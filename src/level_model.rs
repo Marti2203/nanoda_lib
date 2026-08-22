@@ -52,12 +52,29 @@ pub open spec fn interp(l: LevelSpec, rho: Map<nat, nat>) -> nat
     }
 }
 
+pub open spec fn is_succ(l: LevelSpec) -> bool {
+    match l { LevelSpec::Succ(_) => true, _ => false }
+}
+
+pub open spec fn is_imax(l: LevelSpec) -> bool {
+    match l { LevelSpec::IMax(_, _) => true, _ => false }
+}
+
 /// Mirrors `TcCtx::combining` (the worker behind `simplify`'s `Max` case):
 /// pushes a `max` down through matching `Succ`s instead of leaving nested
 /// `Max` nodes around, e.g. `combining(Succ(a), Succ(b)) = Succ(combining(a,b))`
 /// rather than `Max(Succ(a), Succ(b))`.
+///
+/// The second `ensures` clause is the structural fact `simplify_imax_step`
+/// below needs: when the right-hand side is `Succ`-shaped, `combining` can
+/// never produce an `IMax` node. (It's not true in general — e.g.
+/// `combining(IMax(x,y), Zero) == IMax(x,y)`, passed straight through by the
+/// `(l, Zero) => l` arm — but that passthrough arm requires `r == Zero`,
+/// which `is_succ(r)` rules out.)
 pub fn combining(l: LevelSpec, r: LevelSpec) -> (result: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(l, rho), interp(r, rho))
+    ensures
+        forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(l, rho), interp(r, rho)),
+        is_succ(r) ==> !is_imax(result),
     decreases l
 {
     match (l, r) {
@@ -205,6 +222,170 @@ pub fn leq_core_partial(l: &LevelSpec, r: &LevelSpec, diff: i64) -> (result: boo
     }
 }
 
+/// Structural duplicate of a `LevelSpec` reached via `&`, proven to denote
+/// the same value. Needed because substitution may need to copy its
+/// replacement value at more than one occurrence site, and `LevelSpec` isn't
+/// (and, being `Box`-recursive, can't cheaply be) `Copy`. Plain
+/// `#[derive(Clone)]` doesn't work here either: Verus rejects it with
+/// "cyclic self-reference" on a recursive `Box` enum, so this is written out
+/// by hand.
+pub fn dup(l: &LevelSpec) -> (result: LevelSpec)
+    ensures result == *l
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => LevelSpec::Zero,
+        LevelSpec::Param(p) => LevelSpec::Param(*p),
+        LevelSpec::Succ(a) => {
+            let sub = dup(a);
+            assert(sub == **a);
+            LevelSpec::Succ(Box::new(sub))
+        }
+        LevelSpec::Max(a, b) => {
+            let sa = dup(a);
+            let sb = dup(b);
+            assert(sa == **a);
+            assert(sb == **b);
+            LevelSpec::Max(Box::new(sa), Box::new(sb))
+        }
+        LevelSpec::IMax(a, b) => {
+            let sa = dup(a);
+            let sb = dup(b);
+            assert(sa == **a);
+            assert(sb == **b);
+            LevelSpec::IMax(Box::new(sa), Box::new(sb))
+        }
+    }
+}
+
+/// Mirrors `TcCtx::subst_level` specialized to a single parameter (which is
+/// all `leq_imax_by_cases` ever needs: it always substitutes exactly the one
+/// param it's case-splitting on). Proven to mean exactly what substitution
+/// should mean: interpreting the substituted term under `rho` is the same as
+/// interpreting the original term under `rho` with `p`'s assignment
+/// overridden to whatever `v` denotes under `rho`.
+pub fn subst1(l: LevelSpec, p: u64, v: &LevelSpec) -> (result: LevelSpec)
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, rho.insert(p as nat, interp(*v, rho)))
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => LevelSpec::Zero,
+        LevelSpec::Param(q) => {
+            if q == p {
+                let result = dup(v);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(*v, rho));
+                result
+            } else {
+                LevelSpec::Param(q)
+            }
+        }
+        LevelSpec::Succ(a) => {
+            let sub = subst1(*a, p, v);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
+                == interp(*a, rho.insert(p as nat, interp(*v, rho))) + 1);
+            LevelSpec::Succ(Box::new(sub))
+        }
+        LevelSpec::Max(a, b) => {
+            let sa = subst1(*a, p, v);
+            let sb = subst1(*b, p, v);
+            let result = combining(sa, sb);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
+                == max_nat(interp(*a, rho.insert(p as nat, interp(*v, rho))), interp(*b, rho.insert(p as nat, interp(*v, rho)))));
+            result
+        }
+        LevelSpec::IMax(a, b) => {
+            let sa = subst1(*a, p, v);
+            let sb = subst1(*b, p, v);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho)
+                == if interp(sb, rho) == 0 { 0 } else { max_nat(interp(sa, rho), interp(sb, rho)) });
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
+                == if interp(*b, rho.insert(p as nat, interp(*v, rho))) == 0 { 0 } else {
+                    max_nat(interp(*a, rho.insert(p as nat, interp(*v, rho))), interp(*b, rho.insert(p as nat, interp(*v, rho))))
+                });
+            LevelSpec::IMax(Box::new(sa), Box::new(sb))
+        }
+    }
+}
+
+pub open spec fn is_zero_or_succ(l: LevelSpec) -> bool {
+    match l { LevelSpec::Zero => true, LevelSpec::Succ(_) => true, _ => false }
+}
+
+/// Mirrors the body of `TcCtx::simplify`'s `IMax` case, given already-
+/// simplified children. Takes the "is `l_simp` semantically zero-or-one"
+/// decision (`is_zero(l_simp) || is_one(l_simp)` in the real code) as an
+/// opaque `flag` rather than computing it: that requires `is_zero`/`is_one`,
+/// which bottom out in `leq`, which is mutually recursive with `simplify`
+/// itself, so wiring that up is future work.
+///
+/// The key fact — that the result is never `IMax`-shaped when `r_simp` is
+/// `Zero` or `Succ`-shaped — doesn't depend on which way `flag` goes: taking
+/// `flag` as a parameter rather than computing it lets us prove that fact
+/// now, without waiting on the harder mutual-recursion work.
+pub fn simplify_imax_step(l_simp: LevelSpec, r_simp: LevelSpec, flag: bool) -> (result: LevelSpec)
+    requires is_zero_or_succ(r_simp)
+    ensures !is_imax(result)
+{
+    if flag {
+        r_simp
+    } else {
+        match r_simp {
+            LevelSpec::Zero => LevelSpec::Zero,
+            LevelSpec::Succ(s) => combining(l_simp, LevelSpec::Succ(s)),
+            _ => LevelSpec::IMax(Box::new(l_simp), Box::new(r_simp)),
+        }
+    }
+}
+
+/// The concrete fact that makes `leq_imax_by_cases`'s recursion terminate:
+/// substituting the parameter being case-split on (`p`) into the exact
+/// `IMax(a, Param(p))` node that triggered the split — with a replacement
+/// `v` that's `Zero` or `Succ`-shaped, exactly what `leq_imax_by_cases`
+/// plugs in — and then running one step of `simplify`'s `IMax` handling,
+/// can never produce another `IMax` node. So this specific parameter can
+/// never trigger a further case split at this position, regardless of how
+/// deep `a` itself is or what it contains.
+///
+/// (This mirrors `subst1`'s own `IMax` arm without calling it: `subst1` on
+/// `IMax(a, Param(p))` always reconstructs `IMax(subst1(a,...), dup(v))`
+/// since `p` trivially matches itself, so inlining that one step here avoids
+/// needing a separate structural — as opposed to semantic — correctness
+/// lemma about `subst1` in general.)
+pub fn case_split_resolves(a: LevelSpec, p: u64, v: &LevelSpec, flag: bool) -> (result: LevelSpec)
+    requires is_zero_or_succ(*v)
+    ensures !is_imax(result)
+{
+    let l_child = subst1(a, p, v);
+    let r_child = dup(v);
+    assert(r_child == *v);
+    simplify_imax_step(l_child, r_child, flag)
+}
+
+/// `leq_imax_by_cases`'s first substitution target: `p := Zero`.
+pub fn case_split_resolves_zero(a: LevelSpec, p: u64, flag: bool) -> (result: LevelSpec)
+    ensures !is_imax(result)
+{
+    case_split_resolves(a, p, &LevelSpec::Zero, flag)
+}
+
+/// `leq_imax_by_cases`'s second substitution target: `p := Succ(Param(p))`.
+/// Note `p` still occurs in the replacement — substitution doesn't erase
+/// `p` from the term, it only erases this specific `IMax(_, p)` shape (see
+/// the module-level discussion in `leq_core_partial`'s doc comment).
+pub fn case_split_resolves_succ(a: LevelSpec, p: u64, flag: bool) -> (result: LevelSpec)
+    ensures !is_imax(result)
+{
+    let v = LevelSpec::Succ(Box::new(LevelSpec::Param(p)));
+    case_split_resolves(a, p, &v, flag)
+}
+
 } // verus!
 
 #[cfg(test)]
@@ -257,5 +438,31 @@ mod tests {
         // Not a soundness bug: leq_core_partial just doesn't attempt IMax yet.
         let l = LevelSpec::IMax(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Zero));
         assert!(!leq_core_partial(&l, &l, 0));
+    }
+
+    fn assert_not_imax(l: &LevelSpec) {
+        assert!(!matches!(l, LevelSpec::IMax(..)));
+    }
+
+    // Sanity checks that the case-split termination lemma actually fires
+    // (isn't vacuous) for a handful of concrete `a`s and both `flag` values
+    // — this is the fact `leq_core_partial`'s doc comment says is needed
+    // before the `IMax`-by-cases branches themselves can be added.
+    #[test]
+    fn case_split_zero_never_imax() {
+        for flag in [false, true] {
+            assert_not_imax(&case_split_resolves_zero(LevelSpec::Param(7), 5, flag));
+            assert_not_imax(&case_split_resolves_zero(max(LevelSpec::Param(1), LevelSpec::Param(2)), 5, flag));
+            assert_not_imax(&case_split_resolves_zero(LevelSpec::Zero, 5, flag));
+        }
+    }
+
+    #[test]
+    fn case_split_succ_never_imax() {
+        for flag in [false, true] {
+            assert_not_imax(&case_split_resolves_succ(LevelSpec::Param(7), 5, flag));
+            assert_not_imax(&case_split_resolves_succ(max(LevelSpec::Param(1), LevelSpec::Param(2)), 5, flag));
+            assert_not_imax(&case_split_resolves_succ(LevelSpec::Zero, 5, flag));
+        }
     }
 }
