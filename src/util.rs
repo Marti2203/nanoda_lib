@@ -67,6 +67,12 @@ impl<A> Ptr<A> {
     }
 
     pub(crate) fn get_hash(&self) -> u64 { self.raw as u64 }
+
+    /// Exposes the packed representation for `util_model.rs`'s Verus proof
+    /// that `from`/`idx`/`dag_marker`'s bit-packing round-trips correctly.
+    /// Purely additive -- no behavior change.
+    #[allow(dead_code)]
+    pub(crate) fn raw(&self) -> u32 { self.raw }
 }
 
 impl<A> std::hash::Hash for Ptr<A> {

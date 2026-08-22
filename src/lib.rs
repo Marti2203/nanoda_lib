@@ -29,5 +29,6 @@ pub mod union_find_model;
 mod tests;
 pub mod unique_hasher;
 pub mod util;
+pub mod util_model;
 
 pub(crate) const STACK_SIZE: usize = 16_777_216;
