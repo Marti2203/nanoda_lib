@@ -76,6 +76,11 @@ pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> bool {
     a == b
 }
 
+#[allow(dead_code)]
+pub(crate) fn level_ptr_eq<'t>(a: LevelPtr<'t>, b: LevelPtr<'t>) -> bool {
+    a == b
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -121,6 +126,9 @@ pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
 }
 
 pub assume_specification<'t> [name_ptr_eq] (a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
+    ensures result == (a == b);
+
+pub assume_specification<'t> [level_ptr_eq] (a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
     ensures result == (a == b);
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
@@ -226,6 +234,16 @@ pub fn verified_combining<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, 
 /// there). Fuel-bounded for the same reason as `verified_combining` — and
 /// for the same reason, the fuel-exhausted fallback (leave `l` unchanged)
 /// is itself always correct, so the postcondition holds for any fuel value.
+///
+/// Audited arm-for-arm against the real `TcCtx::simplify` (`level.rs`):
+/// semantically equivalent (both preserve `interp`) but not trace-identical.
+/// They diverge in exactly one case — `IMax(a, b)` where `a`'s simplified
+/// form is uniformly zero-or-one *and* `b`'s simplified form is `Param`/
+/// `Max`/`IMax`-shaped (i.e. not already `Zero` or `Succ`): the real
+/// function returns `b`'s simplified form directly there (via `is_zero`/
+/// `is_one`, which this function doesn't compute — see above), while this
+/// one returns an unreduced `IMax` node instead. Still a valid answer (both
+/// denote the same value), just a different pointer.
 pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, fuel: u32) -> (result: LevelPtr<'t>)
     ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(l), rho)
     decreases fuel
@@ -547,6 +565,28 @@ pub fn verified_leq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r
             assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(y), rho) as int + diff as int);
             assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
             return rx || ry;
+        }
+    }
+    // Real `leq_core`'s reflexivity shortcut: two syntactically identical
+    // `IMax` nodes are trivially `<=` when `diff >= 0`. Found missing here
+    // during an audit checking this file against `level.rs` arm-for-arm
+    // (the user asked specifically for a "trace equivalence" claim, and
+    // this omission would have made that claim false): without it, an
+    // `IMax(a,b) <= IMax(a,b)` comparison whose shared right child `b`
+    // isn't bare-`Param`-shaped falls through to the still-unimplemented
+    // `is_any_max` rewrite arms and spuriously answers `false` — not
+    // unsound (`false` is always safe), but a real, previously
+    // under-documented completeness gap relative to the real algorithm.
+    if let (Some((a, b)), Some((x, y))) = (l_imax, r_imax) {
+        if level_ptr_eq(a, x) && level_ptr_eq(b, y) && diff >= 0 {
+            assert(to_model(a) == to_model(x));
+            assert(to_model(b) == to_model(y));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho)
+                == if interp(to_model(b), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(b), rho)) });
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
+                == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(y), rho)) });
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho));
+            return true;
         }
     }
     if let Some((_, b)) = l_imax {
