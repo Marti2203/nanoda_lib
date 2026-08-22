@@ -517,6 +517,67 @@ pub proof fn min_escaping_identity_sanity_check()
     assert(opt_min(Option::<nat>::None, Option::<nat>::None) is None);
 }
 
+/// `max_var_below` after shifting *down* (removing a binder): unlike
+/// substitution, this does NOT grow the bound -- it can only shrink or
+/// preserve it, since `d = -1` only ever decreases an index. The safety
+/// side condition (`no_escaping_below(y, 1)`, only needed at `c0 == 0`)
+/// is exactly what rules out the one bad case (`Var(0)` at the very top
+/// wrapping to `u32::MAX` instead of a real `-1`); same "vacuous once the
+/// induction descends past the first binder" pattern as
+/// `shift_shift_past_down` above.
+pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
+    requires
+        max_var_below(y, bound),
+        c0 == 0 ==> no_escaping_below(y, 1),
+    ensures max_var_below(shift(-1, c0, y), bound)
+    decreases y
+{
+    match y {
+        ExprSpec::Var(i) => {
+            if c0 == 0 {
+                assert(min_escaping(y) == Some(i as nat));
+                assert((i as nat) >= 1);
+            }
+            let ii = i as int;
+            if ii >= c0 {
+                assert(shift(-1, c0, y) == ExprSpec::Var((ii - 1) as u32));
+                assert(ii >= 1);
+                assert(((ii - 1) as nat) < bound);
+            } else {
+                assert(shift(-1, c0, y) == y);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*f, 1));
+                assert(no_escaping_below(*a, 1));
+            }
+            shift_down_max_var_below(c0, bound, *f);
+            shift_down_max_var_below(c0, bound, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*t, 1));
+            }
+            shift_down_max_var_below(c0, bound, *t);
+            shift_down_max_var_below((c0 + 1) as nat, bound, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*t, 1));
+                assert(no_escaping_below(*v, 1));
+            }
+            shift_down_max_var_below(c0, bound, *t);
+            shift_down_max_var_below(c0, bound, *v);
+            shift_down_max_var_below((c0 + 1) as nat, bound, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_down_max_var_below(c0, bound, *s);
+        }
+    }
+}
+
 /// The shift-shift commutation `pstep_shift`'s App-beta case needs,
 /// generalized over BOTH cutoffs so the induction can descend into `x`'s
 /// own `Bind`s (they grow together, in lockstep, since `x`'s recursive
@@ -1002,6 +1063,38 @@ pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: 
             shift_subst_commute(bound, j, diff, s, *st);
         }
     }
+}
+
+/// `max_var_below` after `subst1` (single-variable beta-substitution):
+/// grows relative to `body`'s own bound by `body`'s depth (same reason
+/// `subst_max_var_below` grows -- `subst1`'s inner `subst` re-shifts
+/// `arg` once per `Bind` it descends through), plus one for `subst1`'s
+/// own initial protective shift of `arg`. The final `shift(-1, 0, -)`
+/// does NOT add further growth (`shift_down_max_var_below`) -- shifting
+/// down never grows a bound, only substitution does.
+pub proof fn subst1_max_var_below(bound: nat, body: ExprSpec, arg: ExprSpec)
+    requires
+        bound + depth(body) + 1 <= 0xFFFF_0000,
+        max_var_below(body, bound),
+        max_var_below(arg, bound),
+    ensures max_var_below(subst1(body, arg), ((bound + 1) + depth(body)) as nat)
+{
+    let s = shift(1, 0, arg);
+    let t = subst(0, s, body);
+    assert(subst1(body, arg) == shift(-1, 0, t));
+
+    shift_up_max_var_below(0, bound, arg);
+    max_var_below_mono(body, bound, (bound + 1) as nat);
+    assert((bound + 1) + depth(body) <= 0xFFFF_0000);
+
+    shift_up_raises_margin(bound, 0, arg);
+    subst_no_escape_at((bound + 1) as nat, 0, s, body);
+    assert(no_escaping_below(t, 1));
+
+    subst_max_var_below((bound + 1) as nat, 0, s, body);
+    assert(max_var_below(t, ((bound + 1) + depth(body)) as nat));
+
+    shift_down_max_var_below(0, ((bound + 1) + depth(body)) as nat, t);
 }
 
 /// The identity `pstep_shift`'s App-beta case needs: `shift` commutes with
