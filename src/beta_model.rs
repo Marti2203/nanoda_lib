@@ -278,4 +278,80 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
     }
 }
 
+pub open spec fn opt_min(a: Option<nat>, b: Option<nat>) -> Option<nat> {
+    match (a, b) {
+        (None, x) => x,
+        (x, None) => x,
+        (Some(x), Some(y)) => Some(if x <= y { x } else { y }),
+    }
+}
+
+/// The lowest *escaping* (i.e. not locally bound) `Var` index in `e`,
+/// relative to `e`'s own top-level frame -- `None` if `e` has no escaping
+/// reference at all. The corrected analogue of `nlbv` (which tracks the
+/// highest escaping index via a max-with-subtract recursion) for a
+/// minimum: descending into a `Bind`'s body needs to *exclude* a
+/// locally-bound `Var(0)` and un-bump everything else by one, exactly
+/// mirroring `nlbv`'s `if nlbv(b) == 0 { 0 } else { nlbv(b) - 1 }` --
+/// except MAX naturally absorbs "no escaping refs" as its identity (0),
+/// while MIN has no such identity, hence `Option` instead of a sentinel
+/// value. (My first attempt at this used a threshold-bump instead of a
+/// subtract -- checking the body against `k+1` -- which doesn't
+/// distinguish a locally-bound `Var(0)` from an escaping one; see the
+/// commit history for the concrete counterexample that caught it.)
+pub open spec fn min_escaping(e: ExprSpec) -> Option<nat>
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => Some(i as nat),
+        ExprSpec::Free(_) | ExprSpec::Closed => None,
+        ExprSpec::App(f, a) => opt_min(min_escaping(*f), min_escaping(*a)),
+        ExprSpec::Bind(t, b) => {
+            let bb = match min_escaping(*b) {
+                Some(i) if i == 0 => None,
+                Some(i) => Some((i - 1) as nat),
+                None => None,
+            };
+            opt_min(min_escaping(*t), bb)
+        }
+        ExprSpec::Let(t, v, b) => {
+            let bb = match min_escaping(*b) {
+                Some(i) if i == 0 => None,
+                Some(i) => Some((i - 1) as nat),
+                None => None,
+            };
+            opt_min(opt_min(min_escaping(*t), min_escaping(*v)), bb)
+        }
+        ExprSpec::Proj(s) => min_escaping(*s),
+    }
+}
+
+/// `e` has no escaping reference below `k`.
+pub open spec fn no_escaping_below(e: ExprSpec, k: nat) -> bool {
+    match min_escaping(e) {
+        None => true,
+        Some(m) => m >= k,
+    }
+}
+
+/// Sanity check against the exact counterexample that caught the bug in my
+/// first (threshold-bump) attempt at this predicate: `Bind(Closed,
+/// Var(0))` -- the identity function -- has NO escaping references at
+/// all, even though its body syntactically contains `Var(0)`.
+pub proof fn min_escaping_identity_sanity_check()
+    ensures min_escaping(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))) is None
+{
+    let e = ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)));
+    assert(min_escaping(ExprSpec::Var(0)) == Some(0nat));
+    assert(min_escaping(ExprSpec::Closed) is None);
+    let bb = match min_escaping(ExprSpec::Var(0)) {
+        Some(i) if i == 0 => Option::<nat>::None,
+        Some(i) => Some((i - 1) as nat),
+        None => None,
+    };
+    assert(bb is None);
+    assert(min_escaping(e) == opt_min(min_escaping(ExprSpec::Closed), bb));
+    assert(opt_min(Option::<nat>::None, Option::<nat>::None) is None);
+}
+
 }
