@@ -25,6 +25,7 @@ pub mod parser;
 pub mod parser_model;
 pub mod pretty_printer;
 pub mod quot;
+pub mod quot_model;
 pub mod tc;
 pub mod union_find_model;
 #[cfg(test)]
