@@ -728,6 +728,69 @@ pub fn simplify_full(l: LevelSpec) -> (result: LevelSpec)
     }
 }
 
+/// The identity behind `leq_core`'s first `is_any_max` rewrite arm (the one
+/// missing from `leq_core_fueled`/`verified_leq_core` — see their doc
+/// comments): `imax` distributes over a nested `imax` on its right. Holds
+/// unconditionally, no side conditions on `a`, `x`, or `y`.
+pub proof fn imax_imax_distrib(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
+        == interp(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        ), rho)
+{
+    assert forall |rho: Map<nat, nat>| interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
+        == interp(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        ), rho) by {
+        assert(interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho)
+            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(x, rho), interp(y, rho)) });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)
+            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(y, rho)) });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
+            == if interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho) == 0 { 0 } else {
+                max_nat(interp(a, rho), interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho))
+            });
+        assert(interp(LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ), rho)
+            == max_nat(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho), interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho)));
+    }
+}
+
+/// The identity behind `leq_core`'s second `is_any_max` rewrite arm: `imax`
+/// distributes over a `max` on its right. Also holds unconditionally.
+pub proof fn imax_max_distrib(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
+        == interp(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        ), rho)
+{
+    assert forall |rho: Map<nat, nat>| interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
+        == interp(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        ), rho) by {
+        assert(interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == max_nat(interp(x, rho), interp(y, rho)));
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho)
+            == if interp(x, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(x, rho)) });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)
+            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(y, rho)) });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
+            == if interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == 0 { 0 } else {
+                max_nat(interp(a, rho), interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho))
+            });
+        assert(interp(LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ), rho)
+            == max_nat(interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho), interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)));
+    }
+}
+
 } // verus!
 
 #[cfg(test)]
