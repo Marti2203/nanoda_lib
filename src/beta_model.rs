@@ -110,4 +110,105 @@ pub proof fn subst1_sanity_check()
     assert(shift(-1, 0, ExprSpec::Var(1)) == ExprSpec::Var(0));
 }
 
+/// Single-step reduction: beta at the root, or congruence into a subterm.
+/// Restricted to the `App`/`Bind` fragment -- `Var`/`Free`/`Closed` are
+/// normal forms, and `Let`/`Proj` aren't given reduction rules here (no
+/// zeta/iota yet, matching the fragment's stated scope).
+pub open spec fn step(e1: ExprSpec, e2: ExprSpec) -> bool
+    decreases e1
+{
+    match e1 {
+        ExprSpec::App(f, a) => {
+            ||| (match *f { ExprSpec::Bind(_, body) => e2 == subst1(*body, *a), _ => false })
+            ||| (exists |f2: ExprSpec| step(*f, f2) && e2 == ExprSpec::App(Box::new(f2), a))
+            ||| (exists |a2: ExprSpec| step(*a, a2) && e2 == ExprSpec::App(f, Box::new(a2)))
+        }
+        ExprSpec::Bind(t, b) => {
+            ||| (exists |t2: ExprSpec| step(*t, t2) && e2 == ExprSpec::Bind(Box::new(t2), b))
+            ||| (exists |b2: ExprSpec| step(*b, b2) && e2 == ExprSpec::Bind(t, Box::new(b2)))
+        }
+        _ => false,
+    }
+}
+
+/// Sanity check: the identity function applied to `Free(3)` beta-reduces
+/// to `Free(3)`.
+pub proof fn step_identity_sanity_check()
+    ensures step(
+        ExprSpec::App(
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))),
+            Box::new(ExprSpec::Free(3)),
+        ),
+        ExprSpec::Free(3),
+    )
+{
+    assert(subst1(ExprSpec::Var(0), ExprSpec::Free(3)) == ExprSpec::Free(3)) by {
+        assert(shift(1, 0, ExprSpec::Free(3)) == ExprSpec::Free(3));
+        assert(subst(0, ExprSpec::Free(3), ExprSpec::Var(0)) == ExprSpec::Free(3));
+        assert(shift(-1, 0, ExprSpec::Free(3)) == ExprSpec::Free(3));
+    }
+}
+
+/// Parallel reduction: contract zero or more non-overlapping redexes
+/// simultaneously. `step` alone does NOT satisfy the diamond property
+/// (classic counterexample: `(fun x => x x) ((fun y => y) z)` has two
+/// one-step reductions -- contract the outer redex, or contract the inner
+/// one -- that don't converge in one further step each; the outer
+/// contraction *duplicates* the un-reduced inner redex). Parallel
+/// reduction sidesteps this by allowing "reduce every redex that's
+/// syntactically present right now, all at once" as a single relation
+/// step, which turns out to satisfy the diamond property directly (Tait,
+/// Martin-Löf). `pstep(e, e)` always holds (reducing zero redexes is a
+/// valid parallel step) -- this reflexivity is what will let `pstep`'s
+/// transitive closure coincide with `step`'s.
+pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
+    decreases e1
+{
+    ||| e1 == e2
+    ||| match e1 {
+        ExprSpec::App(f, a) => {
+            ||| (match *f {
+                ExprSpec::Bind(_, body) => exists |body2: ExprSpec, a2: ExprSpec|
+                    #![trigger subst1(body2, a2)]
+                    pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2),
+                _ => false,
+            })
+            ||| (exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)))
+        }
+        ExprSpec::Bind(t, b) => {
+            exists |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2))
+        }
+        _ => false,
+    }
+}
+
+/// Support lemma for the diamond property: `pstep` is preserved by
+/// `shift`. Needed because the substitution lemma's induction has to go
+/// under `Bind`, where `subst`'s recursive call re-shifts its substituted
+/// term -- so relating `pstep` before/after substitution requires first
+/// relating it before/after `shift`.
+///
+/// **Currently `#[verifier::external_body]` (admitted, not proven).**
+/// Working the proof out by hand: case-splitting on `pstep(e1,e2)`'s
+/// definitional disjunction and extracting the App-beta-case witnesses
+/// (`body2`, `a2` with `e2 == subst1(body2, a2)`) is mechanical and does
+/// unfold automatically -- but discharging that case then needs exactly
+/// `shift(d, c, subst1(b, a)) == subst1(shift(d, c+1, b), shift(d, c, a))`,
+/// a shift/substitution *commutation* lemma this file doesn't have yet.
+/// That lemma in turn needs its own sub-lemmas (shift commutes with
+/// itself at different cutoffs; shift commutes with `subst`) before it's
+/// provable -- the classic tower of de Bruijn arithmetic lemmas every
+/// confluence proof needs (see e.g. Software Foundations' `Stlc`/`Norm`
+/// chapters), except each link here needs hand-written case-by-case
+/// unfold-and-assert treatment rather than a tactic like Coq's `induction
+/// ... ; omega` chaining through it automatically. This is genuinely where
+/// the friction starts to compound -- flagged honestly rather than papered
+/// over with a proof that secretly doesn't check.
+#[verifier::external_body]
+pub proof fn pstep_shift(d: int, c: nat, e1: ExprSpec, e2: ExprSpec)
+    requires pstep(e1, e2)
+    ensures pstep(shift(d, c, e1), shift(d, c, e2))
+{
+}
+
 }
