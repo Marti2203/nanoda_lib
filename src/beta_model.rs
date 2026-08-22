@@ -998,6 +998,80 @@ pub proof fn shift_up_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0: n
     }
 }
 
+/// The `has_escaping_ref` analogue of `shift_up_has_escaping_ref_c0`, for
+/// `shift(-1, c0, -)` instead of `shift(1, c0, -)` -- restricted to `k >=
+/// c0` (the only case ever needed downstream: every use threads `k` and
+/// `c0` through in lockstep, so `k == c0` always). This restriction
+/// matters: for `k < c0`, a `Var` sitting EXACTLY at `c0` can shift down
+/// to land exactly at `k = c0 - 1`, an extra "boundary crossing" case the
+/// clean `k >= c0` formula below does not capture (hand-checked and
+/// rejected -- `c0 = 2, i = 2 (= c0), k = 1 (= c0-1)`: `shift(-1,2,Var(2))
+/// = Var(1)`, which DOES have an escaping ref at `k=1`, but `Var(2)` does
+/// NOT have one at `k=1` itself, so a `k < c0` formula stated purely in
+/// terms of `x`'s own escaping structure at `k` would be wrong). Avoiding
+/// that region entirely, rather than characterizing it, is what keeps
+/// this lemma's statement clean.
+///
+/// Needs the same `c0 == 0 ==> !has_escaping_ref(x, 0)` safety condition
+/// as every other `d = -1` lemma in this file (the boundary-wrap
+/// concern), vacuous once `c0 >= 1`.
+pub proof fn shift_down_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0: nat)
+    requires
+        bound <= 0xFFFF_0000,
+        max_var_below(x, bound),
+        k >= c0,
+        c0 == 0 ==> !has_escaping_ref(x, 0),
+    ensures has_escaping_ref(shift(-1, c0, x), k) == has_escaping_ref(x, (k + 1) as nat)
+    decreases x
+{
+    match x {
+        ExprSpec::Var(i) => {
+            assert((i as nat) < bound);
+            if c0 == 0 {
+                assert(!has_escaping_ref(x, 0));
+                assert((i as nat) != 0);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if c0 == 0 {
+                assert(!has_escaping_ref(*f, 0));
+                assert(!has_escaping_ref(*a, 0));
+            }
+            assert(shift(-1, c0, x) == ExprSpec::App(Box::new(shift(-1, c0, *f)), Box::new(shift(-1, c0, *a))));
+            shift_down_has_escaping_ref_c0(bound, *f, k, c0);
+            shift_down_has_escaping_ref_c0(bound, *a, k, c0);
+        }
+        ExprSpec::Bind(t, b) => {
+            if c0 == 0 {
+                assert(!has_escaping_ref(*t, 0));
+            }
+            assert(shift(-1, c0, x) == ExprSpec::Bind(Box::new(shift(-1, c0, *t)), Box::new(shift(-1, (c0 + 1) as nat, *b))));
+            shift_down_has_escaping_ref_c0(bound, *t, k, c0);
+            shift_down_has_escaping_ref_c0(bound, *b, (k + 1) as nat, (c0 + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if c0 == 0 {
+                assert(!has_escaping_ref(*t, 0));
+                assert(!has_escaping_ref(*v, 0));
+            }
+            assert(shift(-1, c0, x) == ExprSpec::Let(
+                Box::new(shift(-1, c0, *t)), Box::new(shift(-1, c0, *v)), Box::new(shift(-1, (c0 + 1) as nat, *b)),
+            ));
+            shift_down_has_escaping_ref_c0(bound, *t, k, c0);
+            shift_down_has_escaping_ref_c0(bound, *v, k, c0);
+            shift_down_has_escaping_ref_c0(bound, *b, (k + 1) as nat, (c0 + 1) as nat);
+        }
+        ExprSpec::Proj(st) => {
+            if c0 == 0 {
+                assert(!has_escaping_ref(*st, 0));
+            }
+            assert(shift(-1, c0, x) == ExprSpec::Proj(Box::new(shift(-1, c0, *st))));
+            shift_down_has_escaping_ref_c0(bound, *st, k, c0);
+        }
+    }
+}
+
 /// If `e` has no escaping reference at exactly `k`, substituting at
 /// position `k` is a no-op: there's nothing in `e` for `subst(k, s, e)`
 /// to find and replace. Uses `has_escaping_ref`, NOT `no_escaping_below`
@@ -1042,6 +1116,71 @@ pub proof fn no_escaping_ref_subst_identity(k: nat, s: ExprSpec, e: ExprSpec)
             assert(!has_escaping_ref(*st, k));
             no_escaping_ref_subst_identity(k, s, *st);
             assert(subst(k, s, e) == ExprSpec::Proj(Box::new(subst(k, s, *st))));
+        }
+    }
+}
+
+/// The `has_escaping_ref` analogue of `subst_no_escape_at`: `subst(j, s,
+/// e)` has no escaping reference at exactly `j`, GIVEN `s` itself has
+/// none at `j` -- like `subst_no_escape_at`, no hypothesis on `e` is
+/// needed at all. Much cleaner than the `min_escaping`-based version:
+/// the same `j` threads through the WHOLE induction unchanged (no
+/// growing threshold), because `has_escaping_ref`'s `Bind`/`Let` `+1`
+/// convention and `shift_up_has_escaping_ref`'s own `-1` relationship
+/// exactly cancel (`shift_up_has_escaping_ref` at query point `j+1`
+/// reduces to querying `s` at `j` itself), unlike `min_escaping`'s
+/// subtract-and-clamp recursion, which needed the hypothesis to grow by
+/// one per level via `shift_up_raises_margin`.
+pub proof fn subst_no_escaping_ref_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
+    requires
+        bound + depth(e) <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        !has_escaping_ref(s, j),
+    ensures !has_escaping_ref(subst(j, s, e), j)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+            } else {
+                assert(subst(j, s, e) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            subst_no_escaping_ref_at(bound, j, s, *f);
+            subst_no_escaping_ref_at(bound, j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            subst_no_escaping_ref_at(bound, j, s, *t);
+            max_var_below_mono(s, bound, (bound + 1) as nat);
+            shift_up_has_escaping_ref((bound + 1) as nat, s, (j + 1) as nat);
+            assert(has_escaping_ref(shift(1, 0, s), (j + 1) as nat) == ((j + 1) >= 1 && has_escaping_ref(s, j)));
+            assert(!has_escaping_ref(shift(1, 0, s), (j + 1) as nat));
+            shift_up_max_var_below(0, bound, s);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_no_escaping_ref_at((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            subst_no_escaping_ref_at(bound, j, s, *t);
+            subst_no_escaping_ref_at(bound, j, s, *v);
+            max_var_below_mono(s, bound, (bound + 1) as nat);
+            shift_up_has_escaping_ref((bound + 1) as nat, s, (j + 1) as nat);
+            assert(has_escaping_ref(shift(1, 0, s), (j + 1) as nat) == ((j + 1) >= 1 && has_escaping_ref(s, j)));
+            assert(!has_escaping_ref(shift(1, 0, s), (j + 1) as nat));
+            shift_up_max_var_below(0, bound, s);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_no_escaping_ref_at((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            subst_no_escaping_ref_at(bound, j, s, *st);
         }
     }
 }
