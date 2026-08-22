@@ -2404,6 +2404,88 @@ pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
     }
 }
 
+/// `size` after substitution: MULTIPLICATIVE (not additive, unlike
+/// `depth`) in `size(s)`, since `e` can have multiple `Var(j)`
+/// occurrences, each replaced by its own full copy of `s` -- the well-
+/// known fact that beta-duplication can blow up term SIZE, in contrast
+/// to `depth`'s additive growth (see `subst_depth_bound`'s own doc
+/// comment). `size(e)` bounds the number of such occurrences (at most
+/// one per node), giving the generous-but-sufficient product bound
+/// below -- exactly the kind of purely-polynomial (not exponential)
+/// headroom this file's `growth`/`pstep_bounds` machinery is built to
+/// absorb.
+pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
+    ensures size(subst(j, s, e)) <= size(e) * (size(s) + 1)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(size(e) == 1);
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+                assert(size(s) <= 1 * (size(s) + 1)) by (nonlinear_arith) {}
+            } else {
+                assert(subst(j, s, e) == e);
+                assert(size(s) >= 1);
+                assert(1 <= 1 * (size(s) + 1)) by (nonlinear_arith) {}
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {
+            assert(subst(j, s, e) == e);
+            assert(size(e) == 1);
+            assert(size(s) >= 1);
+            assert(1 <= 1 * (size(s) + 1)) by (nonlinear_arith) {}
+        }
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            subst_size_bound(j, s, *f);
+            subst_size_bound(j, s, *a);
+            assert(size(*f) * (size(s) + 1) + size(*a) * (size(s) + 1) + 1 <= size(e) * (size(s) + 1)) by (nonlinear_arith)
+                requires size(e) == 1 + size(*f) + size(*a)
+            {}
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            subst_size_bound(j, s, *t);
+            shift_preserves_size(1, 0, s);
+            subst_size_bound((j + 1) as nat, shift(1, 0, s), *b);
+            assert(size(*t) * (size(s) + 1) + size(*b) * (size(s) + 1) + 1 <= size(e) * (size(s) + 1)) by (nonlinear_arith)
+                requires size(e) == 1 + size(*t) + size(*b)
+            {}
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            subst_size_bound(j, s, *t);
+            subst_size_bound(j, s, *v);
+            shift_preserves_size(1, 0, s);
+            subst_size_bound((j + 1) as nat, shift(1, 0, s), *b);
+            assert(size(*t) * (size(s) + 1) + size(*v) * (size(s) + 1) + size(*b) * (size(s) + 1) + 1 <= size(e) * (size(s) + 1)) by (nonlinear_arith)
+                requires size(e) == 1 + size(*t) + size(*v) + size(*b)
+            {}
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            subst_size_bound(j, s, *st);
+            assert(size(*st) * (size(s) + 1) + 1 <= size(e) * (size(s) + 1)) by (nonlinear_arith)
+                requires size(e) == 1 + size(*st)
+            {}
+        }
+    }
+}
+
+/// Corollary for `subst1`: `size(subst1(body,arg)) <= size(body) *
+/// (size(arg) + 1)`, via `subst_size_bound` plus `shift_preserves_size`
+/// twice (`subst1`'s own two shifts).
+pub proof fn subst1_size_bound(body: ExprSpec, arg: ExprSpec)
+    ensures size(subst1(body, arg)) <= size(body) * (size(arg) + 1)
+{
+    shift_preserves_size(1, 0, arg);
+    subst_size_bound(0, shift(1, 0, arg), body);
+    shift_preserves_size(-1, 0, subst(0, shift(1, 0, arg), body));
+}
+
 /// `depth` after substitution: additive, NOT multiplicative, in `depth(s)`
 /// -- replacing every `Var(j)` leaf in `e` with a copy of `s` can only
 /// extend the tree along whichever path that leaf sat on, by exactly
