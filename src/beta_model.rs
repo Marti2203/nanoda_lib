@@ -163,6 +163,36 @@ pub proof fn step_identity_sanity_check()
 /// Martin-Löf). `pstep(e, e)` always holds (reducing zero redexes is a
 /// valid parallel step) -- this reflexivity is what will let `pstep`'s
 /// transitive closure coincide with `step`'s.
+/// Extended (past this file's original "App/Bind fragment" scope, see
+/// `step`'s doc comment above) with plain congruence -- no beta-like
+/// rule -- for `Let`/`Proj` too. Without this, `pstep` couldn't relate
+/// `subst(j,s1,e)` to `subst(j,s2,e)` for a `Let`/`Proj`-shaped `e`
+/// containing `Var(j)`, even given `pstep(s1,s2)`: those shapes offered
+/// only reflexivity, so two different (but `pstep`-related) substituted
+/// values would produce two DIFFERENT, `pstep`-unrelated results. Found
+/// while setting up `pstep_subst`'s statement, before writing any of its
+/// proof -- adding real congruence rules (matching `Bind`'s own shape)
+/// is the natural fix, not an artificial restriction to a `Let`/`Proj`-
+/// free sub-fragment bolted onto every lemma downstream of here.
+///
+/// `Proj`'s clause is written as a `match e2` (pattern-matching `e2`
+/// directly) rather than `Bind`/`Let`'s `exists |s2: ExprSpec| ... && e2
+/// == Proj(Box::new(s2))` shape, for a reason worth recording: the
+/// `exists` form, tested in isolation with a series of throwaway toy
+/// spec fns, reproducibly fails to unfold from a `pstep(e1,e2)`
+/// hypothesis in a single-Box-field recursive case specifically when the
+/// existential has exactly ONE bound variable and a self-referential
+/// recursive call -- `Bind`/`Let`'s two/three-variable existentials (and
+/// a version with an extra always-true padding variable, and one with a
+/// second redundant recursive call) all unfold fine; a single-variable,
+/// *non*-recursive existential also unfolds fine. Never isolated the
+/// exact Verus/Z3 mechanism (tried explicit multi-term triggers, alpha-
+/// renaming to rule out shadowing, `reveal`, `reveal_with_fuel`, and a
+/// standalone minimal reproduction -- all reproduced the same failure
+/// mode or, in the trigger/rename cases, no change). Matching `e2`
+/// directly sidesteps needing an existential at all and reliably works;
+/// switching to this style is the fix, not a workaround pasted over an
+/// unexplained gap.
 pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
     decreases e1
 {
@@ -180,6 +210,14 @@ pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
         ExprSpec::Bind(t, b) => {
             exists |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2))
         }
+        ExprSpec::Let(t, v, b) => {
+            exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2))
+        }
+        ExprSpec::Proj(inner) => match e2 {
+            ExprSpec::Proj(inner2) => pstep(*inner, *inner2),
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -308,6 +346,46 @@ pub proof fn pstep_shift(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
                 assert(shift(1, c, e1) == ExprSpec::Bind(Box::new(shift(1, c, *t)), Box::new(shift(1, (c + 1) as nat, *b))));
                 assert(shift(1, c, e2) == ExprSpec::Bind(Box::new(shift(1, c, t2)), Box::new(shift(1, (c + 1) as nat, b2))));
                 assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*v) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                pstep_shift(bound, c, *t, t2);
+                pstep_shift(bound, c, *v, v2);
+                pstep_shift(bound, (c + 1) as nat, *b, b2);
+                assert(shift(1, c, e1) == ExprSpec::Let(
+                    Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
+                ));
+                assert(shift(1, c, e2) == ExprSpec::Let(
+                    Box::new(shift(1, c, t2)), Box::new(shift(1, c, v2)), Box::new(shift(1, (c + 1) as nat, b2)),
+                ));
+                assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+            }
+            ExprSpec::Proj(s) => {
+                assert(max_var_below(*s, bound));
+                assert(size(e1) == 1 + size(*s));
+                assert(size(*s) < size(e1));
+                growth_mono(size(*s), size(e1));
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep(*s, *s2));
+                        pstep_shift(bound, c, *s, *s2);
+                        assert(shift(1, c, e1) == ExprSpec::Proj(Box::new(shift(1, c, *s))));
+                        assert(shift(1, c, e2) == ExprSpec::Proj(Box::new(shift(1, c, *s2))));
+                        assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                    }
+                    _ => { assert(false); }
+                }
             }
             _ => {
                 assert(false);
@@ -1490,6 +1568,49 @@ pub proof fn pstep_bounds(bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (n
                 max_var_below_mono(b2, bmvb, common);
                 let d2 = 1 + (if tdepth >= bdepth { tdepth } else { bdepth });
                 (common, d2 as nat)
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*v) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                let (tmvb, tdepth) = pstep_bounds(bound, *t, t2);
+                let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                let common0 = if tmvb >= vmvb { tmvb } else { vmvb };
+                let common = if common0 >= bmvb { common0 } else { bmvb };
+                max_var_below_mono(t2, tmvb, common);
+                max_var_below_mono(v2, vmvb, common);
+                max_var_below_mono(b2, bmvb, common);
+                let d0 = if tdepth >= vdepth { tdepth } else { vdepth };
+                let d2 = 1 + (if d0 >= bdepth { d0 } else { bdepth });
+                (common, d2 as nat)
+            }
+            ExprSpec::Proj(s) => {
+                assert(max_var_below(*s, bound));
+                assert(size(e1) == 1 + size(*s));
+                assert(size(*s) < size(e1));
+                growth_mono(size(*s), size(e1));
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep(*s, *s2));
+                        let (smvb, sdepth) = pstep_bounds(bound, *s, *s2);
+                        let d2 = 1 + sdepth;
+                        (smvb, d2 as nat)
+                    }
+                    _ => {
+                        assert(false);
+                        (bound, depth(e1))
+                    }
+                }
             }
             _ => {
                 assert(false);
