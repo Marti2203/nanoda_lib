@@ -2334,4 +2334,207 @@ pub proof fn pstep_subst_refl(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e:
     }
 }
 
+/// The full substitution lemma for `pstep`: `pstep(e1, e2)` and
+/// `pstep(s1, s2)` together give `pstep(subst(j, s1, e1), subst(j, s2,
+/// e2))`. `pstep_subst_refl` above is this lemma's `e1 == e2` base case;
+/// this is the general version, following `pstep(e1,e2)`'s own
+/// structure the same way `pstep_shift` does (`pstep_bounds` for the
+/// beta witnesses' and `s2`'s own bounds -- `s2`, like `e2`, is only
+/// known to exist via `pstep(s1,s2)`, not directly bounded by the
+/// caller; `pstep_shift` to carry `pstep(s1,s2)` itself under a binder;
+/// `pstep_subst` recursively for the congruence subterms;
+/// `subst_subst1_commute` to reassemble the beta case).
+///
+/// Headroom is deliberately generous (`size(e1)` and `size(s1)` scaled
+/// by a large constant, well beyond what's tightly necessary) rather
+/// than tuned to the minimum -- with `growth` itself already quadratic,
+/// nailing an exact linear constant on top buys nothing for realistic
+/// terms and risks yet another off-by-one; see this file's established
+/// practice of generous slack over tight constants throughout.
+pub proof fn pstep_subst(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: ExprSpec, e2: ExprSpec)
+    requires
+        pstep(e1, e2),
+        pstep(s1, s2),
+        max_var_below(e1, bound),
+        max_var_below(s1, bound),
+        bound + growth(size(e1)) + growth(size(s1)) + 4 * size(e1) + 4 * size(s1) + 20 <= 0xFFFF_0000,
+    ensures pstep(subst(j, s1, e1), subst(j, s2, e2))
+    decreases e1
+{
+    let (s2mvb, s2depth) = pstep_bounds(bound, s1, s2);
+    assert(s2depth <= size(s1));
+    assert(s2mvb <= bound + growth(size(s1)));
+
+    if e1 == e2 {
+        depth_le_size(e1);
+        assert(depth(e1) <= size(e1));
+        assert(growth(size(e1)) == size(e1) * size(e1) + size(e1));
+        assert(size(e1) <= growth(size(e1))) by (nonlinear_arith) {}
+        assert(bound + growth(size(s1)) + depth(e1) + 1 <= 0xFFFF_0000);
+        pstep_subst_refl(bound, j, s1, s2, e1);
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                assert(size(*f) < size(e1));
+                assert(size(*a) < size(e1));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        assert(size(*body) + 2 <= size(e1));
+                        growth_mono(size(*body), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+
+                            let (bmvb, bdepth) = pstep_bounds(bound, *body, body2);
+                            let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                            assert(bdepth <= size(*body));
+                            assert(adepth <= size(*a));
+                            assert(bmvb <= bound + growth(size(*body)));
+                            assert(amvb <= bound + growth(size(*a)));
+
+                            pstep_shift(bound, 0, s1, s2);
+                            assert(pstep(shift(1, 0, s1), shift(1, 0, s2)));
+                            shift_up_max_var_below(0, bound, s1);
+                            shift_preserves_size(1, 0, s1);
+                            assert(max_var_below(shift(1, 0, s1), (bound + 1) as nat));
+                            max_var_below_mono(*body, bound, (bound + 1) as nat);
+
+                            assert((bound + 1) + growth(size(*body)) + growth(size(s1)) + 4 * size(*body) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                            pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *body, body2);
+                            assert(pstep(subst((j + 1) as nat, shift(1, 0, s1), *body), subst((j + 1) as nat, shift(1, 0, s2), body2)));
+
+                            assert(bound + growth(size(*a)) + growth(size(s1)) + 4 * size(*a) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                            pstep_subst(bound, j, s1, s2, *a, a2);
+                            assert(pstep(subst(j, s1, *a), subst(j, s2, a2)));
+
+                            let common0 = if bmvb >= amvb { bmvb } else { amvb };
+                            let common = if common0 >= s2mvb { common0 } else { s2mvb };
+                            max_var_below_mono(body2, bmvb, common);
+                            max_var_below_mono(a2, amvb, common);
+                            max_var_below_mono(s2, s2mvb, common);
+
+                            assert(common + 2 * bdepth + adepth + 3 <= 0xFFFF_0000) by (nonlinear_arith)
+                                requires
+                                    common <= bound + growth(size(e1)) + growth(size(s1)) + 1,
+                                    bdepth <= size(e1),
+                                    adepth <= size(e1),
+                                    bound + growth(size(e1)) + growth(size(s1)) + 4 * size(e1) + 4 * size(s1) + 20 <= 0xFFFF_0000,
+                            {}
+
+                            subst_subst1_commute(common, j, s2, body2, a2);
+                            assert(subst(j, s2, subst1(body2, a2))
+                                == subst1(subst((j + 1) as nat, shift(1, 0, s2), body2), subst(j, s2, a2)));
+                            assert(subst(j, s2, e2) == subst1(subst((j + 1) as nat, shift(1, 0, s2), body2), subst(j, s2, a2)));
+
+                            assert(subst(j, s1, e1) == ExprSpec::App(
+                                Box::new(ExprSpec::Bind(Box::new(subst(j, s1, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *body)))),
+                                Box::new(subst(j, s1, *a)),
+                            ));
+                            assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_subst(bound, j, s1, s2, *f, f2);
+                            pstep_subst(bound, j, s1, s2, *a, a2);
+                            assert(subst(j, s1, e1) == ExprSpec::App(Box::new(subst(j, s1, *f)), Box::new(subst(j, s1, *a))));
+                            assert(subst(j, s2, e2) == ExprSpec::App(Box::new(subst(j, s2, f2)), Box::new(subst(j, s2, a2))));
+                            assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_subst(bound, j, s1, s2, *f, f2);
+                        pstep_subst(bound, j, s1, s2, *a, a2);
+                        assert(subst(j, s1, e1) == ExprSpec::App(Box::new(subst(j, s1, *f)), Box::new(subst(j, s1, *a))));
+                        assert(subst(j, s2, e2) == ExprSpec::App(Box::new(subst(j, s2, f2)), Box::new(subst(j, s2, a2))));
+                        assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_subst(bound, j, s1, s2, *t, t2);
+
+                pstep_shift(bound, 0, s1, s2);
+                shift_up_max_var_below(0, bound, s1);
+                shift_preserves_size(1, 0, s1);
+                max_var_below_mono(*b, bound, (bound + 1) as nat);
+                assert((bound + 1) + growth(size(*b)) + growth(size(s1)) + 4 * size(*b) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b, b2);
+
+                assert(subst(j, s1, e1) == ExprSpec::Bind(Box::new(subst(j, s1, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b))));
+                assert(subst(j, s2, e2) == ExprSpec::Bind(Box::new(subst(j, s2, t2)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), b2))));
+                assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*v) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                pstep_subst(bound, j, s1, s2, *t, t2);
+                pstep_subst(bound, j, s1, s2, *v, v2);
+
+                pstep_shift(bound, 0, s1, s2);
+                shift_up_max_var_below(0, bound, s1);
+                shift_preserves_size(1, 0, s1);
+                max_var_below_mono(*b, bound, (bound + 1) as nat);
+                assert((bound + 1) + growth(size(*b)) + growth(size(s1)) + 4 * size(*b) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b, b2);
+
+                assert(subst(j, s1, e1) == ExprSpec::Let(
+                    Box::new(subst(j, s1, *t)), Box::new(subst(j, s1, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b)),
+                ));
+                assert(subst(j, s2, e2) == ExprSpec::Let(
+                    Box::new(subst(j, s2, t2)), Box::new(subst(j, s2, v2)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), b2)),
+                ));
+                assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+            }
+            ExprSpec::Proj(st) => {
+                assert(max_var_below(*st, bound));
+                assert(size(e1) == 1 + size(*st));
+                assert(size(*st) < size(e1));
+                growth_mono(size(*st), size(e1));
+                match e2 {
+                    ExprSpec::Proj(st2) => {
+                        assert(pstep(*st, *st2));
+                        pstep_subst(bound, j, s1, s2, *st, *st2);
+                        assert(subst(j, s1, e1) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
+                        assert(subst(j, s2, e2) == ExprSpec::Proj(Box::new(subst(j, s2, *st2))));
+                        assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                    }
+                    _ => { assert(false); }
+                }
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 }
