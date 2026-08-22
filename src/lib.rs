@@ -20,6 +20,7 @@ pub mod level_arena_bridge;
 pub mod level_model;
 pub mod name;
 pub mod name_model;
+pub mod nat_lit_model;
 pub mod parser;
 pub mod parser_model;
 pub mod pretty_printer;
