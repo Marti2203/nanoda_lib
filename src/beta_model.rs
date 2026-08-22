@@ -30,6 +30,8 @@ use vstd::prelude::*;
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::expr_model::depth;
+#[cfg(verus_only)]
+use crate::expr_model::subst_full;
 
 verus! {
 
@@ -4282,6 +4284,119 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 assert(false);
                 e1
             }
+        }
+    }
+}
+
+/// Telescopic substitution against an EMPTY list is always a no-op --
+/// unconditionally (unlike `subst_full_noop`, which needs `nlbv(e) <=
+/// offset`): with `substs.len() == 0`, `subst_full`'s own `Var` case's
+/// in-range test `(i - offset) < substs.len()` can never hold.
+pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
+    ensures subst_full(e, Seq::<ExprSpec>::empty(), offset) == e
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            subst_full_empty(*f, offset);
+            subst_full_empty(*a, offset);
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_full_empty(*t, offset);
+            subst_full_empty(*b, (offset + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_empty(*t, offset);
+            subst_full_empty(*v, offset);
+            subst_full_empty(*b, (offset + 1) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            subst_full_empty(*s, offset);
+        }
+    }
+}
+
+/// Peels exactly `n` nested `Bind`s from `head`, returning the innermost
+/// body if `head` has at least that many, else `None`.
+pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
+    decreases n
+{
+    if n == 0 {
+        Some(head)
+    } else {
+        match head {
+            ExprSpec::Bind(_, b) => spine_bind(*b, (n - 1) as nat),
+            _ => None,
+        }
+    }
+}
+
+/// Rebuilds `base @ args[0] @ args[1] @ ... @ args[len-1]` (left-
+/// associated), the inverse operation `spine_bind` peels through.
+pub open spec fn spine_app(base: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
+    decreases args.len()
+{
+    if args.len() == 0 {
+        base
+    } else {
+        ExprSpec::App(
+            Box::new(spine_app(base, args.subrange(0, args.len() - 1))),
+            Box::new(args[args.len() - 1]),
+        )
+    }
+}
+
+/// The REAL telescopic beta-reduction step (`tc.rs`'s `whnf_no_unfolding_aux`
+/// `Lambda` case), computed as a sequence of ORDINARY single-argument beta
+/// steps instead of one combined `subst_full` call: peel one `Bind` off
+/// `head`, beta-reduce it against `args[0]` via plain `subst1`, and recurse
+/// on the (possibly still `Bind`-headed) result with the remaining args.
+/// `pstep`/`step` (and therefore `pstep_diamond`) already understand this
+/// process one step at a time; the goal is a bridging theorem
+/// (`spine_reduce(head, args) == subst_full(body, args, 0)` when
+/// `spine_bind(head, args.len()) == Some(body)`) connecting it to the real
+/// algorithm's single combined `subst_full` call.
+///
+/// **Not yet proven -- and NOT simply true as stated.** Checked this
+/// directly rather than assuming it: `subst1` (Pierce-style single
+/// substitution) shifts every SURVIVING free variable down by 1 --
+/// necessarily, since it's removing exactly one binder. `subst_full`
+/// (`inst_aux`'s real semantics) does NOT -- `Var(i)` for `i` outside the
+/// range covered by `substs` is left completely UNCHANGED, no decrement
+/// (see `subst_full`'s own doc comment / definition in `expr_model.rs`).
+/// So iterating `subst1` `n` times shifts any variable escaping past all
+/// `n` binders down by `n`; one `subst_full` call leaves it exactly where
+/// it was. These genuinely disagree whenever `body` has a loose reference
+/// beyond the `n` binders being telescopically removed.
+///
+/// They agree exactly when `body` has NO such escaping reference (e.g.
+/// `nlbv(body) <= n`, `expr_model.rs`'s cached-field metric) -- which is
+/// very plausibly the ACTUAL invariant real call sites maintain (Lean-
+/// kernel discipline represents any variable bound further out than the
+/// current local manipulation as a `Local`/free-variable placeholder,
+/// never as a raw loose `Var` index -- see `tc.rs`'s `mk_dbj_level`/
+/// `abstr_levels` pattern), but that's a claim about how `inst`/`whnf`
+/// are actually CALLED, not a fact provable from `subst_full`'s type
+/// alone, and isn't yet formalized or checked here. Proving the
+/// (correctly qualified) bridging theorem also isn't a quick corollary
+/// of existing lemmas: composing `subst1` through nested `Bind`s needs
+/// either a cutoff-generalized substitution primitive (in the spirit of
+/// `shift_subst1_commute`'s `shift(1,(c+1),shift(1,0,arg)) ==
+/// shift(1,0,shift(1,c,arg))`-style composition, NOT the naive
+/// `shift(1,c+1,arg)` guess -- checked by hand and it's false at `i ==
+/// c`) or a `has_escaping_ref`-based "untouched tail" argument built on
+/// `subst_no_escaping_ref_at`-style facts. Flagged honestly as open,
+/// same as this file's practice for `pstep_subst1` before it was closed.
+pub open spec fn spine_reduce(head: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
+    decreases args.len()
+{
+    if args.len() == 0 {
+        head
+    } else {
+        match head {
+            ExprSpec::Bind(_, b) => spine_reduce(subst1(*b, args[0]), args.subrange(1, args.len() as int)),
+            _ => spine_app(head, args),
         }
     }
 }
