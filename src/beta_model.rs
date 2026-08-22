@@ -1270,6 +1270,33 @@ pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
     }
 }
 
+/// `shift` never changes `size` either, for the same reason it never
+/// changes `depth`.
+pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
+    ensures size(shift(d, c, e)) == size(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            shift_preserves_size(d, c, *f);
+            shift_preserves_size(d, c, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            shift_preserves_size(d, c, *t);
+            shift_preserves_size(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            shift_preserves_size(d, c, *t);
+            shift_preserves_size(d, c, *v);
+            shift_preserves_size(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_preserves_size(d, c, *s);
+        }
+    }
+}
+
 /// `depth` after substitution: additive, NOT multiplicative, in `depth(s)`
 /// -- replacing every `Var(j)` leaf in `e` with a copy of `s` can only
 /// extend the tree along whichever path that leaf sat on, by exactly
@@ -1674,6 +1701,77 @@ pub proof fn shift_subst1_commute(bound: nat, c: nat, body: ExprSpec, arg: ExprS
 
     assert(subst1(shift(1, (c + 1) as nat, body), shift(1, c, arg))
         == shift(-1, 0, subst(0, shift(1, 0, shift(1, c, arg)), shift(1, (c + 1) as nat, body))));
+}
+
+/// Substitution congruence for `pstep`: given `pstep(s1, s2)`, substituting
+/// `s1` vs `s2` for `Var(j)` into the SAME `e` produces `pstep`-related
+/// results. This is `pstep_subst`'s (below) "`e1 == e2`" base case: when
+/// the term being substituted into doesn't itself reduce, the only source
+/// of a `pstep` relation between `subst(j, s1, e)` and `subst(j, s2, e)`
+/// is `s1`/`s2`'s own relation, propagated through `e`'s structure by
+/// plain congruence (now available for every `ExprSpec` shape, per
+/// `pstep`'s extension above). Needs `pstep_shift` at every `Bind`/`Let`
+/// level crossed, to carry `pstep(s1, s2)` itself through the re-shift
+/// `subst`'s own recursion performs -- the headroom requirement scales
+/// with `depth(e)` for exactly that reason (one more unit of `s1`'s own
+/// headroom consumed per level, same bookkeeping pattern as everywhere
+/// else in this file).
+pub proof fn pstep_subst_refl(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e: ExprSpec)
+    requires
+        pstep(s1, s2),
+        max_var_below(s1, bound),
+        bound + growth(size(s1)) + depth(e) + 1 <= 0xFFFF_0000,
+    ensures pstep(subst(j, s1, e), subst(j, s2, e))
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s1, e) == s1);
+                assert(subst(j, s2, e) == s2);
+            } else {
+                assert(subst(j, s1, e) == e);
+                assert(subst(j, s2, e) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s1, e) == ExprSpec::App(Box::new(subst(j, s1, *f)), Box::new(subst(j, s1, *a))));
+            assert(subst(j, s2, e) == ExprSpec::App(Box::new(subst(j, s2, *f)), Box::new(subst(j, s2, *a))));
+            pstep_subst_refl(bound, j, s1, s2, *f);
+            pstep_subst_refl(bound, j, s1, s2, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s1, e) == ExprSpec::Bind(Box::new(subst(j, s1, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b))));
+            assert(subst(j, s2, e) == ExprSpec::Bind(Box::new(subst(j, s2, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), *b))));
+            pstep_subst_refl(bound, j, s1, s2, *t);
+            shift_up_max_var_below(0, bound, s1);
+            shift_preserves_size(1, 0, s1);
+            pstep_shift(bound, 0, s1, s2);
+            assert((bound + 1) + growth(size(shift(1, 0, s1))) + depth(*b) + 1 <= 0xFFFF_0000);
+            pstep_subst_refl((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s1, e) == ExprSpec::Let(
+                Box::new(subst(j, s1, *t)), Box::new(subst(j, s1, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b)),
+            ));
+            assert(subst(j, s2, e) == ExprSpec::Let(
+                Box::new(subst(j, s2, *t)), Box::new(subst(j, s2, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), *b)),
+            ));
+            pstep_subst_refl(bound, j, s1, s2, *t);
+            pstep_subst_refl(bound, j, s1, s2, *v);
+            shift_up_max_var_below(0, bound, s1);
+            shift_preserves_size(1, 0, s1);
+            pstep_shift(bound, 0, s1, s2);
+            assert((bound + 1) + growth(size(shift(1, 0, s1))) + depth(*b) + 1 <= 0xFFFF_0000);
+            pstep_subst_refl((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b);
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s1, e) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
+            assert(subst(j, s2, e) == ExprSpec::Proj(Box::new(subst(j, s2, *st))));
+            pstep_subst_refl(bound, j, s1, s2, *st);
+        }
+    }
 }
 
 }
