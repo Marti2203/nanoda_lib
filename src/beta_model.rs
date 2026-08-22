@@ -1097,6 +1097,342 @@ pub proof fn subst1_max_var_below(bound: nat, body: ExprSpec, arg: ExprSpec)
     shift_down_max_var_below(0, ((bound + 1) + depth(body)) as nat, t);
 }
 
+/// `shift` never changes `depth` -- it rewrites `Var` labels only, the
+/// tree shape (and hence every recursive `max`/`+1` `depth` computes
+/// over) is untouched. No overflow bookkeeping needed here at all (no
+/// `u32` casts involved), unlike almost everything else in this file.
+pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
+    ensures depth(shift(d, c, e)) == depth(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            shift_preserves_depth(d, c, *f);
+            shift_preserves_depth(d, c, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            shift_preserves_depth(d, c, *t);
+            shift_preserves_depth(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            shift_preserves_depth(d, c, *t);
+            shift_preserves_depth(d, c, *v);
+            shift_preserves_depth(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_preserves_depth(d, c, *s);
+        }
+    }
+}
+
+/// `depth` after substitution: additive, NOT multiplicative, in `depth(s)`
+/// -- replacing every `Var(j)` leaf in `e` with a copy of `s` can only
+/// extend the tree along whichever path that leaf sat on, by exactly
+/// `depth(s)`; it can never make a path longer than `depth(e) +
+/// depth(s)`, no matter how many separate `Var(j)` occurrences there are
+/// (more occurrences means more *sibling* copies of `s`, i.e. wider, not
+/// deeper). This is the fact that keeps `pstep`'s beta case from needing
+/// an exponential-in-nesting `max_var_below` headroom: term *size* can
+/// blow up under repeated beta-duplication (well known), but `depth`
+/// (and hence the overflow bound tied to it) only grows additively.
+pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
+    ensures depth(subst(j, s, e)) <= depth(e) + depth(s)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+            } else {
+                assert(subst(j, s, e) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            subst_depth_bound(j, s, *f);
+            subst_depth_bound(j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            subst_depth_bound(j, s, *t);
+            shift_preserves_depth(1, 0, s);
+            subst_depth_bound((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            subst_depth_bound(j, s, *t);
+            subst_depth_bound(j, s, *v);
+            shift_preserves_depth(1, 0, s);
+            subst_depth_bound((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            subst_depth_bound(j, s, *st);
+        }
+    }
+}
+
+/// `depth` after `subst1`: immediate corollary of `subst_depth_bound` and
+/// `shift_preserves_depth` (`subst1`'s own two shifts don't change depth
+/// at all).
+pub proof fn subst1_depth_bound(body: ExprSpec, arg: ExprSpec)
+    ensures depth(subst1(body, arg)) <= depth(body) + depth(arg)
+{
+    shift_preserves_depth(1, 0, arg);
+    subst_depth_bound(0, shift(1, 0, arg), body);
+    shift_preserves_depth(-1, 0, subst(0, shift(1, 0, arg), body));
+}
+
+/// Total AST node count -- the measure `pstep`'s own boundedness-
+/// preservation lemma (`pstep_bounds` below) needs, since `depth` alone
+/// doesn't bound how many separate `pstep_bounds` recursive calls a
+/// single top-level call can make (a `Bind`/`App`'s two children are
+/// each recursed into independently).
+pub open spec fn size(e: ExprSpec) -> nat
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => 1,
+        ExprSpec::App(f, a) => 1 + size(*f) + size(*a),
+        ExprSpec::Bind(t, b) => 1 + size(*t) + size(*b),
+        ExprSpec::Let(t, v, b) => 1 + size(*t) + size(*v) + size(*b),
+        ExprSpec::Proj(s) => 1 + size(*s),
+    }
+}
+
+/// `depth` never exceeds `size` (a tree's longest path can't have more
+/// edges than the tree has nodes).
+pub proof fn depth_le_size(e: ExprSpec)
+    ensures depth(e) <= size(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            depth_le_size(*f);
+            depth_le_size(*a);
+        }
+        ExprSpec::Bind(t, b) => {
+            depth_le_size(*t);
+            depth_le_size(*b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            depth_le_size(*t);
+            depth_le_size(*v);
+            depth_le_size(*b);
+        }
+        ExprSpec::Proj(s) => {
+            depth_le_size(*s);
+        }
+    }
+}
+
+/// Quadratic headroom margin: `n*n + n`. Chosen (and hand-verified
+/// before writing the Verus proof) to satisfy the one recursive
+/// inequality `pstep_bounds`'s beta case needs: for `b <= n - 2`,
+/// `growth(b) + 1 + b <= growth(n)`, i.e. `(b+1)^2 <= n^2 + n`, which
+/// holds for every `n >= 1` since `b + 1 <= n - 1`.
+pub open spec fn growth(n: nat) -> nat {
+    n * n + n
+}
+
+/// `growth` is monotone -- stated as its own lemma since Z3's nonlinear
+/// arithmetic (needed for the `n * n` term) is unreliable without an
+/// explicit hint, even for a fact this simple.
+pub proof fn growth_mono(n1: nat, n2: nat)
+    requires n1 <= n2
+    ensures growth(n1) <= growth(n2)
+{
+    assert(growth(n1) == n1 * n1 + n1);
+    assert(growth(n2) == n2 * n2 + n2);
+    assert(n1 * n1 + n1 <= n2 * n2 + n2) by (nonlinear_arith)
+        requires n1 <= n2
+    {}
+}
+
+/// The one nonlinear inequality `pstep_bounds`'s beta case needs:
+/// `growth(b) + 1 + b <= growth(n)` whenever `b <= n - 2` (a subterm's
+/// size is at least 2 less than its parent App-of-a-Bind's size).
+/// Equivalent to `(b+1)^2 <= n^2 + n`, true since `b+1 <= n-1` gives
+/// `(b+1)^2 <= (n-1)^2 = n^2 - 2n + 1 <= n^2 + n` (as `n >= 1`).
+pub proof fn growth_beta_bound(b: nat, n: nat)
+    requires b + 2 <= n
+    ensures growth(b) + 1 + b <= growth(n)
+{
+    assert(growth(b) == b * b + b);
+    assert(growth(n) == n * n + n);
+    assert(b * b + b + 1 + b <= n * n + n) by (nonlinear_arith)
+        requires b + 2 <= n
+    {}
+}
+
+/// Generalization of `growth_beta_bound` to two independently-sized
+/// subterms: `pstep_bounds`'s beta case needs this when the argument
+/// side's bound dominates the substituted body's own bound (`a` is the
+/// dominating side's size feeding the `growth` term, `b` is the body's
+/// size feeding the additive `depth` term).
+pub proof fn growth_beta_bound2(a: nat, b: nat, n: nat)
+    requires a + b + 2 <= n
+    ensures growth(a) + 1 + b <= growth(n)
+{
+    assert(growth(a) == a * a + a);
+    assert(growth(n) == n * n + n);
+    assert(a * a + a + 1 + b <= n * n + n) by (nonlinear_arith)
+        requires a + b + 2 <= n
+    {}
+}
+
+/// `pstep` preserves boundedness -- the lemma `pstep_shift`'s doc comment
+/// (above the App-beta case's admission) identifies as missing, needed to
+/// apply `subst1_max_var_below` to `pstep`'s own existentially-quantified
+/// beta-case witnesses. Returns (rather than fixes in advance) the actual
+/// `max_var_below` bound achieved for `e2`, together with a `depth`
+/// bound -- avoiding any need for a closed-form "growth as a function of
+/// `e1`" formula for the `max_var_below` side; only `depth`'s growth
+/// (`depth(e2) <= size(e1)`, via `subst1_depth_bound` + `depth_le_size`)
+/// needs one, since that's what feeds `subst1_max_var_below`'s own
+/// overflow precondition.
+///
+/// The `growth(size(e1))` headroom is polynomial (quadratic), NOT the
+/// exponential blowup an earlier pass through this problem assumed. That
+/// earlier assumption conflated two different things: beta-reduction
+/// duplicating an argument at a redex genuinely can blow up a term's
+/// *size* exponentially (well known, e.g. `(fun x => x x) (fun x => x
+/// x)`-style examples) -- but `max_var_below`'s growth is tied to
+/// `depth`, not size, and duplicating an already-correctly-bounded
+/// subterm doesn't make its *indices* any larger, only its *node count*
+/// (checked by hand against a concrete duplicator-chain example before
+/// attempting this proof: `max_var_below` stayed unchanged through
+/// repeated top-level duplication, since `shift(1,0,-)` immediately
+/// followed by `shift(-1,0,-)` at the same cutoff cancels exactly,
+/// regardless of how many times the shifted value got copied).
+pub proof fn pstep_bounds(bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (nat, nat))
+    requires
+        pstep(e1, e2),
+        max_var_below(e1, bound),
+        bound + growth(size(e1)) <= 0xFFFF_0000,
+    ensures
+        max_var_below(e2, result.0),
+        depth(e2) <= result.1,
+        result.1 <= size(e1),
+        result.0 <= bound + growth(size(e1)),
+    decreases e1
+{
+    if e1 == e2 {
+        depth_le_size(e1);
+        (bound, depth(e1))
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                assert(size(*f) < size(e1));
+                assert(size(*a) < size(e1));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        assert(size(*body) + 2 <= size(e1));
+                        growth_mono(size(*body), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+                            let (bmvb, bdepth) = pstep_bounds(bound, *body, body2);
+                            let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                            let common = if bmvb >= amvb { bmvb } else { amvb };
+                            max_var_below_mono(body2, bmvb, common);
+                            max_var_below_mono(a2, amvb, common);
+                            assert(bdepth <= size(*body));
+
+                            // common is dominated by whichever of body2's / a2's own
+                            // bound is larger -- bound the growth(...) term against
+                            // whichever subterm that actually was, since growth_mono
+                            // alone (bound by size(e1)) isn't tight enough to also
+                            // absorb the "+1+bdepth" term below.
+                            if bmvb >= amvb {
+                                growth_beta_bound(size(*body), size(e1));
+                                assert(common <= bound + growth(size(*body)));
+                            } else {
+                                assert(size(*a) + size(*body) + 2 <= size(e1));
+                                growth_beta_bound2(size(*a), size(*body), size(e1));
+                                assert(common <= bound + growth(size(*a)));
+                            }
+                            assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                            assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                            subst1_max_var_below(common, body2, a2);
+                            subst1_depth_bound(body2, a2);
+                            // depth(e2) <= depth(body2) + depth(a2) <= bdepth + adepth
+                            // (additive -- subst1_depth_bound's own bound is a sum, NOT
+                            // a max like the congruence cases below, since substitution
+                            // genuinely can stack two subterms' depths along one path).
+                            let d2 = bdepth + adepth;
+                            let mvb2 = (common + 1) + bdepth;
+                            // subst1_max_var_below's own bound uses the ACTUAL depth(body2),
+                            // not the IH's upper bound bdepth on it -- lift explicitly.
+                            max_var_below_mono(subst1(body2, a2), (common + 1) + depth(body2), mvb2 as nat);
+                            assert(mvb2 <= bound + growth(size(e1)));
+                            assert(d2 <= size(e1));
+                            (mvb2 as nat, d2 as nat)
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            let (fmvb, fdepth) = pstep_bounds(bound, *f, f2);
+                            let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                            let common = if fmvb >= amvb { fmvb } else { amvb };
+                            max_var_below_mono(f2, fmvb, common);
+                            max_var_below_mono(a2, amvb, common);
+                            let d2 = 1 + (if fdepth >= adepth { fdepth } else { adepth });
+                            (common, d2 as nat)
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        let (fmvb, fdepth) = pstep_bounds(bound, *f, f2);
+                        let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                        let common = if fmvb >= amvb { fmvb } else { amvb };
+                        max_var_below_mono(f2, fmvb, common);
+                        max_var_below_mono(a2, amvb, common);
+                        let d2 = 1 + (if fdepth >= adepth { fdepth } else { adepth });
+                        (common, d2 as nat)
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                let (tmvb, tdepth) = pstep_bounds(bound, *t, t2);
+                let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                let common = if tmvb >= bmvb { tmvb } else { bmvb };
+                max_var_below_mono(t2, tmvb, common);
+                max_var_below_mono(b2, bmvb, common);
+                let d2 = 1 + (if tdepth >= bdepth { tdepth } else { bdepth });
+                (common, d2 as nat)
+            }
+            _ => {
+                assert(false);
+                (bound, depth(e1))
+            }
+        }
+    }
+}
+
 /// The identity `pstep_shift`'s App-beta case needs: `shift` commutes with
 /// `subst1` (single-variable beta-substitution), `d = 1` only (matching
 /// every other directional restriction in this file -- see
