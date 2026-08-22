@@ -35,7 +35,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat};
+use crate::level_model::{interp, max_nat, eff, case_split_sound};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, which are erased under plain (non-Verus) compilation — hence the
@@ -388,6 +388,180 @@ pub fn verified_subst1<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, p: 
         };
     }
     None
+}
+
+/// Real-arena counterpart to `level_model::leq_imax_by_cases_fueled`,
+/// reusing `case_split_sound` unchanged (it's a fact purely about
+/// `LevelSpec`/`interp`, indifferent to whether the two subgoals came from
+/// the standalone model or the real arena). If either substitution runs out
+/// of fuel (`verified_subst1` returns `None`), this gives up and returns
+/// `false` — always sound, since `false` never needs justification.
+pub fn verified_leq_imax_by_cases<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l_in: LevelPtr<'t>, r_in: LevelPtr<'t>, p: NamePtr<'t>, diff: i64, fuel: u32) -> (result: bool)
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho) as int <= interp(to_model(r_in), rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+
+    let zero = ctx.zero();
+    let param_p = ctx.param(p);
+    let succ_p = ctx.succ(param_p);
+
+    assert(to_model(param_p) == LevelSpec::Param(name_id(p)));
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(succ_p), rho) == interp(to_model(param_p), rho) + 1);
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(param_p), rho) == eff(rho, name_id(p) as nat));
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(succ_p), rho) == eff(rho, name_id(p) as nat) + 1);
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(zero), rho) == 0);
+
+    let lhs_0_opt = verified_subst1(ctx, l_in, p, zero, fuel1);
+    let rhs_0_opt = verified_subst1(ctx, r_in, p, zero, fuel1);
+    let lhs_s_opt = verified_subst1(ctx, l_in, p, succ_p, fuel1);
+    let rhs_s_opt = verified_subst1(ctx, r_in, p, succ_p, fuel1);
+
+    match (lhs_0_opt, rhs_0_opt, lhs_s_opt, rhs_s_opt) {
+        (Some(lhs_0_raw), Some(rhs_0_raw), Some(lhs_s_raw), Some(rhs_s_raw)) => {
+            let lhs_0 = verified_simplify(ctx, lhs_0_raw, fuel1);
+            let rhs_0 = verified_simplify(ctx, rhs_0_raw, fuel1);
+            let lhs_s = verified_simplify(ctx, lhs_s_raw, fuel1);
+            let rhs_s = verified_simplify(ctx, rhs_s_raw, fuel1);
+
+            let ok0 = verified_leq_core(ctx, lhs_0, rhs_0, diff, fuel1);
+            let oks = verified_leq_core(ctx, lhs_s, rhs_s, diff, fuel1);
+
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(lhs_0), rho) == interp(to_model(lhs_0_raw), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(rhs_0), rho) == interp(to_model(rhs_0_raw), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(lhs_s), rho) == interp(to_model(lhs_s_raw), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(rhs_s), rho) == interp(to_model(rhs_s_raw), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(lhs_0), rho) == interp(to_model(l_in), rho.insert(name_id(p) as nat, 0nat)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(rhs_0), rho) == interp(to_model(r_in), rho.insert(name_id(p) as nat, 0nat)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(lhs_s), rho)
+                == interp(to_model(l_in), rho.insert(name_id(p) as nat, eff(rho, name_id(p) as nat) + 1)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(rhs_s), rho)
+                == interp(to_model(r_in), rho.insert(name_id(p) as nat, eff(rho, name_id(p) as nat) + 1)));
+
+            if ok0 && oks {
+                proof {
+                    case_split_sound(
+                        to_model(l_in), to_model(r_in), name_id(p), diff as int,
+                        to_model(lhs_0), to_model(rhs_0), to_model(lhs_s), to_model(rhs_s),
+                    );
+                }
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Real-arena counterpart to `level_model::leq_core_fueled`: a complete
+/// port of `TcCtx::leq_core` (every match arm except the two `is_any_max`
+/// rewrite arms — see that function's doc comment for why) built entirely
+/// from the axiomatized primitives, calling `verified_leq_imax_by_cases`
+/// for the case-split arms instead of falling back to `false` there.
+pub fn verified_leq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+    let ll = ctx.read_level(l);
+    let rl = ctx.read_level(r);
+
+    let l_is_zero = level_is_zero(&ll);
+    let r_is_zero = level_is_zero(&rl);
+    let l_param = level_as_param(&ll);
+    let r_param = level_as_param(&rl);
+    let l_succ = level_as_succ(&ll);
+    let r_succ = level_as_succ(&rl);
+    let l_max = level_as_max(&ll);
+    let r_max = level_as_max(&rl);
+    let l_imax = level_as_imax(&ll);
+    let r_imax = level_as_imax(&rl);
+
+    if l_is_zero && diff >= 0 {
+        return true;
+    }
+    if r_is_zero && diff < 0 {
+        return false;
+    }
+    if let (Some(a), Some(x)) = (l_param, r_param) {
+        return name_ptr_eq(a, x) && diff >= 0;
+    }
+    if l_param.is_some() && r_is_zero {
+        return false;
+    }
+    if l_is_zero && r_param.is_some() {
+        return diff >= 0;
+    }
+    if let Some(s) = l_succ {
+        return match diff.checked_sub(1) {
+            Some(d) => {
+                let sub = verified_leq_core(ctx, s, r, d, fuel1);
+                assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(s), rho) as int <= interp(to_model(r), rho) as int + d as int);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(s), rho) + 1);
+                sub
+            }
+            None => false,
+        };
+    }
+    if let Some(s) = r_succ {
+        return match diff.checked_add(1) {
+            Some(d) => {
+                let sub = verified_leq_core(ctx, l, s, d, fuel1);
+                assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(s), rho) as int + d as int);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) == interp(to_model(s), rho) + 1);
+                sub
+            }
+            None => false,
+        };
+    }
+    if let Some((a, b)) = l_max {
+        let ra = verified_leq_core(ctx, a, r, diff, fuel1);
+        let rb = verified_leq_core(ctx, b, r, diff, fuel1);
+        assert(ra ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(a), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        assert(rb ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(b), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == max_nat(interp(to_model(a), rho), interp(to_model(b), rho)));
+        return ra && rb;
+    }
+    if l_param.is_some() {
+        if let Some((x, y)) = r_max {
+            let rx = verified_leq_core(ctx, l, x, diff, fuel1);
+            let ry = verified_leq_core(ctx, l, y, diff, fuel1);
+            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(x), rho) as int + diff as int);
+            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(y), rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
+            return rx || ry;
+        }
+    }
+    if l_is_zero {
+        if let Some((x, y)) = r_max {
+            let rx = verified_leq_core(ctx, l, x, diff, fuel1);
+            let ry = verified_leq_core(ctx, l, y, diff, fuel1);
+            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(x), rho) as int + diff as int);
+            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(y), rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
+            return rx || ry;
+        }
+    }
+    if let Some((_, b)) = l_imax {
+        let bl = ctx.read_level(b);
+        if let Some(p) = level_as_param(&bl) {
+            return verified_leq_imax_by_cases(ctx, l, r, p, diff, fuel1);
+        }
+    }
+    if let Some((_, y)) = r_imax {
+        let yl = ctx.read_level(y);
+        if let Some(p) = level_as_param(&yl) {
+            return verified_leq_imax_by_cases(ctx, l, r, p, diff, fuel1);
+        }
+    }
+    false
 }
 
 }
