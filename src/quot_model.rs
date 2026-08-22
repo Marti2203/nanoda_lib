@@ -141,4 +141,92 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     expected
 }
 
+/// A deeper case: `check_quot`'s construction of `Quot`'s expected type,
+/// `Π {A : Sort u}, (A → A → Prop) → Sort u` (`quot.rs:148-164`), built as
+/// `abstr_pi(A, abstr_pi(r, sort_u))` where `r`'s own type
+/// (`A_A_Prop`) already references `A` twice. This exercises abstracting a
+/// binder out of a structure that already had *another* `abstr_pi`
+/// applied to it, not just a flat `mk_pi` chain -- the outer `abstr_pi(A,
+/// ...)` has to correctly shift the already-abstracted-once inner
+/// structure's bound variables.
+pub fn verified_check_quot_type_shape<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, a_name: NamePtr<'t>, r_name: NamePtr<'t>, anon: NamePtr<'t>,
+    a_style: BinderStyle, r_style: BinderStyle, arrow_style: BinderStyle,
+) -> (expected: ExprPtr<'t>)
+    ensures to_model(expected) == ExprSpec::Bind(
+        Box::new(ExprSpec::Closed),
+        Box::new(ExprSpec::Bind(
+            Box::new(ExprSpec::Bind(
+                Box::new(ExprSpec::Var(0)),
+                Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+            )),
+            Box::new(ExprSpec::Closed),
+        )),
+    )
+{
+    let sort_u = ctx.mk_sort(u);
+    let a = ctx.mk_unique(a_name, a_style, sort_u);
+    let prop = ctx.prop();
+    let aa1 = ctx.mk_pi(anon, arrow_style, a, prop);
+    assert(to_model(aa1) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(prop))));
+    let a_a_prop = ctx.mk_pi(anon, arrow_style, a, aa1);
+    assert(to_model(a_a_prop) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(aa1))));
+    let r = ctx.mk_unique(r_name, r_style, a_a_prop);
+
+    let inner = ctx.abstr_pi(r, sort_u);
+    assert(to_model(inner) == ExprSpec::Bind(
+        Box::new(local_type(r)),
+        Box::new(abstr_full(to_model(sort_u), seq![expr_id(r)], 0)),
+    ));
+    assert(local_type(r) == to_model(a_a_prop));
+    assert(abstr_full(to_model(sort_u), seq![expr_id(r)], 0) == ExprSpec::Closed);
+
+    let expected = ctx.abstr_pi(a, inner);
+    assert(to_model(expected) == ExprSpec::Bind(
+        Box::new(local_type(a)),
+        Box::new(abstr_full(to_model(inner), seq![expr_id(a)], 0)),
+    ));
+    assert(local_type(a) == ExprSpec::Closed);
+
+    proof {
+        let id_a = expr_id(a);
+        assert(to_model(inner) == ExprSpec::Bind(
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed))))),
+            Box::new(ExprSpec::Closed),
+        ));
+
+        let t = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed))));
+        let b = ExprSpec::Closed;
+        assert(to_model(inner) == ExprSpec::Bind(Box::new(t), Box::new(b)));
+
+        // Outer unfold: abstr_full(Bind(t, b), [id_a], 0) == Bind(abstr_full(t, [id_a], 0), abstr_full(b, [id_a], 1))
+        assert(abstr_full(to_model(inner), seq![id_a], 0)
+            == ExprSpec::Bind(Box::new(abstr_full(t, seq![id_a], 0)), Box::new(abstr_full(b, seq![id_a], 1))));
+        assert(abstr_full(b, seq![id_a], 1) == ExprSpec::Closed);
+
+        // Inner unfold: abstr_full(t, [id_a], 0), where t = Bind(Free(id_a), Bind(Free(id_a), Closed))
+        let t_t = ExprSpec::Free(id_a);
+        let t_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed));
+        assert(t == ExprSpec::Bind(Box::new(t_t), Box::new(t_b)));
+        assert(abstr_full(t, seq![id_a], 0)
+            == ExprSpec::Bind(Box::new(abstr_full(t_t, seq![id_a], 0)), Box::new(abstr_full(t_b, seq![id_a], 1))));
+        assert(abstr_full(t_t, seq![id_a], 0) == ExprSpec::Var(0));
+        assert(abstr_full(t_b, seq![id_a], 1)
+            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1)), Box::new(abstr_full(ExprSpec::Closed, seq![id_a], 2))));
+        assert(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1) == ExprSpec::Var(1));
+        assert(abstr_full(ExprSpec::Closed, seq![id_a], 2) == ExprSpec::Closed);
+        assert(abstr_full(t, seq![id_a], 0) == ExprSpec::Bind(
+            Box::new(ExprSpec::Var(0)),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+        ));
+
+        assert(abstr_full(to_model(inner), seq![id_a], 0) == ExprSpec::Bind(
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))))),
+            Box::new(ExprSpec::Closed),
+        ));
+    }
+
+    expected
+}
+
 }
