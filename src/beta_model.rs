@@ -1447,6 +1447,124 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
 /// Same `shift_shift_aligned_up` bridge needed in the `Bind`/`Let` cases
 /// to reconcile `subst`'s own cutoff-0 re-shift against the outer
 /// shift's growing cutoff.
+/// `shift_subst_commute`'s `d = -1` counterpart, for the SAME regime
+/// (shift cutoff `j + diff` strictly above the substitution position
+/// `j`, `diff >= 1`) that lemma covers for `d = 1`. Unlike that lemma
+/// (false for ALL `d = -1`, any `diff`), this one is only dangerous at
+/// `diff == 1` specifically -- hand-checked: the collision needs `e` to
+/// have a raw occurrence at exactly `j + 1`, landing on `j` after the
+/// `-1` shift removes exactly one level; for `diff >= 2` that occurrence
+/// would need `j+1 >= j+diff`, i.e. `diff <= 1`, impossible. So `diff >=
+/// 2` is unconditionally safe, and only `diff == 1` needs the
+/// `has_escaping_ref` guard (membership, not `no_escaping_below` --
+/// same masking reason as everywhere else in this file). The `Bind`/
+/// `Let` cases' doubly-shifted-value reconciliation reuses
+/// `shift_shift_aligned` directly (already generic in `d`) rather than
+/// needing a new bridging lemma: its `c_top >= 1` requirement is
+/// automatically satisfied here since `c_top = j + diff >= 1` always
+/// (`diff >= 1` is given) -- unlike `shift_shift_aligned_up`, no `c_top
+/// = 0` case is ever reached in this lemma's own recursion, since the
+/// cutoff only ever grows from an already->=1 starting point.
+pub proof fn shift_subst_commute_down(bound: nat, j: nat, diff: nat, s: ExprSpec, e: ExprSpec)
+    requires
+        diff >= 1,
+        diff == 1 ==> !has_escaping_ref(e, (j + 1) as nat),
+        bound + depth(e) <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        max_var_below(e, bound),
+    ensures shift(-1, (j + diff) as nat, subst(j, s, e)) == subst(j, shift(-1, (j + diff) as nat, s), shift(-1, (j + diff) as nat, e))
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+                assert(shift(-1, (j + diff) as nat, e) == e);
+                assert(subst(j, shift(-1, (j + diff) as nat, s), e) == shift(-1, (j + diff) as nat, s));
+            } else {
+                assert(subst(j, s, e) == e);
+                let ii = i as int;
+                if ii >= (j + diff) as int {
+                    assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Var((ii - 1) as u32));
+                    if diff == 1 {
+                        assert(has_escaping_ref(e, (j + 1) as nat) == ((i as nat) == (j + 1) as nat));
+                        assert(!has_escaping_ref(e, (j + 1) as nat));
+                        assert((i as nat) != (j + 1) as nat);
+                    }
+                    assert((ii - 1) as int != j as int);
+                    assert(subst(j, shift(-1, (j + diff) as nat, s), ExprSpec::Var((ii - 1) as u32)) == ExprSpec::Var((ii - 1) as u32));
+                } else {
+                    assert(shift(-1, (j + diff) as nat, e) == e);
+                    assert(subst(j, shift(-1, (j + diff) as nat, s), e) == e);
+                }
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if diff == 1 {
+                assert(!has_escaping_ref(*f, (j + 1) as nat));
+                assert(!has_escaping_ref(*a, (j + 1) as nat));
+            }
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::App(Box::new(shift(-1, (j + diff) as nat, *f)), Box::new(shift(-1, (j + diff) as nat, *a))));
+            shift_subst_commute_down(bound, j, diff, s, *f);
+            shift_subst_commute_down(bound, j, diff, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            if diff == 1 {
+                assert(!has_escaping_ref(*t, (j + 1) as nat));
+                assert(!has_escaping_ref(*b, (j + 2) as nat));
+            }
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Bind(
+                Box::new(shift(-1, (j + diff) as nat, *t)), Box::new(shift(-1, (j + diff + 1) as nat, *b)),
+            ));
+            shift_subst_commute_down(bound, j, diff, s, *t);
+
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned((j + diff) as nat, 0, -1, s);
+            assert(shift(-1, (j + diff + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(-1, (j + diff) as nat, s)));
+
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            shift_subst_commute_down((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if diff == 1 {
+                assert(!has_escaping_ref(*t, (j + 1) as nat));
+                assert(!has_escaping_ref(*v, (j + 1) as nat));
+                assert(!has_escaping_ref(*b, (j + 2) as nat));
+            }
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Let(
+                Box::new(shift(-1, (j + diff) as nat, *t)), Box::new(shift(-1, (j + diff) as nat, *v)), Box::new(shift(-1, (j + diff + 1) as nat, *b)),
+            ));
+            shift_subst_commute_down(bound, j, diff, s, *t);
+            shift_subst_commute_down(bound, j, diff, s, *v);
+
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned((j + diff) as nat, 0, -1, s);
+            assert(shift(-1, (j + diff + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(-1, (j + diff) as nat, s)));
+
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            shift_subst_commute_down((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            if diff == 1 {
+                assert(!has_escaping_ref(*st, (j + 1) as nat));
+            }
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Proj(Box::new(shift(-1, (j + diff) as nat, *st))));
+            shift_subst_commute_down(bound, j, diff, s, *st);
+        }
+    }
+}
+
 pub proof fn shift_subst_commute_below(bound: nat, c0: nat, j: nat, s: ExprSpec, e: ExprSpec)
     requires
         c0 <= j,
