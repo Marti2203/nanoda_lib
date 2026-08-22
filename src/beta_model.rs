@@ -1703,6 +1703,107 @@ pub proof fn shift_subst1_commute(bound: nat, c: nat, body: ExprSpec, arg: ExprS
         == shift(-1, 0, subst(0, shift(1, 0, shift(1, c, arg)), shift(1, (c + 1) as nat, body))));
 }
 
+/// `subst` commutes with a shift-down of the term it's substituting
+/// into, for a substitution position `j` at or above the shift's cutoff
+/// `c0`: `subst(j, s, shift(-1, c0, x)) == shift(-1, c0, subst(j+1,
+/// shift(1, c0, s), x))`. The mirror image of `shift_shift_past_down`
+/// (which relates an OUTER shift to a shift-down; here it's an OUTER
+/// subst instead) -- same safety side condition (`no_escaping_below(x,
+/// 1)`, needed only at `c0 == 0`, vacuous once the induction descends
+/// past the first binder), for the same reason: `shift(-1, c0, -)` can
+/// only wrap if `x` has an escaping reference exactly at the boundary.
+/// The `Var` case's "substitution position lands exactly on the
+/// boundary" sub-case needs `shift_cancel` to discharge; the `Bind`/`Let`
+/// cases need `shift_shift_aligned_up` to reconcile `subst`'s own
+/// cutoff-0 re-shift of `s` against the OUTER shift's growing cutoff --
+/// this is what `pstep_subst`'s App-beta case needs to move a
+/// substitution past `subst1`'s own `shift(-1, 0, -)`.
+pub proof fn subst_shift_down_commute(bound: nat, c0: nat, j: nat, s: ExprSpec, x: ExprSpec)
+    requires
+        j >= c0,
+        bound + depth(x) <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        max_var_below(x, bound),
+        c0 == 0 ==> no_escaping_below(x, 1),
+    ensures subst(j, s, shift(-1, c0, x)) == shift(-1, c0, subst((j + 1) as nat, shift(1, c0, s), x))
+    decreases x
+{
+    match x {
+        ExprSpec::Var(i) => {
+            let ii = i as int;
+            if c0 == 0 {
+                assert(min_escaping(x) == Some(i as nat));
+                assert(ii >= 1);
+            }
+            if ii >= c0 as int {
+                assert(shift(-1, c0, x) == ExprSpec::Var((ii - 1) as u32));
+                assert(ii >= 1);
+                let im1 = (ii - 1) as u32;
+                if (im1 as nat) == j {
+                    assert(subst(j, s, shift(-1, c0, x)) == s);
+                    assert(ii == (j + 1) as int);
+                    assert(subst((j + 1) as nat, shift(1, c0, s), x) == shift(1, c0, s));
+                    max_var_below_mono(s, bound, 0xFFFF_FFFEnat);
+                    shift_cancel(c0, s);
+                    assert(shift(-1, c0, shift(1, c0, s)) == s);
+                } else {
+                    assert(subst(j, s, shift(-1, c0, x)) == ExprSpec::Var(im1));
+                    assert(ii != (j + 1) as int);
+                    assert(subst((j + 1) as nat, shift(1, c0, s), x) == x);
+                    assert(shift(-1, c0, x) == ExprSpec::Var(im1));
+                }
+            } else {
+                assert(shift(-1, c0, x) == x);
+                assert((i as nat) < c0);
+                assert((i as nat) != j);
+                assert(subst(j, s, x) == x);
+                assert((i as nat) != (j + 1) as nat);
+                assert(subst((j + 1) as nat, shift(1, c0, s), x) == x);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*f, 1));
+                assert(no_escaping_below(*a, 1));
+            }
+            subst_shift_down_commute(bound, c0, j, s, *f);
+            subst_shift_down_commute(bound, c0, j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*t, 1));
+            }
+            subst_shift_down_commute(bound, c0, j, s, *t);
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned_up(c0, 0, s);
+            assert(shift(1, (c0 + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(1, c0, s)));
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_shift_down_commute((bound + 1) as nat, (c0 + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*t, 1));
+                assert(no_escaping_below(*v, 1));
+            }
+            subst_shift_down_commute(bound, c0, j, s, *t);
+            subst_shift_down_commute(bound, c0, j, s, *v);
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned_up(c0, 0, s);
+            assert(shift(1, (c0 + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(1, c0, s)));
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_shift_down_commute((bound + 1) as nat, (c0 + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            subst_shift_down_commute(bound, c0, j, s, *st);
+        }
+    }
+}
+
 /// Substitution congruence for `pstep`: given `pstep(s1, s2)`, substituting
 /// `s1` vs `s2` for `Var(j)` into the SAME `e` produces `pstep`-related
 /// results. This is `pstep_subst`'s (below) "`e1 == e2`" base case: when
