@@ -11,6 +11,7 @@ use vstd::prelude::*;
 pub mod debug_printer;
 pub mod env;
 pub mod expr;
+pub mod expr_arena_bridge;
 pub mod expr_model;
 pub mod inductive;
 pub mod level;
