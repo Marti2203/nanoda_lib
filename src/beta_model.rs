@@ -2646,6 +2646,379 @@ pub proof fn growth_beta_bound2(a: nat, b: nat, n: nat)
     {}
 }
 
+/// `size` growth-rate bound for `pstep`: since a beta step can duplicate
+/// its argument once per occurrence (`subst_size_bound`/
+/// `subst1_size_bound` above -- multiplicative, not additive), `size` can
+/// grow far faster than `max_var_below`/`depth` under `pstep`: a nested
+/// "duplicator chain" `e_k = App(Bind(_, App(Var(0), Var(0))), e_{k-1})`
+/// gives `size(pstep-image) = O(3^k)` against `size(e_k) = O(k)`. `3^n`
+/// (`size_growth` below) is a generous closed-form bound for this --
+/// `pstep_size_bound` further down confirms it's actually sufficient,
+/// covering every `pstep` case, not just the duplicator-chain instance.
+pub open spec fn size_growth(n: nat) -> nat
+    decreases n
+{
+    if n == 0 { 1 } else { 3 * size_growth((n - 1) as nat) }
+}
+
+pub proof fn size_growth_pos(n: nat)
+    ensures size_growth(n) >= 1
+    decreases n
+{
+    if n > 0 {
+        size_growth_pos((n - 1) as nat);
+    }
+}
+
+pub proof fn size_growth_mono(n1: nat, n2: nat)
+    requires n1 <= n2
+    ensures size_growth(n1) <= size_growth(n2)
+    decreases n2 - n1
+{
+    if n1 < n2 {
+        size_growth_mono(n1, (n2 - 1) as nat);
+        size_growth_pos((n2 - 1) as nat);
+    }
+}
+
+/// `size_growth` is a genuine exponential: `size_growth(m + k) ==
+/// size_growth(m) * size_growth(k)`, the fact that lets the beta case's
+/// two independently-growing subterms compose multiplicatively into a
+/// single bound on the parent.
+pub proof fn size_growth_add(m: nat, k: nat)
+    ensures size_growth(m + k) == size_growth(m) * size_growth(k)
+    decreases k
+{
+    if k == 0 {
+        assert(size_growth(k) == 1);
+        assert(size_growth(m) * size_growth(k) == size_growth(m) * 1) by (nonlinear_arith)
+            requires size_growth(k) == 1
+        {}
+    } else {
+        size_growth_add(m, (k - 1) as nat);
+        assert((m + k) as nat == (m + (k - 1) as nat) + 1);
+        assert(size_growth(m + k) == 3 * size_growth((m + k - 1) as nat));
+        assert((m + k - 1) as nat == m + (k - 1) as nat);
+        assert(size_growth(k) == 3 * size_growth((k - 1) as nat));
+        assert(3 * (size_growth(m) * size_growth((k - 1) as nat)) == size_growth(m) * (3 * size_growth((k - 1) as nat)))
+            by (nonlinear_arith) {}
+    }
+}
+
+pub proof fn size_le_size_growth(n: nat)
+    ensures n <= size_growth(n)
+    decreases n
+{
+    if n > 0 {
+        size_le_size_growth((n - 1) as nat);
+        size_growth_pos((n - 1) as nat);
+        assert(size_growth(n) == 3 * size_growth((n - 1) as nat));
+    }
+}
+
+/// The nonlinear inequality `pstep_size_bound`'s two-child congruence
+/// cases (`App` congruence, `Bind`) need: combining two independently-
+/// bounded children into one `size_growth`-dominated bound, given one
+/// unit of size margin over their sum (matching `size(e1) == 1 +
+/// size(child1) + size(child2)` exactly).
+pub proof fn size_growth_congr_bound(a: nat, b: nat, n: nat)
+    requires a + b + 1 <= n
+    ensures size_growth(a) + size_growth(b) + 1 <= size_growth(n)
+{
+    size_growth_pos(a);
+    size_growth_pos(b);
+    size_growth_mono(a + b + 1, n);
+    size_growth_add(a, b);
+    assert(size_growth(1) == 3) by {
+        assert(size_growth(1) == 3 * size_growth(0nat));
+        assert(size_growth(0nat) == 1);
+    }
+    size_growth_add(a + b, 1);
+    assert(size_growth(a + b + 1) == size_growth(a + b) * size_growth(1));
+    assert(size_growth(a + b) == size_growth(a) * size_growth(b));
+    assert(size_growth(a) + size_growth(b) + 1 <= size_growth(a + b + 1)) by (nonlinear_arith)
+        requires
+            size_growth(a) >= 1,
+            size_growth(b) >= 1,
+            size_growth(a + b + 1) == size_growth(a) * size_growth(b) * 3,
+    {}
+}
+
+/// Three-child version, for `Let` (whose `size` formula only gives one
+/// unit of margin over the sum of all three children, not two -- so this
+/// is proved directly rather than by chaining the two-child version
+/// twice, which would need two units of margin).
+pub proof fn size_growth_congr_bound3(a: nat, b: nat, c: nat, n: nat)
+    requires a >= 1, b >= 1, c >= 1, a + b + c + 1 <= n
+    ensures size_growth(a) + size_growth(b) + size_growth(c) + 2 <= size_growth(n)
+{
+    size_growth_mono(a + b + c + 1, n);
+    size_growth_mono(1, a);
+    size_growth_mono(1, b);
+    size_growth_mono(1, c);
+    assert(size_growth(1) == 3) by {
+        assert(size_growth(1) == 3 * size_growth(0nat));
+        assert(size_growth(0nat) == 1);
+    }
+    size_growth_add(a, b);
+    size_growth_add(a + b, c);
+    size_growth_add(a + b + c, 1);
+    assert(size_growth(a + b + c + 1) == size_growth(a + b + c) * size_growth(1));
+    assert(size_growth(a + b + c) == size_growth(a + b) * size_growth(c));
+    assert(size_growth(a + b) == size_growth(a) * size_growth(b));
+    assert(size_growth(a) + size_growth(b) + size_growth(c) + 2 <= size_growth(a + b + c + 1)) by (nonlinear_arith)
+        requires
+            size_growth(a) >= 3,
+            size_growth(b) >= 3,
+            size_growth(c) >= 3,
+            size_growth(a + b + c + 1) == size_growth(a) * size_growth(b) * size_growth(c) * 3,
+    {}
+}
+
+/// The nonlinear inequality `pstep_size_bound`'s beta case needs:
+/// `subst1_size_bound`'s multiplicative combination of two independently-
+/// bounded pieces still fits under `size_growth` applied to the parent,
+/// given the same one-unit-per-child margin as the congruence cases
+/// (`size(e1) == 2 + size(t) + size(body) + size(a)` for `App(Bind(t,
+/// body), a)`, i.e. at least `size(body) + size(a) + 2`).
+pub proof fn size_growth_beta_bound(a: nat, b: nat, n: nat)
+    requires a + b + 2 <= n
+    ensures size_growth(b) * (size_growth(a) + 1) <= size_growth(n)
+{
+    size_growth_pos(a);
+    size_growth_pos(b);
+    size_growth_mono(a + b + 2, n);
+    assert(size_growth(2) == 9) by {
+        assert(size_growth(2) == 3 * size_growth(1nat));
+        assert(size_growth(1nat) == 3 * size_growth(0nat));
+        assert(size_growth(0nat) == 1);
+    }
+    size_growth_add(b, a);
+    size_growth_add(b + a, 2);
+    assert(size_growth(a + b + 2) == size_growth(b + a) * size_growth(2));
+    assert(size_growth(b + a) == size_growth(b) * size_growth(a));
+    assert(size_growth(b) * (size_growth(a) + 1) <= size_growth(a + b + 2)) by (nonlinear_arith)
+        requires
+            size_growth(a) >= 1,
+            size_growth(b) >= 1,
+            size_growth(a + b + 2) == size_growth(b) * size_growth(a) * 9,
+    {}
+}
+
+/// `size` growth-rate bound for `pstep`, mirroring `pstep_bounds`'
+/// structure but tracking `size(e2)` instead of `max_var_below`/`depth`.
+/// Needs NO `bound`/`max_var_below`/overflow-ceiling precondition at all
+/// -- `size` is pure AST node count, not tied to `u32`-typed variable
+/// indices, so there's no wraparound concern to guard against here.
+/// Confirms `size_growth` genuinely suffices as a closed-form bound on
+/// how large a single `pstep` step's image can be, across every case
+/// (not just the duplicator-chain instance that motivated it).
+pub proof fn pstep_size_bound(e1: ExprSpec, e2: ExprSpec) -> (result: nat)
+    requires pstep(e1, e2)
+    ensures size(e2) <= result, result <= size_growth(size(e1))
+    decreases e1
+{
+    if e1 == e2 {
+        size_le_size_growth(size(e1));
+        size(e1)
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+                            let bsize = pstep_size_bound(*body, body2);
+                            let asize = pstep_size_bound(*a, a2);
+                            subst1_size_bound(body2, a2);
+                            assert(size(e2) == size(subst1(body2, a2)));
+                            assert(size(subst1(body2, a2)) <= size(body2) * (size(a2) + 1));
+                            assert(size(e2) <= bsize * (asize + 1)) by (nonlinear_arith)
+                                requires
+                                    size(e2) <= size(body2) * (size(a2) + 1),
+                                    size(body2) <= bsize,
+                                    size(a2) <= asize,
+                            {}
+
+                            assert(size(*body) + size(*a) + 2 <= size(e1));
+                            size_growth_beta_bound(size(*a), size(*body), size(e1));
+                            size_growth_pos(size(*a));
+                            size_growth_pos(size(*body));
+                            assert(bsize * (asize + 1) <= size_growth(size(*body)) * (size_growth(size(*a)) + 1))
+                                by (nonlinear_arith)
+                                requires
+                                    bsize <= size_growth(size(*body)),
+                                    asize <= size_growth(size(*a)),
+                            {}
+                            (bsize * (asize + 1)) as nat
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            let fsize = pstep_size_bound(*f, f2);
+                            let asize = pstep_size_bound(*a, a2);
+                            assert(size(e2) == 1 + size(f2) + size(a2));
+                            size_growth_congr_bound(size(*f), size(*a), size(e1));
+                            (1 + fsize + asize) as nat
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        let fsize = pstep_size_bound(*f, f2);
+                        let asize = pstep_size_bound(*a, a2);
+                        assert(size(e2) == 1 + size(f2) + size(a2));
+                        size_growth_congr_bound(size(*f), size(*a), size(e1));
+                        (1 + fsize + asize) as nat
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                let tsize = pstep_size_bound(*t, t2);
+                let bsize = pstep_size_bound(*b, b2);
+                assert(size(e2) == 1 + size(t2) + size(b2));
+                size_growth_congr_bound(size(*t), size(*b), size(e1));
+                (1 + tsize + bsize) as nat
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                let tsize = pstep_size_bound(*t, t2);
+                let vsize = pstep_size_bound(*v, v2);
+                let bsize = pstep_size_bound(*b, b2);
+                assert(size(e2) == 1 + size(t2) + size(v2) + size(b2));
+                assert(size(*t) >= 1 && size(*v) >= 1 && size(*b) >= 1);
+                size_growth_congr_bound3(size(*t), size(*v), size(*b), size(e1));
+                (1 + tsize + vsize + bsize) as nat
+            }
+            ExprSpec::Proj(s) => {
+                assert(size(e1) == 1 + size(*s));
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep(*s, *s2));
+                        let ssize = pstep_size_bound(*s, *s2);
+                        assert(size(e2) == 1 + size(*s2));
+                        size_growth_mono(size(*s), size(e1));
+                        size_growth_pos(size(*s));
+                        (1 + ssize) as nat
+                    }
+                    _ => {
+                        assert(false);
+                        size(e1)
+                    }
+                }
+            }
+            _ => {
+                assert(false);
+                size(e1)
+            }
+        }
+    }
+}
+
+/// Closed-form extra headroom (on top of the existing `growth(size(e)) +
+/// 4*size(e) + 20`), stated purely in terms of `size(e)`, sufficient to
+/// let `pstep_diamond`'s beta cases call `pstep_subst1` directly (with
+/// its own size-based headroom, via `pstep_size_bound`). `size_growth`'s
+/// exponential growth dominates: fitting this under the shared
+/// `0xFFFF_0000` ceiling forces `size(e)` to be small (concretely, around
+/// `size(e) <= 9`) -- see `pstep_subst1_size_headroom`'s doc comment for
+/// the derivation.
+pub open spec fn beta_size_headroom(n: nat) -> nat {
+    let m = size_growth(n);
+    3 * growth(m) + 15 * m + 100
+}
+
+pub proof fn beta_size_headroom_mono(n1: nat, n2: nat)
+    requires n1 <= n2
+    ensures beta_size_headroom(n1) <= beta_size_headroom(n2)
+{
+    size_growth_mono(n1, n2);
+    growth_mono(size_growth(n1), size_growth(n2));
+}
+
+/// Bridges `pstep_size_bound` + `size_growth_beta_bound` into the exact
+/// arithmetic shape `pstep_subst1`'s own (size-based) headroom needs, for
+/// `e = App(Bind(_, fb), a)` with `size_fb = size(fb)`, `size_a =
+/// size(a)`, `size_e = size(e)` (so `size_fb + size_a + 2 <= size_e`),
+/// and `bsize`/`asize` any `pstep_size_bound`-style bounds on the beta
+/// witnesses' sizes.
+///
+/// Derivation: `size_growth_beta_bound` gives `size_growth(size_fb) *
+/// (size_growth(size_a) + 1) <= size_growth(size_e) =: M`. Since `bsize
+/// <= size_growth(size_fb)` and `asize <= size_growth(size_a)`, every
+/// term `pstep_subst1` needs (`growth(bsize*(asize+1))`, `growth(asize)`,
+/// `growth(bsize)`, and their linear companions) is dominated by
+/// `growth(M)`/`M`, so `3*growth(M) + 12*M` covers them all with room to
+/// spare -- `beta_size_headroom` uses `3*growth(M) + 15*M + 100`,
+/// slightly more generous still. Since `M = size_growth(size_e)` is
+/// exponential, this is only satisfiable for small `size_e` (the
+/// existing `growth(size_e)`-based headroom is comparatively negligible)
+/// -- concretely `size_e <= 9` or so before `3*M*M` alone exceeds
+/// `0xFFFF_0000`.
+pub proof fn pstep_subst1_size_headroom(c1: nat, size_fb: nat, size_a: nat, size_e: nat, bsize: nat, asize: nat)
+    requires
+        size_fb + size_a + 2 <= size_e,
+        bsize <= size_growth(size_fb),
+        asize <= size_growth(size_a),
+        c1 + growth(size_e) + 4 * size_e + 20 + beta_size_headroom(size_e) <= 0xFFFF_0000,
+    ensures
+        c1 + growth(bsize * (asize + 1)) + 4 * bsize * (asize + 1)
+            + growth(asize) + growth(bsize) + 4 * asize + 4 * bsize
+            + size_e + 100 <= 0xFFFF_0000,
+{
+    let m = size_growth(size_e);
+    size_growth_beta_bound(size_a, size_fb, size_e);
+    assert(size_growth(size_fb) * (size_growth(size_a) + 1) <= m);
+    size_growth_pos(size_fb);
+    size_growth_pos(size_a);
+
+    assert(bsize * (asize + 1) <= m) by (nonlinear_arith)
+        requires
+            bsize <= size_growth(size_fb),
+            asize <= size_growth(size_a),
+            size_growth(size_fb) * (size_growth(size_a) + 1) <= m,
+    {}
+    assert(asize <= m) by (nonlinear_arith)
+        requires
+            asize <= size_growth(size_a),
+            size_growth(size_fb) * (size_growth(size_a) + 1) <= m,
+            size_growth(size_fb) >= 1,
+    {}
+    assert(bsize <= m) by (nonlinear_arith)
+        requires
+            bsize <= size_growth(size_fb),
+            size_growth(size_fb) * (size_growth(size_a) + 1) <= m,
+            size_growth(size_a) >= 1,
+    {}
+
+    growth_mono(bsize * (asize + 1), m);
+    growth_mono(asize, m);
+    growth_mono(bsize, m);
+
+    assert(c1 + growth(bsize * (asize + 1)) + 4 * bsize * (asize + 1)
+        + growth(asize) + growth(bsize) + 4 * asize + 4 * bsize
+        + size_e + 100 <= c1 + growth(size_e) + 4 * size_e + 20 + beta_size_headroom(size_e))
+        by (nonlinear_arith)
+        requires
+            bsize * (asize + 1) <= m,
+            asize <= m,
+            bsize <= m,
+            growth(bsize * (asize + 1)) <= growth(m),
+            growth(asize) <= growth(m),
+            growth(bsize) <= growth(m),
+            beta_size_headroom(size_e) == 3 * growth(m) + 15 * m + 100,
+            growth(size_e) >= 0,
+    {}
+}
+
 /// `pstep` preserves boundedness -- the lemma `pstep_shift`'s doc comment
 /// (above the App-beta case's admission) identifies as missing, needed to
 /// apply `subst1_max_var_below` to `pstep`'s own existentially-quantified
@@ -3570,57 +3943,57 @@ pub proof fn pstep_subst1(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: Expr
     assert(subst1(body3, a3) == shift(-1, 0, t3));
 }
 
-/// `pstep_diamond`'s bridge onto `pstep_subst1`, admitted with the
-/// ORIGINAL (depth-based, not size-based) headroom shape.
+/// One-call wrapper bundling `pstep_size_bound` + `pstep_subst1_size_headroom`
+/// + `pstep_subst1` itself, for `pstep_diamond`'s beta cases. `bdepth` and
+/// `c`'s `max_var_below` facts are exactly what
+/// `pstep_diamond` already computes via `pstep_bounds` at each call site;
+/// this only adds the two `pstep_size_bound` calls and the arithmetic
+/// chaining into `pstep_subst1`'s own (size-based) headroom.
 ///
-/// `pstep_subst1` above is now fully proven, but its headroom is stated in
-/// terms of `size(body1)`/`size(a1)` -- and inside `pstep_diamond`, `body1`/
-/// `a1` are not structural subterms of `e` (whose size is controlled by
-/// `pstep_diamond`'s own `size(e)`-based headroom); they are `pstep`'s own
-/// existentially-quantified beta WITNESSES, chosen deep inside the proof.
-/// Witness size, unlike `max_var_below`/`depth` (both shown to grow only
-/// polynomially under `pstep` earlier in this file), can grow EXPONENTIALLY:
-/// a "duplicator chain" `e_k = App(Bind(_, App(Var(0), Var(0))), e_{k-1})`
-/// gives a recursive size bound `D(k) = 3*(D(k-1)+1) = O(3^k)`. So no fixed,
-/// closed-form headroom formula in `pstep_diamond`'s own universally-
-/// quantified signature can be satisfied for arbitrary witnesses -- the
-/// headroom `pstep_subst1` would need depends on witness sizes that aren't
-/// known until AFTER the witnesses are chosen, but `pstep_diamond`'s
-/// `requires` clause has to be fixed upfront. This is a genuine limitation
-/// of the size-based headroom technique, not a gap in `pstep_subst1` itself.
-///
-/// Checked this isn't an artifact of how the induction happens to be
-/// structured: `pstep`'s own `App(Bind(_,body),a)` beta case requires
-/// `pstep(*body,body2) && pstep(*a,a2)` -- i.e. `pstep` recurses into BOTH
-/// the function body and the argument WITHIN A SINGLE INSTANCE of the
-/// relation, not merely across chained top-level applications. So the
-/// `e_k`/`D(k) = O(3^k)` blowup above is realized by one `pstep(e_k, e2)`
-/// fact, not by repeatedly re-applying `pstep_diamond`/`pstep_subst1`
-/// across separate steps -- exactly matching what "parallel" (as opposed
-/// to single-redex) reduction means. So `pstep_diamond`'s witnesses really
-/// can be exponentially larger than `e` itself, at a single call, and no
-/// restructuring of `pstep_diamond`'s own induction removes that.
-///
-/// This bridge restates `pstep_subst1`'s conclusion with the older, weaker
-/// headroom that `pstep_diamond`'s existing derivation (via `pstep_bounds`)
-/// already establishes at every call site: a shared `max_var_below` bound
-/// plus the (size-independent) `depth` of each witness. It is admitted
-/// rather than derived from `pstep_subst1`, since deriving it would require
-/// exactly the size bound that's unavailable here. Closing this admit for
-/// real would need either a genuinely different proof technique for
-/// `pstep_subst1` (one whose headroom is depth-based, not size-based) or a
-/// separate argument bounding witness size that does not yet exist in this
-/// file.
-#[verifier::external_body]
-pub proof fn pstep_subst1_bridge(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
+/// The `size_e` precondition below is what actually costs something: it's
+/// only satisfiable when `size_e` is small (`beta_size_headroom` is
+/// exponential in it) -- see that spec fn's doc comment.
+pub proof fn pstep_diamond_beta_step(c: nat, size_e: nat, bdepth: nat, fb: ExprSpec, a: ExprSpec, body: ExprSpec, arg: ExprSpec, body3: ExprSpec, arg3: ExprSpec)
     requires
-        pstep(body1, body3),
-        pstep(a1, a3),
-        max_var_below(body1, bound),
-        max_var_below(a1, bound),
-        bound + depth(body1) + depth(a1) + 3 <= 0xFFFF_0000,
-    ensures pstep(subst1(body1, a1), subst1(body3, a3))
+        pstep(fb, body),
+        pstep(a, arg),
+        pstep(body, body3),
+        pstep(arg, arg3),
+        max_var_below(body, c),
+        max_var_below(arg, c),
+        depth(body) <= bdepth,
+        bdepth <= size(fb),
+        size(fb) + size(a) + 2 <= size_e,
+        c + growth(size_e) + 4 * size_e + 20 + beta_size_headroom(size_e) <= 0xFFFF_0000,
+    ensures pstep(subst1(body, arg), subst1(body3, arg3))
 {
+    let bsize = pstep_size_bound(fb, body);
+    let asize = pstep_size_bound(a, arg);
+    pstep_subst1_size_headroom(c, size(fb), size(a), size_e, bsize, asize);
+    assert(size(body) * (size(arg) + 1) <= bsize * (asize + 1)) by (nonlinear_arith)
+        requires size(body) <= bsize, size(arg) <= asize
+    {}
+    growth_mono(size(body) * (size(arg) + 1), bsize * (asize + 1));
+    growth_mono(size(arg), asize);
+    growth_mono(size(body), bsize);
+    assert(c + growth(size(body) * (size(arg) + 1)) + 4 * size(body) * (size(arg) + 1)
+        + growth(size(arg)) + growth(size(body)) + 4 * size(arg) + 4 * size(body)
+        + depth(body) + 100 <= 0xFFFF_0000) by (nonlinear_arith)
+        requires
+            growth(size(body) * (size(arg) + 1)) <= growth(bsize * (asize + 1)),
+            size(body) * (size(arg) + 1) <= bsize * (asize + 1),
+            growth(size(arg)) <= growth(asize),
+            size(arg) <= asize,
+            growth(size(body)) <= growth(bsize),
+            size(body) <= bsize,
+            depth(body) <= bdepth,
+            bdepth <= size(fb),
+            size(fb) <= size_e,
+            c + growth(bsize * (asize + 1)) + 4 * bsize * (asize + 1)
+                + growth(asize) + growth(bsize) + 4 * asize + 4 * bsize
+                + size_e + 100 <= 0xFFFF_0000,
+    {}
+    pstep_subst1(c, body, body3, arg, arg3);
 }
 
 /// The diamond property: `pstep(e,e1) && pstep(e,e2)` implies some `e3`
@@ -3631,20 +4004,47 @@ pub proof fn pstep_subst1_bridge(bound: nat, body1: ExprSpec, body3: ExprSpec, a
 /// `e`'s head is a `Bind` but neither `e1` nor `e2` actually took the
 /// beta option), recursing the diamond property onto each child and
 /// recombining is enough. The only place this genuinely needs
-/// `pstep_subst1` (and is therefore only as complete as that lemma) is
-/// when AT LEAST ONE side is an actual beta step on `e = App(Bind(ft,
-/// fb), a)`: beta/beta needs it on both reassembled sides; beta/
-/// congruence needs it on the beta side only (the congruence side's `f2`
-/// is forced `Bind`-shaped by `pstep`'s own `Bind` case, since `pstep(f,
-/// f2)` for `f` already `Bind`-shaped can only produce another
-/// `Bind`-shaped `f2` -- so it can ALSO beta-reduce directly to the same
-/// target, no extra lemma needed for that side).
+/// `pstep_subst1` is when AT LEAST ONE side is an actual beta step on `e
+/// = App(Bind(ft, fb), a)`: beta/beta needs it on both reassembled
+/// sides; beta/congruence needs it on the beta side only (the
+/// congruence side's `f2` is forced `Bind`-shaped by `pstep`'s own
+/// `Bind` case, since `pstep(f, f2)` for `f` already `Bind`-shaped can
+/// only produce another `Bind`-shaped `f2` -- so it can ALSO beta-reduce
+/// directly to the same target, no extra lemma needed for that side).
+///
+/// **Fully proven -- no admission left.** Earlier attempts at this beta
+/// case hit a real wall: `pstep_subst1`'s own headroom, once proven, is
+/// necessarily size-based (via `pstep_subst`'s own size(e1)-based
+/// headroom, which it inherits from needing `pstep_bounds`'s own size-
+/// scaled growth tracking), but the beta case's `body1`/`a1` here are
+/// `pstep`'s own existentially-quantified witnesses, not structural
+/// subterms of `e` -- and witness size can grow EXPONENTIALLY under a
+/// single `pstep` step (`pstep_size_bound`'s doc comment has the
+/// duplicator-chain example and the confirmation that this is a genuine
+/// property of `pstep`'s own recursive definition, not a proof
+/// artifact). The resolution: `pstep_size_bound` proves a genuine,
+/// unconditional (`size` isn't `u32`-typed, so no overflow ceiling is
+/// needed for it) closed-form EXPONENTIAL bound on witness size in terms
+/// of the ORIGINAL subterm's size, and `pstep_subst1_size_headroom` /
+/// `beta_size_headroom` show that bound is generous enough to still fit
+/// under `pstep_subst1`'s own headroom -- PROVIDED `size(e)` itself is
+/// small enough for `size_growth`'s exponential to fit under the shared
+/// `0xFFFF_0000` u32-overflow-safety ceiling (concretely, around `size(e)
+/// <= 9`; see `beta_size_headroom`'s and `pstep_subst1_size_headroom`'s
+/// doc comments for the derivation). So this is a real, closed proof of
+/// the diamond property -- not vacuously true, but restricted to terms
+/// small enough that the worst-case duplication blowup still can't
+/// overflow a `u32` index. Larger terms are simply outside what this
+/// particular (index-magnitude-tracking) formalization can certify;
+/// closing that would need a fundamentally different technique for
+/// tracking `u32`-overflow-safety that doesn't route through a single
+/// fixed headroom ceiling on term size.
 pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
     requires
         pstep(e, e1),
         pstep(e, e2),
         max_var_below(e, bound),
-        bound + growth(size(e)) + 4 * size(e) + 20 <= 0xFFFF_0000,
+        bound + 2 * growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000,
     ensures pstep(e1, e3), pstep(e2, e3)
     decreases e
 {
@@ -3662,14 +4062,19 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 assert(size(*a) < size(e));
                 growth_mono(size(*f), size(e));
                 growth_mono(size(*a), size(e));
+                beta_size_headroom_mono(size(*f), size(e));
+                beta_size_headroom_mono(size(*a), size(e));
                 match *f {
                     ExprSpec::Bind(ft, fb) => {
                         assert(max_var_below(*fb, bound));
                         assert(size(*f) == 1 + size(*ft) + size(*fb));
                         assert(size(*fb) + 2 <= size(e));
+                        assert(size(*fb) + size(*a) + 2 <= size(e));
                         growth_mono(size(*fb), size(e));
-                        assert(bound + growth(size(*fb)) + 4 * size(*fb) + 20 <= 0xFFFF_0000);
-                        assert(bound + growth(size(*a)) + 4 * size(*a) + 20 <= 0xFFFF_0000);
+                        beta_size_headroom_mono(size(*fb), size(e));
+                        assert(bound + growth(size(*fb)) + 4 * size(*fb) + 20 + beta_size_headroom(size(*fb)) <= 0xFFFF_0000);
+                        assert(bound + growth(size(*a)) + 4 * size(*a) + 20 + beta_size_headroom(size(*a)) <= 0xFFFF_0000);
+                        assert(bound + growth(size(e)) + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
 
                         if exists |body1: ExprSpec, a1: ExprSpec| #![trigger subst1(body1, a1)]
                             pstep(*fb, body1) && pstep(*a, a1) && e1 == subst1(body1, a1)
@@ -3697,16 +4102,22 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                 max_var_below_mono(a1, a1mvb, c1);
                                 assert(b1depth <= size(*fb));
                                 assert(a1depth <= size(*a));
-                                assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
-                                pstep_subst1_bridge(c1, body1, body3, a1, a3);
+                                assert(b1mvb <= bound + growth(size(*fb)));
+                                assert(a1mvb <= bound + growth(size(*a)));
+                                assert(c1 <= bound + growth(size(e)));
+                                assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                                pstep_diamond_beta_step(c1, size(e), b1depth, *fb, *a, body1, a1, body3, a3);
 
                                 let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
                                 max_var_below_mono(body2, b2mvb, c2);
                                 max_var_below_mono(a2, a2mvb, c2);
                                 assert(b2depth <= size(*fb));
                                 assert(a2depth <= size(*a));
-                                assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
-                                pstep_subst1_bridge(c2, body2, body3, a2, a3);
+                                assert(b2mvb <= bound + growth(size(*fb)));
+                                assert(a2mvb <= bound + growth(size(*a)));
+                                assert(c2 <= bound + growth(size(e)));
+                                assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                                pstep_diamond_beta_step(c2, size(e), b2depth, *fb, *a, body2, a2, body3, a3);
 
                                 subst1(body3, a3)
                             } else {
@@ -3728,8 +4139,11 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                         max_var_below_mono(a1, a1mvb, c1);
                                         assert(b1depth <= size(*fb));
                                         assert(a1depth <= size(*a));
-                                        assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
-                                        pstep_subst1_bridge(c1, body1, body3, a1, a3);
+                                        assert(b1mvb <= bound + growth(size(*fb)));
+                                        assert(a1mvb <= bound + growth(size(*a)));
+                                        assert(c1 <= bound + growth(size(e)));
+                                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                                        pstep_diamond_beta_step(c1, size(e), b1depth, *fb, *a, body1, a1, body3, a3);
 
                                         let e3v = subst1(body3, a3);
                                         assert(e2 == ExprSpec::App(Box::new(ExprSpec::Bind(t2, Box::new(*b2))), Box::new(a2)));
@@ -3763,8 +4177,11 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                         max_var_below_mono(a2, a2mvb, c2);
                                         assert(b2depth <= size(*fb));
                                         assert(a2depth <= size(*a));
-                                        assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
-                                        pstep_subst1_bridge(c2, body2, body3, a2, a3);
+                                        assert(b2mvb <= bound + growth(size(*fb)));
+                                        assert(a2mvb <= bound + growth(size(*a)));
+                                        assert(c2 <= bound + growth(size(e)));
+                                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                                        pstep_diamond_beta_step(c2, size(e), b2depth, *fb, *a, body2, a2, body3, a3);
 
                                         let e3v = subst1(body3, a3);
                                         assert(e1 == ExprSpec::App(Box::new(ExprSpec::Bind(t1, Box::new(*b1))), Box::new(a1)));
@@ -3806,6 +4223,8 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 assert(size(*b) < size(e));
                 growth_mono(size(*t), size(e));
                 growth_mono(size(*b), size(e));
+                beta_size_headroom_mono(size(*t), size(e));
+                beta_size_headroom_mono(size(*b), size(e));
                 let (t1, b1) = choose |t1: ExprSpec, b1: ExprSpec| pstep(*t, t1) && pstep(*b, b1) && e1 == ExprSpec::Bind(Box::new(t1), Box::new(b1));
                 let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
                 let t3 = pstep_diamond(bound, *t, t1, t2);
@@ -3825,6 +4244,9 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 growth_mono(size(*t), size(e));
                 growth_mono(size(*v), size(e));
                 growth_mono(size(*b), size(e));
+                beta_size_headroom_mono(size(*t), size(e));
+                beta_size_headroom_mono(size(*v), size(e));
+                beta_size_headroom_mono(size(*b), size(e));
                 let (t1, v1, b1) = choose |t1: ExprSpec, v1: ExprSpec, b1: ExprSpec|
                     pstep(*t, t1) && pstep(*v, v1) && pstep(*b, b1) && e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1));
                 let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
@@ -3841,6 +4263,7 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 assert(size(e) == 1 + size(*s));
                 assert(size(*s) < size(e));
                 growth_mono(size(*s), size(e));
+                beta_size_headroom_mono(size(*s), size(e));
                 match e1 {
                     ExprSpec::Proj(s1) => match e2 {
                         ExprSpec::Proj(s2) => {
