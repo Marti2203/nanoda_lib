@@ -114,6 +114,106 @@ pub fn verified_ptr_roundtrip<A>(dag_marker: DagMarker, idx: usize) -> (result: 
     (got_idx, got_is_tc)
 }
 
+/// Abstract model of the two-tier "hash-consing" pattern every
+/// `alloc_X`/`read_X` pair in `util.rs` follows (`alloc_name`/`alloc_level`/
+/// `alloc_expr`/`alloc_string`/`alloc_bignum`/`alloc_levels`, paired with
+/// `read_name`/`read_level`/`read_expr`/etc.): check the persistent
+/// (`export_file.dag`) set first; if absent, find-or-insert into the local
+/// (`self.dag`) set instead.
+///
+/// This does *not* register `indexmap::IndexSet` with Verus (an external
+/// crate, generic over an arbitrary hasher -- not practical to bring in
+/// directly). Instead it models each `IndexSet<T>` as a `Seq<T>` scanned by
+/// equality (`find_index`), which is exactly `IndexSet`'s *documented*
+/// observable contract (`get_index_of` finds an equal element if one
+/// exists; `insert_full` appends if absent; `get_index` retrieves by
+/// position) -- just not its actual O(1)-amortized hashing implementation.
+/// So what's proven below is conditional: *given* `IndexSet` behaves as
+/// documented, the two-tier alloc/read pattern round-trips correctly. This
+/// is a materially different (and stronger) claim than what
+/// `level_arena_bridge.rs`/`expr_arena_bridge.rs` currently assume: their
+/// `to_model`/`read_*` axioms never actually relate `read_X(alloc_X(v))`
+/// back to `v` at all -- `to_model` is free-floating, so a storage/lookup
+/// bug (a wrong index, a stale entry) wouldn't contradict any axiom they
+/// state. This proof closes exactly that gap, modulo trusting `IndexSet`'s
+/// documented API.
+pub open spec fn find_index<T>(s: Seq<T>, v: T) -> Option<nat>
+    decreases s.len()
+{
+    if s.len() == 0 {
+        None
+    } else if s[0] == v {
+        Some(0)
+    } else {
+        match find_index(s.subrange(1, s.len() as int), v) {
+            Some(i) => Some((i + 1) as nat),
+            None => None,
+        }
+    }
+}
+
+pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
+    ensures match find_index(s, v) {
+        Some(i) => i < s.len() && s[i as int] == v,
+        None => forall |i: int| 0 <= i < s.len() ==> s[i] != v,
+    }
+    decreases s.len()
+{
+    if s.len() == 0 {
+    } else if s[0] == v {
+    } else {
+        find_index_correct(s.subrange(1, s.len() as int), v);
+        if let Some(i) = find_index(s.subrange(1, s.len() as int), v) {
+            assert(s.subrange(1, s.len() as int)[i as int] == s[(i + 1) as int]);
+        } else {
+            assert forall |i: int| 0 <= i < s.len() implies s[i] != v by {
+                if i > 0 {
+                    assert(s.subrange(1, s.len() as int)[i - 1] == s[i]);
+                }
+            }
+        }
+    }
+}
+
+/// `alloc_X`'s logic: check `persistent` first (tag `false`/`ExportFile`);
+/// else find-or-insert into `local` (tag `true`/`TcCtx`). Returns the tag,
+/// the index, and `local`'s new contents (only changed when actually
+/// inserting).
+pub open spec fn alloc_transition<T>(persistent: Seq<T>, local: Seq<T>, v: T) -> (bool, nat, Seq<T>) {
+    match find_index(persistent, v) {
+        Some(i) => (false, i, local),
+        None => match find_index(local, v) {
+            Some(i) => (true, i, local),
+            None => (true, local.len(), local.push(v)),
+        },
+    }
+}
+
+/// `read_X`'s logic: dispatch on the tag, then index into the
+/// corresponding set.
+pub open spec fn read_ptr<T>(persistent: Seq<T>, local: Seq<T>, is_tc: bool, idx: nat) -> Option<T> {
+    if is_tc {
+        if idx < local.len() { Some(local[idx as int]) } else { None }
+    } else {
+        if idx < persistent.len() { Some(persistent[idx as int]) } else { None }
+    }
+}
+
+/// The round-trip theorem: allocating `v` and immediately reading back the
+/// pointer you got always returns `v`, regardless of whether it was found
+/// in `persistent`, found in `local`, or freshly inserted into `local`.
+pub proof fn alloc_read_roundtrip<T>(persistent: Seq<T>, local: Seq<T>, v: T)
+    ensures ({
+        let (is_tc, idx, local2) = alloc_transition(persistent, local, v);
+        read_ptr(persistent, local2, is_tc, idx) == Some(v)
+    })
+{
+    find_index_correct(persistent, v);
+    if find_index(persistent, v).is_none() {
+        find_index_correct(local, v);
+    }
+}
+
 }
 
 #[cfg(test)]
@@ -142,4 +242,10 @@ mod tests {
         assert_eq!(p.idx(), 12345);
         assert!(dag_marker_is_tc(&p.dag_marker()));
     }
+
+    // find_index/alloc_transition/read_ptr/alloc_read_roundtrip are `spec`/
+    // `proof` items -- ghost code, erased entirely under plain (non-Verus)
+    // compilation along with vstd's Seq/nat/int, so they aren't reachable
+    // from a plain #[test] the way exec functions are. Their correctness is
+    // checked by `cargo-verus check` only.
 }
