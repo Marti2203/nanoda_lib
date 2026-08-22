@@ -582,6 +582,17 @@ pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (r
             assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
             rx || ry
         }
+        // Real `leq_core` has a reflexivity fast-path here
+        // ((IMax(a,b),IMax(x,y)) if a==x && b==y && diff>=0 => true), cheap
+        // in the real arena since it's just pointer equality (hash-consing
+        // makes it O(1)). There's no analogous cheap check in this
+        // Box-recursive model (no interning, so "are these the same" would
+        // mean a full recursive structural-equality function) — omitted
+        // here since it isn't semantically required: an `l == r` case
+        // still reaches the correct answer via the rewrite arms below
+        // (recursing further rather than short-circuiting), just with more
+        // fuel consumed. `verified_leq_core` (the real-arena version) does
+        // implement this fast-path, using real `LevelPtr` equality.
         (LevelSpec::IMax(_, b), _) if matches!(**b, LevelSpec::Param(_)) => {
             match **b {
                 LevelSpec::Param(p) => leq_imax_by_cases_fueled(dup(l), dup(r), p, diff, fuel1),
@@ -594,9 +605,140 @@ pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (r
                 _ => false, // unreachable given the match guard above
             }
         }
-        // Not attempted: the `is_any_max` rewrite arms (need distributivity
-        // lemmas about `imax`/`max` not yet proven) and anything else.
+        (LevelSpec::IMax(a, b), _) if matches!(**b, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
+            assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(**b)));
+            leq_core_imax_rewrite_left(a, b, l, r, diff, fuel1)
+        }
+        (_, LevelSpec::IMax(x, y)) if matches!(**y, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
+            assert(*r == LevelSpec::IMax(Box::new(**x), Box::new(**y)));
+            leq_core_imax_rewrite_right(x, y, l, r, diff, fuel1)
+        }
         _ => false,
+    }
+}
+
+/// Implements `leq_core`'s first `is_any_max` rewrite arm: `l = IMax(a, b)`
+/// where `b` is itself `Max`- or `IMax`-shaped, using `imax_imax_distrib`/
+/// `imax_max_distrib` to justify rewriting to an equivalent term without an
+/// `IMax` at this position, then recursing.
+///
+/// Verus quirk hit while writing the `Max` sub-case: given two separate
+/// hypotheses `forall |rho| interp(new_max, rho) == interp(new_max_raw, rho)`
+/// and `forall |rho| interp(new_max_raw, rho) == interp(l, rho)` (each
+/// individually already proven, each with its own `#[trigger]`), a plain
+/// `assert(forall |rho| interp(new_max, rho) == interp(l, rho))` — the
+/// transitive combination — did NOT go through automatically, even though
+/// it's immediate for any single `rho`. Z3 wasn't chaining the two
+/// separately-triggered foralls together. Fix: wrap the *same* two facts in
+/// `assert forall |rho| ... by { assert(...); assert(...); }` instead of a
+/// bare `assert(forall |rho| ...)` — forcing both hypotheses to be
+/// instantiated at one concrete, shared `rho` (rather than each pattern-
+/// matching independently) is what let the transitivity go through. The
+/// `#[allow(unused_variables)]` below is unrelated: `l`/`r` are only
+/// referenced inside `assert`s, which are ghost/spec and erased under plain
+/// (non-Verus) compilation, so plain `cargo build` sees them as unused.
+#[allow(unused_variables)]
+fn leq_core_imax_rewrite_left(a: &Box<LevelSpec>, b: &Box<LevelSpec>, l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (result: bool)
+    requires *l == LevelSpec::IMax(Box::new(**a), Box::new(**b))
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+    let r1 = dup(r);
+    match &**b {
+        LevelSpec::IMax(x, y) => {
+            assert(**b == LevelSpec::IMax(Box::new(**x), Box::new(**y)));
+            assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y)))));
+            let a1 = dup(a);
+            let y1 = dup(y);
+            let x1 = dup(x);
+            let y2 = dup(y);
+            let new_max = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(a1), Box::new(y1))), Box::new(LevelSpec::IMax(Box::new(x1), Box::new(y2))));
+            proof { imax_imax_distrib(**a, **x, **y); }
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho)
+                == interp(LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y)))), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*l, rho));
+            let result = leq_core_fueled(&new_max, &r1, diff, fuel1);
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
+            result
+        }
+        LevelSpec::Max(x, y) => {
+            assert(**b == LevelSpec::Max(Box::new(**x), Box::new(**y)));
+            assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y)))));
+            let a1 = dup(a);
+            let x1 = dup(x);
+            let a2 = dup(a);
+            let y1 = dup(y);
+            let new_max_raw = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(a1), Box::new(x1))), Box::new(LevelSpec::IMax(Box::new(a2), Box::new(y1))));
+            proof { imax_max_distrib(**a, **x, **y); }
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho)
+                == interp(LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y)))), rho));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho) == interp(*l, rho));
+            let new_max = simplify_full(new_max_raw);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(new_max_raw, rho));
+            assert forall |rho: Map<nat, nat>| interp(new_max, rho) == interp(*l, rho) by {
+                assert(interp(new_max, rho) == interp(new_max_raw, rho));
+                assert(interp(new_max_raw, rho) == interp(*l, rho));
+            }
+            let result = leq_core_fueled(&new_max, &r1, diff, fuel1);
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
+            result
+        }
+        _ => false, // unreachable given the caller's match guard
+    }
+}
+
+/// Mirror of `leq_core_imax_rewrite_left` for `leq_core`'s second
+/// `is_any_max` rewrite arm: `r = IMax(x, y)` where `y` is `Max`- or
+/// `IMax`-shaped.
+#[allow(unused_variables)]
+fn leq_core_imax_rewrite_right(x: &Box<LevelSpec>, y: &Box<LevelSpec>, l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (result: bool)
+    requires *r == LevelSpec::IMax(Box::new(**x), Box::new(**y))
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+    let l1 = dup(l);
+    match &**y {
+        LevelSpec::IMax(j, k) => {
+            let x1 = dup(x);
+            let k1 = dup(k);
+            let j1 = dup(j);
+            let k2 = dup(k);
+            let new_max = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(x1), Box::new(k1))), Box::new(LevelSpec::IMax(Box::new(j1), Box::new(k2))));
+            proof { imax_imax_distrib(**x, **j, **k); }
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*r, rho));
+            let result = leq_core_fueled(&l1, &new_max, diff, fuel1);
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
+            result
+        }
+        LevelSpec::Max(j, k) => {
+            let x1 = dup(x);
+            let j1 = dup(j);
+            let x2 = dup(x);
+            let k1 = dup(k);
+            let new_max_raw = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(x1), Box::new(j1))), Box::new(LevelSpec::IMax(Box::new(x2), Box::new(k1))));
+            proof { imax_max_distrib(**x, **j, **k); }
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho) == interp(*r, rho));
+            let new_max = simplify_full(new_max_raw);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(new_max_raw, rho));
+            let result = leq_core_fueled(&l1, &new_max, diff, fuel1);
+            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
+            result
+        }
+        _ => false, // unreachable given the caller's match guard
     }
 }
 
@@ -901,5 +1043,33 @@ mod tests {
         // Non-IMax cases don't actually need the fuel budget's IMax-splitting
         // capability, so a small fuel budget still resolves them.
         assert!(leq_core_fueled(&LevelSpec::Zero, &LevelSpec::Zero, 0, 1));
+    }
+
+    // These two exercise the `is_any_max` rewrite arms specifically: before
+    // wiring in imax_imax_distrib/imax_max_distrib, both would fall through
+    // to `_ => false`, i.e. wrongly refuse a universally-valid inequality
+    // (an equality, in fact - both sides denote the same thing).
+    #[test]
+    fn fueled_handles_imax_imax_rewrite() {
+        // imax(a, imax(x,y)) == max(imax(a,y), imax(x,y))
+        let l = imax(LevelSpec::Param(0), imax(LevelSpec::Param(1), LevelSpec::Param(2)));
+        let r = max(
+            imax(LevelSpec::Param(0), LevelSpec::Param(2)),
+            imax(LevelSpec::Param(1), LevelSpec::Param(2)),
+        );
+        assert!(leq_core_fueled(&l, &r, 0, 20));
+        assert!(leq_core_fueled(&r, &l, 0, 20));
+    }
+
+    #[test]
+    fn fueled_handles_imax_max_rewrite() {
+        // imax(a, max(x,y)) == max(imax(a,x), imax(a,y))
+        let l = imax(LevelSpec::Param(0), max(LevelSpec::Param(1), LevelSpec::Param(2)));
+        let r = max(
+            imax(LevelSpec::Param(0), LevelSpec::Param(1)),
+            imax(LevelSpec::Param(0), LevelSpec::Param(2)),
+        );
+        assert!(leq_core_fueled(&l, &r, 0, 20));
+        assert!(leq_core_fueled(&r, &l, 0, 20));
     }
 }
