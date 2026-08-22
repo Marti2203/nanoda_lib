@@ -65,6 +65,17 @@ pub(crate) fn level_as_param<'t>(l: &Level<'t>) -> Option<NamePtr<'t>> {
     match l { Level::Param(n, _) => Some(*n), _ => None }
 }
 
+// Verus doesn't automatically connect an external type's real `==` (its
+// actual `PartialEq::eq`) to spec-level equality on the opaque ghost value —
+// tested directly: `assert(n == p)` failed even immediately inside an
+// `if n == p { ... }` branch. This wrapper plus its `assume_specification`
+// below is what supplies that connection, the same way the `level_as_*`
+// accessors supply pattern-matching.
+#[allow(dead_code)]
+pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> bool {
+    a == b
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -108,6 +119,9 @@ pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
     ensures (n1 == n2) <==> (name_id(n1) == name_id(n2))
 {
 }
+
+pub assume_specification<'t> [name_ptr_eq] (a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
+    ensures result == (a == b);
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
@@ -270,6 +284,110 @@ pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, f
         return result;
     }
     l
+}
+
+/// Real-arena counterpart to `level_model::subst1`. Unlike
+/// `verified_combining`/`verified_simplify`, "leave the pointer unchanged"
+/// is *not* a valid fallback for substitution (it would just be wrong
+/// whenever `l` actually contains `Param(p)`), so fuel exhaustion here
+/// returns `None` instead — propagated by `verified_leq_imax_by_cases`
+/// below as "give up, answer `false`", the same way `leq_core_fueled`
+/// treats its own fuel exhaustion.
+///
+/// Also simpler than `level_model::subst1` in one respect: `LevelPtr` is
+/// `Copy` (it's just a packed index), so substituting `v` in for a
+/// matching `Param` is just returning `v` itself — no `dup`-style manual
+/// copy needed, unlike the `Box`-recursive `LevelSpec`.
+pub fn verified_subst1<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, p: NamePtr<'t>, v: LevelPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
+    ensures match result {
+        Some(r) => forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
+            == interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let ll = ctx.read_level(l);
+
+    if level_is_zero(&ll) {
+        return Some(l);
+    }
+    if let Some(n) = level_as_param(&ll) {
+        assert(to_model_of_level(ll) == to_model(l));
+        assert(to_model_of_level(ll) == LevelSpec::Param(name_id(n)));
+        assert(to_model(l) == LevelSpec::Param(name_id(n)));
+        if name_ptr_eq(n, p) {
+            assert(name_id(n) == name_id(p));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho)))
+                == interp(to_model(v), rho));
+            return Some(v);
+        } else {
+            proof { name_id_injective(n, p); }
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho)))
+                == interp(to_model(l), rho));
+            return Some(l);
+        }
+    }
+    if let Some(a) = level_as_succ(&ll) {
+        return match verified_subst1(ctx, a, p, v, fuel1) {
+            Some(sub) => {
+                let result = ctx.succ(sub);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sub), rho)
+                    == interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(sub), rho) + 1);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho)))
+                    == interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))) + 1);
+                Some(result)
+            }
+            None => None,
+        };
+    }
+    if let Some((a, b)) = level_as_max(&ll) {
+        return match (verified_subst1(ctx, a, p, v, fuel1), verified_subst1(ctx, b, p, v, fuel1)) {
+            (Some(sa), Some(sb)) => {
+                let result = ctx.max(sa, sb);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho)
+                    == interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho)
+                    == interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                    == max_nat(interp(to_model(sa), rho), interp(to_model(sb), rho)));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho)))
+                    == max_nat(
+                        interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+                        interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+                    ));
+                Some(result)
+            }
+            _ => None,
+        };
+    }
+    if let Some((a, b)) = level_as_imax(&ll) {
+        return match (verified_subst1(ctx, a, p, v, fuel1), verified_subst1(ctx, b, p, v, fuel1)) {
+            (Some(sa), Some(sb)) => {
+                let result = ctx.imax(sa, sb);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho)
+                    == interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho)
+                    == interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                    == if interp(to_model(sb), rho) == 0 { 0 } else { max_nat(interp(to_model(sa), rho), interp(to_model(sb), rho)) });
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho)))
+                    == if interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))) == 0 { 0 } else {
+                        max_nat(
+                            interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+                            interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+                        )
+                    });
+                Some(result)
+            }
+            _ => None,
+        };
+    }
+    None
 }
 
 }
