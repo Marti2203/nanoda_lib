@@ -3473,55 +3473,140 @@ pub proof fn pstep_subst(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: Exp
 /// case needs: `pstep(body1, body3) && pstep(a1, a3) => pstep(subst1(body1,
 /// a1), subst1(body3, a3))`.
 ///
-/// **`#[verifier::external_body]` (admitted) -- genuinely open, not just
-/// unproven.** The natural strategy (mirroring how `shift_subst1_commute`
-/// / `subst_subst1_commute` were built) decomposes `subst1`'s definition
+/// **Proven** -- this took a real second attempt, worth recording. The
+/// natural strategy (mirroring how `shift_subst1_commute` /
+/// `subst_subst1_commute` were built) decomposes `subst1`'s definition
 /// and tries to relate `shift(-1, c, -)` across it via a pure algebraic
 /// identity -- the `d = -1` analogue of `shift_subst_commute`, at `diff =
-/// 1` specifically (the case that matches `subst1`'s own cutoff-0
-/// re-shift at the top level, `c = 0`). That sub-identity is FALSE:
-/// hand-derived counterexample, `e = Var(k)` with `k = j + 1` (distinct
-/// from the substitution target `j`) -- `shift(-1, j+1, -)` moves `k`
-/// down to land exactly on `j`, spuriously triggering substitution on
-/// one side where the other never substitutes. Translated back: this
-/// corresponds to `body1`/`body3` having a raw index-1 occurrence
-/// distinct from their index-0 occurrences -- i.e. a lambda body
-/// referencing an outer-bound variable one level up (`fun x => x y`),
-/// which is completely ordinary, not a corner case excludable by an
-/// escaping-safety side condition the way `subst_shift_down_commute`'s
-/// analogous gap was closed.
+/// 1` specifically. THAT sub-identity is FALSE: hand-derived
+/// counterexample, `e = Var(k)` with `k = j + 1` (distinct from the
+/// substitution target `j`) -- `shift(-1, j+1, -)` moves `k` down to
+/// land exactly on `j`, spuriously triggering substitution on one side
+/// where the other never substitutes. Translated back: this corresponds
+/// to `body1`/`body3` having a raw index-1 occurrence distinct from
+/// their index-0 occurrences -- i.e. a lambda body referencing an
+/// outer-bound variable one level up (`fun x => x y`), completely
+/// ordinary, not excludable the way `subst_shift_down_commute`'s
+/// analogous gap was.
 ///
-/// Despite the sub-identity being false, the THEOREM itself checks out
-/// by hand on a concrete instance built specifically to have that
-/// "dangerous" shape (`body1 = body3 = App(Var(0), Var(1))`, `a1 =
-/// App(Bind(Closed, Var(0)), Free(7))` beta-reducing to `a3 = Free(7)`):
-/// `subst1(body1, a1)` and `subst1(body3, a3)` come out `pstep`-related
-/// via ordinary `App` congruence, with the function positions related by
-/// a genuine beta step -- suggesting the lemma is TRUE, but the
-/// algebraic-decomposition proof technique that worked for every other
-/// commutation in this file does not directly apply to it. This is a
-/// materially different kind of gap than any other admission in this
-/// file: not "needs more of the same machinery" but "the technique
-/// itself doesn't transfer" -- closing it for real likely needs either a
-/// genuinely different induction (not decomposing through the false
-/// sub-identity), or reformulating `subst`/`subst1` via simultaneous
-/// (parallel, all-variables-at-once) substitution instead of the
-/// single-variable, capture-avoiding-via-shift style this file uses --
-/// which is closer to nanoda's own actual (telescopic) `inst`, per this
-/// file's own module doc, but would mean re-deriving most of the shift/
-/// subst commutation tower against a different substitution primitive.
-/// Flagged honestly rather than routed around; see this file's own doc
-/// comment history for what closing a gap like this actually costs once
-/// it's tractable (`shift_subst1_commute` alone took five supporting
-/// lemmas).
-#[verifier::external_body]
+/// The fix wasn't a different induction on this lemma directly -- it was
+/// composing already-proven PIECES differently: `pstep_shift` (`d=1`) to
+/// shift `pstep(a1,a3)` up, `pstep_subst` (fully general, no `d=-1`
+/// needed at all) to reach an intermediate `pstep(T1,T3)` fact for
+/// `subst1`'s pre-final-shift inner terms, then `pstep_shift_down` (the
+/// ONE genuinely new lemma this needed, plus its own supporting tower:
+/// `has_escaping_ref`'s shift-down transformation, the `shift_subst_commute`/
+/// `shift_shift_aligned` `d=-1` counterparts CONDITIONED on
+/// `has_escaping_ref` rather than needing it unconditionally, and
+/// `pstep_preserves_no_escaping_ref` to discharge those conditions on
+/// `pstep`'s own witnesses) to bridge the final `shift(-1,0,-)`. An
+/// independent second opinion (asked to re-derive the counterexample and
+/// search for an alternative route before any of this was written)
+/// found exactly this decomposition and confirmed it was tractable
+/// without reformulating substitution to simultaneous/parallel style.
 pub proof fn pstep_subst1(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
     requires
         pstep(body1, body3),
         pstep(a1, a3),
-        bound + depth(body1) + depth(a1) + 3 <= 0xFFFF_0000,
         max_var_below(body1, bound),
         max_var_below(a1, bound),
+        bound + growth(size(body1) * (size(a1) + 1)) + 4 * size(body1) * (size(a1) + 1)
+            + growth(size(a1)) + growth(size(body1)) + 4 * size(a1) + 4 * size(body1)
+            + depth(body1) + 100 <= 0xFFFF_0000,
+    ensures pstep(subst1(body1, a1), subst1(body3, a3))
+{
+    pstep_shift(bound, 0, a1, a3);
+    let s1 = shift(1, 0, a1);
+    let s3 = shift(1, 0, a3);
+    assert(pstep(s1, s3));
+
+    shift_up_max_var_below(0, bound, a1);
+    assert(max_var_below(s1, (bound + 1) as nat));
+    shift_preserves_size(1, 0, a1);
+    assert(size(s1) == size(a1));
+    max_var_below_mono(body1, bound, (bound + 1) as nat);
+
+    assert(size(a1) <= size(body1) * (size(a1) + 1)) by (nonlinear_arith)
+        requires size(body1) >= 1
+    {}
+    growth_mono(size(a1), size(body1) * (size(a1) + 1));
+    assert(size(body1) <= size(body1) * (size(a1) + 1)) by (nonlinear_arith)
+        requires size(a1) >= 1
+    {}
+    growth_mono(size(body1), size(body1) * (size(a1) + 1));
+    assert((bound + 1) + growth(size(body1)) + growth(size(s1)) + 4 * size(body1) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+
+    pstep_subst((bound + 1) as nat, 0, s1, s3, body1, body3);
+    let t1 = subst(0, s1, body1);
+    let t3 = subst(0, s3, body3);
+    assert(pstep(t1, t3));
+
+    max_var_below_mono(a1, bound, (bound + 1) as nat);
+    shift_up_has_escaping_ref((bound + 1) as nat, a1, 0);
+    assert(has_escaping_ref(s1, 0) == (0 >= 1 && has_escaping_ref(a1, (0 - 1) as nat)));
+    assert(!has_escaping_ref(s1, 0));
+    subst_no_escaping_ref_at((bound + 1) as nat, 0, s1, body1);
+    assert(!has_escaping_ref(t1, 0));
+
+    subst_max_var_below((bound + 1) as nat, 0, s1, body1);
+    let t1_bound = ((bound + 1) + depth(body1)) as nat;
+    assert(max_var_below(t1, t1_bound));
+
+    subst_size_bound(0, s1, body1);
+    assert(size(t1) <= size(body1) * (size(s1) + 1));
+    assert(size(t1) <= size(body1) * (size(a1) + 1));
+
+    growth_mono(size(t1), size(body1) * (size(a1) + 1));
+    assert(t1_bound + growth(size(t1)) + 4 * size(t1) + 20 <= 0xFFFF_0000) by (nonlinear_arith)
+        requires
+            t1_bound + growth(size(body1) * (size(a1) + 1)) + 4 * size(body1) * (size(a1) + 1) + 20 <= 0xFFFF_0000,
+            size(t1) <= size(body1) * (size(a1) + 1),
+            growth(size(t1)) <= growth(size(body1) * (size(a1) + 1)),
+    {}
+
+    pstep_shift_down(t1_bound, 0, t1, t3);
+    assert(pstep(shift(-1, 0, t1), shift(-1, 0, t3)));
+    assert(subst1(body1, a1) == shift(-1, 0, t1));
+    assert(subst1(body3, a3) == shift(-1, 0, t3));
+}
+
+/// `pstep_diamond`'s bridge onto `pstep_subst1`, admitted with the
+/// ORIGINAL (depth-based, not size-based) headroom shape.
+///
+/// `pstep_subst1` above is now fully proven, but its headroom is stated in
+/// terms of `size(body1)`/`size(a1)` -- and inside `pstep_diamond`, `body1`/
+/// `a1` are not structural subterms of `e` (whose size is controlled by
+/// `pstep_diamond`'s own `size(e)`-based headroom); they are `pstep`'s own
+/// existentially-quantified beta WITNESSES, chosen deep inside the proof.
+/// Witness size, unlike `max_var_below`/`depth` (both shown to grow only
+/// polynomially under `pstep` earlier in this file), can grow EXPONENTIALLY:
+/// a "duplicator chain" `e_k = App(Bind(_, App(Var(0), Var(0))), e_{k-1})`
+/// gives a recursive size bound `D(k) = 3*(D(k-1)+1) = O(3^k)`. So no fixed,
+/// closed-form headroom formula in `pstep_diamond`'s own universally-
+/// quantified signature can be satisfied for arbitrary witnesses -- the
+/// headroom `pstep_subst1` would need depends on witness sizes that aren't
+/// known until AFTER the witnesses are chosen, but `pstep_diamond`'s
+/// `requires` clause has to be fixed upfront. This is a genuine limitation
+/// of the size-based headroom technique, not a gap in `pstep_subst1` itself.
+///
+/// This bridge restates `pstep_subst1`'s conclusion with the older, weaker
+/// headroom that `pstep_diamond`'s existing derivation (via `pstep_bounds`)
+/// already establishes at every call site: a shared `max_var_below` bound
+/// plus the (size-independent) `depth` of each witness. It is admitted
+/// rather than derived from `pstep_subst1`, since deriving it would require
+/// exactly the size bound that's unavailable here. Closing this admit for
+/// real would need either a genuinely different proof technique for
+/// `pstep_subst1` (one whose headroom is depth-based, not size-based) or a
+/// separate argument bounding witness size that does not yet exist in this
+/// file.
+#[verifier::external_body]
+pub proof fn pstep_subst1_bridge(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
+    requires
+        pstep(body1, body3),
+        pstep(a1, a3),
+        max_var_below(body1, bound),
+        max_var_below(a1, bound),
+        bound + depth(body1) + depth(a1) + 3 <= 0xFFFF_0000,
     ensures pstep(subst1(body1, a1), subst1(body3, a3))
 {
 }
@@ -3601,7 +3686,7 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                 assert(b1depth <= size(*fb));
                                 assert(a1depth <= size(*a));
                                 assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
-                                pstep_subst1(c1, body1, body3, a1, a3);
+                                pstep_subst1_bridge(c1, body1, body3, a1, a3);
 
                                 let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
                                 max_var_below_mono(body2, b2mvb, c2);
@@ -3609,7 +3694,7 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                 assert(b2depth <= size(*fb));
                                 assert(a2depth <= size(*a));
                                 assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
-                                pstep_subst1(c2, body2, body3, a2, a3);
+                                pstep_subst1_bridge(c2, body2, body3, a2, a3);
 
                                 subst1(body3, a3)
                             } else {
@@ -3632,7 +3717,7 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                         assert(b1depth <= size(*fb));
                                         assert(a1depth <= size(*a));
                                         assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
-                                        pstep_subst1(c1, body1, body3, a1, a3);
+                                        pstep_subst1_bridge(c1, body1, body3, a1, a3);
 
                                         let e3v = subst1(body3, a3);
                                         assert(e2 == ExprSpec::App(Box::new(ExprSpec::Bind(t2, Box::new(*b2))), Box::new(a2)));
@@ -3667,7 +3752,7 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                                         assert(b2depth <= size(*fb));
                                         assert(a2depth <= size(*a));
                                         assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
-                                        pstep_subst1(c2, body2, body3, a2, a3);
+                                        pstep_subst1_bridge(c2, body2, body3, a2, a3);
 
                                         let e3v = subst1(body3, a3);
                                         assert(e1 == ExprSpec::App(Box::new(ExprSpec::Bind(t1, Box::new(*b1))), Box::new(a1)));
