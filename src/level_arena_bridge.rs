@@ -35,7 +35,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat, eff, case_split_sound};
+use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, which are erased under plain (non-Verus) compilation — hence the
@@ -589,17 +589,141 @@ pub fn verified_leq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r
             return true;
         }
     }
-    if let Some((_, b)) = l_imax {
+    if let Some((a, b)) = l_imax {
         let bl = ctx.read_level(b);
         if let Some(p) = level_as_param(&bl) {
             return verified_leq_imax_by_cases(ctx, l, r, p, diff, fuel1);
         }
+        if level_as_max(&bl).is_some() || level_as_imax(&bl).is_some() {
+            assert(to_model(l) == LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b))));
+            return verified_leq_core_imax_rewrite_left(ctx, a, b, l, r, diff, fuel1);
+        }
     }
-    if let Some((_, y)) = r_imax {
+    if let Some((x, y)) = r_imax {
         let yl = ctx.read_level(y);
         if let Some(p) = level_as_param(&yl) {
             return verified_leq_imax_by_cases(ctx, l, r, p, diff, fuel1);
         }
+        if level_as_max(&yl).is_some() || level_as_imax(&yl).is_some() {
+            assert(to_model(r) == LevelSpec::IMax(Box::new(to_model(x)), Box::new(to_model(y))));
+            return verified_leq_core_imax_rewrite_right(ctx, x, y, l, r, diff, fuel1);
+        }
+    }
+    false
+}
+
+/// Real-arena counterpart to `level_model::leq_core_imax_rewrite_left`,
+/// implementing `leq_core`'s first `is_any_max` rewrite arm. Notably
+/// simpler than the model version: `LevelPtr` is `Copy`, so reusing `a`,
+/// `x`, `y` in multiple constructed terms below needs no `dup`-equivalent.
+/// (`l` is only referenced inside `assert`s, erased under plain
+/// compilation — see `leq_core_imax_rewrite_left`'s doc comment in
+/// `level_model.rs` for the same note.)
+#[allow(unused_variables)]
+fn verified_leq_core_imax_rewrite_left<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, a: LevelPtr<'t>, b: LevelPtr<'t>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
+    requires to_model(l) == LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b)))
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+    let bl = ctx.read_level(b);
+    if let Some((x, y)) = level_as_imax(&bl) {
+        assert(to_model(b) == LevelSpec::IMax(Box::new(to_model(x)), Box::new(to_model(y))));
+        let new_lhs = ctx.imax(a, y);
+        let new_rhs = ctx.imax(x, y);
+        let new_max = ctx.max(new_lhs, new_rhs);
+        proof { imax_imax_distrib(to_model(a), to_model(x), to_model(y)); }
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max), rho) == interp(to_model(l), rho) by {
+            assert(interp(to_model(new_max), rho) == max_nat(interp(to_model(new_lhs), rho), interp(to_model(new_rhs), rho)));
+            assert(interp(to_model(new_lhs), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(y), rho)) });
+            assert(interp(to_model(new_rhs), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(y), rho)) });
+            assert(interp(to_model(l), rho) == if interp(to_model(b), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(b), rho)) });
+            assert(interp(to_model(b), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(y), rho)) });
+        }
+        let result = verified_leq_core(ctx, new_max, r, diff, fuel1);
+        assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        return result;
+    }
+    if let Some((x, y)) = level_as_max(&bl) {
+        assert(to_model(b) == LevelSpec::Max(Box::new(to_model(x)), Box::new(to_model(y))));
+        let new_lhs = ctx.imax(a, x);
+        let new_rhs = ctx.imax(a, y);
+        let new_max_raw = ctx.max(new_lhs, new_rhs);
+        proof { imax_max_distrib(to_model(a), to_model(x), to_model(y)); }
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max_raw), rho) == interp(to_model(l), rho) by {
+            assert(interp(to_model(new_max_raw), rho) == max_nat(interp(to_model(new_lhs), rho), interp(to_model(new_rhs), rho)));
+            assert(interp(to_model(new_lhs), rho) == if interp(to_model(x), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(x), rho)) });
+            assert(interp(to_model(new_rhs), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(y), rho)) });
+            assert(interp(to_model(l), rho) == if interp(to_model(b), rho) == 0 { 0 } else { max_nat(interp(to_model(a), rho), interp(to_model(b), rho)) });
+            assert(interp(to_model(b), rho) == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
+        }
+        let new_max = verified_simplify(ctx, new_max_raw, fuel1);
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max), rho) == interp(to_model(l), rho) by {
+            assert(interp(to_model(new_max), rho) == interp(to_model(new_max_raw), rho));
+            assert(interp(to_model(new_max_raw), rho) == interp(to_model(l), rho));
+        }
+        let result = verified_leq_core(ctx, new_max, r, diff, fuel1);
+        assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        return result;
+    }
+    false
+}
+
+/// Mirror of `verified_leq_core_imax_rewrite_left` for `leq_core`'s second
+/// `is_any_max` rewrite arm: `r = IMax(x, y)` where `y` is `Max`- or
+/// `IMax`-shaped.
+#[allow(unused_variables)]
+fn verified_leq_core_imax_rewrite_right<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: LevelPtr<'t>, y: LevelPtr<'t>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
+    requires to_model(r) == LevelSpec::IMax(Box::new(to_model(x)), Box::new(to_model(y)))
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    decreases fuel
+{
+    if fuel == 0 {
+        return false;
+    }
+    let fuel1 = fuel - 1;
+    let yl = ctx.read_level(y);
+    if let Some((j, k)) = level_as_imax(&yl) {
+        assert(to_model(y) == LevelSpec::IMax(Box::new(to_model(j)), Box::new(to_model(k))));
+        let new_lhs = ctx.imax(x, k);
+        let new_rhs = ctx.imax(j, k);
+        let new_max = ctx.max(new_lhs, new_rhs);
+        proof { imax_imax_distrib(to_model(x), to_model(j), to_model(k)); }
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max), rho) == interp(to_model(r), rho) by {
+            assert(interp(to_model(new_max), rho) == max_nat(interp(to_model(new_lhs), rho), interp(to_model(new_rhs), rho)));
+            assert(interp(to_model(new_lhs), rho) == if interp(to_model(k), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(k), rho)) });
+            assert(interp(to_model(new_rhs), rho) == if interp(to_model(k), rho) == 0 { 0 } else { max_nat(interp(to_model(j), rho), interp(to_model(k), rho)) });
+            assert(interp(to_model(r), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(y), rho)) });
+            assert(interp(to_model(y), rho) == if interp(to_model(k), rho) == 0 { 0 } else { max_nat(interp(to_model(j), rho), interp(to_model(k), rho)) });
+        }
+        let result = verified_leq_core(ctx, l, new_max, diff, fuel1);
+        assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        return result;
+    }
+    if let Some((j, k)) = level_as_max(&yl) {
+        assert(to_model(y) == LevelSpec::Max(Box::new(to_model(j)), Box::new(to_model(k))));
+        let new_lhs = ctx.imax(x, j);
+        let new_rhs = ctx.imax(x, k);
+        let new_max_raw = ctx.max(new_lhs, new_rhs);
+        proof { imax_max_distrib(to_model(x), to_model(j), to_model(k)); }
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max_raw), rho) == interp(to_model(r), rho) by {
+            assert(interp(to_model(new_max_raw), rho) == max_nat(interp(to_model(new_lhs), rho), interp(to_model(new_rhs), rho)));
+            assert(interp(to_model(new_lhs), rho) == if interp(to_model(j), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(j), rho)) });
+            assert(interp(to_model(new_rhs), rho) == if interp(to_model(k), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(k), rho)) });
+            assert(interp(to_model(r), rho) == if interp(to_model(y), rho) == 0 { 0 } else { max_nat(interp(to_model(x), rho), interp(to_model(y), rho)) });
+            assert(interp(to_model(y), rho) == max_nat(interp(to_model(j), rho), interp(to_model(k), rho)));
+        }
+        let new_max = verified_simplify(ctx, new_max_raw, fuel1);
+        assert forall |rho: Map<nat, nat>| interp(to_model(new_max), rho) == interp(to_model(r), rho) by {
+            assert(interp(to_model(new_max), rho) == interp(to_model(new_max_raw), rho));
+            assert(interp(to_model(new_max_raw), rho) == interp(to_model(r), rho));
+        }
+        let result = verified_leq_core(ctx, l, new_max, diff, fuel1);
+        assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int);
+        return result;
     }
     false
 }
