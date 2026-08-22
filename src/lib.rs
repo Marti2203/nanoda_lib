@@ -13,6 +13,7 @@ pub mod env;
 pub mod expr;
 pub mod inductive;
 pub mod level;
+pub mod level_arena_bridge;
 pub mod level_model;
 pub mod name;
 pub mod parser;
