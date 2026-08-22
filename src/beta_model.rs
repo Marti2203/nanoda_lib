@@ -28,6 +28,8 @@
 use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+#[cfg(verus_only)]
+use crate::expr_model::depth;
 
 verus! {
 
@@ -230,6 +232,62 @@ pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
         ExprSpec::Bind(t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
         ExprSpec::Let(t, v, b) => max_var_below(*t, bound) && max_var_below(*v, bound) && max_var_below(*b, bound),
         ExprSpec::Proj(s) => max_var_below(*s, bound),
+    }
+}
+
+/// Overflow bookkeeping: shifting up by one raises `max_var_below`'s bound
+/// by exactly one too.
+pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
+    requires max_var_below(e, bound)
+    ensures max_var_below(shift(1, c, e), (bound + 1) as nat)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            shift_up_max_var_below(c, bound, *f);
+            shift_up_max_var_below(c, bound, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            shift_up_max_var_below(c, bound, *t);
+            shift_up_max_var_below((c + 1) as nat, bound, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            shift_up_max_var_below(c, bound, *t);
+            shift_up_max_var_below(c, bound, *v);
+            shift_up_max_var_below((c + 1) as nat, bound, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_up_max_var_below(c, bound, *s);
+        }
+    }
+}
+
+/// `max_var_below` is monotone in its bound (widening the bound can only
+/// make the property easier to satisfy).
+pub proof fn max_var_below_mono(e: ExprSpec, b1: nat, b2: nat)
+    requires max_var_below(e, b1), b1 <= b2
+    ensures max_var_below(e, b2)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            max_var_below_mono(*f, b1, b2);
+            max_var_below_mono(*a, b1, b2);
+        }
+        ExprSpec::Bind(t, b) => {
+            max_var_below_mono(*t, b1, b2);
+            max_var_below_mono(*b, b1, b2);
+        }
+        ExprSpec::Let(t, v, b) => {
+            max_var_below_mono(*t, b1, b2);
+            max_var_below_mono(*v, b1, b2);
+            max_var_below_mono(*b, b1, b2);
+        }
+        ExprSpec::Proj(s) => {
+            max_var_below_mono(*s, b1, b2);
+        }
     }
 }
 
@@ -461,8 +519,8 @@ pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
 /// nested `Bind`s, forcing `shift(1, 1, -)`, `shift(1, 2, -)`, etc. during
 /// the induction even though `subst`'s own re-shift always uses cutoff 0
 /// at the top.
-pub proof fn shift_up_min_escaping(c0: nat, s: ExprSpec)
-    requires max_var_below(s, 0xFFFF_0000nat)
+pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
+    requires bound <= 0xFFFF_0000, max_var_below(s, bound)
     ensures min_escaping(shift(1, c0, s)) == match min_escaping(s) {
         None => None::<nat>,
         Some(m) => if m >= c0 { Some((m + 1) as nat) } else { Some(m) },
@@ -472,6 +530,7 @@ pub proof fn shift_up_min_escaping(c0: nat, s: ExprSpec)
     match s {
         ExprSpec::Var(i) => {
             assert(min_escaping(s) == Some(i as nat));
+            assert((i as nat) < bound);
             if (i as nat) >= c0 {
                 assert(shift(1, c0, s) == ExprSpec::Var(((i as int) + 1) as u32));
                 assert(min_escaping(shift(1, c0, s)) == Some((((i as int) + 1) as u32) as nat));
@@ -484,24 +543,24 @@ pub proof fn shift_up_min_escaping(c0: nat, s: ExprSpec)
         ExprSpec::App(f, a) => {
             assert(min_escaping(s) == opt_min(min_escaping(*f), min_escaping(*a)));
             assert(shift(1, c0, s) == ExprSpec::App(Box::new(shift(1, c0, *f)), Box::new(shift(1, c0, *a))));
-            shift_up_min_escaping(c0, *f);
-            shift_up_min_escaping(c0, *a);
+            shift_up_min_escaping(bound, c0, *f);
+            shift_up_min_escaping(bound, c0, *a);
         }
         ExprSpec::Bind(t, b) => {
             assert(shift(1, c0, s) == ExprSpec::Bind(Box::new(shift(1, c0, *t)), Box::new(shift(1, (c0 + 1) as nat, *b))));
-            shift_up_min_escaping(c0, *t);
-            shift_up_min_escaping((c0 + 1) as nat, *b);
+            shift_up_min_escaping(bound, c0, *t);
+            shift_up_min_escaping(bound, (c0 + 1) as nat, *b);
         }
         ExprSpec::Let(t, v, b) => {
             assert(shift(1, c0, s) == ExprSpec::Let(
                 Box::new(shift(1, c0, *t)), Box::new(shift(1, c0, *v)), Box::new(shift(1, (c0 + 1) as nat, *b)),
             ));
-            shift_up_min_escaping(c0, *t);
-            shift_up_min_escaping(c0, *v);
-            shift_up_min_escaping((c0 + 1) as nat, *b);
+            shift_up_min_escaping(bound, c0, *t);
+            shift_up_min_escaping(bound, c0, *v);
+            shift_up_min_escaping(bound, (c0 + 1) as nat, *b);
         }
         ExprSpec::Proj(st) => {
-            shift_up_min_escaping(c0, *st);
+            shift_up_min_escaping(bound, c0, *st);
         }
     }
 }
@@ -509,11 +568,106 @@ pub proof fn shift_up_min_escaping(c0: nat, s: ExprSpec)
 /// Corollary specialized to `c0 = 0`: shifting up always raises the safety
 /// margin by exactly one, since every escaping reference (min or
 /// otherwise) is `>= 0` and therefore always gets shifted.
-pub proof fn shift_up_raises_margin(k: nat, s: ExprSpec)
-    requires max_var_below(s, 0xFFFF_0000nat), no_escaping_below(s, k)
+pub proof fn shift_up_raises_margin(bound: nat, k: nat, s: ExprSpec)
+    requires bound <= 0xFFFF_0000, max_var_below(s, bound), no_escaping_below(s, k)
     ensures no_escaping_below(shift(1, 0, s), (k + 1) as nat)
 {
-    shift_up_min_escaping(0, s);
+    shift_up_min_escaping(bound, 0, s);
+}
+
+/// Substitution safety: `subst(j, s, e)` never has an escaping reference
+/// at exactly `j`, no matter what escaping references `e` itself has --
+/// any occurrence of `Var(j)` in `e` gets replaced by `s`, and `s` (given
+/// its own safety margin at `j+1`) can't contribute one either. This is
+/// what makes `subst1`'s outer `shift(-1, 0, -)` well-defined: `subst1(b,
+/// a) = shift(-1, 0, subst(0, shift(1, 0, a), b))`, and this lemma at
+/// `j = 0` (with `shift_up_min_escaping`'s corollary giving the needed
+/// `no_escaping_below(shift(1, 0, a), 1)` unconditionally) shows the
+/// argument to that outer shift never has an escaping `Var(0)`.
+pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
+    requires
+        bound + depth(e) <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        max_var_below(e, bound),
+        no_escaping_below(s, (j + 1) as nat),
+    ensures min_escaping(subst(j, s, e)) != Some(j)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+            } else {
+                assert(subst(j, s, e) == e);
+                assert(min_escaping(e) == Some(i as nat));
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            assert(min_escaping(subst(j, s, e)) == opt_min(min_escaping(subst(j, s, *f)), min_escaping(subst(j, s, *a))));
+            subst_no_escape_at(bound, j, s, *f);
+            subst_no_escape_at(bound, j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            subst_no_escape_at(bound, j, s, *t);
+            shift_up_raises_margin(bound, (j + 1) as nat, s);
+            shift_up_max_var_below(0, bound, s);
+            assert(no_escaping_below(shift(1, 0, s), (j + 2) as nat));
+            assert(max_var_below(shift(1, 0, s), (bound + 1) as nat));
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_no_escape_at((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+
+            let m = min_escaping(subst((j + 1) as nat, shift(1, 0, s), *b));
+            assert(m != Some((j + 1) as nat));
+            let bb = match m {
+                Some(i) if i == 0 => Option::<nat>::None,
+                Some(i) => Some((i - 1) as nat),
+                None => Option::<nat>::None,
+            };
+            assert(min_escaping(subst(j, s, e)) == opt_min(min_escaping(subst(j, s, *t)), bb));
+            if let Some(i) = m {
+                if i > 0 {
+                    assert(bb == Some((i - 1) as nat));
+                    assert((i - 1) as nat != j);
+                }
+            }
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            subst_no_escape_at(bound, j, s, *t);
+            subst_no_escape_at(bound, j, s, *v);
+            shift_up_raises_margin(bound, (j + 1) as nat, s);
+            shift_up_max_var_below(0, bound, s);
+            assert(no_escaping_below(shift(1, 0, s), (j + 2) as nat));
+            assert(max_var_below(shift(1, 0, s), (bound + 1) as nat));
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            subst_no_escape_at((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
+
+            let m = min_escaping(subst((j + 1) as nat, shift(1, 0, s), *b));
+            assert(m != Some((j + 1) as nat));
+            let bb = match m {
+                Some(i) if i == 0 => Option::<nat>::None,
+                Some(i) => Some((i - 1) as nat),
+                None => Option::<nat>::None,
+            };
+            if let Some(i) = m {
+                if i > 0 {
+                    assert(bb == Some((i - 1) as nat));
+                    assert((i - 1) as nat != j);
+                }
+            }
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            subst_no_escape_at(bound, j, s, *st);
+        }
+    }
 }
 
 }
