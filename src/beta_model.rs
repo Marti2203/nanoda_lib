@@ -747,4 +747,95 @@ pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
     }
 }
 
+/// The shift-subst commutation: `shift(d, j+diff, subst(j, s, e)) ==
+/// subst(j, shift(d, j+diff, s), shift(d, j+diff, e))`, for a shift
+/// cutoff strictly above the substitution position (`diff >= 1`).
+///
+/// **Restricted to `d = 1`** -- found a second genuine obstruction (beyond
+/// `shift_shift_aligned`'s alignment bug) while checking the `Var`
+/// base case for `d = -1`: with `j=0, diff=1, k=1, s=Free(9)`, LHS gives
+/// `Var(0)` but RHS gives `Free(9)`. The issue is structural, not another
+/// off-by-one: shifting *down* (`d=-1`) can move an unrelated index `k >
+/// j` back down to land exactly on `j`, colliding with the substitution
+/// position and triggering it spuriously on the RHS where the LHS never
+/// substitutes at all (since `subst(j,s,Var(k))` for `k != j` is
+/// `Var(k)` outright, no further substitution involved). Shifting *up*
+/// (`d=1`) only ever moves such a `k` further from `j`, so the collision
+/// can't happen -- which is also exactly why `d=1` is the only direction
+/// this file's actual use (`pstep_shift`, protecting a substituted body's
+/// free variables against capture while moving it under a binder) ever
+/// needs.
+pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: ExprSpec)
+    requires
+        diff >= 1,
+        bound + depth(e) <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        max_var_below(e, bound),
+    ensures shift(1, (j + diff) as nat, subst(j, s, e)) == subst(j, shift(1, (j + diff) as nat, s), shift(1, (j + diff) as nat, e))
+    decreases e
+{
+    match e {
+        ExprSpec::Var(k) => {
+            if (k as nat) == j {
+                assert(subst(j, s, e) == s);
+                assert(shift(1, (j + diff) as nat, e) == e);
+            } else {
+                assert(subst(j, s, e) == e);
+                let kk = k as int;
+                if kk >= (j + diff) as int {
+                    assert(shift(1, (j + diff) as nat, e) == ExprSpec::Var((kk + 1) as u32));
+                    assert((kk + 1) as int != j as int);
+                } else {
+                    assert(shift(1, (j + diff) as nat, e) == e);
+                }
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            assert(shift(1, (j + diff) as nat, e) == ExprSpec::App(Box::new(shift(1, (j + diff) as nat, *f)), Box::new(shift(1, (j + diff) as nat, *a))));
+            shift_subst_commute(bound, j, diff, s, *f);
+            shift_subst_commute(bound, j, diff, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            assert(shift(1, (j + diff) as nat, e) == ExprSpec::Bind(Box::new(shift(1, (j + diff) as nat, *t)), Box::new(shift(1, (j + diff + 1) as nat, *b))));
+            shift_subst_commute(bound, j, diff, s, *t);
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned((j + diff) as nat, 0, 1, s);
+            assert(shift(1, (j + diff + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(1, (j + diff) as nat, s)));
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            shift_subst_commute((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
+            assert(shift(1, ((j + 1) + diff) as nat, subst((j + 1) as nat, shift(1, 0, s), *b))
+                == subst((j + 1) as nat, shift(1, ((j + 1) + diff) as nat, shift(1, 0, s)), shift(1, ((j + 1) + diff) as nat, *b)));
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            assert(shift(1, (j + diff) as nat, e) == ExprSpec::Let(
+                Box::new(shift(1, (j + diff) as nat, *t)), Box::new(shift(1, (j + diff) as nat, *v)), Box::new(shift(1, (j + diff + 1) as nat, *b)),
+            ));
+            shift_subst_commute(bound, j, diff, s, *t);
+            shift_subst_commute(bound, j, diff, s, *v);
+            max_var_below_mono(s, bound, 0xFFFF_0000nat);
+            shift_shift_aligned((j + diff) as nat, 0, 1, s);
+            assert(shift(1, (j + diff + 1) as nat, shift(1, 0, s)) == shift(1, 0, shift(1, (j + diff) as nat, s)));
+            shift_up_max_var_below(0, bound, s);
+            max_var_below_mono(*b, bound, (bound + 1) as nat);
+            assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
+            shift_subst_commute((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
+            assert(shift(1, ((j + 1) + diff) as nat, subst((j + 1) as nat, shift(1, 0, s), *b))
+                == subst((j + 1) as nat, shift(1, ((j + 1) + diff) as nat, shift(1, 0, s)), shift(1, ((j + 1) + diff) as nat, *b)));
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            assert(shift(1, (j + diff) as nat, e) == ExprSpec::Proj(Box::new(shift(1, (j + diff) as nat, *st))));
+            shift_subst_commute(bound, j, diff, s, *st);
+        }
+    }
+}
+
 }
