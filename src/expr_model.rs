@@ -15,14 +15,17 @@
 //! sound — i.e. prove the optimized algorithm computes the same thing a
 //! never-short-circuiting reference definition of substitution would.
 //!
-//! Simplified from the real `Expr`: `Free`/`Closed` stand in for
+//! Simplified from the real `Expr`, but exactly (not just "morally") in its
+//! bound-variable-relevant shape: `Free`/`Closed` stand in for
 //! `Local`/(`Sort`,`Const`,`NatLit`,`StringLit`) respectively (none of which
-//! affect the bound-variable mechanics differently from each other), and
-//! `Bind` stands in for both `Pi` and `Lambda` (`Let`/`Proj` follow the same
-//! shape too: a binder_type-like child evaluated at the same offset, plus a
-//! body-like child from the same category, except `Let`/`Proj` don't shift
-//! all their children — the essential mechanics are the same as `Bind`
-//! either way).
+//! affect the bound-variable mechanics differently from each other, and
+//! whose non-bound-variable payload -- a `Level`, a `Name`+`Levels`, a
+//! string/bignum -- is irrelevant to `inst`/`abstr` and so is erased
+//! entirely), `Bind` stands in for both `Pi` and `Lambda` (one same-offset
+//! child, one offset-shifted child), `Let` has its own three-child variant
+//! (`binder_type`/`val` at the same offset, `body` shifted -- the one real
+//! constructor that doesn't fit `App`'s or `Bind`'s shape), and `Proj` has
+//! its own one-child variant (`structure`, same offset, no shift at all).
 
 use vstd::prelude::*;
 
@@ -35,6 +38,8 @@ pub enum ExprSpec {
     Closed,
     App(Box<ExprSpec>, Box<ExprSpec>),
     Bind(Box<ExprSpec>, Box<ExprSpec>),
+    Let(Box<ExprSpec>, Box<ExprSpec>, Box<ExprSpec>),
+    Proj(Box<ExprSpec>),
 }
 
 /// Mirrors the cached `num_loose_bvars` field's defining formula (see
@@ -51,6 +56,12 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
             let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
             if nlbv(*t) >= bb { nlbv(*t) } else { bb }
         }
+        ExprSpec::Let(t, v, b) => {
+            let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
+            let tv = if nlbv(*t) >= nlbv(*v) { nlbv(*t) } else { nlbv(*v) };
+            if tv >= bb { tv } else { bb }
+        }
+        ExprSpec::Proj(s) => nlbv(*s),
     }
 }
 
@@ -63,6 +74,8 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
+        ExprSpec::Let(t, v, b) => has_fv(*t) || has_fv(*v) || has_fv(*b),
+        ExprSpec::Proj(s) => has_fv(*s),
     }
 }
 
@@ -80,6 +93,11 @@ pub open spec fn depth(e: ExprSpec) -> nat
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => 0,
         ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) { depth(*f) } else { depth(*a) },
         ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) { depth(*t) } else { depth(*b) },
+        ExprSpec::Let(t, v, b) => {
+            let tv = if depth(*t) >= depth(*v) { depth(*t) } else { depth(*v) };
+            1 + if tv >= depth(*b) { tv } else { depth(*b) }
+        }
+        ExprSpec::Proj(s) => 1 + depth(*s),
     }
 }
 
@@ -112,6 +130,12 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
             Box::new(subst_full(*t, substs, offset)),
             Box::new(subst_full(*b, substs, offset + 1)),
         ),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(
+            Box::new(subst_full(*t, substs, offset)),
+            Box::new(subst_full(*v, substs, offset)),
+            Box::new(subst_full(*b, substs, offset + 1)),
+        ),
+        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(subst_full(*s, substs, offset))),
     }
 }
 
@@ -135,6 +159,14 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
         ExprSpec::Bind(t, b) => {
             subst_full_noop(*t, substs, offset);
             subst_full_noop(*b, substs, (offset + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_noop(*t, substs, offset);
+            subst_full_noop(*v, substs, offset);
+            subst_full_noop(*b, substs, (offset + 1) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            subst_full_noop(*s, substs, offset);
         }
     }
 }
@@ -164,6 +196,20 @@ pub fn dup(e: &ExprSpec) -> (result: ExprSpec)
             assert(st == **t);
             assert(sb == **b);
             ExprSpec::Bind(Box::new(st), Box::new(sb))
+        }
+        ExprSpec::Let(t, v, b) => {
+            let st = dup(t);
+            let sv = dup(v);
+            let sb = dup(b);
+            assert(st == **t);
+            assert(sv == **v);
+            assert(sb == **b);
+            ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
+        }
+        ExprSpec::Proj(s) => {
+            let ss = dup(s);
+            assert(ss == **s);
+            ExprSpec::Proj(Box::new(ss))
         }
     }
 }
@@ -205,6 +251,15 @@ pub fn nlbv_exec(e: &ExprSpec) -> (result: u32)
             let bb = if nb == 0 { 0 } else { nb - 1 };
             if nt >= bb { nt } else { bb }
         }
+        ExprSpec::Let(t, v, b) => {
+            let nt = nlbv_exec(t);
+            let nv = nlbv_exec(v);
+            let nb = nlbv_exec(b);
+            let bb = if nb == 0 { 0 } else { nb - 1 };
+            let tv = if nt >= nv { nt } else { nv };
+            if tv >= bb { tv } else { bb }
+        }
+        ExprSpec::Proj(s) => nlbv_exec(s),
     }
 }
 
@@ -244,6 +299,16 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
                 let st = inst_model(*t, substs, offset);
                 let sb = inst_model(*b, substs, offset + 1);
                 ExprSpec::Bind(Box::new(st), Box::new(sb))
+            }
+            ExprSpec::Let(t, v, b) => {
+                let st = inst_model(*t, substs, offset);
+                let sv = inst_model(*v, substs, offset);
+                let sb = inst_model(*b, substs, offset + 1);
+                ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
+            }
+            ExprSpec::Proj(s) => {
+                let ss = inst_model(*s, substs, offset);
+                ExprSpec::Proj(Box::new(ss))
             }
         }
     }
@@ -289,6 +354,12 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
             Box::new(abstr_full(*t, locals, offset)),
             Box::new(abstr_full(*b, locals, offset + 1)),
         ),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(
+            Box::new(abstr_full(*t, locals, offset)),
+            Box::new(abstr_full(*v, locals, offset)),
+            Box::new(abstr_full(*b, locals, offset + 1)),
+        ),
+        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(abstr_full(*s, locals, offset))),
     }
 }
 
@@ -313,6 +384,14 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
             abstr_full_noop(*t, locals, offset);
             abstr_full_noop(*b, locals, (offset + 1) as nat);
         }
+        ExprSpec::Let(t, v, b) => {
+            abstr_full_noop(*t, locals, offset);
+            abstr_full_noop(*v, locals, offset);
+            abstr_full_noop(*b, locals, (offset + 1) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            abstr_full_noop(*s, locals, offset);
+        }
     }
 }
 
@@ -334,6 +413,13 @@ pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
             let rb = has_fv_exec(b);
             rt || rb
         }
+        ExprSpec::Let(t, v, b) => {
+            let rt = has_fv_exec(t);
+            let rv = has_fv_exec(v);
+            let rb = has_fv_exec(b);
+            rt || rv || rb
+        }
+        ExprSpec::Proj(s) => has_fv_exec(s),
     }
 }
 
@@ -371,6 +457,16 @@ pub fn abstr_model(e: ExprSpec, locals: &[u32], offset: u32) -> (result: ExprSpe
                 let st = abstr_model(*t, locals, offset);
                 let sb = abstr_model(*b, locals, offset + 1);
                 ExprSpec::Bind(Box::new(st), Box::new(sb))
+            }
+            ExprSpec::Let(t, v, b) => {
+                let st = abstr_model(*t, locals, offset);
+                let sv = abstr_model(*v, locals, offset);
+                let sb = abstr_model(*b, locals, offset + 1);
+                ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
+            }
+            ExprSpec::Proj(s) => {
+                let ss = abstr_model(*s, locals, offset);
+                ExprSpec::Proj(Box::new(ss))
             }
         }
     }
@@ -417,6 +513,8 @@ mod tests {
 
     fn app(f: ExprSpec, a: ExprSpec) -> ExprSpec { ExprSpec::App(Box::new(f), Box::new(a)) }
     fn bind(t: ExprSpec, b: ExprSpec) -> ExprSpec { ExprSpec::Bind(Box::new(t), Box::new(b)) }
+    fn let_(t: ExprSpec, v: ExprSpec, b: ExprSpec) -> ExprSpec { ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)) }
+    fn proj(s: ExprSpec) -> ExprSpec { ExprSpec::Proj(Box::new(s)) }
 
     // Sanity checks that inst_model/abstr_model are real (non-vacuous)
     // implementations, not just stubs that always short-circuit. Formal
@@ -484,5 +582,52 @@ mod tests {
         let locals: Vec<u32> = vec![99];
         let result = abstr_model(e, &locals, 0);
         assert_eq!(result, app(ExprSpec::Closed, ExprSpec::Var(3)));
+    }
+
+    #[test]
+    fn inst_let_shifts_body_but_not_binder_type_or_val() {
+        // Let(Var(0), Var(0), Var(1))[Free(9)] -> Let(Free(9), Free(9), Free(9)):
+        // binder_type/val see offset 0 (both hit Var(0)); body sees offset 1, so
+        // Var(1) is *also* in range there (1 - 1 = 0 < substs.len()) and hits too.
+        let e = let_(ExprSpec::Var(0), ExprSpec::Var(0), ExprSpec::Var(1));
+        let substs = vec![ExprSpec::Free(9)];
+        let result = inst_model(e, &substs, 0);
+        assert_eq!(result, let_(ExprSpec::Free(9), ExprSpec::Free(9), ExprSpec::Free(9)));
+    }
+
+    #[test]
+    fn inst_let_body_offset_leaves_out_of_range_var_from_binder_type() {
+        // Let(Var(1), Closed, Closed)[Free(9)]: Var(1) is evaluated at offset 0
+        // (binder_type isn't shifted), so it's out of range for a single subst
+        // and stays Var(1) -- unlike an equal-looking Var(1) in the body, which
+        // *would* be in range there (offset 1).
+        let e = let_(ExprSpec::Var(1), ExprSpec::Closed, ExprSpec::Closed);
+        let substs = vec![ExprSpec::Free(9)];
+        let result = inst_model(e, &substs, 0);
+        assert_eq!(result, let_(ExprSpec::Var(1), ExprSpec::Closed, ExprSpec::Closed));
+    }
+
+    #[test]
+    fn inst_proj_recurses_into_structure() {
+        let e = proj(ExprSpec::Var(0));
+        let substs = vec![ExprSpec::Free(5)];
+        let result = inst_model(e, &substs, 0);
+        assert_eq!(result, proj(ExprSpec::Free(5)));
+    }
+
+    #[test]
+    fn abstr_let_shifts_body_but_not_binder_type_or_val() {
+        let e = let_(ExprSpec::Free(7), ExprSpec::Free(7), ExprSpec::Free(7));
+        let locals = vec![7u32];
+        let result = abstr_model(e, &locals, 0);
+        assert_eq!(result, let_(ExprSpec::Var(0), ExprSpec::Var(0), ExprSpec::Var(1)));
+    }
+
+    #[test]
+    fn abstr_proj_recurses_into_structure() {
+        let e = proj(ExprSpec::Free(3));
+        let locals = vec![3u32];
+        let result = abstr_model(e, &locals, 0);
+        assert_eq!(result, proj(ExprSpec::Var(0)));
     }
 }
