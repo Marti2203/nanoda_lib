@@ -670,4 +670,81 @@ pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
     }
 }
 
+/// A second shift-shift commutation, needed for the shift-subst
+/// commutation lemma below: `shift(d, c_top+c0+1, shift(1, c0, s)) ==
+/// shift(1, c0, shift(d, c_top+c0, s))` -- shifting past a shift-*up*
+/// (unlike `shift_shift_past_down`, which shifts past a shift-*down*),
+/// where the outer cutoff on the "shift-up first" side is exactly one
+/// *more* than on the other side, since `shift(1, c0, -)` itself moves
+/// every affected index up by one. Getting this alignment wrong is a real,
+/// concrete trap: `shift(d, c_top+c0, shift(1, c0, s)) ==
+/// shift(1, c0, shift(d, c_top+c0, s))` (same cutoff both sides, no `+1`)
+/// looks equally plausible but is simply FALSE -- e.g. `d=1, c_top+c0=1,
+/// s=Var(0)`: `shift(1, 1, shift(1, 0, Var(0))) = shift(1, 1, Var(1)) =
+/// Var(2)`, but `shift(1, 0, shift(1, 1, Var(0))) = shift(1, 0, Var(0)) =
+/// Var(1)`. Found this by chasing a mismatch all the way down to a
+/// concrete counterexample after a more "obviously right" generalization
+/// of the substitution-commutation lemma turned out to need exactly this
+/// false identity in its `Bind` case.
+///
+/// Requires `c_top >= 1` specifically -- not just `c_top + c0 >= 1` --
+/// since a boundary `Var` at exactly `c_top + c0` with `d = -1` needs
+/// `ii + d = c_top + c0 - 1 >= c0`, which only holds when `c_top >= 1` on
+/// its own (`c_top = 0, c0 = 1` would satisfy the weaker sum condition
+/// while still landing exactly on the unsafe boundary). Always true in
+/// this file's actual use, where `c_top` is a fixed, never-touched value
+/// that starts `>= 1`.
+pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
+    requires
+        d == 1 || d == -1,
+        c_top >= 1,
+        max_var_below(s, 0xFFFF_0000nat),
+    ensures shift(d, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(d, (c_top + c0) as nat, s))
+    decreases s
+{
+    match s {
+        ExprSpec::Var(i) => {
+            let ii = i as int;
+            assert(shift(1, c0, s) == ExprSpec::Var(if ii >= c0 { (ii + 1) as u32 } else { i }));
+            if ii >= (c_top + c0) as int {
+                assert(shift(d, (c_top + c0) as nat, s) == ExprSpec::Var((ii + d) as u32));
+                assert(ii >= c0);
+                assert(ii + 1 >= (c_top + c0 + 1) as int);
+                assert(shift(d, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32)) == ExprSpec::Var((ii + 1 + d) as u32));
+                assert(ii + d >= 0);
+                assert(shift(1, c0, ExprSpec::Var((ii + d) as u32)) == ExprSpec::Var((ii + d + 1) as u32));
+                assert((ii + 1 + d) as u32 == (ii + d + 1) as u32);
+            } else {
+                assert(shift(d, (c_top + c0) as nat, s) == s);
+                if ii >= c0 {
+                    assert(ii + 1 < (c_top + c0 + 1) as int);
+                    assert(shift(d, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32)) == ExprSpec::Var((ii + 1) as u32));
+                    assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as u32));
+                } else {
+                    assert(ii < (c_top + c0 + 1) as int);
+                    assert(shift(d, (c_top + c0 + 1) as nat, s) == s);
+                    assert(shift(1, c0, s) == s);
+                }
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            shift_shift_aligned(c_top, c0, d, *f);
+            shift_shift_aligned(c_top, c0, d, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            shift_shift_aligned(c_top, c0, d, *t);
+            shift_shift_aligned(c_top, (c0 + 1) as nat, d, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            shift_shift_aligned(c_top, c0, d, *t);
+            shift_shift_aligned(c_top, c0, d, *v);
+            shift_shift_aligned(c_top, (c0 + 1) as nat, d, *b);
+        }
+        ExprSpec::Proj(st) => {
+            shift_shift_aligned(c_top, c0, d, *st);
+        }
+    }
+}
+
 }
