@@ -17,6 +17,7 @@ pub mod level;
 pub mod level_arena_bridge;
 pub mod level_model;
 pub mod name;
+pub mod name_model;
 pub mod parser;
 pub mod pretty_printer;
 pub mod quot;
