@@ -190,64 +190,130 @@ pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
 /// term -- so relating `pstep` before/after substitution requires first
 /// relating it before/after `shift`.
 ///
-/// **Currently `#[verifier::external_body]` (admitted, not proven) --
-/// and this section documents TWO successive obstructions, the second
-/// deeper than the first.**
-///
-/// The originally-anticipated obstruction is now fully resolved:
-/// case-splitting `pstep(e1,e2)`'s definitional disjunction and
-/// extracting the App-beta-case witnesses (`body2`, `a2` with `e2 ==
-/// subst1(body2, a2)`) is mechanical, and the commutation identity that
-/// case needs -- `shift(d, c, subst1(b, a)) == subst1(shift(d, c+1, b),
-/// shift(d, c, a))`, restricted to `d = 1` per this file's established
-/// pattern -- is now a proven lemma, `shift_subst1_commute` above. It
-/// took the full tower this file predicted (`shift_shift_past_down`,
-/// `subst_no_escape_at`, `subst_max_var_below`, `shift_subst_commute`,
-/// `shift_shift_aligned_up`), each needing its own hand-written
-/// case-by-case unfold-and-assert treatment rather than a tactic like
-/// Coq's `induction ...; omega` chaining through automatically -- but it
-/// went through.
-///
-/// What's left is a deeper problem the mechanical tower doesn't touch.
-/// `shift_subst1_commute` (like every arithmetic lemma in this file)
-/// takes `max_var_below` on its inputs as a *hypothesis* -- it doesn't
-/// derive one. To use it on the beta case's `body2`/`a2`, something has
-/// to first establish that THOSE (existentially-quantified, otherwise
-/// arbitrary) witnesses satisfy some usable bound, given only that `e1`
-/// does. The natural move is an auxiliary "`pstep` preserves
-/// `max_var_below`, growing it by some function of `e1`" lemma, proved by
-/// induction alongside `pstep`'s own recursive structure -- and that
-/// induction does NOT close, for a real, non-bookkeeping reason: a single
-/// parallel-reduction step can *duplicate* its argument at a beta-redex
-/// (e.g. `body = App(Var(0), Var(0))` -- both copies of the bound
-/// variable become copies of the same argument after substitution), and
-/// unlike the idealized unbounded-`nat` de Bruijn indices every textbook
-/// confluence proof (and Lean4Lean/MetaCoq) actually uses,
-/// `ExprSpec::Var` holds a real, fixed-width `u32` -- matching nanoda's
-/// actual representation, deliberately, per this file's module doc. A
-/// term with on the order of 32 nested self-duplicating redexes can push
-/// a variable index toward `u32::MAX` in a *single* `pstep` -- so no
-/// fixed additive (or even a term-depth-scaled) headroom constant can be
-/// derived purely from `e1`'s own shape; the bound `e2` needs depends on
-/// how many of `e1`'s redexes duplicate, which is a real combinatorial
-/// fact about `e1`, not a proof-engineering gap. This isn't a case where
-/// Verus's tactic style is weaker than a proof assistant's -- the
-/// unrestricted statement is genuinely more delicate for a `u32`-indexed
-/// AST than for the idealized model the literature states it about, and
-/// closing it needs either an explicit, caller-supplied `max_var_below`
-/// bound on `e1`, `e2`, AND the beta-case witnesses (unstatable as a
-/// clean top-level `requires` since the witnesses are existentially
-/// bound inside `pstep`'s own definition), or a redesign of `pstep`
-/// itself to carry its reduction witnesses explicitly rather than
-/// existentially. Neither is a quick corollary of what's proven so far.
-/// Flagged honestly, with the exact machinery now available for whoever
-/// picks this back up, rather than papered over with a proof that
-/// secretly doesn't check.
-#[verifier::external_body]
-pub proof fn pstep_shift(d: int, c: nat, e1: ExprSpec, e2: ExprSpec)
-    requires pstep(e1, e2)
-    ensures pstep(shift(d, c, e1), shift(d, c, e2))
+/// **Proven** (`d = 1` only, per this file's established directional
+/// restriction -- see `shift_subst_commute`'s doc comment; the caller-
+/// supplied `bound`/headroom hypotheses match `pstep_bounds` exactly,
+/// which this proof leans on directly). Two successive obstructions had
+/// to be resolved to get here, both documented in earlier commits: the
+/// mechanical shift/beta-substitution commutation (`shift_subst1_commute`,
+/// needing the full `shift_shift_past_down` / `subst_no_escape_at` /
+/// `subst_max_var_below` / `shift_subst_commute` / `shift_shift_aligned_up`
+/// tower), and propagating a `max_var_below` bound through `pstep`'s own
+/// existentially-quantified reduction witnesses (`pstep_bounds`, using a
+/// quadratic-in-`size(e1)` headroom -- an earlier pass through this
+/// wrongly concluded that obstruction was fundamentally unclosable via an
+/// exponential-blowup argument that turned out to conflate term-*size*
+/// explosion under duplication with variable-*index* growth, which stays
+/// polynomial; see `pstep_bounds`'s doc comment for the corrected
+/// account). This lemma is the payoff: with both pieces in hand, the
+/// beta case just combines them (`pstep_bounds` for the witnesses'
+/// bounds, `pstep_shift` recursively for the witnesses' own
+/// shift-preservation, `shift_subst1_commute` to reassemble); the
+/// congruence cases are direct structural recursion.
+pub proof fn pstep_shift(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
+    requires
+        pstep(e1, e2),
+        max_var_below(e1, bound),
+        bound + growth(size(e1)) + 1 <= 0xFFFF_0000,
+    ensures pstep(shift(1, c, e1), shift(1, c, e2))
+    decreases e1
 {
+    if e1 == e2 {
+        assert(shift(1, c, e1) == shift(1, c, e2));
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                assert(size(*f) < size(e1));
+                assert(size(*a) < size(e1));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        assert(size(*body) + 2 <= size(e1));
+                        growth_mono(size(*body), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*body, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+
+                            let (bmvb, bdepth) = pstep_bounds(bound, *body, body2);
+                            let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                            pstep_shift(bound, (c + 1) as nat, *body, body2);
+                            pstep_shift(bound, c, *a, a2);
+                            assert(pstep(shift(1, (c + 1) as nat, *body), shift(1, (c + 1) as nat, body2)));
+                            assert(pstep(shift(1, c, *a), shift(1, c, a2)));
+
+                            let common = if bmvb >= amvb { bmvb } else { amvb };
+                            max_var_below_mono(body2, bmvb, common);
+                            max_var_below_mono(a2, amvb, common);
+                            assert(bdepth <= size(*body));
+                            if bmvb >= amvb {
+                                growth_beta_bound(size(*body), size(e1));
+                                assert(common <= bound + growth(size(*body)));
+                            } else {
+                                assert(size(*a) + size(*body) + 2 <= size(e1));
+                                growth_beta_bound2(size(*a), size(*body), size(e1));
+                                assert(common <= bound + growth(size(*a)));
+                            }
+                            assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                            assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                            shift_subst1_commute(common, c, body2, a2);
+                            assert(shift(1, c, subst1(body2, a2)) == subst1(shift(1, (c + 1) as nat, body2), shift(1, c, a2)));
+                            assert(shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, body2), shift(1, c, a2)));
+
+                            assert(shift(1, c, e1) == ExprSpec::App(
+                                Box::new(ExprSpec::Bind(Box::new(shift(1, c, *t)), Box::new(shift(1, (c + 1) as nat, *body)))),
+                                Box::new(shift(1, c, *a)),
+                            ));
+                            assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_shift(bound, c, *f, f2);
+                            pstep_shift(bound, c, *a, a2);
+                            assert(shift(1, c, e1) == ExprSpec::App(Box::new(shift(1, c, *f)), Box::new(shift(1, c, *a))));
+                            assert(shift(1, c, e2) == ExprSpec::App(Box::new(shift(1, c, f2)), Box::new(shift(1, c, a2))));
+                            assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_shift(bound, c, *f, f2);
+                        pstep_shift(bound, c, *a, a2);
+                        assert(shift(1, c, e1) == ExprSpec::App(Box::new(shift(1, c, *f)), Box::new(shift(1, c, *a))));
+                        assert(shift(1, c, e2) == ExprSpec::App(Box::new(shift(1, c, f2)), Box::new(shift(1, c, a2))));
+                        assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                assert(size(*t) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_shift(bound, c, *t, t2);
+                pstep_shift(bound, (c + 1) as nat, *b, b2);
+                assert(shift(1, c, e1) == ExprSpec::Bind(Box::new(shift(1, c, *t)), Box::new(shift(1, (c + 1) as nat, *b))));
+                assert(shift(1, c, e2) == ExprSpec::Bind(Box::new(shift(1, c, t2)), Box::new(shift(1, (c + 1) as nat, b2))));
+                assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
 }
 
 /// Every `Var` index occurring anywhere in `e` (bound or free, at any
