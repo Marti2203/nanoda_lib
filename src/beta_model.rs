@@ -1524,6 +1524,77 @@ pub proof fn subst_subst_commute(bound: nat, j0: nat, diff: nat, s_inner: ExprSp
     }
 }
 
+/// `subst` commutes with `subst1` (the mirror image of
+/// `shift_subst1_commute` above, with an outer `subst` instead of an
+/// outer `shift`): `subst(j, s, subst1(body, arg)) == subst1(subst(j+1,
+/// shift(1,0,s), body), subst(j, s, arg))`. This is what `pstep_subst`'s
+/// App-beta case needs to move a substitution past `subst1`'s own
+/// `shift(-1, 0, -)`, exactly parallel to how `shift_subst1_commute` was
+/// what `pstep_shift`'s App-beta case needed.
+///
+/// Composes the same way `shift_subst1_commute` did, with the natural
+/// substitutions: `subst_shift_down_commute` (not `shift_shift_past_down`)
+/// to move the outer `subst` past `subst1`'s `shift(-1,0,-)`;
+/// `subst_max_var_below`/`subst_no_escape_at` for that inner
+/// substitution's bound and safety, unchanged; `subst_subst_commute` (not
+/// `shift_subst_commute`) for the inner `subst`/`subst` commutation
+/// itself; and `shift_subst_commute_below` (not `shift_shift_aligned_up`)
+/// to align the doubly-transformed argument on both sides.
+pub proof fn subst_subst1_commute(bound: nat, j: nat, s: ExprSpec, body: ExprSpec, arg: ExprSpec)
+    requires
+        bound + 2 * depth(body) + depth(arg) + 3 <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        max_var_below(body, bound),
+        max_var_below(arg, bound),
+    ensures subst(j, s, subst1(body, arg)) == subst1(subst((j + 1) as nat, shift(1, 0, s), body), subst(j, s, arg))
+{
+    let sh = shift(1, 0, arg);
+    let t = subst(0, sh, body);
+    assert(subst1(body, arg) == shift(-1, 0, t));
+
+    shift_up_max_var_below(0, bound, arg);
+    assert(max_var_below(sh, (bound + 1) as nat));
+    max_var_below_mono(body, bound, (bound + 1) as nat);
+    assert((bound + 1) + depth(body) <= 0xFFFF_0000);
+
+    shift_up_raises_margin(bound, 0, arg);
+    assert(no_escaping_below(sh, 1));
+    subst_no_escape_at((bound + 1) as nat, 0, sh, body);
+    assert(no_escaping_below(t, 1));
+
+    subst_max_var_below((bound + 1) as nat, 0, sh, body);
+    assert(max_var_below(t, ((bound + 1) + depth(body)) as nat));
+
+    subst_depth_bound(0, sh, body);
+    shift_preserves_depth(1, 0, arg);
+    assert(depth(t) <= depth(body) + depth(arg));
+
+    let bound_t = ((bound + 1) + depth(body)) as nat;
+    max_var_below_mono(s, bound, bound_t);
+    assert(bound_t + depth(t) <= 0xFFFF_0000);
+
+    subst_shift_down_commute(bound_t, 0, j, s, t);
+    assert(subst(j, s, shift(-1, 0, t)) == shift(-1, 0, subst((j + 1) as nat, shift(1, 0, s), t)));
+
+    shift_up_max_var_below(0, bound, s);
+    max_var_below_mono(sh, (bound + 1) as nat, (bound + 1) as nat);
+    shift_up_has_escaping_ref(bound, s, 0);
+    assert(!has_escaping_ref(shift(1, 0, s), 0));
+
+    subst_subst_commute((bound + 1) as nat, 0, (j + 1) as nat, sh, shift(1, 0, s), body);
+    assert(subst((j + 1) as nat, shift(1, 0, s), subst(0, sh, body))
+        == subst(0, subst((j + 1) as nat, shift(1, 0, s), sh), subst((j + 1) as nat, shift(1, 0, s), body)));
+
+    shift_subst_commute_below(bound, 0, j, s, arg);
+    assert(shift(1, 0, subst(j, s, arg)) == subst((j + 1) as nat, shift(1, 0, s), shift(1, 0, arg)));
+
+    assert(subst((j + 1) as nat, shift(1, 0, s), t)
+        == subst(0, shift(1, 0, subst(j, s, arg)), subst((j + 1) as nat, shift(1, 0, s), body)));
+
+    assert(subst1(subst((j + 1) as nat, shift(1, 0, s), body), subst(j, s, arg))
+        == shift(-1, 0, subst(0, shift(1, 0, subst(j, s, arg)), subst((j + 1) as nat, shift(1, 0, s), body))));
+}
+
 pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: ExprSpec)
     requires
         diff >= 1,
