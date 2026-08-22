@@ -203,6 +203,62 @@ pub open spec fn contains_pfx(n: NameSpec, target: NameSpec) -> bool
     }
 }
 
+/// Mirrors `TcCtx::get_pfx`: walk `n`'s prefix chain until reaching the
+/// single-segment name whose own prefix is `Anon` (i.e. the topmost
+/// namespace component, the "root" of `n`'s hierarchical name) — or `Anon`
+/// itself, if `n` already is `Anon`.
+///
+/// The real code compares `pfx == anonymous` via arena pointer equality,
+/// which is sound here under the same hash-consing trust boundary noted for
+/// `level_arena_bridge.rs`: pointer equality between interned names implies
+/// structural equality, so it corresponds to `*pfx == NameSpec::Anon`.
+pub open spec fn root_of(n: NameSpec) -> NameSpec
+    decreases n
+{
+    match n {
+        NameSpec::Anon => NameSpec::Anon,
+        NameSpec::Str(pfx, sfx) => {
+            if *pfx == NameSpec::Anon { NameSpec::Str(pfx, sfx) } else { root_of(*pfx) }
+        }
+        NameSpec::Num(pfx, sfx) => {
+            if *pfx == NameSpec::Anon { NameSpec::Num(pfx, sfx) } else { root_of(*pfx) }
+        }
+    }
+}
+
+pub fn get_pfx_model(n: &NameSpec) -> (result: NameSpec)
+    ensures result == root_of(*n)
+    decreases n
+{
+    match n {
+        NameSpec::Anon => NameSpec::Anon,
+        NameSpec::Str(pfx, _sfx) => {
+            if name_eq(pfx, &NameSpec::Anon) {
+                assert(**pfx == NameSpec::Anon);
+                dup(n)
+            } else {
+                assert(**pfx != NameSpec::Anon);
+                let result = get_pfx_model(pfx);
+                assert(result == root_of(**pfx));
+                assert(root_of(*n) == root_of(**pfx));
+                result
+            }
+        }
+        NameSpec::Num(pfx, _sfx) => {
+            if name_eq(pfx, &NameSpec::Anon) {
+                assert(**pfx == NameSpec::Anon);
+                dup(n)
+            } else {
+                assert(**pfx != NameSpec::Anon);
+                let result = get_pfx_model(pfx);
+                assert(result == root_of(**pfx));
+                assert(root_of(*n) == root_of(**pfx));
+                result
+            }
+        }
+    }
+}
+
 }
 
 #[cfg(test)]
@@ -273,5 +329,27 @@ mod tests {
         assert!(a == b);
         assert!(!name_eq(&a, &c));
         assert!(a != c);
+    }
+
+    #[test]
+    fn get_pfx_of_anon_is_anon() {
+        assert_eq!(get_pfx_model(&NameSpec::Anon), NameSpec::Anon);
+    }
+
+    #[test]
+    fn get_pfx_of_single_segment_is_itself() {
+        let n = str_(NameSpec::Anon, 1); // "A"
+        let result = get_pfx_model(&n);
+        assert_eq!(result, n);
+    }
+
+    #[test]
+    fn get_pfx_of_nested_name_is_topmost_segment() {
+        // A.B.C -> A
+        let a = str_(NameSpec::Anon, 1);
+        let ab = str_(dup(&a), 2);
+        let abc = num_(ab, 3);
+        let result = get_pfx_model(&abc);
+        assert_eq!(result, a);
     }
 }
