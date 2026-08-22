@@ -18,15 +18,17 @@ use vstd::prelude::*;
 
 verus! {
 
-/// Arena-free mirror of `crate::level::Level`. `Param` carries a raw `nat` id
+/// Arena-free mirror of `crate::level::Level`. `Param` carries a raw `u64` id
 /// rather than an interned `Name`, since name identity plays no role in the
-/// semantics below (only equality, which `nat` gives us for free).
+/// semantics below (only equality) — and unlike a ghost `nat`, `u64` is a
+/// real runtime value, so exec code can actually compare two params' ids
+/// (needed by `leq_core_partial` below).
 pub enum LevelSpec {
     Zero,
     Succ(Box<LevelSpec>),
     Max(Box<LevelSpec>, Box<LevelSpec>),
     IMax(Box<LevelSpec>, Box<LevelSpec>),
-    Param(nat),
+    Param(u64),
 }
 
 pub open spec fn max_nat(a: nat, b: nat) -> nat {
@@ -46,7 +48,7 @@ pub open spec fn interp(l: LevelSpec, rho: Map<nat, nat>) -> nat
         LevelSpec::IMax(a, b) => {
             if interp(*b, rho) == 0 { 0 } else { max_nat(interp(*a, rho), interp(*b, rho)) }
         }
-        LevelSpec::Param(p) => if rho.contains_key(p) { rho[p] } else { 0 },
+        LevelSpec::Param(p) => if rho.contains_key(p as nat) { rho[p as nat] } else { 0 },
     }
 }
 
@@ -111,4 +113,149 @@ pub fn simplify_no_imax(l: LevelSpec) -> (result: LevelSpec)
     }
 }
 
+/// A conservative, structural-only fragment of `TcCtx::leq_core`
+/// (`level.rs`'s decision procedure for "is `l + diff <= r` valid for every
+/// assignment of the universe parameters"). It's faithful to the real
+/// `leq_core` for every case that doesn't require the "IMax case split"
+/// (`leq_imax_by_cases`) — and for everything else it just returns `false`,
+/// which is always a safe (if incomplete) answer.
+///
+/// `leq_core(l, r, diff)` in `level.rs` maintains the invariant that it
+/// decides `interp(l) <= interp(r) + diff`, not `interp(l) + diff <=
+/// interp(r)` — `diff` is added to the *right*, which is why peeling a
+/// `Succ` off `l` decrements `diff` (`l = Succ(s)`: `s + 1 <= r + diff` iff
+/// `s <= r + (diff - 1)`) while peeling one off `r` increments it.
+///
+/// The real `leq_core`'s hard case (IMax-by-cases) is left unimplemented
+/// here because its termination isn't structural: substituting a param `p`
+/// with `Succ(p)` to test the "`p` is nonzero" branch makes the substituted
+/// term *larger*, not smaller, so a plain structural `decreases` doesn't
+/// apply. The actual reason it terminates is that the substitution
+/// eliminates every `IMax(_, p)` occurrence of that specific `p` (`subst`
+/// replaces all of them, and `simplify` rewrites the resulting
+/// `IMax(_, Succ(_))`/`IMax(_, Zero)` shapes into `Max`/`Succ`/`Zero`, none
+/// of which can trigger a further case split on `p`) — so the number of
+/// *distinct params that could still trigger a case split* is what
+/// decreases, not term size. Formalizing that requires first proving
+/// `subst`+`simplify` actually has that "no more case-split shapes for
+/// `p`" property, which is real work for a follow-up.
+pub fn leq_core_partial(l: &LevelSpec, r: &LevelSpec, diff: i64) -> (result: bool)
+    ensures result ==> forall |rho: Map<nat, nat>|
+        #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
+    decreases l, r
+{
+    match (l, r) {
+        (LevelSpec::Zero, _) if diff >= 0 => true,
+        (_, LevelSpec::Zero) if diff < 0 => false,
+        (LevelSpec::Param(a), LevelSpec::Param(x)) => *a == *x && diff >= 0,
+        (LevelSpec::Param(_), LevelSpec::Zero) => false,
+        (LevelSpec::Zero, LevelSpec::Param(_)) => diff >= 0,
+        (LevelSpec::Succ(s), _) => {
+            match diff.checked_sub(1) {
+                Some(d) => {
+                    let sub = leq_core_partial(&**s, r, d);
+                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(**s, rho) as int <= interp(*r, rho) as int + d as int);
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == interp(**s, rho) + 1);
+                    sub
+                }
+                // `diff - 1` would overflow `i64`: astronomically unreachable in
+                // practice (it needs ~2^63 nested `Succ`s), but since we only need
+                // to return a sound answer, not a complete one, `false` is free.
+                None => false,
+            }
+        }
+        (_, LevelSpec::Succ(s)) => {
+            match diff.checked_add(1) {
+                Some(d) => {
+                    let sub = leq_core_partial(l, &**s, d);
+                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**s, rho) as int + d as int);
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == interp(**s, rho) + 1);
+                    sub
+                }
+                None => false,
+            }
+        }
+        (LevelSpec::Max(a, b), _) => {
+            let ra = leq_core_partial(&**a, r, diff);
+            let rb = leq_core_partial(&**b, r, diff);
+            assert(ra ==> forall |rho: Map<nat, nat>| #[trigger] interp(**a, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(rb ==> forall |rho: Map<nat, nat>| #[trigger] interp(**b, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == max_nat(interp(**a, rho), interp(**b, rho)));
+            ra && rb
+        }
+        (LevelSpec::Param(_), LevelSpec::Max(x, y)) => {
+            let rx = leq_core_partial(l, &**x, diff);
+            let ry = leq_core_partial(l, &**y, diff);
+            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            rx || ry
+        }
+        (LevelSpec::Zero, LevelSpec::Max(x, y)) => {
+            let rx = leq_core_partial(l, &**x, diff);
+            let ry = leq_core_partial(l, &**y, diff);
+            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            rx || ry
+        }
+        // Any pair involving `IMax` that isn't caught above: not attempted (see
+        // doc comment). Returning `false` unconditionally keeps this sound.
+        _ => false,
+    }
+}
+
 } // verus!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn succ(l: LevelSpec) -> LevelSpec { LevelSpec::Succ(Box::new(l)) }
+    fn max(l: LevelSpec, r: LevelSpec) -> LevelSpec { LevelSpec::Max(Box::new(l), Box::new(r)) }
+
+    // Sanity checks that `leq_core_partial` is a real (non-vacuous) decision
+    // procedure on the fragment it covers, not just a stub that always
+    // returns `false`. Formal soundness (true results are always correct)
+    // is checked by Verus; these just check it says `true` when it should.
+    #[test]
+    fn zero_leq_zero() {
+        assert!(leq_core_partial(&LevelSpec::Zero, &LevelSpec::Zero, 0));
+    }
+
+    #[test]
+    fn succ_chain() {
+        // Succ(Succ(Zero)) <= Succ(Succ(Succ(Zero)))
+        let l = succ(succ(LevelSpec::Zero));
+        let r = succ(succ(succ(LevelSpec::Zero)));
+        assert!(leq_core_partial(&l, &r, 0));
+        // ... but not the other way around.
+        assert!(!leq_core_partial(&r, &l, 0));
+    }
+
+    #[test]
+    fn param_needs_matching_id() {
+        let p0 = LevelSpec::Param(0);
+        let p1 = LevelSpec::Param(1);
+        assert!(leq_core_partial(&p0, &LevelSpec::Param(0), 0));
+        assert!(!leq_core_partial(&p0, &p1, 0));
+    }
+
+    #[test]
+    fn max_left_needs_both_arms() {
+        // max(Param(0), Param(1)) <= Param(1) is NOT universally valid
+        // (fails when Param(0)'s assignment exceeds Param(1)'s).
+        let l = max(LevelSpec::Param(0), LevelSpec::Param(1));
+        assert!(!leq_core_partial(&l, &LevelSpec::Param(1), 0));
+        // max(Param(0), Param(0)) <= Param(0) is fine.
+        let l2 = max(LevelSpec::Param(0), LevelSpec::Param(0));
+        assert!(leq_core_partial(&l2, &LevelSpec::Param(0), 0));
+    }
+
+    #[test]
+    fn imax_shapes_conservatively_false() {
+        // Not a soundness bug: leq_core_partial just doesn't attempt IMax yet.
+        let l = LevelSpec::IMax(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Zero));
+        assert!(!leq_core_partial(&l, &l, 0));
+    }
+}
