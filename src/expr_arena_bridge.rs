@@ -31,7 +31,7 @@
 use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::util::TcCtx;
-use crate::util::{ExprPtr, NamePtr};
+use crate::util::{ExprPtr, NamePtr, LevelsPtr};
 use crate::expr::{Expr, BinderStyle};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -66,6 +66,19 @@ pub(crate) fn expr_is_closed_leaf(e: &Expr) -> bool {
 #[allow(dead_code)]
 pub(crate) fn expr_as_app<'t>(e: &Expr<'t>) -> Option<(ExprPtr<'t>, ExprPtr<'t>)> {
     match e { Expr::App { fun, arg, .. } => Some((*fun, *arg)), _ => None }
+}
+
+/// Unlike the other accessors, `Const`'s payload (a name plus universe
+/// levels) is otherwise erased entirely into `ExprSpec::Closed` (see
+/// `expr_is_closed_leaf`'s doc comment) -- content-blind is right for
+/// `inst`/`abstr`'s purposes, but some later proofs (e.g.
+/// `tc_model.rs::get_rec_rule`) need to know *which* `Const` this is.
+/// Takes the pointer itself, same reason as `expr_is_local`: so the
+/// contract can talk about the pointer's identity, not just the shallow
+/// value's.
+#[allow(dead_code)]
+pub(crate) fn expr_as_const<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(NamePtr<'t>, LevelsPtr<'t>)> {
+    match e { Expr::Const { name, levels, .. } => Some((*name, *levels)), _ => None }
 }
 
 #[allow(dead_code)]
@@ -147,6 +160,21 @@ pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(Ex
     ensures match result {
         Some((f, a)) => to_model_of_expr(*e) == ExprSpec::App(Box::new(to_model(f)), Box::new(to_model(a))),
         None => !matches!(to_model_of_expr(*e), ExprSpec::App(_, _)),
+    };
+
+/// `Const`'s name/levels, keyed by the pointer (like `expr_id`) since
+/// `to_model`/`to_model_of_expr` collapse every `Const` to `Closed`
+/// regardless of payload (see `expr_is_closed_leaf`) -- `is_const_shape`/
+/// `const_name_of`/`const_levels_of` are a separate side channel, not
+/// derived from `to_model`.
+pub uninterp spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
+pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
+
+pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, LevelsPtr<'t>)>)
+    ensures match result {
+        Some((n, l)) => is_const_shape(ptr) && const_name_of(ptr) == n && const_levels_of(ptr) == l,
+        None => !is_const_shape(ptr),
     };
 
 pub assume_specification<'t> [expr_as_pi] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
