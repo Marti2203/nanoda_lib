@@ -190,22 +190,59 @@ pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
 /// term -- so relating `pstep` before/after substitution requires first
 /// relating it before/after `shift`.
 ///
-/// **Currently `#[verifier::external_body]` (admitted, not proven).**
-/// Working the proof out by hand: case-splitting on `pstep(e1,e2)`'s
-/// definitional disjunction and extracting the App-beta-case witnesses
-/// (`body2`, `a2` with `e2 == subst1(body2, a2)`) is mechanical and does
-/// unfold automatically -- but discharging that case then needs exactly
-/// `shift(d, c, subst1(b, a)) == subst1(shift(d, c+1, b), shift(d, c, a))`,
-/// a shift/substitution *commutation* lemma this file doesn't have yet.
-/// That lemma in turn needs its own sub-lemmas (shift commutes with
-/// itself at different cutoffs; shift commutes with `subst`) before it's
-/// provable -- the classic tower of de Bruijn arithmetic lemmas every
-/// confluence proof needs (see e.g. Software Foundations' `Stlc`/`Norm`
-/// chapters), except each link here needs hand-written case-by-case
-/// unfold-and-assert treatment rather than a tactic like Coq's `induction
-/// ... ; omega` chaining through it automatically. This is genuinely where
-/// the friction starts to compound -- flagged honestly rather than papered
-/// over with a proof that secretly doesn't check.
+/// **Currently `#[verifier::external_body]` (admitted, not proven) --
+/// and this section documents TWO successive obstructions, the second
+/// deeper than the first.**
+///
+/// The originally-anticipated obstruction is now fully resolved:
+/// case-splitting `pstep(e1,e2)`'s definitional disjunction and
+/// extracting the App-beta-case witnesses (`body2`, `a2` with `e2 ==
+/// subst1(body2, a2)`) is mechanical, and the commutation identity that
+/// case needs -- `shift(d, c, subst1(b, a)) == subst1(shift(d, c+1, b),
+/// shift(d, c, a))`, restricted to `d = 1` per this file's established
+/// pattern -- is now a proven lemma, `shift_subst1_commute` above. It
+/// took the full tower this file predicted (`shift_shift_past_down`,
+/// `subst_no_escape_at`, `subst_max_var_below`, `shift_subst_commute`,
+/// `shift_shift_aligned_up`), each needing its own hand-written
+/// case-by-case unfold-and-assert treatment rather than a tactic like
+/// Coq's `induction ...; omega` chaining through automatically -- but it
+/// went through.
+///
+/// What's left is a deeper problem the mechanical tower doesn't touch.
+/// `shift_subst1_commute` (like every arithmetic lemma in this file)
+/// takes `max_var_below` on its inputs as a *hypothesis* -- it doesn't
+/// derive one. To use it on the beta case's `body2`/`a2`, something has
+/// to first establish that THOSE (existentially-quantified, otherwise
+/// arbitrary) witnesses satisfy some usable bound, given only that `e1`
+/// does. The natural move is an auxiliary "`pstep` preserves
+/// `max_var_below`, growing it by some function of `e1`" lemma, proved by
+/// induction alongside `pstep`'s own recursive structure -- and that
+/// induction does NOT close, for a real, non-bookkeeping reason: a single
+/// parallel-reduction step can *duplicate* its argument at a beta-redex
+/// (e.g. `body = App(Var(0), Var(0))` -- both copies of the bound
+/// variable become copies of the same argument after substitution), and
+/// unlike the idealized unbounded-`nat` de Bruijn indices every textbook
+/// confluence proof (and Lean4Lean/MetaCoq) actually uses,
+/// `ExprSpec::Var` holds a real, fixed-width `u32` -- matching nanoda's
+/// actual representation, deliberately, per this file's module doc. A
+/// term with on the order of 32 nested self-duplicating redexes can push
+/// a variable index toward `u32::MAX` in a *single* `pstep` -- so no
+/// fixed additive (or even a term-depth-scaled) headroom constant can be
+/// derived purely from `e1`'s own shape; the bound `e2` needs depends on
+/// how many of `e1`'s redexes duplicate, which is a real combinatorial
+/// fact about `e1`, not a proof-engineering gap. This isn't a case where
+/// Verus's tactic style is weaker than a proof assistant's -- the
+/// unrestricted statement is genuinely more delicate for a `u32`-indexed
+/// AST than for the idealized model the literature states it about, and
+/// closing it needs either an explicit, caller-supplied `max_var_below`
+/// bound on `e1`, `e2`, AND the beta-case witnesses (unstatable as a
+/// clean top-level `requires` since the witnesses are existentially
+/// bound inside `pstep`'s own definition), or a redesign of `pstep`
+/// itself to carry its reduction witnesses explicitly rather than
+/// existentially. Neither is a quick corollary of what's proven so far.
+/// Flagged honestly, with the exact machinery now available for whoever
+/// picks this back up, rather than papered over with a proof that
+/// secretly doesn't check.
 #[verifier::external_body]
 pub proof fn pstep_shift(d: int, c: nat, e1: ExprSpec, e2: ExprSpec)
     requires pstep(e1, e2)
