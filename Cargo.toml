@@ -30,8 +30,17 @@ num-traits = "0.2.17"
 semver = "1.0.27"
 serde_json = "1.0.111"
 serde = { version = "1.0.228", features = ["derive"] }
+vstd = "=0.0.0-2026-08-09-0044"
 
 [[bin]]
 name = "nanoda_bin"
 path = "src/main.rs"
 bench = false
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

@@ -5,6 +5,9 @@
 #![allow(clippy::too_many_arguments)]
 #![deny(clippy::cast_possible_truncation)]
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 pub mod debug_printer;
 pub mod env;
 pub mod expr;
