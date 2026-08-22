@@ -10,6 +10,7 @@ use vstd::prelude::*;
 
 pub mod debug_printer;
 pub mod env;
+pub mod env_model;
 pub mod expr;
 pub mod expr_arena_bridge;
 pub mod expr_model;
