@@ -1370,6 +1370,94 @@ pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
 /// more instance of this file's recurring pattern (see
 /// `shift_subst_commute`'s doc comment) where the two shift directions
 /// are not interchangeable and only one of them is actually needed.
+/// A THIRD shift-shift alignment, for MIXED directions: `shift(-1,
+/// c_top+c0+1, shift(1, c0, s)) == shift(1, c0, shift(-1, c_top+c0, s))`
+/// -- shift up then down vs. shift down then up. Unlike
+/// `shift_shift_aligned_up` (pure `d=1`, no restriction needed) and like
+/// `shift_shift_aligned` (needs `c_top >= 1`), this ALSO needs a safety
+/// condition at the boundary -- but here it's `has_escaping_ref`-based
+/// (a `Var` sitting exactly at `c_top+c0` on the "shift down first" side
+/// underflows/misaligns when `c_top == 0`), vacuous once `c_top >= 1`,
+/// same shape as every other `d = -1` boundary condition in this file.
+pub proof fn shift_shift_aligned_mixed(bound: nat, c_top: nat, c0: nat, s: ExprSpec)
+    requires
+        bound <= 0xFFFF_0000,
+        max_var_below(s, bound),
+        c_top == 0 ==> !has_escaping_ref(s, c0),
+    ensures shift(-1, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(-1, (c_top + c0) as nat, s))
+    decreases s
+{
+    match s {
+        ExprSpec::Var(i) => {
+            let ii = i as int;
+            assert((i as nat) < bound);
+            assert(shift(1, c0, s) == ExprSpec::Var(if ii >= c0 { (ii + 1) as u32 } else { i }));
+            if c_top == 0 {
+                assert(has_escaping_ref(s, c0) == ((i as nat) == c0));
+                assert(!has_escaping_ref(s, c0));
+                assert((i as nat) != c0);
+            }
+            if ii >= (c_top + c0) as int {
+                assert(shift(-1, (c_top + c0) as nat, s) == ExprSpec::Var((ii - 1) as u32));
+                assert(ii >= c0);
+                if c_top == 0 {
+                    assert(ii != c0 as int);
+                }
+                assert(ii > c0 as int);
+                assert(shift(1, c0, ExprSpec::Var((ii - 1) as u32)) == ExprSpec::Var(ii as u32));
+                assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as u32));
+                assert(ii + 1 >= (c_top + c0 + 1) as int);
+                assert(shift(-1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32)) == ExprSpec::Var(ii as u32));
+            } else {
+                assert(shift(-1, (c_top + c0) as nat, s) == s);
+                if ii >= c0 {
+                    assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as u32));
+                    assert(ii + 1 < (c_top + c0 + 1) as int);
+                    assert(shift(-1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32)) == ExprSpec::Var((ii + 1) as u32));
+                    assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as u32));
+                } else {
+                    assert(shift(1, c0, s) == s);
+                    assert(ii < (c_top + c0 + 1) as int);
+                    assert(shift(-1, (c_top + c0 + 1) as nat, s) == s);
+                }
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if c_top == 0 {
+                assert(!has_escaping_ref(*f, c0));
+                assert(!has_escaping_ref(*a, c0));
+            }
+            shift_shift_aligned_mixed(bound, c_top, c0, *f);
+            shift_shift_aligned_mixed(bound, c_top, c0, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            if c_top == 0 {
+                assert(!has_escaping_ref(*t, c0));
+                assert(!has_escaping_ref(*b, (c0 + 1) as nat));
+            }
+            shift_shift_aligned_mixed(bound, c_top, c0, *t);
+            shift_shift_aligned_mixed(bound, c_top, (c0 + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if c_top == 0 {
+                assert(!has_escaping_ref(*t, c0));
+                assert(!has_escaping_ref(*v, c0));
+                assert(!has_escaping_ref(*b, (c0 + 1) as nat));
+            }
+            shift_shift_aligned_mixed(bound, c_top, c0, *t);
+            shift_shift_aligned_mixed(bound, c_top, c0, *v);
+            shift_shift_aligned_mixed(bound, c_top, (c0 + 1) as nat, *b);
+        }
+        ExprSpec::Proj(st) => {
+            if c_top == 0 {
+                assert(!has_escaping_ref(*st, c0));
+            }
+            shift_shift_aligned_mixed(bound, c_top, c0, *st);
+        }
+    }
+}
+
 pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
     requires max_var_below(s, 0xFFFF_0000nat)
     ensures shift(1, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(1, (c_top + c0) as nat, s))
@@ -2417,6 +2505,68 @@ pub proof fn shift_subst1_commute(bound: nat, c: nat, body: ExprSpec, arg: ExprS
 
     assert(subst1(shift(1, (c + 1) as nat, body), shift(1, c, arg))
         == shift(-1, 0, subst(0, shift(1, 0, shift(1, c, arg)), shift(1, (c + 1) as nat, body))));
+}
+
+/// `shift_subst1_commute`'s `d = -1` counterpart: `shift(-1, c,
+/// subst1(body, arg)) == subst1(shift(-1, c+1, body), shift(-1, c,
+/// arg))`. Needs escaping-safety guards on BOTH `body` and `arg` -- but
+/// only at `c == 0`, vacuous otherwise, same shape as every other `d =
+/// -1` lemma here: `shift_subst_commute_down` (used at `diff = c+1`)
+/// needs `!has_escaping_ref(body, 1)` exactly when `c == 0` (`diff ==
+/// 1`); `shift_shift_aligned_mixed` (used at `c_top = c`) needs
+/// `!has_escaping_ref(arg, 0)` exactly when `c == 0` (`c_top == 0`).
+/// Composes the rest the same way `shift_subst1_commute` does, with
+/// `shift_shift_past_down` (already generic in `d`, reused directly with
+/// `d = -1`), `subst_max_var_below`/`subst_no_escape_at` (unchanged),
+/// and the two `d = -1` counterparts in place of their `d = 1`
+/// originals.
+pub proof fn shift_subst1_commute_down(bound: nat, c: nat, body: ExprSpec, arg: ExprSpec)
+    requires
+        c == 0 ==> !has_escaping_ref(body, 1),
+        c == 0 ==> !has_escaping_ref(arg, 0),
+        bound + 2 * depth(body) + depth(arg) + 3 <= 0xFFFF_0000,
+        max_var_below(body, bound),
+        max_var_below(arg, bound),
+    ensures shift(-1, c, subst1(body, arg)) == subst1(shift(-1, (c + 1) as nat, body), shift(-1, c, arg))
+{
+    let s = shift(1, 0, arg);
+    let t = subst(0, s, body);
+    assert(subst1(body, arg) == shift(-1, 0, t));
+
+    shift_up_max_var_below(0, bound, arg);
+    assert(max_var_below(s, (bound + 1) as nat));
+    max_var_below_mono(body, bound, (bound + 1) as nat);
+    assert((bound + 1) + depth(body) <= 0xFFFF_0000);
+
+    shift_up_raises_margin(bound, 0, arg);
+    assert(no_escaping_below(s, 1));
+    subst_no_escape_at((bound + 1) as nat, 0, s, body);
+    assert(min_escaping(t) != Some(0nat));
+    assert(no_escaping_below(t, 1));
+
+    subst_max_var_below((bound + 1) as nat, 0, s, body);
+    assert(max_var_below(t, ((bound + 1) + depth(body)) as nat));
+    max_var_below_mono(t, ((bound + 1) + depth(body)) as nat, 0xFFFF_0000nat);
+    assert(max_var_below(t, 0xFFFF_0000nat));
+
+    shift_shift_past_down(c, 0, -1, t);
+    assert(shift(-1, c, shift(-1, 0, t)) == shift(-1, 0, shift(-1, (c + 1) as nat, t)));
+
+    shift_subst_commute_down((bound + 1) as nat, 0, (c + 1) as nat, s, body);
+    assert(shift(-1, (c + 1) as nat, t) == subst(0, shift(-1, (c + 1) as nat, s), shift(-1, (c + 1) as nat, body)));
+
+    if c == 0 {
+        assert(!has_escaping_ref(arg, 0));
+    }
+    max_var_below_mono(arg, bound, 0xFFFF_0000nat);
+    shift_shift_aligned_mixed(0xFFFF_0000nat, c, 0, arg);
+    assert(shift(-1, (c + 1) as nat, s) == shift(1, 0, shift(-1, c, arg)));
+
+    assert(shift(-1, (c + 1) as nat, t)
+        == subst(0, shift(1, 0, shift(-1, c, arg)), shift(-1, (c + 1) as nat, body)));
+
+    assert(subst1(shift(-1, (c + 1) as nat, body), shift(-1, c, arg))
+        == shift(-1, 0, subst(0, shift(1, 0, shift(-1, c, arg)), shift(-1, (c + 1) as nat, body))));
 }
 
 /// `subst` commutes with a shift-down of the term it's substituting
