@@ -22,6 +22,7 @@ pub mod parser;
 pub mod pretty_printer;
 pub mod quot;
 pub mod tc;
+pub mod union_find_model;
 #[cfg(test)]
 mod tests;
 pub mod unique_hasher;
