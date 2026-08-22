@@ -211,4 +211,71 @@ pub proof fn pstep_shift(d: int, c: nat, e1: ExprSpec, e2: ExprSpec)
 {
 }
 
+/// Every `Var` index occurring anywhere in `e` (bound or free, at any
+/// nesting depth) is `< bound` -- boilerplate overflow bookkeeping (`u32`
+/// arithmetic near `u32::MAX` is where `+1`/`-1` shift steps could
+/// theoretically wrap; no real term is remotely close to 4 billion levels
+/// of nesting, but Verus needs this made explicit), same spirit as
+/// `expr_model.rs::nlbv_exec`'s `offset + depth(e) <= 1_000_000_000` bound.
+/// Unlike `nlbv` (which only tracks *escaping* references), this checks
+/// every `Var` node unconditionally, since a shift step can touch a
+/// locally-bound one too.
+pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => (i as nat) < bound,
+        ExprSpec::Free(_) | ExprSpec::Closed => true,
+        ExprSpec::App(f, a) => max_var_below(*f, bound) && max_var_below(*a, bound),
+        ExprSpec::Bind(t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
+        ExprSpec::Let(t, v, b) => max_var_below(*t, bound) && max_var_below(*v, bound) && max_var_below(*b, bound),
+        ExprSpec::Proj(s) => max_var_below(*s, bound),
+    }
+}
+
+/// Building block toward the commutation lemma `pstep_shift` needs:
+/// shifting up then immediately back down at the *same* cutoff is the
+/// identity (no "no free variable at this level" side condition needed,
+/// unlike the general shift-shift/shift-subst commutations, since a
+/// `Var(i)` either stays untouched by both shifts (`i < c`) or gets `+1`
+/// then `-1`'d straight back (`i >= c`)) -- modulo the boilerplate `u32`
+/// overflow bound above.
+pub proof fn shift_cancel(c: nat, e: ExprSpec)
+    requires max_var_below(e, 0xFFFF_FFFEnat)
+    ensures shift(-1, c, shift(1, c, e)) == e
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) >= c {
+                assert(shift(1, c, e) == ExprSpec::Var(((i as int) + 1) as u32));
+                assert((((i as int) + 1) as u32) as nat >= c);
+                assert(shift(-1, c, ExprSpec::Var(((i as int) + 1) as u32))
+                    == ExprSpec::Var(((((i as int) + 1) as u32 as int) - 1) as u32));
+                assert(((((i as int) + 1) as u32 as int) - 1) as u32 == i);
+            } else {
+                assert(shift(1, c, e) == e);
+                assert(shift(-1, c, e) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            shift_cancel(c, *f);
+            shift_cancel(c, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            shift_cancel(c, *t);
+            shift_cancel((c + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            shift_cancel(c, *t);
+            shift_cancel(c, *v);
+            shift_cancel((c + 1) as nat, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_cancel(c, *s);
+        }
+    }
+}
+
 }
