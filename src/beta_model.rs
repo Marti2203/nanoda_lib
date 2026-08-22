@@ -2537,4 +2537,301 @@ pub proof fn pstep_subst(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: Exp
     }
 }
 
+/// The substitution-compatibility lemma the diamond property's App-beta
+/// case needs: `pstep(body1, body3) && pstep(a1, a3) => pstep(subst1(body1,
+/// a1), subst1(body3, a3))`.
+///
+/// **`#[verifier::external_body]` (admitted) -- genuinely open, not just
+/// unproven.** The natural strategy (mirroring how `shift_subst1_commute`
+/// / `subst_subst1_commute` were built) decomposes `subst1`'s definition
+/// and tries to relate `shift(-1, c, -)` across it via a pure algebraic
+/// identity -- the `d = -1` analogue of `shift_subst_commute`, at `diff =
+/// 1` specifically (the case that matches `subst1`'s own cutoff-0
+/// re-shift at the top level, `c = 0`). That sub-identity is FALSE:
+/// hand-derived counterexample, `e = Var(k)` with `k = j + 1` (distinct
+/// from the substitution target `j`) -- `shift(-1, j+1, -)` moves `k`
+/// down to land exactly on `j`, spuriously triggering substitution on
+/// one side where the other never substitutes. Translated back: this
+/// corresponds to `body1`/`body3` having a raw index-1 occurrence
+/// distinct from their index-0 occurrences -- i.e. a lambda body
+/// referencing an outer-bound variable one level up (`fun x => x y`),
+/// which is completely ordinary, not a corner case excludable by an
+/// escaping-safety side condition the way `subst_shift_down_commute`'s
+/// analogous gap was closed.
+///
+/// Despite the sub-identity being false, the THEOREM itself checks out
+/// by hand on a concrete instance built specifically to have that
+/// "dangerous" shape (`body1 = body3 = App(Var(0), Var(1))`, `a1 =
+/// App(Bind(Closed, Var(0)), Free(7))` beta-reducing to `a3 = Free(7)`):
+/// `subst1(body1, a1)` and `subst1(body3, a3)` come out `pstep`-related
+/// via ordinary `App` congruence, with the function positions related by
+/// a genuine beta step -- suggesting the lemma is TRUE, but the
+/// algebraic-decomposition proof technique that worked for every other
+/// commutation in this file does not directly apply to it. This is a
+/// materially different kind of gap than any other admission in this
+/// file: not "needs more of the same machinery" but "the technique
+/// itself doesn't transfer" -- closing it for real likely needs either a
+/// genuinely different induction (not decomposing through the false
+/// sub-identity), or reformulating `subst`/`subst1` via simultaneous
+/// (parallel, all-variables-at-once) substitution instead of the
+/// single-variable, capture-avoiding-via-shift style this file uses --
+/// which is closer to nanoda's own actual (telescopic) `inst`, per this
+/// file's own module doc, but would mean re-deriving most of the shift/
+/// subst commutation tower against a different substitution primitive.
+/// Flagged honestly rather than routed around; see this file's own doc
+/// comment history for what closing a gap like this actually costs once
+/// it's tractable (`shift_subst1_commute` alone took five supporting
+/// lemmas).
+#[verifier::external_body]
+pub proof fn pstep_subst1(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
+    requires
+        pstep(body1, body3),
+        pstep(a1, a3),
+        bound + depth(body1) + depth(a1) + 3 <= 0xFFFF_0000,
+        max_var_below(body1, bound),
+        max_var_below(a1, bound),
+    ensures pstep(subst1(body1, a1), subst1(body3, a3))
+{
+}
+
+/// The diamond property: `pstep(e,e1) && pstep(e,e2)` implies some `e3`
+/// with `pstep(e1,e3) && pstep(e2,e3)`. Everywhere `e1` or `e2` arises
+/// via reflexivity, `e3` is just the OTHER one (`pstep(e,e2)` restated
+/// as `pstep(e1,e3)` when `e1 == e`, etc.) -- no induction needed there.
+/// Everywhere BOTH sides arise via plain congruence (including when
+/// `e`'s head is a `Bind` but neither `e1` nor `e2` actually took the
+/// beta option), recursing the diamond property onto each child and
+/// recombining is enough. The only place this genuinely needs
+/// `pstep_subst1` (and is therefore only as complete as that lemma) is
+/// when AT LEAST ONE side is an actual beta step on `e = App(Bind(ft,
+/// fb), a)`: beta/beta needs it on both reassembled sides; beta/
+/// congruence needs it on the beta side only (the congruence side's `f2`
+/// is forced `Bind`-shaped by `pstep`'s own `Bind` case, since `pstep(f,
+/// f2)` for `f` already `Bind`-shaped can only produce another
+/// `Bind`-shaped `f2` -- so it can ALSO beta-reduce directly to the same
+/// target, no extra lemma needed for that side).
+pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
+    requires
+        pstep(e, e1),
+        pstep(e, e2),
+        max_var_below(e, bound),
+        bound + growth(size(e)) + 4 * size(e) + 20 <= 0xFFFF_0000,
+    ensures pstep(e1, e3), pstep(e2, e3)
+    decreases e
+{
+    if e == e1 {
+        e2
+    } else if e == e2 {
+        e1
+    } else {
+        match e {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(size(e) == 1 + size(*f) + size(*a));
+                assert(size(*f) < size(e));
+                assert(size(*a) < size(e));
+                growth_mono(size(*f), size(e));
+                growth_mono(size(*a), size(e));
+                match *f {
+                    ExprSpec::Bind(ft, fb) => {
+                        assert(max_var_below(*fb, bound));
+                        assert(size(*f) == 1 + size(*ft) + size(*fb));
+                        assert(size(*fb) + 2 <= size(e));
+                        growth_mono(size(*fb), size(e));
+                        assert(bound + growth(size(*fb)) + 4 * size(*fb) + 20 <= 0xFFFF_0000);
+                        assert(bound + growth(size(*a)) + 4 * size(*a) + 20 <= 0xFFFF_0000);
+
+                        if exists |body1: ExprSpec, a1: ExprSpec| #![trigger subst1(body1, a1)]
+                            pstep(*fb, body1) && pstep(*a, a1) && e1 == subst1(body1, a1)
+                        {
+                            let (body1, a1) = choose |body1: ExprSpec, a1: ExprSpec| #![trigger subst1(body1, a1)]
+                                pstep(*fb, body1) && pstep(*a, a1) && e1 == subst1(body1, a1);
+                            if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                            {
+                                // beta / beta
+                                let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                    pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+                                let body3 = pstep_diamond(bound, *fb, body1, body2);
+                                let a3 = pstep_diamond(bound, *a, a1, a2);
+                                assert(pstep(body1, body3) && pstep(body2, body3));
+                                assert(pstep(a1, a3) && pstep(a2, a3));
+
+                                let (b1mvb, b1depth) = pstep_bounds(bound, *fb, body1);
+                                let (a1mvb, a1depth) = pstep_bounds(bound, *a, a1);
+                                let (b2mvb, b2depth) = pstep_bounds(bound, *fb, body2);
+                                let (a2mvb, a2depth) = pstep_bounds(bound, *a, a2);
+
+                                let c1 = if b1mvb >= a1mvb { b1mvb } else { a1mvb };
+                                max_var_below_mono(body1, b1mvb, c1);
+                                max_var_below_mono(a1, a1mvb, c1);
+                                assert(b1depth <= size(*fb));
+                                assert(a1depth <= size(*a));
+                                assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
+                                pstep_subst1(c1, body1, body3, a1, a3);
+
+                                let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
+                                max_var_below_mono(body2, b2mvb, c2);
+                                max_var_below_mono(a2, a2mvb, c2);
+                                assert(b2depth <= size(*fb));
+                                assert(a2depth <= size(*a));
+                                assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
+                                pstep_subst1(c2, body2, body3, a2, a3);
+
+                                subst1(body3, a3)
+                            } else {
+                                // beta / congruence
+                                assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                                let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                                match f2 {
+                                    ExprSpec::Bind(t2, b2) => {
+                                        assert(pstep(*fb, *b2));
+                                        let body3 = pstep_diamond(bound, *fb, body1, *b2);
+                                        let a3 = pstep_diamond(bound, *a, a1, a2);
+                                        assert(pstep(body1, body3) && pstep(*b2, body3));
+                                        assert(pstep(a1, a3) && pstep(a2, a3));
+
+                                        let (b1mvb, b1depth) = pstep_bounds(bound, *fb, body1);
+                                        let (a1mvb, a1depth) = pstep_bounds(bound, *a, a1);
+                                        let c1 = if b1mvb >= a1mvb { b1mvb } else { a1mvb };
+                                        max_var_below_mono(body1, b1mvb, c1);
+                                        max_var_below_mono(a1, a1mvb, c1);
+                                        assert(b1depth <= size(*fb));
+                                        assert(a1depth <= size(*a));
+                                        assert(c1 + b1depth + a1depth + 3 <= 0xFFFF_0000);
+                                        pstep_subst1(c1, body1, body3, a1, a3);
+
+                                        let e3v = subst1(body3, a3);
+                                        assert(e2 == ExprSpec::App(Box::new(ExprSpec::Bind(t2, Box::new(*b2))), Box::new(a2)));
+                                        assert(pstep(e2, e3v));
+                                        e3v
+                                    }
+                                    _ => { assert(false); e1 }
+                                }
+                            }
+                        } else {
+                            assert(exists |f1: ExprSpec, a1: ExprSpec| pstep(*f, f1) && pstep(*a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1)));
+                            let (f1, a1) = choose |f1: ExprSpec, a1: ExprSpec| pstep(*f, f1) && pstep(*a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1));
+                            if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                            {
+                                // congruence / beta
+                                let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                    pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+                                match f1 {
+                                    ExprSpec::Bind(t1, b1) => {
+                                        assert(pstep(*fb, *b1));
+                                        let body3 = pstep_diamond(bound, *fb, *b1, body2);
+                                        let a3 = pstep_diamond(bound, *a, a1, a2);
+                                        assert(pstep(*b1, body3) && pstep(body2, body3));
+                                        assert(pstep(a1, a3) && pstep(a2, a3));
+
+                                        let (b2mvb, b2depth) = pstep_bounds(bound, *fb, body2);
+                                        let (a2mvb, a2depth) = pstep_bounds(bound, *a, a2);
+                                        let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
+                                        max_var_below_mono(body2, b2mvb, c2);
+                                        max_var_below_mono(a2, a2mvb, c2);
+                                        assert(b2depth <= size(*fb));
+                                        assert(a2depth <= size(*a));
+                                        assert(c2 + b2depth + a2depth + 3 <= 0xFFFF_0000);
+                                        pstep_subst1(c2, body2, body3, a2, a3);
+
+                                        let e3v = subst1(body3, a3);
+                                        assert(e1 == ExprSpec::App(Box::new(ExprSpec::Bind(t1, Box::new(*b1))), Box::new(a1)));
+                                        assert(pstep(e1, e3v));
+                                        e3v
+                                    }
+                                    _ => { assert(false); e2 }
+                                }
+                            } else {
+                                // congruence / congruence
+                                assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                                let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                                let f3 = pstep_diamond(bound, *f, f1, f2);
+                                let a3 = pstep_diamond(bound, *a, a1, a2);
+                                assert(pstep(e1, ExprSpec::App(Box::new(f3), Box::new(a3))));
+                                assert(pstep(e2, ExprSpec::App(Box::new(f3), Box::new(a3))));
+                                ExprSpec::App(Box::new(f3), Box::new(a3))
+                            }
+                        }
+                    }
+                    _ => {
+                        assert(exists |f1: ExprSpec, a1: ExprSpec| pstep(*f, f1) && pstep(*a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1)));
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f1, a1) = choose |f1: ExprSpec, a1: ExprSpec| pstep(*f, f1) && pstep(*a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        let f3 = pstep_diamond(bound, *f, f1, f2);
+                        let a3 = pstep_diamond(bound, *a, a1, a2);
+                        assert(pstep(e1, ExprSpec::App(Box::new(f3), Box::new(a3))));
+                        assert(pstep(e2, ExprSpec::App(Box::new(f3), Box::new(a3))));
+                        ExprSpec::App(Box::new(f3), Box::new(a3))
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e) == 1 + size(*t) + size(*b));
+                assert(size(*t) < size(e));
+                assert(size(*b) < size(e));
+                growth_mono(size(*t), size(e));
+                growth_mono(size(*b), size(e));
+                let (t1, b1) = choose |t1: ExprSpec, b1: ExprSpec| pstep(*t, t1) && pstep(*b, b1) && e1 == ExprSpec::Bind(Box::new(t1), Box::new(b1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                let t3 = pstep_diamond(bound, *t, t1, t2);
+                let b3 = pstep_diamond(bound, *b, b1, b2);
+                assert(pstep(e1, ExprSpec::Bind(Box::new(t3), Box::new(b3))));
+                assert(pstep(e2, ExprSpec::Bind(Box::new(t3), Box::new(b3))));
+                ExprSpec::Bind(Box::new(t3), Box::new(b3))
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
+                assert(size(*t) < size(e));
+                assert(size(*v) < size(e));
+                assert(size(*b) < size(e));
+                growth_mono(size(*t), size(e));
+                growth_mono(size(*v), size(e));
+                growth_mono(size(*b), size(e));
+                let (t1, v1, b1) = choose |t1: ExprSpec, v1: ExprSpec, b1: ExprSpec|
+                    pstep(*t, t1) && pstep(*v, v1) && pstep(*b, b1) && e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                let t3 = pstep_diamond(bound, *t, t1, t2);
+                let v3 = pstep_diamond(bound, *v, v1, v2);
+                let b3 = pstep_diamond(bound, *b, b1, b2);
+                assert(pstep(e1, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
+                assert(pstep(e2, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
+                ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))
+            }
+            ExprSpec::Proj(s) => {
+                assert(max_var_below(*s, bound));
+                assert(size(e) == 1 + size(*s));
+                assert(size(*s) < size(e));
+                growth_mono(size(*s), size(e));
+                match e1 {
+                    ExprSpec::Proj(s1) => match e2 {
+                        ExprSpec::Proj(s2) => {
+                            assert(pstep(*s, *s1) && pstep(*s, *s2));
+                            let s3 = pstep_diamond(bound, *s, *s1, *s2);
+                            assert(pstep(e1, ExprSpec::Proj(Box::new(s3))));
+                            assert(pstep(e2, ExprSpec::Proj(Box::new(s3))));
+                            ExprSpec::Proj(Box::new(s3))
+                        }
+                        _ => { assert(false); e1 }
+                    }
+                    _ => { assert(false); e1 }
+                }
+            }
+            _ => {
+                assert(false);
+                e1
+            }
+        }
+    }
+}
+
 }
