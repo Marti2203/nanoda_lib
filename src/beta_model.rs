@@ -451,4 +451,69 @@ pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
     }
 }
 
+/// Full characterization of how `shift(1, c0, -)` transforms
+/// `min_escaping`: an escaping reference at or above the shift's own
+/// cutoff `c0` gets shifted (so the minimum, if it's one of those,
+/// increases by one); one strictly below `c0` is untouched (so if that's
+/// the overall minimum, it stays put -- shifting only ever *increases* the
+/// other candidates, never making them smaller than an untouched one).
+/// Generalized over `c0` (not fixed at 0) because `s` can itself contain
+/// nested `Bind`s, forcing `shift(1, 1, -)`, `shift(1, 2, -)`, etc. during
+/// the induction even though `subst`'s own re-shift always uses cutoff 0
+/// at the top.
+pub proof fn shift_up_min_escaping(c0: nat, s: ExprSpec)
+    requires max_var_below(s, 0xFFFF_0000nat)
+    ensures min_escaping(shift(1, c0, s)) == match min_escaping(s) {
+        None => None::<nat>,
+        Some(m) => if m >= c0 { Some((m + 1) as nat) } else { Some(m) },
+    }
+    decreases s
+{
+    match s {
+        ExprSpec::Var(i) => {
+            assert(min_escaping(s) == Some(i as nat));
+            if (i as nat) >= c0 {
+                assert(shift(1, c0, s) == ExprSpec::Var(((i as int) + 1) as u32));
+                assert(min_escaping(shift(1, c0, s)) == Some((((i as int) + 1) as u32) as nat));
+                assert((((i as int) + 1) as u32) as nat == (i as nat) + 1);
+            } else {
+                assert(shift(1, c0, s) == s);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            assert(min_escaping(s) == opt_min(min_escaping(*f), min_escaping(*a)));
+            assert(shift(1, c0, s) == ExprSpec::App(Box::new(shift(1, c0, *f)), Box::new(shift(1, c0, *a))));
+            shift_up_min_escaping(c0, *f);
+            shift_up_min_escaping(c0, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(shift(1, c0, s) == ExprSpec::Bind(Box::new(shift(1, c0, *t)), Box::new(shift(1, (c0 + 1) as nat, *b))));
+            shift_up_min_escaping(c0, *t);
+            shift_up_min_escaping((c0 + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(shift(1, c0, s) == ExprSpec::Let(
+                Box::new(shift(1, c0, *t)), Box::new(shift(1, c0, *v)), Box::new(shift(1, (c0 + 1) as nat, *b)),
+            ));
+            shift_up_min_escaping(c0, *t);
+            shift_up_min_escaping(c0, *v);
+            shift_up_min_escaping((c0 + 1) as nat, *b);
+        }
+        ExprSpec::Proj(st) => {
+            shift_up_min_escaping(c0, *st);
+        }
+    }
+}
+
+/// Corollary specialized to `c0 = 0`: shifting up always raises the safety
+/// margin by exactly one, since every escaping reference (min or
+/// otherwise) is `>= 0` and therefore always gets shifted.
+pub proof fn shift_up_raises_margin(k: nat, s: ExprSpec)
+    requires max_var_below(s, 0xFFFF_0000nat), no_escaping_below(s, k)
+    ensures no_escaping_below(shift(1, 0, s), (k + 1) as nat)
+{
+    shift_up_min_escaping(0, s);
+}
+
 }
