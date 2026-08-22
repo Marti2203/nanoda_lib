@@ -3589,6 +3589,18 @@ pub proof fn pstep_subst1(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: Expr
 /// `requires` clause has to be fixed upfront. This is a genuine limitation
 /// of the size-based headroom technique, not a gap in `pstep_subst1` itself.
 ///
+/// Checked this isn't an artifact of how the induction happens to be
+/// structured: `pstep`'s own `App(Bind(_,body),a)` beta case requires
+/// `pstep(*body,body2) && pstep(*a,a2)` -- i.e. `pstep` recurses into BOTH
+/// the function body and the argument WITHIN A SINGLE INSTANCE of the
+/// relation, not merely across chained top-level applications. So the
+/// `e_k`/`D(k) = O(3^k)` blowup above is realized by one `pstep(e_k, e2)`
+/// fact, not by repeatedly re-applying `pstep_diamond`/`pstep_subst1`
+/// across separate steps -- exactly matching what "parallel" (as opposed
+/// to single-redex) reduction means. So `pstep_diamond`'s witnesses really
+/// can be exponentially larger than `e` itself, at a single call, and no
+/// restructuring of `pstep_diamond`'s own induction removes that.
+///
 /// This bridge restates `pstep_subst1`'s conclusion with the older, weaker
 /// headroom that `pstep_diamond`'s existing derivation (via `pstep_bounds`)
 /// already establishes at every call site: a shared `max_var_below` bound
