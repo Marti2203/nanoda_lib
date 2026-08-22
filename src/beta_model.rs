@@ -2573,6 +2573,146 @@ pub proof fn pstep_bounds(bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (n
     }
 }
 
+/// `pstep` never introduces a fresh escaping reference: if `e1` has none
+/// at `k`, neither does any `e2` with `pstep(e1, e2)`. The
+/// `has_escaping_ref` analogue of `pstep_bounds`, needed for
+/// `pstep_shift_down`'s own beta case (to justify calling
+/// `subst1_no_escaping_ref` on the existentially-quantified beta
+/// witnesses, which come with no escaping-structure guarantee of their
+/// own otherwise). Congruence cases need no growth at all -- unlike
+/// `max_var_below`, `has_escaping_ref` doesn't scale with depth, since
+/// substitution can only ever consume or duplicate an ALREADY-escaping
+/// reference, never manufacture one from nothing (the standard "free
+/// variables don't grow under reduction" fact, here specialized to
+/// membership at one fixed point `k`). Only the beta case needs
+/// `pstep_bounds` at all, and only for the unrelated overflow-safety
+/// bookkeeping `subst1_no_escaping_ref` itself requires.
+pub proof fn pstep_preserves_no_escaping_ref(bound: nat, k: nat, e1: ExprSpec, e2: ExprSpec)
+    requires
+        pstep(e1, e2),
+        max_var_below(e1, bound),
+        !has_escaping_ref(e1, k),
+        bound + growth(size(e1)) + 4 * size(e1) + 20 <= 0xFFFF_0000,
+    ensures !has_escaping_ref(e2, k)
+    decreases e1
+{
+    if e1 == e2 {
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                assert(size(*f) < size(e1));
+                assert(size(*a) < size(e1));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(ft, fb) => {
+                        assert(max_var_below(*fb, bound));
+                        assert(size(*fb) + 2 <= size(e1));
+                        growth_mono(size(*fb), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(*fb, body2) && pstep(*a, a2) && e2 == subst1(body2, a2);
+                            assert(has_escaping_ref(*f, k) == (has_escaping_ref(*ft, k) || has_escaping_ref(*fb, (k + 1) as nat)));
+                            assert(!has_escaping_ref(*ft, k));
+                            assert(!has_escaping_ref(*fb, (k + 1) as nat));
+                            assert(!has_escaping_ref(*a, k));
+                            pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *fb, body2);
+                            pstep_preserves_no_escaping_ref(bound, k, *a, a2);
+
+                            let (bmvb, bdepth) = pstep_bounds(bound, *fb, body2);
+                            let (amvb, adepth) = pstep_bounds(bound, *a, a2);
+                            let common = if bmvb >= amvb { bmvb } else { amvb };
+                            max_var_below_mono(body2, bmvb, common);
+                            max_var_below_mono(a2, amvb, common);
+                            assert(bdepth <= size(*fb));
+                            if bmvb >= amvb {
+                                growth_beta_bound(size(*fb), size(e1));
+                                assert(common <= bound + growth(size(*fb)));
+                            } else {
+                                assert(size(*a) + size(*fb) + 2 <= size(e1));
+                                growth_beta_bound2(size(*a), size(*fb), size(e1));
+                                assert(common <= bound + growth(size(*a)));
+                            }
+                            assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                            assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                            subst1_no_escaping_ref(common, k, body2, a2);
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            assert(!has_escaping_ref(*f, k));
+                            assert(!has_escaping_ref(*a, k));
+                            pstep_preserves_no_escaping_ref(bound, k, *f, f2);
+                            pstep_preserves_no_escaping_ref(bound, k, *a, a2);
+                            assert(e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(*f, f2) && pstep(*a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        assert(!has_escaping_ref(*f, k));
+                        assert(!has_escaping_ref(*a, k));
+                        pstep_preserves_no_escaping_ref(bound, k, *f, f2);
+                        pstep_preserves_no_escaping_ref(bound, k, *a, a2);
+                        assert(e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(size(*t) < size(e1));
+                assert(size(*b) < size(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                assert(!has_escaping_ref(*t, k));
+                assert(!has_escaping_ref(*b, (k + 1) as nat));
+                pstep_preserves_no_escaping_ref(bound, k, *t, t2);
+                pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *b, b2);
+                assert(e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                assert(!has_escaping_ref(*t, k));
+                assert(!has_escaping_ref(*v, k));
+                assert(!has_escaping_ref(*b, (k + 1) as nat));
+                pstep_preserves_no_escaping_ref(bound, k, *t, t2);
+                pstep_preserves_no_escaping_ref(bound, k, *v, v2);
+                pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *b, b2);
+                assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+            }
+            ExprSpec::Proj(st) => {
+                assert(max_var_below(*st, bound));
+                growth_mono(size(*st), size(e1));
+                match e2 {
+                    ExprSpec::Proj(st2) => {
+                        assert(!has_escaping_ref(*st, k));
+                        assert(pstep(*st, *st2));
+                        pstep_preserves_no_escaping_ref(bound, k, *st, *st2);
+                    }
+                    _ => { assert(false); }
+                }
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 /// The identity `pstep_shift`'s App-beta case needs: `shift` commutes with
 /// `subst1` (single-variable beta-substitution), `d = 1` only (matching
 /// every other directional restriction in this file -- see
