@@ -354,4 +354,101 @@ pub proof fn min_escaping_identity_sanity_check()
     assert(opt_min(Option::<nat>::None, Option::<nat>::None) is None);
 }
 
+/// The shift-shift commutation `pstep_shift`'s App-beta case needs,
+/// generalized over BOTH cutoffs so the induction can descend into `x`'s
+/// own `Bind`s (they grow together, in lockstep, since `x`'s recursive
+/// structure is what's being inducted on): `shift(d, c_top+c0, shift(-1,
+/// c0, x)) == shift(-1, c0, shift(d, c_top+c0+1, x))`. The safety side
+/// condition (`no_escaping_below(x, 1)`) is only needed when `c0 == 0`;
+/// once the induction has descended past the first binder (`c0 >= 1`),
+/// `shift(-1, c0, -)` can never wrap regardless of `x`'s content (any
+/// affected `Var(i)` already has `i >= c0 >= 1`), so the hypothesis
+/// becomes vacuous exactly where the induction needs it to.
+pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
+    requires
+        d == 1 || d == -1,
+        max_var_below(x, 0xFFFF_0000nat),
+        c0 == 0 ==> no_escaping_below(x, 1),
+    ensures shift(d, (c_top + c0) as nat, shift(-1, c0, x)) == shift(-1, c0, shift(d, (c_top + c0 + 1) as nat, x))
+    decreases x
+{
+    match x {
+        ExprSpec::Var(i) => {
+            if c0 == 0 {
+                assert(min_escaping(x) == Some(i as nat));
+                assert((i as nat) >= 1);
+            }
+            assert((i as nat) < 0xFFFF_0000nat);
+            let ii = i as int;
+            if ii >= c0 {
+                // shift(-1, c0, x) == Var(ii - 1), safely (ii >= c0, and
+                // ii >= 1 when c0 == 0 from the safety hypothesis; ii >=
+                // c0 >= 1 automatically otherwise).
+                assert(shift(-1, c0, x) == ExprSpec::Var((ii - 1) as u32));
+                if ii - 1 >= (c_top + c0) as int {
+                    // both sides land on Var(ii - 1 + d)
+                    assert(shift(d, (c_top + c0) as nat, ExprSpec::Var((ii - 1) as u32)) == ExprSpec::Var((ii - 1 + d) as u32));
+                    assert(ii >= (c_top + c0 + 1) as int);
+                    assert(shift(d, (c_top + c0 + 1) as nat, x) == ExprSpec::Var((ii + d) as u32));
+                    assert(ii + d >= 0);
+                    assert(((ii + d) as u32) as int == ii + d);
+                    assert(((ii + d) as u32) as nat >= c0);
+                    assert(shift(-1, c0, ExprSpec::Var((ii + d) as u32)) == ExprSpec::Var((((ii + d) as u32 as int) - 1) as u32));
+                    assert((ii - 1 + d) as u32 == ((((ii + d) as u32 as int) - 1) as u32));
+                } else {
+                    // both sides land on Var(ii - 1) unchanged by the d-shift
+                    assert(shift(d, (c_top + c0) as nat, ExprSpec::Var((ii - 1) as u32)) == ExprSpec::Var((ii - 1) as u32));
+                    assert(ii < (c_top + c0 + 1) as int);
+                    assert(shift(d, (c_top + c0 + 1) as nat, x) == x);
+                    assert(shift(-1, c0, x) == ExprSpec::Var((ii - 1) as u32));
+                }
+            } else {
+                // ii < c0: untouched by every shift here.
+                assert(shift(-1, c0, x) == x);
+                assert(ii < (c_top + c0) as int);
+                assert(shift(d, (c_top + c0) as nat, x) == x);
+                assert(ii < (c_top + c0 + 1) as int);
+                assert(shift(d, (c_top + c0 + 1) as nat, x) == x);
+                assert(shift(-1, c0, x) == x);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            if c0 == 0 {
+                assert(min_escaping(x) == opt_min(min_escaping(*f), min_escaping(*a)));
+                assert(no_escaping_below(*f, 1));
+                assert(no_escaping_below(*a, 1));
+            }
+            shift_shift_past_down(c_top, c0, d, *f);
+            shift_shift_past_down(c_top, c0, d, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            if c0 == 0 {
+                assert(min_escaping(x) == opt_min(min_escaping(*t), {
+                    match min_escaping(*b) {
+                        Some(i) if i == 0 => Option::<nat>::None,
+                        Some(i) => Some((i - 1) as nat),
+                        None => Option::<nat>::None,
+                    }
+                }));
+                assert(no_escaping_below(*t, 1));
+            }
+            shift_shift_past_down(c_top, c0, d, *t);
+            shift_shift_past_down(c_top, (c0 + 1) as nat, d, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            if c0 == 0 {
+                assert(no_escaping_below(*t, 1));
+                assert(no_escaping_below(*v, 1));
+            }
+            shift_shift_past_down(c_top, c0, d, *t);
+            shift_shift_past_down(c_top, c0, d, *v);
+            shift_shift_past_down(c_top, (c0 + 1) as nat, d, *b);
+        }
+        ExprSpec::Proj(s) => {
+            shift_shift_past_down(c_top, c0, d, *s);
+        }
+    }
+}
+
 }
