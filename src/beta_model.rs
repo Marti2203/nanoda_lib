@@ -32,6 +32,10 @@ use crate::expr_model::ExprSpec;
 use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
+#[cfg(verus_only)]
+use crate::expr_model::nlbv;
+#[cfg(verus_only)]
+use crate::expr_model::subst_full_noop;
 
 verus! {
 
@@ -4313,6 +4317,563 @@ pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
         }
         ExprSpec::Proj(s) => {
             subst_full_empty(*s, offset);
+        }
+    }
+}
+
+/// If `e` has no loose reference at or above `j` (`nlbv(e) <= j`), plain
+/// `subst(j, s, e)` -- unlike `subst_full`, this is Pierce-style single-
+/// variable substitution with no built-in range check -- is STILL a
+/// no-op, unconditionally in `s`: `e` simply never contains a `Var(j)`
+/// node for `subst` to replace. Mirrors `nlbv`'s own `+1`-under-`Bind`
+/// threading exactly, since that's exactly `subst`'s own `j+1` threading.
+pub proof fn nlbv_subst_noop(j: nat, s: ExprSpec, e: ExprSpec)
+    requires nlbv(e) <= j
+    ensures subst(j, s, e) == e
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            assert((i as nat) != j);
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            nlbv_subst_noop(j, s, *f);
+            nlbv_subst_noop(j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            nlbv_subst_noop(j, s, *t);
+            nlbv_subst_noop((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            nlbv_subst_noop(j, s, *t);
+            nlbv_subst_noop(j, s, *v);
+            nlbv_subst_noop((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            nlbv_subst_noop(j, s, *st);
+        }
+    }
+}
+
+/// The `shift` analogue of `nlbv_subst_noop`: if `e` has no loose
+/// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
+/// (not just `+1`/`-1`) -- `shift`'s own cutoff comparison never fires.
+pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
+    requires nlbv(e) <= c
+    ensures shift(d, c, e) == e
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            assert((i as nat) < c);
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::App(f, a) => {
+            nlbv_shift_noop(d, c, *f);
+            nlbv_shift_noop(d, c, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            nlbv_shift_noop(d, c, *t);
+            nlbv_shift_noop(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            nlbv_shift_noop(d, c, *t);
+            nlbv_shift_noop(d, c, *v);
+            nlbv_shift_noop(d, (c + 1) as nat, *b);
+        }
+        ExprSpec::Proj(s) => {
+            nlbv_shift_noop(d, c, *s);
+        }
+    }
+}
+
+/// The generalized ("at cutoff `c`") single-substitution primitive:
+/// `subst_c(e, a, 0) == subst1(e, a)` exactly (same expression, `c`
+/// instantiated to `0`); a nonzero `c` is exactly what's needed to relate
+/// PLAIN, repeatedly-applied `subst1` (peeling one `Bind` at a time, as
+/// `spine_reduce` does) to `body`'s own position `c` levels below
+/// wherever each individual substitution actually happens.
+pub open spec fn subst_c(e: ExprSpec, a: ExprSpec, c: nat) -> ExprSpec {
+    shift(-1, c, subst(c, shift(1, c, a), e))
+}
+
+/// `subst_c(e, a, c) == subst_full(e, seq![a], c)`: the generalized
+/// single-substitution primitive matches telescopic substitution against
+/// a ONE-element list, PROVIDED `e` doesn't reference anything past the
+/// substituted position (`nlbv(e) <= c + 1`) and `a` itself has no
+/// escaping loose references (`nlbv(a) <= 0` -- true of any genuinely
+/// closed-relative-to-this-scope argument expression). Both conditions
+/// are needed, and checked by hand first: without `nlbv(e) <= c + 1`,
+/// `subst_c` shifts a surviving `Var(i)` (`i > c`) down by 1 (removing a
+/// binder) while `subst_full` leaves it exactly where it was (see
+/// `spine_reduce`'s doc comment); without `nlbv(a) <= 0`, descending
+/// under a `Bind` reshifts `subst_c`'s own substituted value
+/// (`shift(1,0,-)` each level, `subst`'s own capture-avoiding behavior)
+/// while `subst_full` reuses the SAME `substs` unchanged at every depth.
+pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
+    requires
+        nlbv(e) <= c + 1,
+        nlbv(a) <= 0,
+        max_var_below(a, bound),
+        bound <= 0xFFFF_0000nat,
+    ensures subst_c(e, a, c) == subst_full(e, seq![a], c)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            if (i as nat) == c {
+                max_var_below_mono(a, bound, 0xFFFF_0000nat);
+                max_var_below_mono(a, 0xFFFF_0000nat, 0xFFFF_FFFEnat);
+                shift_cancel(c, a);
+                assert(subst_c(e, a, c) == shift(-1, c, shift(1, c, a)));
+                assert(subst_c(e, a, c) == a);
+                assert(subst_full(e, seq![a], c) == a);
+            } else {
+                assert((i as nat) < c);
+                assert(subst(c, shift(1, c, a), e) == e);
+                assert(subst_c(e, a, c) == shift(-1, c, e));
+                assert(shift(-1, c, e) == e);
+                assert(subst_full(e, seq![a], c) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {
+            assert(subst(c, shift(1, c, a), e) == e);
+            assert(shift(-1, c, e) == e);
+        }
+        ExprSpec::App(f, g) => {
+            subst_c_eq_subst_full(*f, a, c, bound);
+            subst_c_eq_subst_full(*g, a, c, bound);
+            assert(subst(c, shift(1, c, a), e)
+                == ExprSpec::App(Box::new(subst(c, shift(1, c, a), *f)), Box::new(subst(c, shift(1, c, a), *g))));
+            assert(subst_c(e, a, c) == ExprSpec::App(Box::new(subst_c(*f, a, c)), Box::new(subst_c(*g, a, c))));
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_c_eq_subst_full(*t, a, c, bound);
+            nlbv_shift_noop(1, 0, a);
+            assert(shift(1, 0, a) == a);
+            subst_c_eq_subst_full(*b, a, (c + 1) as nat, bound);
+
+            let s = shift(1, c, a);
+            assert(subst(c, s, e) == ExprSpec::Bind(
+                Box::new(subst(c, s, *t)),
+                Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            assert(subst_c(e, a, c) == ExprSpec::Bind(
+                Box::new(shift(-1, c, subst(c, s, *t))),
+                Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
+            ));
+
+            max_var_below_mono(a, bound, 0xFFFF_0000nat);
+            shift_shift_aligned_up(c, 0, a);
+            assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
+            assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
+
+            assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
+                == subst_c(*b, a, (c + 1) as nat));
+            assert(subst_c(*t, a, c) == shift(-1, c, subst(c, s, *t)));
+
+            assert(subst_c(e, a, c) == ExprSpec::Bind(
+                Box::new(subst_c(*t, a, c)),
+                Box::new(subst_c(*b, a, (c + 1) as nat)),
+            ));
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_c_eq_subst_full(*t, a, c, bound);
+            subst_c_eq_subst_full(*v, a, c, bound);
+            nlbv_shift_noop(1, 0, a);
+            assert(shift(1, 0, a) == a);
+            subst_c_eq_subst_full(*b, a, (c + 1) as nat, bound);
+
+            let s = shift(1, c, a);
+            assert(subst(c, s, e) == ExprSpec::Let(
+                Box::new(subst(c, s, *t)), Box::new(subst(c, s, *v)),
+                Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            assert(subst_c(e, a, c) == ExprSpec::Let(
+                Box::new(shift(-1, c, subst(c, s, *t))),
+                Box::new(shift(-1, c, subst(c, s, *v))),
+                Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
+            ));
+
+            max_var_below_mono(a, bound, 0xFFFF_0000nat);
+            shift_shift_aligned_up(c, 0, a);
+            assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
+            assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
+
+            assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
+                == subst_c(*b, a, (c + 1) as nat));
+            assert(subst_c(*t, a, c) == shift(-1, c, subst(c, s, *t)));
+            assert(subst_c(*v, a, c) == shift(-1, c, subst(c, s, *v)));
+
+            assert(subst_c(e, a, c) == ExprSpec::Let(
+                Box::new(subst_c(*t, a, c)),
+                Box::new(subst_c(*v, a, c)),
+                Box::new(subst_c(*b, a, (c + 1) as nat)),
+            ));
+        }
+        ExprSpec::Proj(st) => {
+            subst_c_eq_subst_full(*st, a, c, bound);
+            assert(subst(c, shift(1, c, a), e) == ExprSpec::Proj(Box::new(subst(c, shift(1, c, a), *st))));
+            assert(subst_c(e, a, c) == ExprSpec::Proj(Box::new(subst_c(*st, a, c))));
+        }
+    }
+}
+
+/// The key composition fact making the whole telescopic-reduction bridge
+/// work: substituting into a term with `k` more `Bind`s to peel, when the
+/// term BEYOND those `k` binders (`body`) has no reference escaping past
+/// them (`nlbv(body) <= c + k`), leaves `body` completely untouched --
+/// `subst_c` just peels the SAME `k` binders back down to the SAME `body`,
+/// unchanged.
+///
+/// Proven by induction on `k`, generalizing over `a` (the substituted
+/// value): the recursive step needs to apply the IH at a DIFFERENT
+/// (once-more-shifted) `a`, not the same one, which only works because
+/// this lemma is stated for an arbitrary `a` in the first place.
+/// `shift_shift_aligned_up` is the identity that makes the recursive
+/// unfolding line up: `shift(1, 0, shift(1, c, a)) == shift(1, (c+1),
+/// shift(1, 0, a))` -- checked by hand FIRST that the naive guess
+/// (`shift(1, (c+1), a)`, no extra `shift(1,0,-)` wrapper) is FALSE
+/// (disagrees with the correct identity exactly at `i == c`) before
+/// building this proof around the right one.
+pub proof fn subst_c_spine_invariant(t0: ExprSpec, a: ExprSpec, c: nat, k: nat, body: ExprSpec, bound: nat)
+    requires
+        spine_bind(t0, k) == Some(body),
+        nlbv(body) <= c + k,
+        max_var_below(a, bound),
+        bound + k + 10 <= 0xFFFF_0000,
+    ensures spine_bind(subst_c(t0, a, c), k) == Some(body)
+    decreases k
+{
+    if k == 0 {
+        assert(t0 == body);
+        nlbv_subst_noop(c, shift(1, c, a), body);
+        assert(subst(c, shift(1, c, a), body) == body);
+        nlbv_shift_noop(-1, c, body);
+        assert(subst_c(t0, a, c) == body);
+    } else {
+        match t0 {
+            ExprSpec::Bind(t, b) => {
+                assert(spine_bind(t0, k) == spine_bind(*b, (k - 1) as nat));
+                assert(spine_bind(*b, (k - 1) as nat) == Some(body));
+
+                let s = shift(1, c, a);
+                assert(subst(c, s, t0) == ExprSpec::Bind(
+                    Box::new(subst(c, s, *t)),
+                    Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
+                ));
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                    Box::new(shift(-1, c, subst(c, s, *t))),
+                    Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
+                ));
+
+                max_var_below_mono(a, bound, 0xFFFF_0000nat);
+                shift_shift_aligned_up(c, 0, a);
+                assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
+                assert(shift(1, 0, s) == shift(1, (c + 1) as nat, shift(1, 0, a)));
+
+                assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
+                    == subst_c(*b, shift(1, 0, a), (c + 1) as nat));
+
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                    Box::new(shift(-1, c, subst(c, s, *t))),
+                    Box::new(subst_c(*b, shift(1, 0, a), (c + 1) as nat)),
+                ));
+
+                shift_up_max_var_below(0, bound, a);
+                assert(max_var_below(shift(1, 0, a), (bound + 1) as nat));
+                assert((bound + 1) + (k - 1) + 10 <= 0xFFFF_0000);
+
+                subst_c_spine_invariant(*b, shift(1, 0, a), (c + 1) as nat, (k - 1) as nat, body, (bound + 1) as nat);
+                assert(spine_bind(subst_c(*b, shift(1, 0, a), (c + 1) as nat), (k - 1) as nat) == Some(body));
+
+                assert(spine_bind(subst_c(t0, a, c), k)
+                    == spine_bind(subst_c(*b, shift(1, 0, a), (c + 1) as nat), (k - 1) as nat));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// The FULLY GENERAL version of `subst_c_spine_invariant`: rather than
+/// requiring `body` to be untouched by the substitution, this directly
+/// computes what DOES happen -- `body` with `a` substituted in via
+/// `subst_full`, at the position `a` lands at after `k` peels (`c + k`).
+/// `subst_c_spine_invariant` is the special case where `nlbv(body) <= c
+/// + k` makes that substitution a no-op. Needs `nlbv(a) <= 0` (`a` has no
+/// escaping loose references of its own -- see `subst_c_eq_subst_full`'s
+/// doc comment for why) so the SAME `a` can be reused, unchanged, as the
+/// base case at every recursion depth -- no headroom growth needed
+/// across levels, unlike `subst_c_spine_invariant`, since `a` itself
+/// never actually changes.
+pub proof fn subst_c_spine_reduce_eq(t0: ExprSpec, a: ExprSpec, c: nat, k: nat, body: ExprSpec, bound: nat)
+    requires
+        spine_bind(t0, k) == Some(body),
+        nlbv(body) <= c + k + 1,
+        nlbv(a) <= 0,
+        max_var_below(a, bound),
+        bound + 10 <= 0xFFFF_0000,
+    ensures spine_bind(subst_c(t0, a, c), k) == Some(subst_full(body, seq![a], (c + k) as nat))
+    decreases k
+{
+    if k == 0 {
+        assert(t0 == body);
+        subst_c_eq_subst_full(body, a, c, bound);
+        assert(subst_c(t0, a, c) == subst_full(body, seq![a], c));
+    } else {
+        match t0 {
+            ExprSpec::Bind(t, b) => {
+                assert(spine_bind(t0, k) == spine_bind(*b, (k - 1) as nat));
+                assert(spine_bind(*b, (k - 1) as nat) == Some(body));
+
+                let s = shift(1, c, a);
+                assert(subst(c, s, t0) == ExprSpec::Bind(
+                    Box::new(subst(c, s, *t)),
+                    Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
+                ));
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                    Box::new(shift(-1, c, subst(c, s, *t))),
+                    Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
+                ));
+
+                nlbv_shift_noop(1, 0, a);
+                assert(shift(1, 0, a) == a);
+
+                max_var_below_mono(a, bound, 0xFFFF_0000nat);
+                shift_shift_aligned_up(c, 0, a);
+                assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
+                assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
+
+                assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
+                    == subst_c(*b, a, (c + 1) as nat));
+
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                    Box::new(shift(-1, c, subst(c, s, *t))),
+                    Box::new(subst_c(*b, a, (c + 1) as nat)),
+                ));
+
+                subst_c_spine_reduce_eq(*b, a, (c + 1) as nat, (k - 1) as nat, body, bound);
+                assert(spine_bind(subst_c(*b, a, (c + 1) as nat), (k - 1) as nat)
+                    == Some(subst_full(body, seq![a], (c + 1 + (k - 1)) as nat)));
+                assert((c + 1 + (k - 1)) as nat == (c + k) as nat);
+
+                assert(spine_bind(subst_c(t0, a, c), k)
+                    == spine_bind(subst_c(*b, a, (c + 1) as nat), (k - 1) as nat));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// Bounds how far `subst_full` against a single, closed (`nlbv(s) <= 0`)
+/// substituted value can leave a loose reference: if `e` references
+/// nothing past the substituted position (`nlbv(e) <= offset + 1`), the
+/// result references nothing past `offset` itself. The substituted
+/// position (`Var(offset)`, if it occurred at all) gets replaced by `s`,
+/// which contributes nothing (it's closed); everything else that
+/// survived was already `< offset`. Needed to chain the main telescopic-
+/// reduction induction across MULTIPLE args: after peeling one, the
+/// remaining `body` needs to satisfy the SAME kind of bound relative to
+/// the shrunk remaining binder count for the next `subst_c_spine_reduce_eq`
+/// call to apply.
+pub proof fn subst_full_nlbv_bound(e: ExprSpec, s: ExprSpec, offset: nat)
+    requires
+        nlbv(e) <= offset + 1,
+        nlbv(s) <= 0,
+    ensures nlbv(subst_full(e, seq![s], offset)) <= offset
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            if (i as nat) < offset {
+                assert(subst_full(e, seq![s], offset) == e);
+            } else {
+                assert((i as nat) == offset);
+                assert(subst_full(e, seq![s], offset) == s);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {
+            assert(subst_full(e, seq![s], offset) == e);
+        }
+        ExprSpec::App(f, a) => {
+            subst_full_nlbv_bound(*f, s, offset);
+            subst_full_nlbv_bound(*a, s, offset);
+            assert(subst_full(e, seq![s], offset) == ExprSpec::App(
+                Box::new(subst_full(*f, seq![s], offset)),
+                Box::new(subst_full(*a, seq![s], offset)),
+            ));
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_full_nlbv_bound(*t, s, offset);
+            subst_full_nlbv_bound(*b, s, (offset + 1) as nat);
+            assert(subst_full(e, seq![s], offset) == ExprSpec::Bind(
+                Box::new(subst_full(*t, seq![s], offset)),
+                Box::new(subst_full(*b, seq![s], (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_nlbv_bound(*t, s, offset);
+            subst_full_nlbv_bound(*v, s, offset);
+            subst_full_nlbv_bound(*b, s, (offset + 1) as nat);
+            assert(subst_full(e, seq![s], offset) == ExprSpec::Let(
+                Box::new(subst_full(*t, seq![s], offset)),
+                Box::new(subst_full(*v, seq![s], offset)),
+                Box::new(subst_full(*b, seq![s], (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Proj(st) => {
+            subst_full_nlbv_bound(*st, s, offset);
+            assert(subst_full(e, seq![s], offset) == ExprSpec::Proj(Box::new(subst_full(*st, seq![s], offset))));
+        }
+    }
+}
+
+/// The composition law that lets the main telescopic-reduction theorem
+/// process `args` one at a time and still land on `subst_full` against
+/// the WHOLE list: substituting `s` in first (at the position it lands,
+/// `offset + k`), then substituting `rest` (`k` more entries) at
+/// `offset`, computes the SAME thing as one `subst_full` call against
+/// `seq![s] + rest` at `offset` directly. Needs `nlbv(s) <= 0` for the
+/// same reason `subst_c_eq_subst_full` does: once `s` is planted into the
+/// result of the first substitution, the second `subst_full` pass
+/// recurses into it too (it doesn't know it's "already finished") --
+/// `subst_full_noop` is what keeps that second pass from corrupting it.
+pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k: nat, offset: nat)
+    requires
+        nlbv(e) <= offset + k + 1,
+        nlbv(s) <= 0,
+        rest.len() == k,
+    ensures subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
+        == subst_full(e, seq![s] + rest, offset)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            if (i as nat) < offset {
+                assert(subst_full(e, seq![s], (offset + k) as nat) == e);
+                assert(subst_full(e, rest, offset) == e);
+                assert(subst_full(e, seq![s] + rest, offset) == e);
+            } else if (i as nat) < offset + k {
+                assert(subst_full(e, seq![s], (offset + k) as nat) == e);
+                let j = (i as nat) - offset;
+                assert(j < k);
+                assert(subst_full(e, rest, offset) == rest[(k - 1 - j) as int]);
+                assert((seq![s] + rest).len() == k + 1);
+                assert((seq![s] + rest)[(k - j) as int] == rest[(k - j - 1) as int]);
+                assert(subst_full(e, seq![s] + rest, offset) == (seq![s] + rest)[(k - j) as int]);
+                assert((k - 1 - j) as int == (k - j - 1) as int);
+            } else {
+                assert((i as nat) == offset + k);
+                assert(subst_full(e, seq![s], (offset + k) as nat) == s);
+                subst_full_noop(s, rest, offset);
+                assert(subst_full(s, rest, offset) == s);
+                assert((seq![s] + rest)[0int] == s);
+                assert(subst_full(e, seq![s] + rest, offset) == (seq![s] + rest)[0int]);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed => {
+            assert(subst_full(e, seq![s], (offset + k) as nat) == e);
+            assert(subst_full(e, rest, offset) == e);
+            assert(subst_full(e, seq![s] + rest, offset) == e);
+        }
+        ExprSpec::App(f, a) => {
+            subst_full_compose(*f, s, rest, k, offset);
+            subst_full_compose(*a, s, rest, k, offset);
+
+            let fx = subst_full(*f, seq![s], (offset + k) as nat);
+            let ax = subst_full(*a, seq![s], (offset + k) as nat);
+            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::App(Box::new(fx), Box::new(ax)));
+
+            assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full(ExprSpec::App(Box::new(fx), Box::new(ax)), rest, offset));
+            assert(subst_full(ExprSpec::App(Box::new(fx), Box::new(ax)), rest, offset) == ExprSpec::App(
+                Box::new(subst_full(fx, rest, offset)),
+                Box::new(subst_full(ax, rest, offset)),
+            ));
+            assert(subst_full(fx, rest, offset) == subst_full(*f, seq![s] + rest, offset));
+            assert(subst_full(ax, rest, offset) == subst_full(*a, seq![s] + rest, offset));
+
+            assert(subst_full(e, seq![s] + rest, offset) == ExprSpec::App(
+                Box::new(subst_full(*f, seq![s] + rest, offset)),
+                Box::new(subst_full(*a, seq![s] + rest, offset)),
+            ));
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_full_compose(*t, s, rest, k, offset);
+            subst_full_compose(*b, s, rest, k, (offset + 1) as nat);
+            assert((offset + 1 + k) as nat == (offset + k + 1) as nat);
+            assert(subst_full(subst_full(*b, seq![s], (offset + k + 1) as nat), rest, (offset + 1) as nat)
+                == subst_full(*b, seq![s] + rest, (offset + 1) as nat));
+
+            let tx = subst_full(*t, seq![s], (offset + k) as nat);
+            let bx = subst_full(*b, seq![s], (offset + k + 1) as nat);
+            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Bind(Box::new(tx), Box::new(bx)));
+
+            assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full(ExprSpec::Bind(Box::new(tx), Box::new(bx)), rest, offset));
+            assert(subst_full(ExprSpec::Bind(Box::new(tx), Box::new(bx)), rest, offset) == ExprSpec::Bind(
+                Box::new(subst_full(tx, rest, offset)),
+                Box::new(subst_full(bx, rest, (offset + 1) as nat)),
+            ));
+            assert(subst_full(tx, rest, offset) == subst_full(*t, seq![s] + rest, offset));
+            assert(subst_full(bx, rest, (offset + 1) as nat) == subst_full(*b, seq![s] + rest, (offset + 1) as nat));
+
+            assert(subst_full(e, seq![s] + rest, offset) == ExprSpec::Bind(
+                Box::new(subst_full(*t, seq![s] + rest, offset)),
+                Box::new(subst_full(*b, seq![s] + rest, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_compose(*t, s, rest, k, offset);
+            subst_full_compose(*v, s, rest, k, offset);
+            subst_full_compose(*b, s, rest, k, (offset + 1) as nat);
+            assert((offset + 1 + k) as nat == (offset + k + 1) as nat);
+            assert(subst_full(subst_full(*b, seq![s], (offset + k + 1) as nat), rest, (offset + 1) as nat)
+                == subst_full(*b, seq![s] + rest, (offset + 1) as nat));
+
+            let tx = subst_full(*t, seq![s], (offset + k) as nat);
+            let vx = subst_full(*v, seq![s], (offset + k) as nat);
+            let bx = subst_full(*b, seq![s], (offset + k + 1) as nat);
+            assert(subst_full(e, seq![s], (offset + k) as nat)
+                == ExprSpec::Let(Box::new(tx), Box::new(vx), Box::new(bx)));
+
+            assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full(ExprSpec::Let(Box::new(tx), Box::new(vx), Box::new(bx)), rest, offset));
+            assert(subst_full(ExprSpec::Let(Box::new(tx), Box::new(vx), Box::new(bx)), rest, offset) == ExprSpec::Let(
+                Box::new(subst_full(tx, rest, offset)),
+                Box::new(subst_full(vx, rest, offset)),
+                Box::new(subst_full(bx, rest, (offset + 1) as nat)),
+            ));
+            assert(subst_full(tx, rest, offset) == subst_full(*t, seq![s] + rest, offset));
+            assert(subst_full(vx, rest, offset) == subst_full(*v, seq![s] + rest, offset));
+            assert(subst_full(bx, rest, (offset + 1) as nat) == subst_full(*b, seq![s] + rest, (offset + 1) as nat));
+
+            assert(subst_full(e, seq![s] + rest, offset) == ExprSpec::Let(
+                Box::new(subst_full(*t, seq![s] + rest, offset)),
+                Box::new(subst_full(*v, seq![s] + rest, offset)),
+                Box::new(subst_full(*b, seq![s] + rest, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Proj(st) => {
+            subst_full_compose(*st, s, rest, k, offset);
+
+            let sx = subst_full(*st, seq![s], (offset + k) as nat);
+            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Proj(Box::new(sx)));
+
+            assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full(ExprSpec::Proj(Box::new(sx)), rest, offset));
+            assert(subst_full(ExprSpec::Proj(Box::new(sx)), rest, offset)
+                == ExprSpec::Proj(Box::new(subst_full(sx, rest, offset))));
+            assert(subst_full(sx, rest, offset) == subst_full(*st, seq![s] + rest, offset));
+
+            assert(subst_full(e, seq![s] + rest, offset)
+                == ExprSpec::Proj(Box::new(subst_full(*st, seq![s] + rest, offset))));
         }
     }
 }
