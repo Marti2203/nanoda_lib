@@ -12,6 +12,7 @@ pub mod debug_printer;
 pub mod env;
 pub mod env_model;
 pub mod beta_model;
+pub mod beta_model_z;
 pub mod expr;
 pub mod expr_arena_bridge;
 pub mod expr_model;
