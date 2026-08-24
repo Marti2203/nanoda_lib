@@ -5124,4 +5124,257 @@ pub proof fn spine_reduce_eq_subst_full(head: ExprSpec, args: Seq<ExprSpec>, bod
     }
 }
 
+/// Structural fact about `spine_app`, independent of `pstep`/reduction:
+/// peeling `args[0]` off the FRONT of the argument list and applying it
+/// first is the same as building the whole spine at once -- `spine_app`
+/// itself peels from the BACK (matching its own `decreases args.len()`),
+/// so this needs its own induction to reconcile the two ends.
+pub proof fn spine_app_compose(base: ExprSpec, a0: ExprSpec, rest: Seq<ExprSpec>)
+    ensures spine_app(base, seq![a0] + rest) == spine_app(ExprSpec::App(Box::new(base), Box::new(a0)), rest)
+    decreases rest.len()
+{
+    if rest.len() == 0 {
+        assert(seq![a0] + rest =~= seq![a0]);
+        assert(spine_app(base, seq![a0]) == ExprSpec::App(Box::new(spine_app(base, seq![a0].subrange(0, 0))), Box::new(a0)));
+        assert(seq![a0].subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    } else {
+        let rest_init = rest.subrange(0, rest.len() - 1);
+        let last = rest[rest.len() - 1];
+        assert(rest =~= rest_init.push(last));
+        spine_app_compose(base, a0, rest_init);
+
+        let whole = seq![a0] + rest;
+        assert(whole =~= (seq![a0] + rest_init).push(last));
+        assert(spine_app(base, whole) == ExprSpec::App(
+            Box::new(spine_app(base, whole.subrange(0, whole.len() - 1))),
+            Box::new(whole[whole.len() - 1]),
+        ));
+        assert(whole.subrange(0, whole.len() - 1) =~= seq![a0] + rest_init);
+        assert(whole[whole.len() - 1] == last);
+
+        assert(spine_app(ExprSpec::App(Box::new(base), Box::new(a0)), rest) == ExprSpec::App(
+            Box::new(spine_app(ExprSpec::App(Box::new(base), Box::new(a0)), rest_init)),
+            Box::new(last),
+        ));
+    }
+}
+
+/// One link in a `pstep` chain is valid: consecutive elements are related
+/// by `pstep`. Used by `pstep_star` below rather than a directly
+/// recursive `bool` spec fn, sidestepping any need for a `decreases`
+/// measure on "how many steps" (parallel reduction can grow a term's
+/// size, so there's no obvious structural bound on chain length).
+pub open spec fn pstep_chain_valid(chain: Seq<ExprSpec>) -> bool {
+    forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 ==> pstep(chain[i], chain[i + 1])
+}
+
+/// The reflexive-transitive closure of `pstep`, witnessed by an explicit
+/// chain rather than direct recursion -- see `pstep_chain_valid`'s doc
+/// comment for why. This is the relation the telescopic-reduction bridge
+/// below actually needs: `spine_app`/`spine_reduce` are related by a
+/// SEQUENCE of `pstep` steps (one per binder peeled), not necessarily
+/// one, and `pstep_star`'s own transitivity is free (chain
+/// concatenation) -- unlike `pstep` itself, which is NOT known to be
+/// transitive and whose transitivity is a genuinely hard, classically
+/// subtle property this file deliberately avoids needing.
+pub open spec fn pstep_star(e1: ExprSpec, e2: ExprSpec) -> bool {
+    exists |chain: Seq<ExprSpec>|
+        chain.len() >= 1 && chain[0] == e1 && chain[chain.len() - 1] == e2 && pstep_chain_valid(chain)
+}
+
+/// `pstep_star` is reflexive: the length-1 chain `[e]`.
+pub proof fn pstep_star_refl(e: ExprSpec)
+    ensures pstep_star(e, e)
+{
+    let chain = seq![e];
+    assert(chain.len() == 1);
+    assert(chain[0] == e);
+    assert(chain[chain.len() - 1] == e);
+    assert(pstep_chain_valid(chain));
+}
+
+/// A single `pstep` step is (trivially) a `pstep_star` step: the
+/// length-2 chain `[e1, e2]`.
+pub proof fn pstep_star_one(e1: ExprSpec, e2: ExprSpec)
+    requires pstep(e1, e2)
+    ensures pstep_star(e1, e2)
+{
+    let chain = seq![e1, e2];
+    assert(chain.len() == 2);
+    assert(chain[0] == e1);
+    assert(chain[chain.len() - 1] == e2);
+    assert(pstep_chain_valid(chain)) by {
+        assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep(chain[i], chain[i + 1]) by {
+            assert(i == 0);
+        }
+    }
+}
+
+/// `pstep_star` is transitive -- for FREE, by concatenating the two
+/// witness chains (`chain1` minus nothing, `chain2` minus its shared
+/// first element). This is the whole point of going through
+/// `pstep_star` instead of trying to prove `pstep` itself transitive:
+/// this proof is pure `Seq` index bookkeeping, no reasoning about
+/// `pstep`'s own redex structure at all.
+pub proof fn pstep_star_trans(e1: ExprSpec, e2: ExprSpec, e3: ExprSpec)
+    requires pstep_star(e1, e2), pstep_star(e2, e3)
+    ensures pstep_star(e1, e3)
+{
+    let chain1 = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == e1 && c[c.len() - 1] == e2 && pstep_chain_valid(c);
+    let chain2 = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == e2 && c[c.len() - 1] == e3 && pstep_chain_valid(c);
+    let n1 = chain1.len();
+    let chain2_tail = chain2.subrange(1, chain2.len() as int);
+    let chain = chain1 + chain2_tail;
+
+    assert(chain.len() == n1 + chain2.len() - 1);
+    assert(chain[0] == chain1[0]);
+    assert(chain[0] == e1);
+
+    if chain2.len() == 1 {
+        assert(chain2_tail =~= Seq::<ExprSpec>::empty());
+        assert(chain =~= chain1);
+        assert(chain[chain.len() - 1] == e2);
+        assert(e2 == e3);
+    } else {
+        assert(chain[chain.len() - 1] == chain2_tail[chain2_tail.len() - 1]);
+        assert(chain2_tail[chain2_tail.len() - 1] == chain2[chain2.len() - 1]);
+        assert(chain[chain.len() - 1] == e3);
+    }
+
+    assert(pstep_chain_valid(chain)) by {
+        assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep(chain[i], chain[i + 1]) by {
+            if i < n1 - 1 {
+                assert(chain[i] == chain1[i]);
+                assert(chain[i + 1] == chain1[i + 1]);
+                assert(pstep(chain1[i], chain1[i + 1]));
+            } else if i == n1 - 1 {
+                assert(chain[i] == chain1[n1 - 1]);
+                assert(chain[i] == e2);
+                assert(chain[i + 1] == chain2_tail[0]);
+                assert(chain2_tail[0] == chain2[1]);
+                assert(chain2[0] == e2);
+                assert(pstep(chain2[0], chain2[1]));
+            } else {
+                let j = i - n1 + 1;
+                assert(chain[i] == chain2_tail[i - n1]);
+                assert(chain2_tail[i - n1] == chain2[j]);
+                assert(chain[i + 1] == chain2_tail[i + 1 - n1]);
+                assert(chain2_tail[i + 1 - n1] == chain2[j + 1]);
+                assert(pstep(chain2[j], chain2[j + 1]));
+            }
+        }
+    }
+}
+
+/// Lifts a `pstep_star` fact through `App`'s function position, keeping
+/// the argument fixed: `pstep_star(x, y)` gives `pstep_star(App(x, a),
+/// App(y, a))`. Built by mapping `App(-, a)` over the witness chain --
+/// each individual step uses `pstep`'s own congruence rule (the argument
+/// side taken reflexively via `pstep(a, a)`), so this needs no
+/// transitivity of `pstep` itself either.
+pub proof fn pstep_star_app_congr(x: ExprSpec, y: ExprSpec, a: ExprSpec)
+    requires pstep_star(x, y)
+    ensures pstep_star(ExprSpec::App(Box::new(x), Box::new(a)), ExprSpec::App(Box::new(y), Box::new(a)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::App(Box::new(chain[i]), Box::new(a)));
+
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::App(Box::new(chain[0]), Box::new(a)));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::App(Box::new(chain[chain.len() - 1]), Box::new(a)));
+    assert(chain[chain.len() - 1] == y);
+
+    assert(pstep_chain_valid(mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(mapped[i], mapped[i + 1]) by {
+            assert(pstep(chain[i], chain[i + 1]));
+            assert(pstep(a, a));
+            assert(mapped[i] == ExprSpec::App(Box::new(chain[i]), Box::new(a)));
+            assert(mapped[i + 1] == ExprSpec::App(Box::new(chain[i + 1]), Box::new(a)));
+            assert(pstep(mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// Lifts `pstep_star_app_congr` from a single `App` to a whole
+/// `spine_app`: `pstep_star(x, y)` gives `pstep_star(spine_app(x, args),
+/// spine_app(y, args))` for any fixed `args`. By induction on
+/// `args.len()`, matching `spine_app`'s own back-peeling recursion.
+pub proof fn pstep_spine_app_star(x: ExprSpec, y: ExprSpec, args: Seq<ExprSpec>)
+    requires pstep_star(x, y)
+    ensures pstep_star(spine_app(x, args), spine_app(y, args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        pstep_spine_app_star(x, y, args_init);
+        pstep_star_app_congr(spine_app(x, args_init), spine_app(y, args_init), last);
+        assert(spine_app(x, args) == ExprSpec::App(Box::new(spine_app(x, args_init)), Box::new(last)));
+        assert(spine_app(y, args) == ExprSpec::App(Box::new(spine_app(y, args_init)), Box::new(last)));
+    }
+}
+
+/// The telescopic-reduction bridge to `pstep`/confluence this whole file
+/// was building toward: `spine_app(head, args)` (the ORIGINAL,
+/// unreduced spine) and `spine_reduce(head, args)` (the fully telescoped
+/// result) are related by `pstep_star` -- a chain of ordinary parallel-
+/// reduction steps, one per binder `spine_reduce` peels. This is what
+/// makes `pstep_diamond`'s (or the unrestricted `pstep_diamond_z`'s)
+/// confluence property actually APPLICABLE to telescopic reduction: any
+/// other `pstep`/`pstep_star` reduct of `spine_app(head, args)` and
+/// `spine_reduce(head, args)` now provably share a common further
+/// reduct, since both are `pstep_star`-reachable from the same starting
+/// term via a shared prefix of this chain (standard diamond-implies-
+/// confluent-closure reasoning, not re-derived here).
+///
+/// Proof by induction on `args.len()`, structurally identical to
+/// `spine_reduce_eq_subst_full`'s: the base case is reflexivity
+/// (`pstep_star_refl`); the inductive step uses `spine_app_compose` to
+/// isolate `args[0]`, a single direct `pstep` beta-step (`head`'s outer
+/// `Bind` contracted against `args[0]`, both sides taken reflexively via
+/// `pstep`'s own definition) lifted to the whole spine via
+/// `pstep_spine_app_star`, and the IH on the remaining `args[1..]` --
+/// stitched together with `pstep_star_trans`, which (unlike `pstep`
+/// transitivity) is free.
+pub proof fn pstep_star_spine_reduce(head: ExprSpec, args: Seq<ExprSpec>)
+    ensures pstep_star(spine_app(head, args), spine_reduce(head, args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+        pstep_star_refl(head);
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+
+        match head {
+            ExprSpec::Bind(bt, b) => {
+                let beta_target = subst1(*b, a0);
+                assert(pstep(ExprSpec::App(Box::new(head), Box::new(a0)), beta_target)) by {
+                    assert(pstep(*b, *b));
+                    assert(pstep(a0, a0));
+                }
+                pstep_star_one(ExprSpec::App(Box::new(head), Box::new(a0)), beta_target);
+                pstep_spine_app_star(ExprSpec::App(Box::new(head), Box::new(a0)), beta_target, rest);
+
+                spine_app_compose(head, a0, rest);
+                assert(seq![a0] + rest =~= args);
+                assert(spine_app(head, args) == spine_app(ExprSpec::App(Box::new(head), Box::new(a0)), rest));
+                assert(pstep_star(spine_app(head, args), spine_app(beta_target, rest)));
+
+                pstep_star_spine_reduce(beta_target, rest);
+                assert(pstep_star(spine_app(beta_target, rest), spine_reduce(beta_target, rest)));
+                assert(spine_reduce(head, args) == spine_reduce(beta_target, rest));
+
+                pstep_star_trans(spine_app(head, args), spine_app(beta_target, rest), spine_reduce(head, args));
+            }
+            _ => {
+                assert(spine_reduce(head, args) == spine_app(head, args));
+                pstep_star_refl(spine_app(head, args));
+            }
+        }
+    }
+}
+
 }
