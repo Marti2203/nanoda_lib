@@ -1544,4 +1544,881 @@ pub proof fn pstep_diamond_z(e: ExprSpecZ, e1: ExprSpecZ, e2: ExprSpecZ) -> (e3:
     }
 }
 
+// ---------------------------------------------------------------------
+// Telescopic substitution and the confluence connection, unbounded.
+//
+// Ports `beta_model.rs`'s `nlbv`/`subst_full`/`spine_bind`/`spine_app`/
+// `spine_reduce`/`subst_c` tower and its `pstep_star` confluence bridge
+// to `ExprSpecZ`, closing the SAME gap `pstep_diamond_z` closed for
+// plain `pstep`: `beta_model::pstep_star_spine_reduce` connects
+// telescopic reduction to CONFLUENCE ONLY for `size(e) <= 9` (it's built
+// on the capped `pstep_diamond`). This section gives the unrestricted
+// version, connecting `spine_app_z`/`spine_reduce_z` to `pstep_star_z`
+// (and therefore `pstep_diamond_z`'s UNCAPPED confluence) for every
+// term, no size limit.
+//
+// `nlbv`'s bound-tracking role in the original was ALREADY `nat`-valued
+// (not `u32`) -- it counts loose bound variables, not raw index values --
+// so `nlbv_z` needs no simplification at all relative to `nlbv`; only
+// the shift/subst-internal `u32`-cast concerns (`max_var_below`, the
+// `0xFFFF_0000` ceiling) disappear here, exactly as in the tower above.
+// ---------------------------------------------------------------------
+
+/// `beta_model::nlbv`'s unbounded counterpart: highest loose de Bruijn
+/// index referencing "outside" `e`, plus one; 0 if none.
+pub open spec fn nlbv_z(e: ExprSpecZ) -> nat
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(i) => i + 1,
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => 0,
+        ExprSpecZ::App(f, a) => if nlbv_z(*f) >= nlbv_z(*a) { nlbv_z(*f) } else { nlbv_z(*a) },
+        ExprSpecZ::Bind(t, b) => {
+            let bb = if nlbv_z(*b) == 0 { 0 } else { (nlbv_z(*b) - 1) as nat };
+            if nlbv_z(*t) >= bb { nlbv_z(*t) } else { bb }
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            let bb = if nlbv_z(*b) == 0 { 0 } else { (nlbv_z(*b) - 1) as nat };
+            let tv = if nlbv_z(*t) >= nlbv_z(*v) { nlbv_z(*t) } else { nlbv_z(*v) };
+            if tv >= bb { tv } else { bb }
+        }
+        ExprSpecZ::Proj(s) => nlbv_z(*s),
+    }
+}
+
+/// `beta_model::subst_full`'s unbounded counterpart: telescopic
+/// substitution, replacing `Var(i)` for `offset <= i < offset +
+/// substs.len()`, leaving everything else unchanged.
+pub open spec fn subst_full_z(e: ExprSpecZ, substs: Seq<ExprSpecZ>, offset: nat) -> ExprSpecZ
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(i) => {
+            if i < offset {
+                e
+            } else if (i - offset) < substs.len() {
+                substs[(substs.len() - 1 - (i - offset)) as int]
+            } else {
+                e
+            }
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => e,
+        ExprSpecZ::App(f, a) => ExprSpecZ::App(
+            Box::new(subst_full_z(*f, substs, offset)),
+            Box::new(subst_full_z(*a, substs, offset)),
+        ),
+        ExprSpecZ::Bind(t, b) => ExprSpecZ::Bind(
+            Box::new(subst_full_z(*t, substs, offset)),
+            Box::new(subst_full_z(*b, substs, (offset + 1) as nat)),
+        ),
+        ExprSpecZ::Let(t, v, b) => ExprSpecZ::Let(
+            Box::new(subst_full_z(*t, substs, offset)),
+            Box::new(subst_full_z(*v, substs, offset)),
+            Box::new(subst_full_z(*b, substs, (offset + 1) as nat)),
+        ),
+        ExprSpecZ::Proj(s) => ExprSpecZ::Proj(Box::new(subst_full_z(*s, substs, offset))),
+    }
+}
+
+/// `beta_model::subst_full_empty`'s unbounded counterpart: telescopic
+/// substitution against an empty list is always a no-op.
+pub proof fn subst_full_empty_z(e: ExprSpecZ, offset: nat)
+    ensures subst_full_z(e, Seq::<ExprSpecZ>::empty(), offset) == e
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(_) | ExprSpecZ::Free(_) | ExprSpecZ::Closed => {}
+        ExprSpecZ::App(f, a) => {
+            subst_full_empty_z(*f, offset);
+            subst_full_empty_z(*a, offset);
+        }
+        ExprSpecZ::Bind(t, b) => {
+            subst_full_empty_z(*t, offset);
+            subst_full_empty_z(*b, (offset + 1) as nat);
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            subst_full_empty_z(*t, offset);
+            subst_full_empty_z(*v, offset);
+            subst_full_empty_z(*b, (offset + 1) as nat);
+        }
+        ExprSpecZ::Proj(s) => {
+            subst_full_empty_z(*s, offset);
+        }
+    }
+}
+
+/// `beta_model::subst_full_noop`'s unbounded counterpart: if `e` has no
+/// loose bound variable at or above `offset`, substituting at `offset`
+/// is a no-op for any `substs`.
+pub proof fn subst_full_noop_z(e: ExprSpecZ, substs: Seq<ExprSpecZ>, offset: nat)
+    requires nlbv_z(e) <= offset
+    ensures subst_full_z(e, substs, offset) == e
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(_) | ExprSpecZ::Free(_) | ExprSpecZ::Closed => {}
+        ExprSpecZ::App(f, a) => {
+            subst_full_noop_z(*f, substs, offset);
+            subst_full_noop_z(*a, substs, offset);
+        }
+        ExprSpecZ::Bind(t, b) => {
+            subst_full_noop_z(*t, substs, offset);
+            subst_full_noop_z(*b, substs, (offset + 1) as nat);
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            subst_full_noop_z(*t, substs, offset);
+            subst_full_noop_z(*v, substs, offset);
+            subst_full_noop_z(*b, substs, (offset + 1) as nat);
+        }
+        ExprSpecZ::Proj(s) => {
+            subst_full_noop_z(*s, substs, offset);
+        }
+    }
+}
+
+/// `beta_model::nlbv_subst_noop`'s unbounded counterpart.
+pub proof fn nlbv_subst_noop_z(j: nat, s: ExprSpecZ, e: ExprSpecZ)
+    requires nlbv_z(e) <= j
+    ensures subst_z(j, s, e) == e
+    decreases e
+{
+    reveal(shift_z);
+    reveal(subst_z);
+    match e {
+        ExprSpecZ::Var(i) => {
+            assert(nlbv_z(e) == i + 1);
+            assert(i != j);
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => {}
+        ExprSpecZ::App(f, a) => {
+            nlbv_subst_noop_z(j, s, *f);
+            nlbv_subst_noop_z(j, s, *a);
+        }
+        ExprSpecZ::Bind(t, b) => {
+            nlbv_subst_noop_z(j, s, *t);
+            nlbv_subst_noop_z((j + 1) as nat, shift_z(1, 0, s), *b);
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            nlbv_subst_noop_z(j, s, *t);
+            nlbv_subst_noop_z(j, s, *v);
+            nlbv_subst_noop_z((j + 1) as nat, shift_z(1, 0, s), *b);
+        }
+        ExprSpecZ::Proj(st) => {
+            nlbv_subst_noop_z(j, s, *st);
+        }
+    }
+}
+
+/// `beta_model::nlbv_shift_noop`'s unbounded counterpart.
+pub proof fn nlbv_shift_noop_z(d: int, c: nat, e: ExprSpecZ)
+    requires nlbv_z(e) <= c
+    ensures shift_z(d, c, e) == e
+    decreases e
+{
+    reveal(shift_z);
+    match e {
+        ExprSpecZ::Var(i) => {
+            assert(nlbv_z(e) == i + 1);
+            assert(i < c);
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => {}
+        ExprSpecZ::App(f, a) => {
+            nlbv_shift_noop_z(d, c, *f);
+            nlbv_shift_noop_z(d, c, *a);
+        }
+        ExprSpecZ::Bind(t, b) => {
+            nlbv_shift_noop_z(d, c, *t);
+            nlbv_shift_noop_z(d, (c + 1) as nat, *b);
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            nlbv_shift_noop_z(d, c, *t);
+            nlbv_shift_noop_z(d, c, *v);
+            nlbv_shift_noop_z(d, (c + 1) as nat, *b);
+        }
+        ExprSpecZ::Proj(s) => {
+            nlbv_shift_noop_z(d, c, *s);
+        }
+    }
+}
+
+/// `beta_model::subst_c`'s unbounded counterpart: the generalized
+/// ("at cutoff `c`") single-substitution primitive. `subst_c_z(e, a, 0)
+/// == subst1_z(e, a)` exactly.
+pub open spec fn subst_c_z(e: ExprSpecZ, a: ExprSpecZ, c: nat) -> ExprSpecZ {
+    shift_z(-1, c, subst_z(c, shift_z(1, c, a), e))
+}
+
+/// `beta_model::subst_c_eq_subst_full`'s unbounded counterpart --
+/// UNCONDITIONAL modulo the semantic hypotheses (the original also
+/// needed `max_var_below(a, bound)`/`bound <= 0xFFFF_0000` purely for
+/// `shift_cancel`/`shift_shift_aligned_up`'s `u32`-cast safety, both
+/// unconditional here).
+pub proof fn subst_c_eq_subst_full_z(e: ExprSpecZ, a: ExprSpecZ, c: nat)
+    requires nlbv_z(e) <= c + 1, nlbv_z(a) <= 0
+    ensures subst_c_z(e, a, c) == subst_full_z(e, seq![a], c)
+    decreases e
+{
+    reveal(shift_z);
+    reveal(subst_z);
+    match e {
+        ExprSpecZ::Var(i) => {
+            assert(nlbv_z(e) == i + 1);
+            if i == c {
+                shift_cancel_z(c, a);
+                assert(subst_c_z(e, a, c) == shift_z(-1, c, shift_z(1, c, a)));
+                assert(subst_c_z(e, a, c) == a);
+                assert(subst_full_z(e, seq![a], c) == a);
+            } else {
+                assert(i < c);
+                assert(subst_z(c, shift_z(1, c, a), e) == e);
+                assert(subst_c_z(e, a, c) == shift_z(-1, c, e));
+                assert(shift_z(-1, c, e) == e);
+                assert(subst_full_z(e, seq![a], c) == e);
+            }
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => {
+            assert(subst_z(c, shift_z(1, c, a), e) == e);
+            assert(shift_z(-1, c, e) == e);
+        }
+        ExprSpecZ::App(f, g) => {
+            subst_c_eq_subst_full_z(*f, a, c);
+            subst_c_eq_subst_full_z(*g, a, c);
+            assert(subst_z(c, shift_z(1, c, a), e)
+                == ExprSpecZ::App(Box::new(subst_z(c, shift_z(1, c, a), *f)), Box::new(subst_z(c, shift_z(1, c, a), *g))));
+            assert(subst_c_z(e, a, c) == ExprSpecZ::App(Box::new(subst_c_z(*f, a, c)), Box::new(subst_c_z(*g, a, c))));
+        }
+        ExprSpecZ::Bind(t, b) => {
+            subst_c_eq_subst_full_z(*t, a, c);
+            nlbv_shift_noop_z(1, 0, a);
+            assert(shift_z(1, 0, a) == a);
+            subst_c_eq_subst_full_z(*b, a, (c + 1) as nat);
+
+            let s = shift_z(1, c, a);
+            assert(subst_z(c, s, e) == ExprSpecZ::Bind(
+                Box::new(subst_z(c, s, *t)),
+                Box::new(subst_z((c + 1) as nat, shift_z(1, 0, s), *b)),
+            ));
+            assert(subst_c_z(e, a, c) == ExprSpecZ::Bind(
+                Box::new(shift_z(-1, c, subst_z(c, s, *t))),
+                Box::new(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))),
+            ));
+
+            shift_shift_aligned_up_z(c, 0, a);
+            assert(shift_z(1, (c + 1) as nat, shift_z(1, 0, a)) == shift_z(1, 0, shift_z(1, c, a)));
+            assert(shift_z(1, 0, s) == shift_z(1, (c + 1) as nat, a));
+
+            assert(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))
+                == subst_c_z(*b, a, (c + 1) as nat));
+            assert(subst_c_z(*t, a, c) == shift_z(-1, c, subst_z(c, s, *t)));
+
+            assert(subst_c_z(e, a, c) == ExprSpecZ::Bind(
+                Box::new(subst_c_z(*t, a, c)),
+                Box::new(subst_c_z(*b, a, (c + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            subst_c_eq_subst_full_z(*t, a, c);
+            subst_c_eq_subst_full_z(*v, a, c);
+            nlbv_shift_noop_z(1, 0, a);
+            assert(shift_z(1, 0, a) == a);
+            subst_c_eq_subst_full_z(*b, a, (c + 1) as nat);
+
+            let s = shift_z(1, c, a);
+            assert(subst_z(c, s, e) == ExprSpecZ::Let(
+                Box::new(subst_z(c, s, *t)), Box::new(subst_z(c, s, *v)),
+                Box::new(subst_z((c + 1) as nat, shift_z(1, 0, s), *b)),
+            ));
+            assert(subst_c_z(e, a, c) == ExprSpecZ::Let(
+                Box::new(shift_z(-1, c, subst_z(c, s, *t))),
+                Box::new(shift_z(-1, c, subst_z(c, s, *v))),
+                Box::new(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))),
+            ));
+
+            shift_shift_aligned_up_z(c, 0, a);
+            assert(shift_z(1, (c + 1) as nat, shift_z(1, 0, a)) == shift_z(1, 0, shift_z(1, c, a)));
+            assert(shift_z(1, 0, s) == shift_z(1, (c + 1) as nat, a));
+
+            assert(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))
+                == subst_c_z(*b, a, (c + 1) as nat));
+            assert(subst_c_z(*t, a, c) == shift_z(-1, c, subst_z(c, s, *t)));
+            assert(subst_c_z(*v, a, c) == shift_z(-1, c, subst_z(c, s, *v)));
+
+            assert(subst_c_z(e, a, c) == ExprSpecZ::Let(
+                Box::new(subst_c_z(*t, a, c)),
+                Box::new(subst_c_z(*v, a, c)),
+                Box::new(subst_c_z(*b, a, (c + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Proj(st) => {
+            subst_c_eq_subst_full_z(*st, a, c);
+            assert(subst_z(c, shift_z(1, c, a), e) == ExprSpecZ::Proj(Box::new(subst_z(c, shift_z(1, c, a), *st))));
+            assert(subst_c_z(e, a, c) == ExprSpecZ::Proj(Box::new(subst_c_z(*st, a, c))));
+        }
+    }
+}
+
+/// `beta_model::spine_bind`'s unbounded counterpart: peels exactly `n`
+/// nested `Bind`s from `head`, returning the innermost body if `head`
+/// has at least that many, else `None`.
+pub open spec fn spine_bind_z(head: ExprSpecZ, n: nat) -> Option<ExprSpecZ>
+    decreases n
+{
+    if n == 0 {
+        Some(head)
+    } else {
+        match head {
+            ExprSpecZ::Bind(_, b) => spine_bind_z(*b, (n - 1) as nat),
+            _ => None,
+        }
+    }
+}
+
+/// `beta_model::spine_app`'s unbounded counterpart: rebuilds `base @
+/// args[0] @ ... @ args[len-1]` (left-associated).
+pub open spec fn spine_app_z(base: ExprSpecZ, args: Seq<ExprSpecZ>) -> ExprSpecZ
+    decreases args.len()
+{
+    if args.len() == 0 {
+        base
+    } else {
+        ExprSpecZ::App(
+            Box::new(spine_app_z(base, args.subrange(0, args.len() - 1))),
+            Box::new(args[args.len() - 1]),
+        )
+    }
+}
+
+/// `beta_model::spine_reduce`'s unbounded counterpart: the telescopic
+/// beta-reduction step computed as a sequence of ordinary single-
+/// argument beta steps.
+pub open spec fn spine_reduce_z(head: ExprSpecZ, args: Seq<ExprSpecZ>) -> ExprSpecZ
+    decreases args.len()
+{
+    if args.len() == 0 {
+        head
+    } else {
+        match head {
+            ExprSpecZ::Bind(_, b) => spine_reduce_z(subst1_z(*b, args[0]), args.subrange(1, args.len() as int)),
+            _ => spine_app_z(head, args),
+        }
+    }
+}
+
+/// `beta_model::subst_c_spine_reduce_eq`'s unbounded counterpart:
+/// substituting into a term with `k` more `Bind`s to peel, at cutoff
+/// `c`, matches one `subst_full_z` call against `body` at the position
+/// `a` lands after `k` peels (`c + k`).
+pub proof fn subst_c_spine_reduce_eq_z(t0: ExprSpecZ, a: ExprSpecZ, c: nat, k: nat, body: ExprSpecZ)
+    requires
+        spine_bind_z(t0, k) == Some(body),
+        nlbv_z(body) <= c + k + 1,
+        nlbv_z(a) <= 0,
+    ensures spine_bind_z(subst_c_z(t0, a, c), k) == Some(subst_full_z(body, seq![a], (c + k) as nat))
+    decreases k
+{
+    reveal(shift_z);
+    reveal(subst_z);
+    if k == 0 {
+        assert(t0 == body);
+        subst_c_eq_subst_full_z(body, a, c);
+        assert(subst_c_z(t0, a, c) == subst_full_z(body, seq![a], c));
+    } else {
+        match t0 {
+            ExprSpecZ::Bind(t, b) => {
+                assert(spine_bind_z(t0, k) == spine_bind_z(*b, (k - 1) as nat));
+                assert(spine_bind_z(*b, (k - 1) as nat) == Some(body));
+
+                let s = shift_z(1, c, a);
+                assert(subst_z(c, s, t0) == ExprSpecZ::Bind(
+                    Box::new(subst_z(c, s, *t)),
+                    Box::new(subst_z((c + 1) as nat, shift_z(1, 0, s), *b)),
+                ));
+                assert(subst_c_z(t0, a, c) == ExprSpecZ::Bind(
+                    Box::new(shift_z(-1, c, subst_z(c, s, *t))),
+                    Box::new(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))),
+                ));
+
+                nlbv_shift_noop_z(1, 0, a);
+                assert(shift_z(1, 0, a) == a);
+
+                shift_shift_aligned_up_z(c, 0, a);
+                assert(shift_z(1, (c + 1) as nat, shift_z(1, 0, a)) == shift_z(1, 0, shift_z(1, c, a)));
+                assert(shift_z(1, 0, s) == shift_z(1, (c + 1) as nat, a));
+
+                assert(shift_z(-1, (c + 1) as nat, subst_z((c + 1) as nat, shift_z(1, 0, s), *b))
+                    == subst_c_z(*b, a, (c + 1) as nat));
+
+                assert(subst_c_z(t0, a, c) == ExprSpecZ::Bind(
+                    Box::new(shift_z(-1, c, subst_z(c, s, *t))),
+                    Box::new(subst_c_z(*b, a, (c + 1) as nat)),
+                ));
+
+                subst_c_spine_reduce_eq_z(*b, a, (c + 1) as nat, (k - 1) as nat, body);
+                assert(spine_bind_z(subst_c_z(*b, a, (c + 1) as nat), (k - 1) as nat)
+                    == Some(subst_full_z(body, seq![a], (c + 1 + (k - 1)) as nat)));
+                assert((c + 1 + (k - 1)) as nat == (c + k) as nat);
+
+                assert(spine_bind_z(subst_c_z(t0, a, c), k)
+                    == spine_bind_z(subst_c_z(*b, a, (c + 1) as nat), (k - 1) as nat));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// `beta_model::subst_full_nlbv_bound`'s unbounded counterpart -- ALREADY
+/// bound-free in the original (`nlbv` was always `nat`-valued), so this
+/// is a direct, unmodified-in-spirit port.
+pub proof fn subst_full_nlbv_bound_z(e: ExprSpecZ, s: ExprSpecZ, offset: nat)
+    requires nlbv_z(e) <= offset + 1, nlbv_z(s) <= 0
+    ensures nlbv_z(subst_full_z(e, seq![s], offset)) <= offset
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(i) => {
+            assert(nlbv_z(e) == i + 1);
+            if i < offset {
+                assert(subst_full_z(e, seq![s], offset) == e);
+            } else {
+                assert(i == offset);
+                assert(subst_full_z(e, seq![s], offset) == s);
+            }
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => {
+            assert(subst_full_z(e, seq![s], offset) == e);
+        }
+        ExprSpecZ::App(f, a) => {
+            subst_full_nlbv_bound_z(*f, s, offset);
+            subst_full_nlbv_bound_z(*a, s, offset);
+            assert(subst_full_z(e, seq![s], offset) == ExprSpecZ::App(
+                Box::new(subst_full_z(*f, seq![s], offset)),
+                Box::new(subst_full_z(*a, seq![s], offset)),
+            ));
+        }
+        ExprSpecZ::Bind(t, b) => {
+            subst_full_nlbv_bound_z(*t, s, offset);
+            subst_full_nlbv_bound_z(*b, s, (offset + 1) as nat);
+            assert(subst_full_z(e, seq![s], offset) == ExprSpecZ::Bind(
+                Box::new(subst_full_z(*t, seq![s], offset)),
+                Box::new(subst_full_z(*b, seq![s], (offset + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            subst_full_nlbv_bound_z(*t, s, offset);
+            subst_full_nlbv_bound_z(*v, s, offset);
+            subst_full_nlbv_bound_z(*b, s, (offset + 1) as nat);
+            assert(subst_full_z(e, seq![s], offset) == ExprSpecZ::Let(
+                Box::new(subst_full_z(*t, seq![s], offset)),
+                Box::new(subst_full_z(*v, seq![s], offset)),
+                Box::new(subst_full_z(*b, seq![s], (offset + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Proj(st) => {
+            subst_full_nlbv_bound_z(*st, s, offset);
+            assert(subst_full_z(e, seq![s], offset) == ExprSpecZ::Proj(Box::new(subst_full_z(*st, seq![s], offset))));
+        }
+    }
+}
+
+/// `beta_model::subst_full_compose`'s unbounded counterpart -- ALREADY
+/// bound-free in the original.
+pub proof fn subst_full_compose_z(e: ExprSpecZ, s: ExprSpecZ, rest: Seq<ExprSpecZ>, k: nat, offset: nat)
+    requires nlbv_z(e) <= offset + k + 1, nlbv_z(s) <= 0, rest.len() == k
+    ensures subst_full_z(subst_full_z(e, seq![s], (offset + k) as nat), rest, offset)
+        == subst_full_z(e, seq![s] + rest, offset)
+    decreases e
+{
+    match e {
+        ExprSpecZ::Var(i) => {
+            assert(nlbv_z(e) == i + 1);
+            if i < offset {
+                assert(subst_full_z(e, seq![s], (offset + k) as nat) == e);
+                assert(subst_full_z(e, rest, offset) == e);
+                assert(subst_full_z(e, seq![s] + rest, offset) == e);
+            } else if i < offset + k {
+                assert(subst_full_z(e, seq![s], (offset + k) as nat) == e);
+                let j = i - offset;
+                assert(j < k);
+                assert(subst_full_z(e, rest, offset) == rest[(k - 1 - j) as int]);
+                assert((seq![s] + rest).len() == k + 1);
+                assert((seq![s] + rest)[(k - j) as int] == rest[(k - j - 1) as int]);
+                assert(subst_full_z(e, seq![s] + rest, offset) == (seq![s] + rest)[(k - j) as int]);
+                assert((k - 1 - j) as int == (k - j - 1) as int);
+            } else {
+                assert(i == offset + k);
+                assert(subst_full_z(e, seq![s], (offset + k) as nat) == s);
+                subst_full_noop_z(s, rest, offset);
+                assert(subst_full_z(s, rest, offset) == s);
+                assert((seq![s] + rest)[0int] == s);
+                assert(subst_full_z(e, seq![s] + rest, offset) == (seq![s] + rest)[0int]);
+            }
+        }
+        ExprSpecZ::Free(_) | ExprSpecZ::Closed => {
+            assert(subst_full_z(e, seq![s], (offset + k) as nat) == e);
+            assert(subst_full_z(e, rest, offset) == e);
+            assert(subst_full_z(e, seq![s] + rest, offset) == e);
+        }
+        ExprSpecZ::App(f, a) => {
+            subst_full_compose_z(*f, s, rest, k, offset);
+            subst_full_compose_z(*a, s, rest, k, offset);
+
+            let fx = subst_full_z(*f, seq![s], (offset + k) as nat);
+            let ax = subst_full_z(*a, seq![s], (offset + k) as nat);
+            assert(subst_full_z(e, seq![s], (offset + k) as nat) == ExprSpecZ::App(Box::new(fx), Box::new(ax)));
+
+            assert(subst_full_z(subst_full_z(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full_z(ExprSpecZ::App(Box::new(fx), Box::new(ax)), rest, offset));
+            assert(subst_full_z(ExprSpecZ::App(Box::new(fx), Box::new(ax)), rest, offset) == ExprSpecZ::App(
+                Box::new(subst_full_z(fx, rest, offset)),
+                Box::new(subst_full_z(ax, rest, offset)),
+            ));
+            assert(subst_full_z(fx, rest, offset) == subst_full_z(*f, seq![s] + rest, offset));
+            assert(subst_full_z(ax, rest, offset) == subst_full_z(*a, seq![s] + rest, offset));
+
+            assert(subst_full_z(e, seq![s] + rest, offset) == ExprSpecZ::App(
+                Box::new(subst_full_z(*f, seq![s] + rest, offset)),
+                Box::new(subst_full_z(*a, seq![s] + rest, offset)),
+            ));
+        }
+        ExprSpecZ::Bind(t, b) => {
+            subst_full_compose_z(*t, s, rest, k, offset);
+            subst_full_compose_z(*b, s, rest, k, (offset + 1) as nat);
+            assert((offset + 1 + k) as nat == (offset + k + 1) as nat);
+            assert(subst_full_z(subst_full_z(*b, seq![s], (offset + k + 1) as nat), rest, (offset + 1) as nat)
+                == subst_full_z(*b, seq![s] + rest, (offset + 1) as nat));
+
+            let tx = subst_full_z(*t, seq![s], (offset + k) as nat);
+            let bx = subst_full_z(*b, seq![s], (offset + k + 1) as nat);
+            assert(subst_full_z(e, seq![s], (offset + k) as nat) == ExprSpecZ::Bind(Box::new(tx), Box::new(bx)));
+
+            assert(subst_full_z(subst_full_z(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full_z(ExprSpecZ::Bind(Box::new(tx), Box::new(bx)), rest, offset));
+            assert(subst_full_z(ExprSpecZ::Bind(Box::new(tx), Box::new(bx)), rest, offset) == ExprSpecZ::Bind(
+                Box::new(subst_full_z(tx, rest, offset)),
+                Box::new(subst_full_z(bx, rest, (offset + 1) as nat)),
+            ));
+            assert(subst_full_z(tx, rest, offset) == subst_full_z(*t, seq![s] + rest, offset));
+            assert(subst_full_z(bx, rest, (offset + 1) as nat) == subst_full_z(*b, seq![s] + rest, (offset + 1) as nat));
+
+            assert(subst_full_z(e, seq![s] + rest, offset) == ExprSpecZ::Bind(
+                Box::new(subst_full_z(*t, seq![s] + rest, offset)),
+                Box::new(subst_full_z(*b, seq![s] + rest, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Let(t, v, b) => {
+            subst_full_compose_z(*t, s, rest, k, offset);
+            subst_full_compose_z(*v, s, rest, k, offset);
+            subst_full_compose_z(*b, s, rest, k, (offset + 1) as nat);
+            assert((offset + 1 + k) as nat == (offset + k + 1) as nat);
+            assert(subst_full_z(subst_full_z(*b, seq![s], (offset + k + 1) as nat), rest, (offset + 1) as nat)
+                == subst_full_z(*b, seq![s] + rest, (offset + 1) as nat));
+
+            let tx = subst_full_z(*t, seq![s], (offset + k) as nat);
+            let vx = subst_full_z(*v, seq![s], (offset + k) as nat);
+            let bx = subst_full_z(*b, seq![s], (offset + k + 1) as nat);
+            assert(subst_full_z(e, seq![s], (offset + k) as nat)
+                == ExprSpecZ::Let(Box::new(tx), Box::new(vx), Box::new(bx)));
+
+            assert(subst_full_z(subst_full_z(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full_z(ExprSpecZ::Let(Box::new(tx), Box::new(vx), Box::new(bx)), rest, offset));
+            assert(subst_full_z(ExprSpecZ::Let(Box::new(tx), Box::new(vx), Box::new(bx)), rest, offset) == ExprSpecZ::Let(
+                Box::new(subst_full_z(tx, rest, offset)),
+                Box::new(subst_full_z(vx, rest, offset)),
+                Box::new(subst_full_z(bx, rest, (offset + 1) as nat)),
+            ));
+            assert(subst_full_z(tx, rest, offset) == subst_full_z(*t, seq![s] + rest, offset));
+            assert(subst_full_z(vx, rest, offset) == subst_full_z(*v, seq![s] + rest, offset));
+            assert(subst_full_z(bx, rest, (offset + 1) as nat) == subst_full_z(*b, seq![s] + rest, (offset + 1) as nat));
+
+            assert(subst_full_z(e, seq![s] + rest, offset) == ExprSpecZ::Let(
+                Box::new(subst_full_z(*t, seq![s] + rest, offset)),
+                Box::new(subst_full_z(*v, seq![s] + rest, offset)),
+                Box::new(subst_full_z(*b, seq![s] + rest, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpecZ::Proj(st) => {
+            subst_full_compose_z(*st, s, rest, k, offset);
+
+            let sx = subst_full_z(*st, seq![s], (offset + k) as nat);
+            assert(subst_full_z(e, seq![s], (offset + k) as nat) == ExprSpecZ::Proj(Box::new(sx)));
+
+            assert(subst_full_z(subst_full_z(e, seq![s], (offset + k) as nat), rest, offset)
+                == subst_full_z(ExprSpecZ::Proj(Box::new(sx)), rest, offset));
+            assert(subst_full_z(ExprSpecZ::Proj(Box::new(sx)), rest, offset)
+                == ExprSpecZ::Proj(Box::new(subst_full_z(sx, rest, offset))));
+            assert(subst_full_z(sx, rest, offset) == subst_full_z(*st, seq![s] + rest, offset));
+
+            assert(subst_full_z(e, seq![s] + rest, offset)
+                == ExprSpecZ::Proj(Box::new(subst_full_z(*st, seq![s] + rest, offset))));
+        }
+    }
+}
+
+/// `beta_model::spine_reduce_eq_subst_full`'s unbounded counterpart --
+/// UNCONDITIONAL modulo the semantic hypotheses (no `bound`/
+/// `max_var_below` at all): `spine_reduce_z`'s iterated single-argument
+/// `subst1_z` steps compute exactly what one `subst_full_z` call against
+/// the whole `args` list does.
+pub proof fn spine_reduce_eq_subst_full_z(head: ExprSpecZ, args: Seq<ExprSpecZ>, body: ExprSpecZ)
+    requires
+        spine_bind_z(head, args.len()) == Some(body),
+        nlbv_z(body) <= args.len(),
+        forall|i: int| 0 <= i < args.len() ==> nlbv_z(args[i]) <= 0,
+    ensures spine_reduce_z(head, args) == subst_full_z(body, args, 0)
+    decreases args.len()
+{
+    if args.len() == 0 {
+        assert(head == body);
+        assert(args =~= Seq::<ExprSpecZ>::empty());
+        subst_full_empty_z(body, 0);
+        assert(subst_full_z(body, args, 0) == subst_full_z(body, Seq::<ExprSpecZ>::empty(), 0));
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        let n = rest.len();
+
+        match head {
+            ExprSpecZ::Bind(ht, hb) => {
+                assert(spine_bind_z(head, args.len()) == spine_bind_z(*hb, n));
+                assert(spine_bind_z(*hb, n) == Some(body));
+
+                assert(subst1_z(*hb, a0) == subst_c_z(*hb, a0, 0));
+
+                subst_c_spine_reduce_eq_z(*hb, a0, 0, n, body);
+                assert(spine_bind_z(subst_c_z(*hb, a0, 0), n) == Some(subst_full_z(body, seq![a0], n)));
+                assert(spine_bind_z(subst1_z(*hb, a0), n) == Some(subst_full_z(body, seq![a0], n)));
+
+                let body2 = subst_full_z(body, seq![a0], n);
+                subst_full_nlbv_bound_z(body, a0, n);
+                assert(nlbv_z(body2) <= n);
+
+                assert forall|i: int| 0 <= i < rest.len() implies nlbv_z(rest[i]) <= 0 by {
+                    assert(rest[i] == args[i + 1]);
+                }
+
+                spine_reduce_eq_subst_full_z(subst1_z(*hb, a0), rest, body2);
+                assert(spine_reduce_z(subst1_z(*hb, a0), rest) == subst_full_z(body2, rest, 0));
+                assert(spine_reduce_z(head, args) == spine_reduce_z(subst1_z(*hb, a0), rest));
+
+                subst_full_compose_z(body, a0, rest, n, 0);
+                assert(subst_full_z(subst_full_z(body, seq![a0], (0 + n) as nat), rest, 0)
+                    == subst_full_z(body, seq![a0] + rest, 0));
+
+                assert(seq![a0] + rest =~= args);
+                assert(subst_full_z(body, seq![a0] + rest, 0) == subst_full_z(body, args, 0));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// `beta_model::spine_app_compose`'s unbounded counterpart.
+pub proof fn spine_app_compose_z(base: ExprSpecZ, a0: ExprSpecZ, rest: Seq<ExprSpecZ>)
+    ensures spine_app_z(base, seq![a0] + rest) == spine_app_z(ExprSpecZ::App(Box::new(base), Box::new(a0)), rest)
+    decreases rest.len()
+{
+    if rest.len() == 0 {
+        assert(seq![a0] + rest =~= seq![a0]);
+        assert(spine_app_z(base, seq![a0]) == ExprSpecZ::App(Box::new(spine_app_z(base, seq![a0].subrange(0, 0))), Box::new(a0)));
+        assert(seq![a0].subrange(0, 0) =~= Seq::<ExprSpecZ>::empty());
+    } else {
+        let rest_init = rest.subrange(0, rest.len() - 1);
+        let last = rest[rest.len() - 1];
+        assert(rest =~= rest_init.push(last));
+        spine_app_compose_z(base, a0, rest_init);
+
+        let whole = seq![a0] + rest;
+        assert(whole =~= (seq![a0] + rest_init).push(last));
+        assert(spine_app_z(base, whole) == ExprSpecZ::App(
+            Box::new(spine_app_z(base, whole.subrange(0, whole.len() - 1))),
+            Box::new(whole[whole.len() - 1]),
+        ));
+        assert(whole.subrange(0, whole.len() - 1) =~= seq![a0] + rest_init);
+        assert(whole[whole.len() - 1] == last);
+
+        assert(spine_app_z(ExprSpecZ::App(Box::new(base), Box::new(a0)), rest) == ExprSpecZ::App(
+            Box::new(spine_app_z(ExprSpecZ::App(Box::new(base), Box::new(a0)), rest_init)),
+            Box::new(last),
+        ));
+    }
+}
+
+/// `beta_model::pstep_chain_valid`'s unbounded counterpart.
+pub open spec fn pstep_chain_valid_z(chain: Seq<ExprSpecZ>) -> bool {
+    forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 ==> pstep_z(chain[i], chain[i + 1])
+}
+
+/// `beta_model::pstep_star`'s unbounded counterpart: the reflexive-
+/// transitive closure of `pstep_z`, witnessed by an explicit chain.
+pub open spec fn pstep_star_z(e1: ExprSpecZ, e2: ExprSpecZ) -> bool {
+    exists |chain: Seq<ExprSpecZ>|
+        chain.len() >= 1 && chain[0] == e1 && chain[chain.len() - 1] == e2 && pstep_chain_valid_z(chain)
+}
+
+/// `beta_model::pstep_star_refl`'s unbounded counterpart.
+pub proof fn pstep_star_refl_z(e: ExprSpecZ)
+    ensures pstep_star_z(e, e)
+{
+    let chain = seq![e];
+    assert(chain.len() == 1);
+    assert(chain[0] == e);
+    assert(chain[chain.len() - 1] == e);
+    assert(pstep_chain_valid_z(chain));
+}
+
+/// `beta_model::pstep_star_one`'s unbounded counterpart.
+pub proof fn pstep_star_one_z(e1: ExprSpecZ, e2: ExprSpecZ)
+    requires pstep_z(e1, e2)
+    ensures pstep_star_z(e1, e2)
+{
+    let chain = seq![e1, e2];
+    assert(chain.len() == 2);
+    assert(chain[0] == e1);
+    assert(chain[chain.len() - 1] == e2);
+    assert(pstep_chain_valid_z(chain)) by {
+        assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep_z(chain[i], chain[i + 1]) by {
+            assert(i == 0);
+        }
+    }
+}
+
+/// `beta_model::pstep_star_trans`'s unbounded counterpart -- free, by
+/// concatenating the two witness chains.
+pub proof fn pstep_star_trans_z(e1: ExprSpecZ, e2: ExprSpecZ, e3: ExprSpecZ)
+    requires pstep_star_z(e1, e2), pstep_star_z(e2, e3)
+    ensures pstep_star_z(e1, e3)
+{
+    let chain1 = choose |c: Seq<ExprSpecZ>| c.len() >= 1 && c[0] == e1 && c[c.len() - 1] == e2 && pstep_chain_valid_z(c);
+    let chain2 = choose |c: Seq<ExprSpecZ>| c.len() >= 1 && c[0] == e2 && c[c.len() - 1] == e3 && pstep_chain_valid_z(c);
+    let n1 = chain1.len();
+    let chain2_tail = chain2.subrange(1, chain2.len() as int);
+    let chain = chain1 + chain2_tail;
+
+    assert(chain.len() == n1 + chain2.len() - 1);
+    assert(chain[0] == chain1[0]);
+    assert(chain[0] == e1);
+
+    if chain2.len() == 1 {
+        assert(chain2_tail =~= Seq::<ExprSpecZ>::empty());
+        assert(chain =~= chain1);
+        assert(chain[chain.len() - 1] == e2);
+        assert(e2 == e3);
+    } else {
+        assert(chain[chain.len() - 1] == chain2_tail[chain2_tail.len() - 1]);
+        assert(chain2_tail[chain2_tail.len() - 1] == chain2[chain2.len() - 1]);
+        assert(chain[chain.len() - 1] == e3);
+    }
+
+    assert(pstep_chain_valid_z(chain)) by {
+        assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep_z(chain[i], chain[i + 1]) by {
+            if i < n1 - 1 {
+                assert(chain[i] == chain1[i]);
+                assert(chain[i + 1] == chain1[i + 1]);
+                assert(pstep_z(chain1[i], chain1[i + 1]));
+            } else if i == n1 - 1 {
+                assert(chain[i] == chain1[n1 - 1]);
+                assert(chain[i] == e2);
+                assert(chain[i + 1] == chain2_tail[0]);
+                assert(chain2_tail[0] == chain2[1]);
+                assert(chain2[0] == e2);
+                assert(pstep_z(chain2[0], chain2[1]));
+            } else {
+                let j = i - n1 + 1;
+                assert(chain[i] == chain2_tail[i - n1]);
+                assert(chain2_tail[i - n1] == chain2[j]);
+                assert(chain[i + 1] == chain2_tail[i + 1 - n1]);
+                assert(chain2_tail[i + 1 - n1] == chain2[j + 1]);
+                assert(pstep_z(chain2[j], chain2[j + 1]));
+            }
+        }
+    }
+}
+
+/// `beta_model::pstep_star_app_congr`'s unbounded counterpart.
+pub proof fn pstep_star_app_congr_z(x: ExprSpecZ, y: ExprSpecZ, a: ExprSpecZ)
+    requires pstep_star_z(x, y)
+    ensures pstep_star_z(ExprSpecZ::App(Box::new(x), Box::new(a)), ExprSpecZ::App(Box::new(y), Box::new(a)))
+{
+    let chain = choose |c: Seq<ExprSpecZ>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid_z(c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpecZ::App(Box::new(chain[i]), Box::new(a)));
+
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpecZ::App(Box::new(chain[0]), Box::new(a)));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpecZ::App(Box::new(chain[chain.len() - 1]), Box::new(a)));
+    assert(chain[chain.len() - 1] == y);
+
+    assert(pstep_chain_valid_z(mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep_z(mapped[i], mapped[i + 1]) by {
+            assert(pstep_z(chain[i], chain[i + 1]));
+            assert(pstep_z(a, a));
+            assert(mapped[i] == ExprSpecZ::App(Box::new(chain[i]), Box::new(a)));
+            assert(mapped[i + 1] == ExprSpecZ::App(Box::new(chain[i + 1]), Box::new(a)));
+            assert(pstep_z(mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `beta_model::pstep_spine_app_star`'s unbounded counterpart.
+pub proof fn pstep_spine_app_star_z(x: ExprSpecZ, y: ExprSpecZ, args: Seq<ExprSpecZ>)
+    requires pstep_star_z(x, y)
+    ensures pstep_star_z(spine_app_z(x, args), spine_app_z(y, args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        pstep_spine_app_star_z(x, y, args_init);
+        pstep_star_app_congr_z(spine_app_z(x, args_init), spine_app_z(y, args_init), last);
+        assert(spine_app_z(x, args) == ExprSpecZ::App(Box::new(spine_app_z(x, args_init)), Box::new(last)));
+        assert(spine_app_z(y, args) == ExprSpecZ::App(Box::new(spine_app_z(y, args_init)), Box::new(last)));
+    }
+}
+
+/// `beta_model::pstep_star_spine_reduce`'s unbounded counterpart -- the
+/// full, UNRESTRICTED telescopic-reduction-to-confluence bridge:
+/// `spine_app_z(head, args)` and `spine_reduce_z(head, args)` are
+/// related by `pstep_star_z` for EVERY `head`/`args`, no size
+/// restriction, making `pstep_diamond_z`'s unconditional confluence
+/// actually applicable to telescopic reduction without exception.
+pub proof fn pstep_star_spine_reduce_z(head: ExprSpecZ, args: Seq<ExprSpecZ>)
+    ensures pstep_star_z(spine_app_z(head, args), spine_reduce_z(head, args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+        pstep_star_refl_z(head);
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+
+        match head {
+            ExprSpecZ::Bind(bt, b) => {
+                let beta_target = subst1_z(*b, a0);
+                assert(pstep_z(ExprSpecZ::App(Box::new(head), Box::new(a0)), beta_target)) by {
+                    assert(pstep_z(*b, *b));
+                    assert(pstep_z(a0, a0));
+                }
+                pstep_star_one_z(ExprSpecZ::App(Box::new(head), Box::new(a0)), beta_target);
+                pstep_spine_app_star_z(ExprSpecZ::App(Box::new(head), Box::new(a0)), beta_target, rest);
+
+                spine_app_compose_z(head, a0, rest);
+                assert(seq![a0] + rest =~= args);
+                assert(spine_app_z(head, args) == spine_app_z(ExprSpecZ::App(Box::new(head), Box::new(a0)), rest));
+                assert(pstep_star_z(spine_app_z(head, args), spine_app_z(beta_target, rest)));
+
+                pstep_star_spine_reduce_z(beta_target, rest);
+                assert(pstep_star_z(spine_app_z(beta_target, rest), spine_reduce_z(beta_target, rest)));
+                assert(spine_reduce_z(head, args) == spine_reduce_z(beta_target, rest));
+
+                pstep_star_trans_z(spine_app_z(head, args), spine_app_z(beta_target, rest), spine_reduce_z(head, args));
+            }
+            _ => {
+                assert(spine_reduce_z(head, args) == spine_app_z(head, args));
+                pstep_star_refl_z(spine_app_z(head, args));
+            }
+        }
+    }
+}
+
 }
