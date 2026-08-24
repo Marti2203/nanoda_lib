@@ -5043,4 +5043,85 @@ pub open spec fn spine_reduce(head: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
     }
 }
 
+/// The main telescopic-reduction bridging theorem the whole tower above
+/// was built for: `spine_reduce`'s iterated single-argument `subst1`
+/// steps compute EXACTLY what one `subst_full` call against the whole
+/// `args` list at once does -- the same conclusion the real `tc.rs`
+/// `whnf_no_unfolding_aux` `Lambda` case relies on (peel `N` nested
+/// lambdas, substitute all `N` args via one `inst()` call), PROVIDED
+/// `body` (what's left after peeling every binder `head` has) has no
+/// loose reference escaping past them (`nlbv(body) <= args.len()`), and
+/// every substituted value is itself closed with respect to loose
+/// references (`nlbv(args[i]) <= 0` for all `i` -- see
+/// `subst_c_eq_subst_full`'s doc comment for why this matches actual
+/// Lean-kernel discipline, where anything bound further out than the
+/// current manipulation is represented as a `Local`, never a raw
+/// escaping `Var`).
+///
+/// Proof by induction on `args.len()`: the base case is exactly
+/// `subst_full_empty`. The inductive step peels `args[0]` via
+/// `subst_c_spine_reduce_eq` (at cutoff `c = 0`, since `subst1(x, a) ==
+/// subst_c(x, a, 0)` by definition) to land on `subst_full(body,
+/// seq![args[0]], k)` for the remaining `k = args.len() - 1` binders,
+/// bounds ITS `nlbv` via `subst_full_nlbv_bound` to satisfy the IH's own
+/// precondition, applies the IH to the remaining `args.subrange(1, ..)`,
+/// then stitches the two `subst_full` calls (one against `[args[0]]`,
+/// one against the rest) into the single one against the full list via
+/// `subst_full_compose`.
+pub proof fn spine_reduce_eq_subst_full(head: ExprSpec, args: Seq<ExprSpec>, body: ExprSpec, bound: nat)
+    requires
+        spine_bind(head, args.len()) == Some(body),
+        nlbv(body) <= args.len(),
+        bound + 10 <= 0xFFFF_0000,
+        forall|i: int| 0 <= i < args.len() ==> nlbv(args[i]) <= 0 && max_var_below(args[i], bound),
+    ensures spine_reduce(head, args) == subst_full(body, args, 0)
+    decreases args.len()
+{
+    if args.len() == 0 {
+        assert(head == body);
+        assert(args =~= Seq::<ExprSpec>::empty());
+        subst_full_empty(body, 0);
+        assert(subst_full(body, args, 0) == subst_full(body, Seq::<ExprSpec>::empty(), 0));
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        let n = rest.len();
+
+        match head {
+            ExprSpec::Bind(ht, hb) => {
+                assert(spine_bind(head, args.len()) == spine_bind(*hb, n));
+                assert(spine_bind(*hb, n) == Some(body));
+
+                assert(subst1(*hb, a0) == subst_c(*hb, a0, 0));
+
+                subst_c_spine_reduce_eq(*hb, a0, 0, n, body, bound);
+                assert(spine_bind(subst_c(*hb, a0, 0), n) == Some(subst_full(body, seq![a0], n)));
+                assert(spine_bind(subst1(*hb, a0), n) == Some(subst_full(body, seq![a0], n)));
+
+                let body2 = subst_full(body, seq![a0], n);
+                subst_full_nlbv_bound(body, a0, n);
+                assert(nlbv(body2) <= n);
+
+                assert forall|i: int| 0 <= i < rest.len() implies
+                    nlbv(rest[i]) <= 0 && max_var_below(rest[i], bound)
+                by {
+                    assert(rest[i] == args[i + 1]);
+                }
+
+                spine_reduce_eq_subst_full(subst1(*hb, a0), rest, body2, bound);
+                assert(spine_reduce(subst1(*hb, a0), rest) == subst_full(body2, rest, 0));
+                assert(spine_reduce(head, args) == spine_reduce(subst1(*hb, a0), rest));
+
+                subst_full_compose(body, a0, rest, n, 0);
+                assert(subst_full(subst_full(body, seq![a0], (0 + n) as nat), rest, 0)
+                    == subst_full(body, seq![a0] + rest, 0));
+
+                assert(seq![a0] + rest =~= args);
+                assert(subst_full(body, seq![a0] + rest, 0) == subst_full(body, args, 0));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
 }
