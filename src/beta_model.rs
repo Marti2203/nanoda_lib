@@ -223,8 +223,10 @@ pub open spec fn pstep(e1: ExprSpec, e2: ExprSpec) -> bool
             exists |t2: ExprSpec, b2: ExprSpec| pstep(*t, t2) && pstep(*b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2))
         }
         ExprSpec::Let(t, v, b) => {
-            exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2))
+            ||| (exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2))
+            ||| (exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)))
         }
         ExprSpec::Proj(inner) => match e2 {
             ExprSpec::Proj(inner2) => pstep(*inner, *inner2),
@@ -371,18 +373,56 @@ pub proof fn pstep_shift(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*v), size(e1));
                 growth_mono(size(*b), size(e1));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                pstep_shift(bound, c, *t, t2);
-                pstep_shift(bound, c, *v, v2);
-                pstep_shift(bound, (c + 1) as nat, *b, b2);
-                assert(shift(1, c, e1) == ExprSpec::Let(
-                    Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
-                ));
-                assert(shift(1, c, e2) == ExprSpec::Let(
-                    Box::new(shift(1, c, t2)), Box::new(shift(1, c, v2)), Box::new(shift(1, (c + 1) as nat, b2)),
-                ));
-                assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    pstep_shift(bound, (c + 1) as nat, *b, b2);
+                    pstep_shift(bound, c, *v, v2);
+                    assert(pstep(shift(1, (c + 1) as nat, *b), shift(1, (c + 1) as nat, b2)));
+                    assert(pstep(shift(1, c, *v), shift(1, c, v2)));
+
+                    let common = if bmvb >= vmvb { bmvb } else { vmvb };
+                    max_var_below_mono(b2, bmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    assert(bdepth <= size(*b));
+                    if bmvb >= vmvb {
+                        growth_beta_bound(size(*b), size(e1));
+                        assert(common <= bound + growth(size(*b)));
+                    } else {
+                        assert(size(*v) + size(*b) + 2 <= size(e1));
+                        growth_beta_bound2(size(*v), size(*b), size(e1));
+                        assert(common <= bound + growth(size(*v)));
+                    }
+                    assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                    assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                    shift_subst1_commute(common, c, b2, v2);
+                    assert(shift(1, c, subst1(b2, v2)) == subst1(shift(1, (c + 1) as nat, b2), shift(1, c, v2)));
+                    assert(shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, b2), shift(1, c, v2)));
+
+                    assert(shift(1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
+                    ));
+                    assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_shift(bound, c, *t, t2);
+                    pstep_shift(bound, c, *v, v2);
+                    pstep_shift(bound, (c + 1) as nat, *b, b2);
+                    assert(shift(1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
+                    ));
+                    assert(shift(1, c, e2) == ExprSpec::Let(
+                        Box::new(shift(1, c, t2)), Box::new(shift(1, c, v2)), Box::new(shift(1, (c + 1) as nat, b2)),
+                    ));
+                    assert(pstep(shift(1, c, e1), shift(1, c, e2)));
+                }
             }
             ExprSpec::Proj(s) => {
                 assert(max_var_below(*s, bound));
@@ -551,18 +591,62 @@ pub proof fn pstep_shift_down(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
                 assert(!has_escaping_ref(*t, c));
                 assert(!has_escaping_ref(*v, c));
                 assert(!has_escaping_ref(*b, (c + 1) as nat));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                pstep_shift_down(bound, c, *t, t2);
-                pstep_shift_down(bound, c, *v, v2);
-                pstep_shift_down(bound, (c + 1) as nat, *b, b2);
-                assert(shift(-1, c, e1) == ExprSpec::Let(
-                    Box::new(shift(-1, c, *t)), Box::new(shift(-1, c, *v)), Box::new(shift(-1, (c + 1) as nat, *b)),
-                ));
-                assert(shift(-1, c, e2) == ExprSpec::Let(
-                    Box::new(shift(-1, c, t2)), Box::new(shift(-1, c, v2)), Box::new(shift(-1, (c + 1) as nat, b2)),
-                ));
-                assert(pstep(shift(-1, c, e1), shift(-1, c, e2)));
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    pstep_shift_down(bound, (c + 1) as nat, *b, b2);
+                    pstep_shift_down(bound, c, *v, v2);
+                    assert(pstep(shift(-1, (c + 1) as nat, *b), shift(-1, (c + 1) as nat, b2)));
+                    assert(pstep(shift(-1, c, *v), shift(-1, c, v2)));
+
+                    let common = if bmvb >= vmvb { bmvb } else { vmvb };
+                    max_var_below_mono(b2, bmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    assert(bdepth <= size(*b));
+                    if bmvb >= vmvb {
+                        growth_beta_bound(size(*b), size(e1));
+                        assert(common <= bound + growth(size(*b)));
+                    } else {
+                        assert(size(*v) + size(*b) + 2 <= size(e1));
+                        growth_beta_bound2(size(*v), size(*b), size(e1));
+                        assert(common <= bound + growth(size(*v)));
+                    }
+                    assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                    assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                    if c == 0 {
+                        pstep_preserves_no_escaping_ref(bound, 1, *b, b2);
+                        assert(!has_escaping_ref(b2, 1));
+                        pstep_preserves_no_escaping_ref(bound, 0, *v, v2);
+                        assert(!has_escaping_ref(v2, 0));
+                    }
+                    shift_subst1_commute_down(common, c, b2, v2);
+                    assert(shift(-1, c, subst1(b2, v2)) == subst1(shift(-1, (c + 1) as nat, b2), shift(-1, c, v2)));
+                    assert(shift(-1, c, e2) == subst1(shift(-1, (c + 1) as nat, b2), shift(-1, c, v2)));
+
+                    assert(shift(-1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(-1, c, *t)), Box::new(shift(-1, c, *v)), Box::new(shift(-1, (c + 1) as nat, *b)),
+                    ));
+                    assert(pstep(shift(-1, c, e1), shift(-1, c, e2)));
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_shift_down(bound, c, *t, t2);
+                    pstep_shift_down(bound, c, *v, v2);
+                    pstep_shift_down(bound, (c + 1) as nat, *b, b2);
+                    assert(shift(-1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(-1, c, *t)), Box::new(shift(-1, c, *v)), Box::new(shift(-1, (c + 1) as nat, *b)),
+                    ));
+                    assert(shift(-1, c, e2) == ExprSpec::Let(
+                        Box::new(shift(-1, c, t2)), Box::new(shift(-1, c, v2)), Box::new(shift(-1, (c + 1) as nat, b2)),
+                    ));
+                    assert(pstep(shift(-1, c, e1), shift(-1, c, e2)));
+                }
             }
             ExprSpec::Proj(s) => {
                 assert(max_var_below(*s, bound));
@@ -2951,15 +3035,45 @@ pub proof fn pstep_size_bound(e1: ExprSpec, e2: ExprSpec) -> (result: nat)
             }
             ExprSpec::Let(t, v, b) => {
                 assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                let tsize = pstep_size_bound(*t, t2);
-                let vsize = pstep_size_bound(*v, v2);
-                let bsize = pstep_size_bound(*b, b2);
-                assert(size(e2) == 1 + size(t2) + size(v2) + size(b2));
-                assert(size(*t) >= 1 && size(*v) >= 1 && size(*b) >= 1);
-                size_growth_congr_bound3(size(*t), size(*v), size(*b), size(e1));
-                (1 + tsize + vsize + bsize) as nat
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+                    let bsize = pstep_size_bound(*b, b2);
+                    let vsize = pstep_size_bound(*v, v2);
+                    subst1_size_bound(b2, v2);
+                    assert(size(e2) == size(subst1(b2, v2)));
+                    assert(size(subst1(b2, v2)) <= size(b2) * (size(v2) + 1));
+                    assert(size(e2) <= bsize * (vsize + 1)) by (nonlinear_arith)
+                        requires
+                            size(e2) <= size(b2) * (size(v2) + 1),
+                            size(b2) <= bsize,
+                            size(v2) <= vsize,
+                    {}
+
+                    assert(size(*v) + size(*b) + 2 <= size(e1));
+                    size_growth_beta_bound(size(*v), size(*b), size(e1));
+                    size_growth_pos(size(*v));
+                    size_growth_pos(size(*b));
+                    assert(bsize * (vsize + 1) <= size_growth(size(*b)) * (size_growth(size(*v)) + 1))
+                        by (nonlinear_arith)
+                        requires
+                            bsize <= size_growth(size(*b)),
+                            vsize <= size_growth(size(*v)),
+                    {}
+                    (bsize * (vsize + 1)) as nat
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    let tsize = pstep_size_bound(*t, t2);
+                    let vsize = pstep_size_bound(*v, v2);
+                    let bsize = pstep_size_bound(*b, b2);
+                    assert(size(e2) == 1 + size(t2) + size(v2) + size(b2));
+                    assert(size(*t) >= 1 && size(*v) >= 1 && size(*b) >= 1);
+                    size_growth_congr_bound3(size(*t), size(*v), size(*b), size(e1));
+                    (1 + tsize + vsize + bsize) as nat
+                }
             }
             ExprSpec::Proj(s) => {
                 assert(size(e1) == 1 + size(*s));
@@ -3233,19 +3347,52 @@ pub proof fn pstep_bounds(bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (n
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*v), size(e1));
                 growth_mono(size(*b), size(e1));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                let (tmvb, tdepth) = pstep_bounds(bound, *t, t2);
-                let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
-                let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
-                let common0 = if tmvb >= vmvb { tmvb } else { vmvb };
-                let common = if common0 >= bmvb { common0 } else { bmvb };
-                max_var_below_mono(t2, tmvb, common);
-                max_var_below_mono(v2, vmvb, common);
-                max_var_below_mono(b2, bmvb, common);
-                let d0 = if tdepth >= vdepth { tdepth } else { vdepth };
-                let d2 = 1 + (if d0 >= bdepth { d0 } else { bdepth });
-                (common, d2 as nat)
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    let common = if bmvb >= vmvb { bmvb } else { vmvb };
+                    max_var_below_mono(b2, bmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    assert(bdepth <= size(*b));
+
+                    if bmvb >= vmvb {
+                        growth_beta_bound(size(*b), size(e1));
+                        assert(common <= bound + growth(size(*b)));
+                    } else {
+                        assert(size(*v) + size(*b) + 2 <= size(e1));
+                        growth_beta_bound2(size(*v), size(*b), size(e1));
+                        assert(common <= bound + growth(size(*v)));
+                    }
+                    assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                    assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                    subst1_max_var_below(common, b2, v2);
+                    subst1_depth_bound(b2, v2);
+                    let d2 = bdepth + vdepth;
+                    let mvb2 = (common + 1) + bdepth;
+                    max_var_below_mono(subst1(b2, v2), (common + 1) + depth(b2), mvb2 as nat);
+                    assert(mvb2 <= bound + growth(size(e1)));
+                    assert(d2 <= size(e1));
+                    (mvb2 as nat, d2 as nat)
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    let (tmvb, tdepth) = pstep_bounds(bound, *t, t2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let common0 = if tmvb >= vmvb { tmvb } else { vmvb };
+                    let common = if common0 >= bmvb { common0 } else { bmvb };
+                    max_var_below_mono(t2, tmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    max_var_below_mono(b2, bmvb, common);
+                    let d0 = if tdepth >= vdepth { tdepth } else { vdepth };
+                    let d2 = 1 + (if d0 >= bdepth { d0 } else { bdepth });
+                    (common, d2 as nat)
+                }
             }
             ExprSpec::Proj(s) => {
                 assert(max_var_below(*s, bound));
@@ -3382,18 +3529,51 @@ pub proof fn pstep_preserves_no_escaping_ref(bound: nat, k: nat, e1: ExprSpec, e
                 assert(max_var_below(*t, bound));
                 assert(max_var_below(*v, bound));
                 assert(max_var_below(*b, bound));
+                assert(size(*t) < size(e1));
+                assert(size(*v) < size(e1));
+                assert(size(*b) < size(e1));
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*v), size(e1));
                 growth_mono(size(*b), size(e1));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                assert(!has_escaping_ref(*t, k));
-                assert(!has_escaping_ref(*v, k));
-                assert(!has_escaping_ref(*b, (k + 1) as nat));
-                pstep_preserves_no_escaping_ref(bound, k, *t, t2);
-                pstep_preserves_no_escaping_ref(bound, k, *v, v2);
-                pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *b, b2);
-                assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+                    assert(!has_escaping_ref(*b, (k + 1) as nat));
+                    assert(!has_escaping_ref(*v, k));
+                    pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *b, b2);
+                    pstep_preserves_no_escaping_ref(bound, k, *v, v2);
+
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    let common = if bmvb >= vmvb { bmvb } else { vmvb };
+                    max_var_below_mono(b2, bmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    assert(bdepth <= size(*b));
+                    if bmvb >= vmvb {
+                        growth_beta_bound(size(*b), size(e1));
+                        assert(common <= bound + growth(size(*b)));
+                    } else {
+                        assert(size(*v) + size(*b) + 2 <= size(e1));
+                        growth_beta_bound2(size(*v), size(*b), size(e1));
+                        assert(common <= bound + growth(size(*v)));
+                    }
+                    assert(common + bdepth + 1 <= bound + growth(size(e1)));
+                    assert(common + bdepth + 1 <= 0xFFFF_0000);
+
+                    subst1_no_escaping_ref(common, k, b2, v2);
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    assert(!has_escaping_ref(*t, k));
+                    assert(!has_escaping_ref(*v, k));
+                    assert(!has_escaping_ref(*b, (k + 1) as nat));
+                    pstep_preserves_no_escaping_ref(bound, k, *t, t2);
+                    pstep_preserves_no_escaping_ref(bound, k, *v, v2);
+                    pstep_preserves_no_escaping_ref(bound, (k + 1) as nat, *b, b2);
+                    assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                }
             }
             ExprSpec::Proj(st) => {
                 assert(max_var_below(*st, bound));
@@ -3874,25 +4054,78 @@ pub proof fn pstep_subst(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: Exp
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*v), size(e1));
                 growth_mono(size(*b), size(e1));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                pstep_subst(bound, j, s1, s2, *t, t2);
-                pstep_subst(bound, j, s1, s2, *v, v2);
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
 
-                pstep_shift(bound, 0, s1, s2);
-                shift_up_max_var_below(0, bound, s1);
-                shift_preserves_size(1, 0, s1);
-                max_var_below_mono(*b, bound, (bound + 1) as nat);
-                assert((bound + 1) + growth(size(*b)) + growth(size(s1)) + 4 * size(*b) + 4 * size(s1) + 20 <= 0xFFFF_0000);
-                pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b, b2);
+                    let (bmvb, bdepth) = pstep_bounds(bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(bound, *v, v2);
+                    assert(bdepth <= size(*b));
+                    assert(vdepth <= size(*v));
+                    assert(bmvb <= bound + growth(size(*b)));
+                    assert(vmvb <= bound + growth(size(*v)));
 
-                assert(subst(j, s1, e1) == ExprSpec::Let(
-                    Box::new(subst(j, s1, *t)), Box::new(subst(j, s1, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b)),
-                ));
-                assert(subst(j, s2, e2) == ExprSpec::Let(
-                    Box::new(subst(j, s2, t2)), Box::new(subst(j, s2, v2)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), b2)),
-                ));
-                assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                    pstep_shift(bound, 0, s1, s2);
+                    assert(pstep(shift(1, 0, s1), shift(1, 0, s2)));
+                    shift_up_max_var_below(0, bound, s1);
+                    shift_preserves_size(1, 0, s1);
+                    assert(max_var_below(shift(1, 0, s1), (bound + 1) as nat));
+                    max_var_below_mono(*b, bound, (bound + 1) as nat);
+
+                    assert((bound + 1) + growth(size(*b)) + growth(size(s1)) + 4 * size(*b) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                    pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b, b2);
+                    assert(pstep(subst((j + 1) as nat, shift(1, 0, s1), *b), subst((j + 1) as nat, shift(1, 0, s2), b2)));
+
+                    assert(bound + growth(size(*v)) + growth(size(s1)) + 4 * size(*v) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                    pstep_subst(bound, j, s1, s2, *v, v2);
+                    assert(pstep(subst(j, s1, *v), subst(j, s2, v2)));
+
+                    let common0 = if bmvb >= vmvb { bmvb } else { vmvb };
+                    let common = if common0 >= s2mvb { common0 } else { s2mvb };
+                    max_var_below_mono(b2, bmvb, common);
+                    max_var_below_mono(v2, vmvb, common);
+                    max_var_below_mono(s2, s2mvb, common);
+
+                    assert(common + 2 * bdepth + vdepth + 3 <= 0xFFFF_0000) by (nonlinear_arith)
+                        requires
+                            common <= bound + growth(size(e1)) + growth(size(s1)) + 1,
+                            bdepth <= size(e1),
+                            vdepth <= size(e1),
+                            bound + growth(size(e1)) + growth(size(s1)) + 4 * size(e1) + 4 * size(s1) + 20 <= 0xFFFF_0000,
+                    {}
+
+                    subst_subst1_commute(common, j, s2, b2, v2);
+                    assert(subst(j, s2, subst1(b2, v2))
+                        == subst1(subst((j + 1) as nat, shift(1, 0, s2), b2), subst(j, s2, v2)));
+                    assert(subst(j, s2, e2) == subst1(subst((j + 1) as nat, shift(1, 0, s2), b2), subst(j, s2, v2)));
+
+                    assert(subst(j, s1, e1) == ExprSpec::Let(
+                        Box::new(subst(j, s1, *t)), Box::new(subst(j, s1, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b)),
+                    ));
+                    assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_subst(bound, j, s1, s2, *t, t2);
+                    pstep_subst(bound, j, s1, s2, *v, v2);
+
+                    pstep_shift(bound, 0, s1, s2);
+                    shift_up_max_var_below(0, bound, s1);
+                    shift_preserves_size(1, 0, s1);
+                    max_var_below_mono(*b, bound, (bound + 1) as nat);
+                    assert((bound + 1) + growth(size(*b)) + growth(size(s1)) + 4 * size(*b) + 4 * size(s1) + 20 <= 0xFFFF_0000);
+                    pstep_subst((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b, b2);
+
+                    assert(subst(j, s1, e1) == ExprSpec::Let(
+                        Box::new(subst(j, s1, *t)), Box::new(subst(j, s1, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s1), *b)),
+                    ));
+                    assert(subst(j, s2, e2) == ExprSpec::Let(
+                        Box::new(subst(j, s2, t2)), Box::new(subst(j, s2, v2)), Box::new(subst((j + 1) as nat, shift(1, 0, s2), b2)),
+                    ));
+                    assert(pstep(subst(j, s1, e1), subst(j, s2, e2)));
+                }
             }
             ExprSpec::Proj(st) => {
                 assert(max_var_below(*st, bound));
@@ -4318,22 +4551,131 @@ pub proof fn pstep_diamond(bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) 
                 assert(size(*t) < size(e));
                 assert(size(*v) < size(e));
                 assert(size(*b) < size(e));
+                assert(size(*v) + size(*b) + 2 <= size(e));
                 growth_mono(size(*t), size(e));
                 growth_mono(size(*v), size(e));
                 growth_mono(size(*b), size(e));
                 beta_size_headroom_mono(size(*t), size(e));
                 beta_size_headroom_mono(size(*v), size(e));
                 beta_size_headroom_mono(size(*b), size(e));
-                let (t1, v1, b1) = choose |t1: ExprSpec, v1: ExprSpec, b1: ExprSpec|
-                    pstep(*t, t1) && pstep(*v, v1) && pstep(*b, b1) && e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1));
-                let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                    pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                let t3 = pstep_diamond(bound, *t, t1, t2);
-                let v3 = pstep_diamond(bound, *v, v1, v2);
-                let b3 = pstep_diamond(bound, *b, b1, b2);
-                assert(pstep(e1, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
-                assert(pstep(e2, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
-                ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))
+                assert(bound + growth(size(*b)) + 4 * size(*b) + 20 + beta_size_headroom(size(*b)) <= 0xFFFF_0000);
+                assert(bound + growth(size(*v)) + 4 * size(*v) + 20 + beta_size_headroom(size(*v)) <= 0xFFFF_0000);
+                assert(bound + growth(size(e)) + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+
+                if exists |b1: ExprSpec, v1: ExprSpec| #![trigger subst1(b1, v1)]
+                    pstep(*b, b1) && pstep(*v, v1) && e1 == subst1(b1, v1)
+                {
+                    let (b1, v1) = choose |b1: ExprSpec, v1: ExprSpec| #![trigger subst1(b1, v1)]
+                        pstep(*b, b1) && pstep(*v, v1) && e1 == subst1(b1, v1);
+                    if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                    {
+                        // zeta / zeta
+                        let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                            pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+                        let b3 = pstep_diamond(bound, *b, b1, b2);
+                        let v3 = pstep_diamond(bound, *v, v1, v2);
+                        assert(pstep(b1, b3) && pstep(b2, b3));
+                        assert(pstep(v1, v3) && pstep(v2, v3));
+
+                        let (b1mvb, b1depth) = pstep_bounds(bound, *b, b1);
+                        let (v1mvb, v1depth) = pstep_bounds(bound, *v, v1);
+                        let (b2mvb, b2depth) = pstep_bounds(bound, *b, b2);
+                        let (v2mvb, v2depth) = pstep_bounds(bound, *v, v2);
+
+                        let c1 = if b1mvb >= v1mvb { b1mvb } else { v1mvb };
+                        max_var_below_mono(b1, b1mvb, c1);
+                        max_var_below_mono(v1, v1mvb, c1);
+                        assert(b1depth <= size(*b));
+                        assert(v1depth <= size(*v));
+                        assert(b1mvb <= bound + growth(size(*b)));
+                        assert(v1mvb <= bound + growth(size(*v)));
+                        assert(c1 <= bound + growth(size(e)));
+                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                        pstep_diamond_beta_step(c1, size(e), b1depth, *b, *v, b1, v1, b3, v3);
+
+                        let c2 = if b2mvb >= v2mvb { b2mvb } else { v2mvb };
+                        max_var_below_mono(b2, b2mvb, c2);
+                        max_var_below_mono(v2, v2mvb, c2);
+                        assert(b2depth <= size(*b));
+                        assert(v2depth <= size(*v));
+                        assert(b2mvb <= bound + growth(size(*b)));
+                        assert(v2mvb <= bound + growth(size(*v)));
+                        assert(c2 <= bound + growth(size(e)));
+                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                        pstep_diamond_beta_step(c2, size(e), b2depth, *b, *v, b2, v2, b3, v3);
+
+                        subst1(b3, v3)
+                    } else {
+                        // zeta / congruence
+                        let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                            pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                        let b3 = pstep_diamond(bound, *b, b1, b2);
+                        let v3 = pstep_diamond(bound, *v, v1, v2);
+                        assert(pstep(b1, b3) && pstep(b2, b3));
+                        assert(pstep(v1, v3) && pstep(v2, v3));
+
+                        let (b1mvb, b1depth) = pstep_bounds(bound, *b, b1);
+                        let (v1mvb, v1depth) = pstep_bounds(bound, *v, v1);
+                        let c1 = if b1mvb >= v1mvb { b1mvb } else { v1mvb };
+                        max_var_below_mono(b1, b1mvb, c1);
+                        max_var_below_mono(v1, v1mvb, c1);
+                        assert(b1depth <= size(*b));
+                        assert(v1depth <= size(*v));
+                        assert(b1mvb <= bound + growth(size(*b)));
+                        assert(v1mvb <= bound + growth(size(*v)));
+                        assert(c1 <= bound + growth(size(e)));
+                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                        pstep_diamond_beta_step(c1, size(e), b1depth, *b, *v, b1, v1, b3, v3);
+
+                        let e3v = subst1(b3, v3);
+                        assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                        assert(pstep(e2, e3v));
+                        e3v
+                    }
+                } else {
+                    let (t1, v1, b1) = choose |t1: ExprSpec, v1: ExprSpec, b1: ExprSpec|
+                        pstep(*t, t1) && pstep(*v, v1) && pstep(*b, b1) && e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1));
+                    if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2)
+                    {
+                        // congruence / zeta
+                        let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                            pstep(*b, b2) && pstep(*v, v2) && e2 == subst1(b2, v2);
+                        let b3 = pstep_diamond(bound, *b, b1, b2);
+                        let v3 = pstep_diamond(bound, *v, v1, v2);
+                        assert(pstep(b1, b3) && pstep(b2, b3));
+                        assert(pstep(v1, v3) && pstep(v2, v3));
+
+                        let (b2mvb, b2depth) = pstep_bounds(bound, *b, b2);
+                        let (v2mvb, v2depth) = pstep_bounds(bound, *v, v2);
+                        let c2 = if b2mvb >= v2mvb { b2mvb } else { v2mvb };
+                        max_var_below_mono(b2, b2mvb, c2);
+                        max_var_below_mono(v2, v2mvb, c2);
+                        assert(b2depth <= size(*b));
+                        assert(v2depth <= size(*v));
+                        assert(b2mvb <= bound + growth(size(*b)));
+                        assert(v2mvb <= bound + growth(size(*v)));
+                        assert(c2 <= bound + growth(size(e)));
+                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
+                        pstep_diamond_beta_step(c2, size(e), b2depth, *b, *v, b2, v2, b3, v3);
+
+                        let e3v = subst1(b3, v3);
+                        assert(e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)));
+                        assert(pstep(e1, e3v));
+                        e3v
+                    } else {
+                        // congruence / congruence
+                        let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                            pstep(*t, t2) && pstep(*v, v2) && pstep(*b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                        let t3 = pstep_diamond(bound, *t, t1, t2);
+                        let v3 = pstep_diamond(bound, *v, v1, v2);
+                        let b3 = pstep_diamond(bound, *b, b1, b2);
+                        assert(pstep(e1, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
+                        assert(pstep(e2, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
+                        ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))
+                    }
+                }
             }
             ExprSpec::Proj(s) => {
                 assert(max_var_below(*s, bound));
