@@ -44,6 +44,7 @@ verus! {
 /// removing a binder after substitution has eliminated every reference to
 /// it). `d = -1` is only ever applied where a prior substitution already
 /// guarantees no remaining `Var` is exactly `cutoff` -- see `subst1`.
+#[verifier::opaque]
 pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
     decreases e
 {
@@ -64,6 +65,7 @@ pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
 /// pointing at the same things as `e`'s binder-nesting grows) -- Pierce's
 /// `[j -> s]e`. Unlike `subst_full`, does NOT decrement other `Var`s; that
 /// happens separately in `subst1`'s outer `shift(-1, ...)`.
+#[verifier::opaque]
 pub open spec fn subst(j: nat, s: ExprSpec, e: ExprSpec) -> ExprSpec
     decreases e
 {
@@ -98,6 +100,8 @@ pub proof fn subst1_sanity_check()
         ExprSpec::Free(5),
     ) == ExprSpec::App(Box::new(ExprSpec::Free(5)), Box::new(ExprSpec::Var(0)))
 {
+    reveal(shift);
+    reveal(subst);
     let body = ExprSpec::App(Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Var(1)));
     let arg = ExprSpec::Free(5);
     assert(shift(1, 0, arg) == ExprSpec::Free(5));
@@ -150,6 +154,8 @@ pub proof fn step_identity_sanity_check()
         ExprSpec::Free(3),
     )
 {
+    reveal(shift);
+    reveal(subst);
     assert(subst1(ExprSpec::Var(0), ExprSpec::Free(3)) == ExprSpec::Free(3)) by {
         assert(shift(1, 0, ExprSpec::Free(3)) == ExprSpec::Free(3));
         assert(subst(0, ExprSpec::Free(3), ExprSpec::Var(0)) == ExprSpec::Free(3));
@@ -262,6 +268,7 @@ pub proof fn pstep_shift(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
     ensures pstep(shift(1, c, e1), shift(1, c, e2))
     decreases e1
 {
+    reveal(shift);
     if e1 == e2 {
         assert(shift(1, c, e1) == shift(1, c, e2));
     } else {
@@ -423,6 +430,7 @@ pub proof fn pstep_shift_down(bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
     ensures pstep(shift(-1, c, e1), shift(-1, c, e2))
     decreases e1
 {
+    reveal(shift);
     if e1 == e2 {
         assert(shift(-1, c, e1) == shift(-1, c, e2));
     } else {
@@ -610,6 +618,7 @@ pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
     ensures max_var_below(shift(1, c, e), (bound + 1) as nat)
     decreases e
 {
+    reveal(shift);
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
         ExprSpec::App(f, a) => {
@@ -676,6 +685,8 @@ pub proof fn subst_max_var_below(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
     ensures max_var_below(subst(j, s, e), (bound + depth(e)) as nat)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
         ExprSpec::App(f, a) => {
@@ -739,6 +750,7 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
     ensures shift(-1, c, shift(1, c, e)) == e
     decreases e
 {
+    reveal(shift);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) >= c {
@@ -863,6 +875,7 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
     ensures max_var_below(shift(-1, c0, y), bound)
     decreases y
 {
+    reveal(shift);
     match y {
         ExprSpec::Var(i) => {
             if c0 == 0 {
@@ -927,6 +940,7 @@ pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
     ensures shift(d, (c_top + c0) as nat, shift(-1, c0, x)) == shift(-1, c0, shift(d, (c_top + c0 + 1) as nat, x))
     decreases x
 {
+    reveal(shift);
     match x {
         ExprSpec::Var(i) => {
             if c0 == 0 {
@@ -1024,6 +1038,7 @@ pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
     }
     decreases s
 {
+    reveal(shift);
     match s {
         ExprSpec::Var(i) => {
             assert(min_escaping(s) == Some(i as nat));
@@ -1069,6 +1084,8 @@ pub proof fn shift_up_raises_margin(bound: nat, k: nat, s: ExprSpec)
     requires bound <= 0xFFFF_0000, max_var_below(s, bound), no_escaping_below(s, k)
     ensures no_escaping_below(shift(1, 0, s), (k + 1) as nat)
 {
+    reveal(shift);
+    reveal(subst);
     shift_up_min_escaping(bound, 0, s);
 }
 
@@ -1113,6 +1130,7 @@ pub proof fn shift_up_has_escaping_ref(bound: nat, x: ExprSpec, k: nat)
     ensures has_escaping_ref(shift(1, 0, x), k) == (k >= 1 && has_escaping_ref(x, (k - 1) as nat))
     decreases x
 {
+    reveal(shift);
     match x {
         ExprSpec::Var(i) => {
             assert((i as nat) < bound);
@@ -1155,6 +1173,7 @@ pub proof fn shift_up_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0: n
     )
     decreases x
 {
+    reveal(shift);
     match x {
         ExprSpec::Var(i) => {
             assert((i as nat) < bound);
@@ -1211,6 +1230,8 @@ pub proof fn shift_down_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0:
     ensures has_escaping_ref(shift(-1, c0, x), k) == has_escaping_ref(x, (k + 1) as nat)
     decreases x
 {
+    reveal(shift);
+    reveal(subst);
     match x {
         ExprSpec::Var(i) => {
             assert((i as nat) < bound);
@@ -1269,6 +1290,8 @@ pub proof fn no_escaping_ref_subst_identity(k: nat, s: ExprSpec, e: ExprSpec)
     ensures subst(k, s, e) == e
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             assert((i as nat) != k);
@@ -1326,6 +1349,8 @@ pub proof fn subst_no_escaping_ref_at(bound: nat, j: nat, s: ExprSpec, e: ExprSp
     ensures !has_escaping_ref(subst(j, s, e), j)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -1390,6 +1415,8 @@ pub proof fn subst_no_escaping_ref_shifted(bound: nat, j: nat, diff: nat, s: Exp
     ensures !has_escaping_ref(subst(j, s, e), (j + diff) as nat)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -1463,6 +1490,8 @@ pub proof fn subst1_no_escaping_ref(bound: nat, k: nat, body: ExprSpec, arg: Exp
         !has_escaping_ref(arg, k),
     ensures !has_escaping_ref(subst1(body, arg), k)
 {
+    reveal(shift);
+    reveal(subst);
     let s = shift(1, 0, arg);
     let t = subst(0, s, body);
     assert(subst1(body, arg) == shift(-1, 0, t));
@@ -1512,6 +1541,8 @@ pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
     ensures min_escaping(subst(j, s, e)) != Some(j)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -1621,6 +1652,7 @@ pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
     ensures shift(d, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(d, (c_top + c0) as nat, s))
     decreases s
 {
+    reveal(shift);
     match s {
         ExprSpec::Var(i) => {
             let ii = i as int;
@@ -1696,6 +1728,7 @@ pub proof fn shift_shift_aligned_mixed(bound: nat, c_top: nat, c0: nat, s: ExprS
     ensures shift(-1, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(-1, (c_top + c0) as nat, s))
     decreases s
 {
+    reveal(shift);
     match s {
         ExprSpec::Var(i) => {
             let ii = i as int;
@@ -1772,6 +1805,8 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
     ensures shift(1, (c_top + c0 + 1) as nat, shift(1, c0, s)) == shift(1, c0, shift(1, (c_top + c0) as nat, s))
     decreases s
 {
+    reveal(shift);
+    reveal(subst);
     match s {
         ExprSpec::Var(i) => {
             let ii = i as int;
@@ -1872,6 +1907,8 @@ pub proof fn shift_subst_commute_down(bound: nat, j: nat, diff: nat, s: ExprSpec
     ensures shift(-1, (j + diff) as nat, subst(j, s, e)) == subst(j, shift(-1, (j + diff) as nat, s), shift(-1, (j + diff) as nat, e))
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -1971,6 +2008,8 @@ pub proof fn shift_subst_commute_below(bound: nat, c0: nat, j: nat, s: ExprSpec,
     ensures shift(1, c0, subst(j, s, e)) == subst((j + 1) as nat, shift(1, c0, s), shift(1, c0, e))
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -2090,6 +2129,8 @@ pub proof fn subst_subst_commute(bound: nat, j0: nat, diff: nat, s_inner: ExprSp
         == subst(j0, subst((j0 + diff) as nat, s_outer, s_inner), subst((j0 + diff) as nat, s_outer, e))
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j0 {
@@ -2202,6 +2243,8 @@ pub proof fn subst_subst1_commute(bound: nat, j: nat, s: ExprSpec, body: ExprSpe
         max_var_below(arg, bound),
     ensures subst(j, s, subst1(body, arg)) == subst1(subst((j + 1) as nat, shift(1, 0, s), body), subst(j, s, arg))
 {
+    reveal(shift);
+    reveal(subst);
     let sh = shift(1, 0, arg);
     let t = subst(0, sh, body);
     assert(subst1(body, arg) == shift(-1, 0, t));
@@ -2258,6 +2301,8 @@ pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: 
     ensures shift(1, (j + diff) as nat, subst(j, s, e)) == subst(j, shift(1, (j + diff) as nat, s), shift(1, (j + diff) as nat, e))
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(k) => {
             if (k as nat) == j {
@@ -2336,6 +2381,8 @@ pub proof fn subst1_max_var_below(bound: nat, body: ExprSpec, arg: ExprSpec)
         max_var_below(arg, bound),
     ensures max_var_below(subst1(body, arg), ((bound + 1) + depth(body)) as nat)
 {
+    reveal(shift);
+    reveal(subst);
     let s = shift(1, 0, arg);
     let t = subst(0, s, body);
     assert(subst1(body, arg) == shift(-1, 0, t));
@@ -2362,6 +2409,7 @@ pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
     ensures depth(shift(d, c, e)) == depth(e)
     decreases e
 {
+    reveal(shift);
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
         ExprSpec::App(f, a) => {
@@ -2389,6 +2437,7 @@ pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
     ensures size(shift(d, c, e)) == size(e)
     decreases e
 {
+    reveal(shift);
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
         ExprSpec::App(f, a) => {
@@ -2424,6 +2473,8 @@ pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
     ensures size(subst(j, s, e)) <= size(e) * (size(s) + 1)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             assert(size(e) == 1);
@@ -2487,6 +2538,8 @@ pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
 pub proof fn subst1_size_bound(body: ExprSpec, arg: ExprSpec)
     ensures size(subst1(body, arg)) <= size(body) * (size(arg) + 1)
 {
+    reveal(shift);
+    reveal(subst);
     shift_preserves_size(1, 0, arg);
     subst_size_bound(0, shift(1, 0, arg), body);
     shift_preserves_size(-1, 0, subst(0, shift(1, 0, arg), body));
@@ -2506,6 +2559,8 @@ pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
     ensures depth(subst(j, s, e)) <= depth(e) + depth(s)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -2548,6 +2603,8 @@ pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
 pub proof fn subst1_depth_bound(body: ExprSpec, arg: ExprSpec)
     ensures depth(subst1(body, arg)) <= depth(body) + depth(arg)
 {
+    reveal(shift);
+    reveal(subst);
     shift_preserves_depth(1, 0, arg);
     subst_depth_bound(0, shift(1, 0, arg), body);
     shift_preserves_depth(-1, 0, subst(0, shift(1, 0, arg), body));
@@ -2980,6 +3037,7 @@ pub proof fn pstep_subst1_size_headroom(c1: nat, size_fb: nat, size_a: nat, size
             + growth(asize) + growth(bsize) + 4 * asize + 4 * bsize
             + size_e + 100 <= 0xFFFF_0000,
 {
+    reveal(shift);
     let m = size_growth(size_e);
     size_growth_beta_bound(size_a, size_fb, size_e);
     assert(size_growth(size_fb) * (size_growth(size_a) + 1) <= m);
@@ -3238,6 +3296,7 @@ pub proof fn pstep_preserves_no_escaping_ref(bound: nat, k: nat, e1: ExprSpec, e
     ensures !has_escaping_ref(e2, k)
     decreases e1
 {
+    reveal(shift);
     if e1 == e2 {
     } else {
         match e1 {
@@ -3374,6 +3433,8 @@ pub proof fn shift_subst1_commute(bound: nat, c: nat, body: ExprSpec, arg: ExprS
         max_var_below(arg, bound),
     ensures shift(1, c, subst1(body, arg)) == subst1(shift(1, (c + 1) as nat, body), shift(1, c, arg))
 {
+    reveal(shift);
+    reveal(subst);
     let s = shift(1, 0, arg);
     let t = subst(0, s, body);
     assert(subst1(body, arg) == shift(-1, 0, t));
@@ -3433,6 +3494,8 @@ pub proof fn shift_subst1_commute_down(bound: nat, c: nat, body: ExprSpec, arg: 
         max_var_below(arg, bound),
     ensures shift(-1, c, subst1(body, arg)) == subst1(shift(-1, (c + 1) as nat, body), shift(-1, c, arg))
 {
+    reveal(shift);
+    reveal(subst);
     let s = shift(1, 0, arg);
     let t = subst(0, s, body);
     assert(subst1(body, arg) == shift(-1, 0, t));
@@ -3498,6 +3561,8 @@ pub proof fn subst_shift_down_commute(bound: nat, c0: nat, j: nat, s: ExprSpec, 
     ensures subst(j, s, shift(-1, c0, x)) == shift(-1, c0, subst((j + 1) as nat, shift(1, c0, s), x))
     decreases x
 {
+    reveal(shift);
+    reveal(subst);
     match x {
         ExprSpec::Var(i) => {
             let ii = i as int;
@@ -3595,6 +3660,8 @@ pub proof fn pstep_subst_refl(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e:
     ensures pstep(subst(j, s1, e), subst(j, s2, e))
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) == j {
@@ -3672,6 +3739,8 @@ pub proof fn pstep_subst(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: Exp
     ensures pstep(subst(j, s1, e1), subst(j, s2, e2))
     decreases e1
 {
+    reveal(shift);
+    reveal(subst);
     let (s2mvb, s2depth) = pstep_bounds(bound, s1, s2);
     assert(s2depth <= size(s1));
     assert(s2mvb <= bound + growth(size(s1)));
@@ -3894,6 +3963,8 @@ pub proof fn pstep_subst1(bound: nat, body1: ExprSpec, body3: ExprSpec, a1: Expr
             + depth(body1) + 100 <= 0xFFFF_0000,
     ensures pstep(subst1(body1, a1), subst1(body3, a3))
 {
+    reveal(shift);
+    reveal(subst);
     pstep_shift(bound, 0, a1, a3);
     let s1 = shift(1, 0, a1);
     let s3 = shift(1, 0, a3);
@@ -4300,6 +4371,7 @@ pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
     ensures subst_full(e, Seq::<ExprSpec>::empty(), offset) == e
     decreases e
 {
+    reveal(subst);
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
         ExprSpec::App(f, a) => {
@@ -4332,6 +4404,8 @@ pub proof fn nlbv_subst_noop(j: nat, s: ExprSpec, e: ExprSpec)
     ensures subst(j, s, e) == e
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             assert(nlbv(e) == i as nat + 1);
@@ -4365,6 +4439,7 @@ pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
     ensures shift(d, c, e) == e
     decreases e
 {
+    reveal(shift);
     match e {
         ExprSpec::Var(i) => {
             assert(nlbv(e) == i as nat + 1);
@@ -4422,6 +4497,8 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
     ensures subst_c(e, a, c) == subst_full(e, seq![a], c)
     decreases e
 {
+    reveal(shift);
+    reveal(subst);
     match e {
         ExprSpec::Var(i) => {
             assert(nlbv(e) == i as nat + 1);
@@ -4549,6 +4626,8 @@ pub proof fn subst_c_spine_invariant(t0: ExprSpec, a: ExprSpec, c: nat, k: nat, 
     ensures spine_bind(subst_c(t0, a, c), k) == Some(body)
     decreases k
 {
+    reveal(shift);
+    reveal(subst);
     if k == 0 {
         assert(t0 == body);
         nlbv_subst_noop(c, shift(1, c, a), body);
@@ -4620,6 +4699,8 @@ pub proof fn subst_c_spine_reduce_eq(t0: ExprSpec, a: ExprSpec, c: nat, k: nat, 
     ensures spine_bind(subst_c(t0, a, c), k) == Some(subst_full(body, seq![a], (c + k) as nat))
     decreases k
 {
+    reveal(shift);
+    reveal(subst);
     if k == 0 {
         assert(t0 == body);
         subst_c_eq_subst_full(body, a, c, bound);
