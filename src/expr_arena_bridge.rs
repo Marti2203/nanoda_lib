@@ -38,7 +38,7 @@ use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_bind_nlbv, spine_bind_depth, max_var_below};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -637,7 +637,8 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
             && to_model(r) == spine_app(
                 spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
                 Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
-            ),
+            )
+            && pstep_star(spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
     }
 {
@@ -675,6 +676,30 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                             Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
                         ));
                         assert(spine_bind(to_model(e_fun), n as nat) == Some(to_model(peeled)));
+
+                        let consumed_model = Seq::new(n as nat, |i: int| to_model(args@[i]));
+                        let remaining_model = Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i]));
+                        let full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                        assert(consumed_model + remaining_model =~= full_model);
+
+                        pstep_star_spine_reduce(to_model(e_fun), consumed_model);
+                        assert(pstep_star(spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
+
+                        pstep_spine_app_star(
+                            spine_app(to_model(e_fun), consumed_model),
+                            spine_reduce(to_model(e_fun), consumed_model),
+                            remaining_model,
+                        );
+                        assert(pstep_star(
+                            spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model),
+                            spine_app(spine_reduce(to_model(e_fun), consumed_model), remaining_model),
+                        ));
+
+                        spine_app_concat(to_model(e_fun), consumed_model, remaining_model);
+                        assert(spine_app(to_model(e_fun), full_model)
+                            == spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model));
+
+                        assert(pstep_star(spine_app(to_model(e_fun), full_model), to_model(result)));
                     }
                     Some(result)
                 }

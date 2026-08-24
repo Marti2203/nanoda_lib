@@ -5212,6 +5212,45 @@ pub proof fn spine_app_compose(base: ExprSpec, a0: ExprSpec, rest: Seq<ExprSpec>
     }
 }
 
+/// General split of `spine_app`, generalizing `spine_app_compose` from a
+/// single-element prefix to an ARBITRARY-length one:
+/// `spine_app(base, args1 + args2) == spine_app(spine_app(base, args1),
+/// args2)` -- applying `args1` first, then `args2`, is the same as
+/// applying the whole concatenated list at once. Unlike
+/// `spine_app_compose` (induction on `rest.len()`, needed to reconcile
+/// prepending one element against `spine_app`'s own back-peeling
+/// recursion), this inducts directly on `args2.len()`, matching
+/// `spine_app`'s own recursion on BOTH sides at once -- no reconciliation
+/// needed, `spine_app`'s defining equation fires identically on each side
+/// of the induction step.
+pub proof fn spine_app_concat(base: ExprSpec, args1: Seq<ExprSpec>, args2: Seq<ExprSpec>)
+    ensures spine_app(base, args1 + args2) == spine_app(spine_app(base, args1), args2)
+    decreases args2.len()
+{
+    if args2.len() == 0 {
+        assert(args1 + args2 =~= args1);
+    } else {
+        let args2_init = args2.subrange(0, args2.len() - 1);
+        let last = args2[args2.len() - 1];
+        assert(args2 =~= args2_init.push(last));
+        spine_app_concat(base, args1, args2_init);
+
+        let whole = args1 + args2;
+        assert(whole =~= (args1 + args2_init).push(last));
+        assert(spine_app(base, whole) == ExprSpec::App(
+            Box::new(spine_app(base, whole.subrange(0, whole.len() - 1))),
+            Box::new(whole[whole.len() - 1]),
+        ));
+        assert(whole.subrange(0, whole.len() - 1) =~= args1 + args2_init);
+        assert(whole[whole.len() - 1] == last);
+
+        assert(spine_app(spine_app(base, args1), args2) == ExprSpec::App(
+            Box::new(spine_app(spine_app(base, args1), args2_init)),
+            Box::new(last),
+        ));
+    }
+}
+
 /// One link in a `pstep` chain is valid: consecutive elements are related
 /// by `pstep`. Used by `pstep_star` below rather than a directly
 /// recursive `bool` spec fn, sidestepping any need for a `decreases`
