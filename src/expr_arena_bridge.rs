@@ -38,7 +38,7 @@ use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -705,6 +705,70 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 }
                 None => None,
             }
+        }
+        None => None,
+    }
+}
+
+/// Bridges `tc.rs`'s `whnf_no_unfolding_aux`'s `Let { val, body, .. }`
+/// branch -- the real kernel's actual ZETA-reduction step: `inst(body,
+/// [val])` (a single substitution -- `Let`'s type annotation `t` is
+/// simply irrelevant and discarded, matching `pstep`'s own zeta rule),
+/// then reapply any args the `Let`-headed spine was carrying. Much
+/// simpler than `verified_whnf_beta_step`: no binder-peeling loop (a
+/// `Let` never has "more than one" to peel -- it's a single substitution
+/// every time), so this is a direct `verified_inst` call at a
+/// one-element substs list, matching `subst1` exactly.
+///
+/// Only possible after `pstep`'s `Let` case was extended with an actual
+/// zeta rule (see `beta_model.rs`'s `pstep` doc comment): without it,
+/// `pstep(Let(t,v,b), subst1(b,v))` was simply false in the model, so
+/// this bridge (and the `pstep_star` conclusion in particular) could not
+/// have been stated, let alone proven.
+pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        exists |t_model: ExprSpec| to_model(e_fun) == ExprSpec::Let(Box::new(t_model), Box::new(to_model(val)), Box::new(to_model(body))),
+        nlbv(to_model(body)) <= 1,
+        nlbv(to_model(val)) <= 0,
+        max_var_below(to_model(val), bound),
+        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        depth(to_model(body)) <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            && pstep_star(spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
+        None => true,
+    }
+{
+    let substs_arr = [val];
+    match verified_inst(ctx, body, &substs_arr, 0, fuel) {
+        Some(inst_result) => {
+            proof {
+                assert(substs_arr@ =~= seq![val]);
+                assert(Seq::new(substs_arr@.len(), |i: int| to_model(substs_arr@[i])) =~= seq![to_model(val)]);
+                assert(to_model(inst_result) == subst_full(to_model(body), seq![to_model(val)], 0));
+
+                assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
+                assert(subst_c(to_model(body), to_model(val), 0) == subst_full(to_model(body), seq![to_model(val)], 0));
+                assert(to_model(inst_result) == subst1(to_model(body), to_model(val)));
+            }
+            let result = verified_foldl_apps(ctx, inst_result, args);
+            proof {
+                let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                assert(to_model(result) == spine_app(to_model(inst_result), args_model));
+                assert(to_model(result) == spine_app(subst1(to_model(body), to_model(val)), args_model));
+
+                assert(pstep(to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
+                    assert(pstep(to_model(body), to_model(body)));
+                    assert(pstep(to_model(val), to_model(val)));
+                }
+                pstep_star_one(to_model(e_fun), subst1(to_model(body), to_model(val)));
+                pstep_spine_app_star(to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
+                assert(pstep_star(spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
+                assert(pstep_star(spine_app(to_model(e_fun), args_model), to_model(result)));
+            }
+            Some(result)
         }
         None => None,
     }
