@@ -4961,6 +4961,59 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
 
 /// Peels exactly `n` nested `Bind`s from `head`, returning the innermost
 /// body if `head` has at least that many, else `None`.
+/// Peeling `k` binders off a term whose `nlbv` is bounded by `m` bounds
+/// the peeled body's `nlbv` by `m + k`: each peel can raise the bound by
+/// at most 1 (mirrors `nlbv`'s own `Bind` case, `nlbv(Bind(t,b)) ==
+/// max(nlbv(t), nlbv(b)-1-or-0)`, which forces `nlbv(b) <= nlbv(Bind(t,b))
+/// + 1`). At `m = 0` (a CLOSED term -- no escaping loose references at
+/// all, the discipline real top-level `whnf` calls maintain) this gives
+/// exactly the precondition `spine_reduce_eq_subst_full` needs
+/// (`nlbv(body) <= k`) for ANY peel count `k`, without needing to know
+/// `k` in advance -- the real bridging use case, where how many binders
+/// get peeled is data-dependent (depends on how many args are available).
+pub proof fn spine_bind_nlbv(head: ExprSpec, k: nat, body: ExprSpec, m: nat)
+    requires spine_bind(head, k) == Some(body), nlbv(head) <= m
+    ensures nlbv(body) <= m + k
+    decreases k
+{
+    if k == 0 {
+        assert(head == body);
+    } else {
+        match head {
+            ExprSpec::Bind(t, b) => {
+                assert(spine_bind(head, k) == spine_bind(*b, (k - 1) as nat));
+                assert(nlbv(*b) <= m + 1);
+                spine_bind_nlbv(*b, (k - 1) as nat, body, (m + 1) as nat);
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// Peeling binders never increases `depth`: `depth(Bind(t,b)) == 1 +
+/// max(depth(t), depth(b)) > depth(b)`, so each peel strictly decreases
+/// it. Needed to carry a `depth`-based headroom bound (e.g.
+/// `verified_inst`'s `offset + depth(e) <= 60000`) from the original,
+/// unpeeled term down to whatever body ends up substituted into.
+pub proof fn spine_bind_depth(head: ExprSpec, k: nat, body: ExprSpec)
+    requires spine_bind(head, k) == Some(body)
+    ensures depth(body) <= depth(head)
+    decreases k
+{
+    if k == 0 {
+        assert(head == body);
+    } else {
+        match head {
+            ExprSpec::Bind(t, b) => {
+                assert(spine_bind(head, k) == spine_bind(*b, (k - 1) as nat));
+                assert(depth(*b) <= depth(head));
+                spine_bind_depth(*b, (k - 1) as nat, body);
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
 pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
     decreases n
 {

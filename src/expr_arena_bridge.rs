@@ -37,6 +37,8 @@ use crate::expr::{Expr, BinderStyle};
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
+#[cfg(verus_only)]
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_bind_nlbv, spine_bind_depth, max_var_below};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -467,6 +469,220 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         };
     }
     None
+}
+
+// -----------------------------------------------------------------------
+// Bridging `tc.rs`'s real beta-reduction step (`whnf_no_unfolding_aux`'s
+// `Lambda { .. } if !args.is_empty()` case) to `beta_model.rs`'s
+// telescopic-reduction confluence machinery (`spine_bind`/`spine_app`/
+// `spine_reduce`/`spine_reduce_eq_subst_full`). `verified_inst` above
+// already gives `inst`'s correctness relative to `subst_full`; what's new
+// here is bridging the SURROUNDING peel/reapply logic (`unfold_apps`,
+// counting how many lambdas to peel, `foldl_apps`) so the real code's
+// FULL beta step -- not just its `inst` sub-call -- is provably related
+// to the model.
+// -----------------------------------------------------------------------
+
+/// Real-arena counterpart to `spine_app`: `TcCtx::foldl_apps`'s actual
+/// iterative loop (`for arg in args { fun = mk_app(fun, arg) }`),
+/// reformulated recursively (processing `args[0]` first, matching the
+/// real loop's order) since a real exec loop can't easily carry a Verus
+/// proof obligation across iterations the way recursion can. Structural
+/// `decreases` on `args.len()` -- no fuel needed, `args` is a real slice,
+/// not an opaque `ExprPtr` to descend into.
+///
+/// `spine_app` itself recurses the OPPOSITE way (peeling `args[len-1]`
+/// off the end, see its own doc comment) -- `spine_app_compose` (already
+/// proven, `beta_model.rs`) is exactly the bridge reconciling the two
+/// recursion directions, the same role it played for
+/// `pstep_star_spine_reduce`.
+pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>, args: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
+    ensures to_model(result) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+    decreases args.len()
+{
+    if args.len() == 0 {
+        assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= Seq::<ExprSpec>::empty());
+        fun
+    } else {
+        let a0 = args[0];
+        let rest = &args[1..args.len()];
+        assert(rest@ =~= args@.subrange(1, args@.len() as int));
+        assert(rest@.len() == args@.len() - 1);
+        let fun2 = ctx.mk_app(fun, a0);
+        let result = verified_foldl_apps(ctx, fun2, rest);
+        proof {
+            assert(Seq::new(rest@.len(), |i: int| to_model(rest@[i]))
+                =~= Seq::new(args@.len(), |i: int| to_model(args@[i])).subrange(1, args@.len() as int));
+            spine_app_compose(to_model(fun), to_model(a0), Seq::new(rest@.len(), |i: int| to_model(rest@[i])));
+            assert(spine_app(to_model(fun), seq![to_model(a0)] + Seq::new(rest@.len(), |i: int| to_model(rest@[i])))
+                == spine_app(ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(a0))), Seq::new(rest@.len(), |i: int| to_model(rest@[i]))));
+            assert(to_model(fun2) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(a0))));
+            assert(seq![to_model(a0)] + Seq::new(rest@.len(), |i: int| to_model(rest@[i]))
+                =~= Seq::new(args@.len(), |i: int| to_model(args@[i])));
+        }
+        result
+    }
+}
+
+/// Real-arena counterpart to `spine_app`'s inverse: `TcCtx::unfold_apps`'s
+/// actual loop (`from f a_0 .. a_N, return (f, [a_0, .. a_N])`),
+/// reformulated recursively -- peels one `App` at a time descending into
+/// `fun`, appending `arg` to the tail on the way back up, which lands
+/// args in the SAME `[a_0, .. a_N]` order the real loop produces only
+/// after its own explicit `args.reverse()`. `ExprPtr` is opaque (no
+/// structural `decreases`), so this needs fuel, like `verified_inst`.
+pub fn verified_unfold_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(ExprPtr<'t>, Vec<ExprPtr<'t>>)>)
+    ensures match result {
+        Some((f, args)) => to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(e);
+    if let Some((fun, arg)) = expr_as_app(&el) {
+        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
+        match verified_unfold_apps(ctx, fun, fuel1) {
+            Some((f, mut args)) => {
+                let ghost args_model_before = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                args.push(arg);
+                assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model_before.push(to_model(arg)));
+                let ghost pushed = args_model_before.push(to_model(arg));
+                assert(pushed.len() != 0);
+                assert(pushed.subrange(0, pushed.len() - 1) =~= args_model_before);
+                assert(pushed[pushed.len() - 1] == to_model(arg));
+                assert(spine_app(to_model(f), pushed)
+                    == ExprSpec::App(Box::new(spine_app(to_model(f), pushed.subrange(0, pushed.len() - 1))), Box::new(pushed[pushed.len() - 1])));
+                assert(spine_app(to_model(f), pushed)
+                    == ExprSpec::App(Box::new(spine_app(to_model(f), args_model_before)), Box::new(to_model(arg))));
+                Some((f, args))
+            }
+            None => None,
+        }
+    } else {
+        assert(!matches!(to_model_of_expr(el), ExprSpec::App(_, _)));
+        let empty: Vec<ExprPtr<'t>> = Vec::new();
+        assert(Seq::new(empty@.len(), |i: int| to_model(empty@[i])) =~= Seq::<ExprSpec>::empty());
+        Some((e, empty))
+    }
+}
+
+/// Real-arena counterpart to `spine_bind`: mirrors
+/// `whnf_no_unfolding_aux`'s peeling `while let (Lambda { body, .. },
+/// [_arg, _rest @ ..]) = (read_expr(e), &args[n_args..]) { n_args += 1;
+/// e = body; }` loop, again reformulated recursively for the same fuel
+/// reason `verified_inst` needs it. Peels exactly `min(nested-Lambda-
+/// depth of e, args_len)` binders -- the loop stops the instant EITHER
+/// condition fails, matching `spine_bind`'s own "peel until `n` or until
+/// not `Bind`-shaped" behavior exactly.
+pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_len: usize, fuel: u32) -> (result: Option<(ExprPtr<'t>, usize)>)
+    ensures match result {
+        Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(to_model(body)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    if args_len == 0 {
+        assert(spine_bind(to_model(e), 0) == Some(to_model(e)));
+        return Some((e, 0));
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(e);
+    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))));
+        match verified_peel_lambdas(ctx, body, args_len - 1, fuel1) {
+            Some((b2, n2)) => {
+                assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(to_model(body), n2 as nat));
+                Some((b2, n2 + 1))
+            }
+            None => None,
+        }
+    } else {
+        Some((e, 0))
+    }
+}
+
+/// The capstone: bridges `tc.rs`'s `whnf_no_unfolding_aux`'s
+/// `Lambda { .. } if !args.is_empty()` branch -- the real kernel's
+/// actual beta-reduction step (peel as many binders as there are
+/// available args via `verified_peel_lambdas`, substitute all of them
+/// at once via `verified_inst`, reapply any leftover args via
+/// `verified_foldl_apps`) -- to `spine_reduce`, connecting REAL,
+/// EXECUTABLE code to the model's telescopic-substitution/confluence
+/// machinery for the first time in this codebase.
+///
+/// Requires `e_fun` and every arg to be CLOSED (`nlbv <= 0`, no escaping
+/// loose references at all) -- the discipline real top-level `whnf`
+/// calls maintain (anything bound further out is a `Local`, never a raw
+/// escaping `Var`; see `spine_reduce`'s own doc comment in
+/// `beta_model.rs`). This is what lets `spine_bind_nlbv` guarantee the
+/// peeled body satisfies `spine_reduce_eq_subst_full`'s precondition for
+/// WHATEVER peel count `n` the real code data-dependently computes,
+/// without needing to know `n` in advance.
+pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        args.len() > 0,
+        nlbv(to_model(e_fun)) <= 0,
+        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        depth(to_model(e_fun)) <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => exists|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
+            && to_model(r) == spine_app(
+                spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
+                Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+            ),
+        None => true,
+    }
+{
+    match verified_peel_lambdas(ctx, e_fun, args.len(), fuel) {
+        Some((peeled, n)) => {
+            proof {
+                spine_bind_nlbv(to_model(e_fun), n as nat, to_model(peeled), 0);
+                spine_bind_depth(to_model(e_fun), n as nat, to_model(peeled));
+            }
+            let consumed = &args[0..n];
+            let remaining = &args[n..args.len()];
+            match verified_inst(ctx, peeled, consumed, 0, fuel) {
+                Some(inst_result) => {
+                    proof {
+                        assert forall|i: int| 0 <= i < consumed@.len() implies
+                            nlbv(to_model(consumed@[i])) <= 0 && max_var_below(to_model(consumed@[i]), bound)
+                        by {
+                            assert(consumed@[i] == args@[i]);
+                        }
+                        let consumed_model = Seq::new(consumed@.len(), |i: int| to_model(consumed@[i]));
+                        spine_reduce_eq_subst_full(to_model(e_fun), consumed_model, to_model(peeled), bound);
+                        assert(spine_reduce(to_model(e_fun), consumed_model) == subst_full(to_model(peeled), consumed_model, 0));
+                        assert(to_model(inst_result) == subst_full(to_model(peeled), consumed_model, 0));
+                    }
+                    let result = verified_foldl_apps(ctx, inst_result, remaining);
+                    proof {
+                        assert(remaining@ =~= args@.subrange(n as int, args@.len() as int));
+                        assert(Seq::new(remaining@.len(), |i: int| to_model(remaining@[i]))
+                            =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
+                        assert(Seq::new(consumed@.len(), |i: int| to_model(consumed@[i]))
+                            =~= Seq::new(n as nat, |i: int| to_model(args@[i])));
+                        assert(to_model(result) == spine_app(to_model(inst_result), Seq::new(remaining@.len(), |i: int| to_model(remaining@[i]))));
+                        assert(to_model(result) == spine_app(
+                            spine_reduce(to_model(e_fun), Seq::new(n as nat, |i: int| to_model(args@[i]))),
+                            Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                        ));
+                        assert(spine_bind(to_model(e_fun), n as nat) == Some(to_model(peeled)));
+                    }
+                    Some(result)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }
 
 }
