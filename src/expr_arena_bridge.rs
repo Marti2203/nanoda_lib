@@ -59,9 +59,15 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 /// `Sort`/`Const`/`StringLit`/`NatLit`: all four always have
 /// `num_loose_bvars() == 0` and `has_fvars() == false` (see
 /// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
-/// `ExprSpec::Closed` for `inst`/`abstr`'s purposes regardless of payload.
+/// bound-variable-inert for `inst`/`abstr`'s purposes regardless of
+/// payload -- `Sort`/`StringLit`/`NatLit` collapse to `ExprSpec::Closed`;
+/// `Const` gets its own distinct `ExprSpec::Const(id)` (see `ExprSpec`'s
+/// doc comment in `expr_model.rs`), so this function's *contract* now
+/// gives `matches!(..., Closed) || is_const_shape(ptr)`, not `Closed`
+/// alone -- the real boolean result is unchanged, still true for all
+/// four variants; only the trust boundary's own precision improved.
 #[allow(dead_code)]
-pub(crate) fn expr_is_closed_leaf(e: &Expr) -> bool {
+pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
 }
 
@@ -155,8 +161,8 @@ pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
         result ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
         !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
 
-pub assume_specification [expr_is_closed_leaf] (e: &Expr) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Closed);
+pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
+    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed) || is_const_shape(ptr));
 
 pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
@@ -164,14 +170,32 @@ pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(Ex
         None => !matches!(to_model_of_expr(*e), ExprSpec::App(_, _)),
     };
 
-/// `Const`'s name/levels, keyed by the pointer (like `expr_id`) since
-/// `to_model`/`to_model_of_expr` collapse every `Const` to `Closed`
-/// regardless of payload (see `expr_is_closed_leaf`) -- `is_const_shape`/
-/// `const_name_of`/`const_levels_of` are a separate side channel, not
-/// derived from `to_model`.
+/// `Const`'s name/levels, keyed by the pointer (like `expr_id`) --
+/// `const_name_of`/`const_levels_of` are a separate side channel from
+/// `to_model`, carrying the FULL name/levels payload `ExprSpec::Const`'s
+/// single `u32` id can't (see `ExprSpec`'s doc comment: the id "mirrors
+/// `Free`'s pointer-identity convention... not the name's actual
+/// content"). `const_id` bridges the two: `is_const_shape_model` below
+/// is the trusted fact that a `Const`-shaped pointer's `to_model` is
+/// exactly `ExprSpec::Const(const_id(ptr))`.
 pub uninterp spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool;
 pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
 pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
+pub uninterp spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u32;
+
+/// The trust boundary connecting `is_const_shape` to `to_model`: stated
+/// as a standalone callable lemma (rather than folded into
+/// `expr_as_const`'s own postcondition) so it's usable anywhere
+/// `is_const_shape(ptr)` is already known, not just at `expr_as_const`'s
+/// own call sites -- e.g. `expr_is_closed_leaf`'s `is_const_shape(ptr)`
+/// disjunct needs exactly this to relate its own result back to
+/// `to_model(ptr)`'s actual shape.
+#[verifier::external_body]
+pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
+    requires is_const_shape(ptr)
+    ensures to_model(ptr) == ExprSpec::Const(const_id(ptr))
+{
+}
 
 pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, LevelsPtr<'t>)>)
     ensures match result {
@@ -310,8 +334,15 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
             return Some(e);
         }
     }
-    if expr_is_closed_leaf(&el) {
-        assert(to_model(e) == ExprSpec::Closed);
+    if expr_is_closed_leaf(e, &el) {
+        proof {
+            if is_const_shape(e) {
+                is_const_shape_model(e);
+                assert(to_model(e) == ExprSpec::Const(const_id(e)));
+            } else {
+                assert(to_model(e) == ExprSpec::Closed);
+            }
+        }
         return Some(e);
     }
     if expr_is_local(e, &el) {
@@ -411,7 +442,18 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
             None => Some(e),
         };
     }
-    if expr_as_var(&el).is_some() || expr_is_closed_leaf(&el) {
+    if expr_as_var(&el).is_some() {
+        return Some(e);
+    }
+    if expr_is_closed_leaf(e, &el) {
+        proof {
+            if is_const_shape(e) {
+                is_const_shape_model(e);
+                assert(to_model(e) == ExprSpec::Const(const_id(e)));
+            } else {
+                assert(to_model(e) == ExprSpec::Closed);
+            }
+        }
         return Some(e);
     }
     if let Some((fun, arg)) = expr_as_app(&el) {
