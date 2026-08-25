@@ -50,7 +50,7 @@ pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
 {
     match e {
         ExprSpec::Var(i) => if (i as nat) >= cutoff { ExprSpec::Var(((i as int) + d) as u32) } else { ExprSpec::Var(i) },
-        ExprSpec::Free(_) | ExprSpec::Closed => e,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(Box::new(shift(d, cutoff, *f)), Box::new(shift(d, cutoff, *a))),
         ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(shift(d, cutoff, *t)), Box::new(shift(d, (cutoff + 1) as nat, *b))),
         ExprSpec::Let(t, v, b) => ExprSpec::Let(
@@ -71,7 +71,7 @@ pub open spec fn subst(j: nat, s: ExprSpec, e: ExprSpec) -> ExprSpec
 {
     match e {
         ExprSpec::Var(i) => if (i as nat) == j { s } else { e },
-        ExprSpec::Free(_) | ExprSpec::Closed => e,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))),
         ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))),
         ExprSpec::Let(t, v, b) => ExprSpec::Let(
@@ -687,7 +687,7 @@ pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
 {
     match e {
         ExprSpec::Var(i) => (i as nat) < bound,
-        ExprSpec::Free(_) | ExprSpec::Closed => true,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => true,
         ExprSpec::App(f, a) => max_var_below(*f, bound) && max_var_below(*a, bound),
         ExprSpec::Bind(t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
         ExprSpec::Let(t, v, b) => max_var_below(*t, bound) && max_var_below(*v, bound) && max_var_below(*b, bound),
@@ -704,7 +704,7 @@ pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
 {
     reveal(shift);
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_up_max_var_below(c, bound, *f);
             shift_up_max_var_below(c, bound, *a);
@@ -732,7 +732,7 @@ pub proof fn max_var_below_mono(e: ExprSpec, b1: nat, b2: nat)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             max_var_below_mono(*f, b1, b2);
             max_var_below_mono(*a, b1, b2);
@@ -772,7 +772,7 @@ pub proof fn subst_max_var_below(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
     reveal(shift);
     reveal(subst);
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             subst_max_var_below(bound, j, s, *f);
@@ -848,7 +848,7 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
                 assert(shift(-1, c, e) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_cancel(c, *f);
             shift_cancel(c, *a);
@@ -894,7 +894,7 @@ pub open spec fn min_escaping(e: ExprSpec) -> Option<nat>
 {
     match e {
         ExprSpec::Var(i) => Some(i as nat),
-        ExprSpec::Free(_) | ExprSpec::Closed => None,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => None,
         ExprSpec::App(f, a) => opt_min(min_escaping(*f), min_escaping(*a)),
         ExprSpec::Bind(t, b) => {
             let bb = match min_escaping(*b) {
@@ -975,7 +975,7 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
                 assert(shift(-1, c0, y) == y);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if c0 == 0 {
                 assert(no_escaping_below(*f, 1));
@@ -1065,7 +1065,7 @@ pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
                 assert(shift(-1, c0, x) == x);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if c0 == 0 {
                 assert(min_escaping(x) == opt_min(min_escaping(*f), min_escaping(*a)));
@@ -1135,7 +1135,7 @@ pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
                 assert(shift(1, c0, s) == s);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(min_escaping(s) == opt_min(min_escaping(*f), min_escaping(*a)));
             assert(shift(1, c0, s) == ExprSpec::App(Box::new(shift(1, c0, *f)), Box::new(shift(1, c0, *a))));
@@ -1195,7 +1195,7 @@ pub open spec fn has_escaping_ref(e: ExprSpec, k: nat) -> bool
 {
     match e {
         ExprSpec::Var(i) => (i as nat) == k,
-        ExprSpec::Free(_) | ExprSpec::Closed => false,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => false,
         ExprSpec::App(f, a) => has_escaping_ref(*f, k) || has_escaping_ref(*a, k),
         ExprSpec::Bind(t, b) => has_escaping_ref(*t, k) || has_escaping_ref(*b, (k + 1) as nat),
         ExprSpec::Let(t, v, b) => has_escaping_ref(*t, k) || has_escaping_ref(*v, k) || has_escaping_ref(*b, (k + 1) as nat),
@@ -1220,7 +1220,7 @@ pub proof fn shift_up_has_escaping_ref(bound: nat, x: ExprSpec, k: nat)
             assert((i as nat) < bound);
             assert(shift(1, 0, x) == ExprSpec::Var(((i as int) + 1) as u32));
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(shift(1, 0, x) == ExprSpec::App(Box::new(shift(1, 0, *f)), Box::new(shift(1, 0, *a))));
             shift_up_has_escaping_ref(bound, *f, k);
@@ -1262,7 +1262,7 @@ pub proof fn shift_up_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0: n
         ExprSpec::Var(i) => {
             assert((i as nat) < bound);
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(shift(1, c0, x) == ExprSpec::App(Box::new(shift(1, c0, *f)), Box::new(shift(1, c0, *a))));
             shift_up_has_escaping_ref_c0(bound, *f, k, c0);
@@ -1324,7 +1324,7 @@ pub proof fn shift_down_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0:
                 assert((i as nat) != 0);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if c0 == 0 {
                 assert(!has_escaping_ref(*f, 0));
@@ -1380,7 +1380,7 @@ pub proof fn no_escaping_ref_subst_identity(k: nat, s: ExprSpec, e: ExprSpec)
         ExprSpec::Var(i) => {
             assert((i as nat) != k);
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(!has_escaping_ref(*f, k));
             assert(!has_escaping_ref(*a, k));
@@ -1443,7 +1443,7 @@ pub proof fn subst_no_escaping_ref_at(bound: nat, j: nat, s: ExprSpec, e: ExprSp
                 assert(subst(j, s, e) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             subst_no_escaping_ref_at(bound, j, s, *f);
@@ -1509,7 +1509,7 @@ pub proof fn subst_no_escaping_ref_shifted(bound: nat, j: nat, diff: nat, s: Exp
                 assert(subst(j, s, e) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(!has_escaping_ref(*f, (j + diff) as nat));
             assert(!has_escaping_ref(*a, (j + diff) as nat));
@@ -1636,7 +1636,7 @@ pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
                 assert(min_escaping(e) == Some(i as nat));
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             assert(min_escaping(subst(j, s, e)) == opt_min(min_escaping(subst(j, s, *f)), min_escaping(subst(j, s, *a))));
@@ -1762,7 +1762,7 @@ pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_shift_aligned(c_top, c0, d, *f);
             shift_shift_aligned(c_top, c0, d, *a);
@@ -1848,7 +1848,7 @@ pub proof fn shift_shift_aligned_mixed(bound: nat, c_top: nat, c0: nat, s: ExprS
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if c_top == 0 {
                 assert(!has_escaping_ref(*f, c0));
@@ -1914,7 +1914,7 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_shift_aligned_up(c_top, c0, *f);
             shift_shift_aligned_up(c_top, c0, *a);
@@ -2017,7 +2017,7 @@ pub proof fn shift_subst_commute_down(bound: nat, j: nat, diff: nat, s: ExprSpec
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if diff == 1 {
                 assert(!has_escaping_ref(*f, (j + 1) as nat));
@@ -2114,7 +2114,7 @@ pub proof fn shift_subst_commute_below(bound: nat, c0: nat, j: nat, s: ExprSpec,
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             assert(shift(1, c0, e) == ExprSpec::App(Box::new(shift(1, c0, *f)), Box::new(shift(1, c0, *a))));
@@ -2237,7 +2237,7 @@ pub proof fn subst_subst_commute(bound: nat, j0: nat, diff: nat, s_inner: ExprSp
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j0, s_inner, e) == ExprSpec::App(Box::new(subst(j0, s_inner, *f)), Box::new(subst(j0, s_inner, *a))));
             assert(subst((j0 + diff) as nat, s_outer, e) == ExprSpec::App(Box::new(subst((j0 + diff) as nat, s_outer, *f)), Box::new(subst((j0 + diff) as nat, s_outer, *a))));
@@ -2403,7 +2403,7 @@ pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: 
                 }
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             assert(shift(1, (j + diff) as nat, e) == ExprSpec::App(Box::new(shift(1, (j + diff) as nat, *f)), Box::new(shift(1, (j + diff) as nat, *a))));
@@ -2495,7 +2495,7 @@ pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
 {
     reveal(shift);
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_preserves_depth(d, c, *f);
             shift_preserves_depth(d, c, *a);
@@ -2523,7 +2523,7 @@ pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
 {
     reveal(shift);
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             shift_preserves_size(d, c, *f);
             shift_preserves_size(d, c, *a);
@@ -2571,7 +2571,7 @@ pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
                 assert(1 <= 1 * (size(s) + 1)) by (nonlinear_arith) {}
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {
             assert(subst(j, s, e) == e);
             assert(size(e) == 1);
             assert(size(s) >= 1);
@@ -2653,7 +2653,7 @@ pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
                 assert(subst(j, s, e) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
             subst_depth_bound(j, s, *f);
@@ -2703,7 +2703,7 @@ pub open spec fn size(e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => 1,
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 1,
         ExprSpec::App(f, a) => 1 + size(*f) + size(*a),
         ExprSpec::Bind(t, b) => 1 + size(*t) + size(*b),
         ExprSpec::Let(t, v, b) => 1 + size(*t) + size(*v) + size(*b),
@@ -2718,7 +2718,7 @@ pub proof fn depth_le_size(e: ExprSpec)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             depth_le_size(*f);
             depth_le_size(*a);
@@ -3776,7 +3776,7 @@ pub proof fn subst_shift_down_commute(bound: nat, c0: nat, j: nat, s: ExprSpec, 
                 assert(subst((j + 1) as nat, shift(1, c0, s), x) == x);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             if c0 == 0 {
                 assert(no_escaping_below(*f, 1));
@@ -3852,7 +3852,7 @@ pub proof fn pstep_subst_refl(bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e:
                 assert(subst(j, s2, e) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             assert(subst(j, s1, e) == ExprSpec::App(Box::new(subst(j, s1, *f)), Box::new(subst(j, s1, *a))));
             assert(subst(j, s2, e) == ExprSpec::App(Box::new(subst(j, s2, *f)), Box::new(subst(j, s2, *a))));
@@ -4715,7 +4715,7 @@ pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
 {
     reveal(subst);
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             subst_full_empty(*f, offset);
             subst_full_empty(*a, offset);
@@ -4753,7 +4753,7 @@ pub proof fn nlbv_subst_noop(j: nat, s: ExprSpec, e: ExprSpec)
             assert(nlbv(e) == i as nat + 1);
             assert((i as nat) != j);
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             nlbv_subst_noop(j, s, *f);
             nlbv_subst_noop(j, s, *a);
@@ -4787,7 +4787,7 @@ pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
             assert(nlbv(e) == i as nat + 1);
             assert((i as nat) < c);
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             nlbv_shift_noop(d, c, *f);
             nlbv_shift_noop(d, c, *a);
@@ -4859,7 +4859,7 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
                 assert(subst_full(e, seq![a], c) == e);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {
             assert(subst(c, shift(1, c, a), e) == e);
             assert(shift(-1, c, e) == e);
         }
@@ -5120,7 +5120,7 @@ pub proof fn subst_full_nlbv_bound(e: ExprSpec, s: ExprSpec, offset: nat)
                 assert(subst_full(e, seq![s], offset) == s);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {
             assert(subst_full(e, seq![s], offset) == e);
         }
         ExprSpec::App(f, a) => {
@@ -5200,7 +5200,7 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
                 assert(subst_full(e, seq![s] + rest, offset) == (seq![s] + rest)[0int]);
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => {
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {
             assert(subst_full(e, seq![s], (offset + k) as nat) == e);
             assert(subst_full(e, rest, offset) == e);
             assert(subst_full(e, seq![s] + rest, offset) == e);

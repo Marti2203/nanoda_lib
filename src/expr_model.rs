@@ -36,6 +36,20 @@ pub enum ExprSpec {
     Var(u32),
     Free(u32),
     Closed,
+    /// A named global constant reference (`Expr::Const`), distinguished
+    /// from the undifferentiated `Closed` leaf specifically so a future
+    /// delta-reduction rule can be stated at all: `Closed` alone (which
+    /// `Sort`/`StringLit`/`NatLit` still collapse to, per this file's
+    /// original simplification -- their payload is equally irrelevant to
+    /// substitution and there's no analogous "unfold by identity" rule
+    /// for them) carries no identity to unfold BY. Bound-variable-inert
+    /// in every other respect, identically to `Closed`, in every
+    /// function below -- a constant reference is never itself a loose
+    /// bound variable or a `Local`, so it behaves exactly like `Closed`
+    /// for `nlbv`/`has_fv`/`subst_full`/`abstr_full` and their exec
+    /// counterparts. The `u32` mirrors `Free`'s pointer-identity
+    /// convention (an uninterpreted id, not the name's actual content).
+    Const(u32),
     App(Box<ExprSpec>, Box<ExprSpec>),
     Bind(Box<ExprSpec>, Box<ExprSpec>),
     Let(Box<ExprSpec>, Box<ExprSpec>, Box<ExprSpec>),
@@ -50,7 +64,7 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
 {
     match e {
         ExprSpec::Var(i) => i as nat + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
         ExprSpec::App(f, a) => if nlbv(*f) >= nlbv(*a) { nlbv(*f) } else { nlbv(*a) },
         ExprSpec::Bind(t, b) => {
             let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
@@ -70,7 +84,7 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
@@ -90,7 +104,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed => 0,
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
         ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) { depth(*f) } else { depth(*a) },
         ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) { depth(*t) } else { depth(*b) },
         ExprSpec::Let(t, v, b) => {
@@ -121,7 +135,7 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
                 e
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed => e,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(
             Box::new(subst_full(*f, substs, offset)),
             Box::new(subst_full(*a, substs, offset)),
@@ -151,7 +165,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
 {
     match e {
         ExprSpec::Var(_) => {}
-        ExprSpec::Free(_) | ExprSpec::Closed => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::App(f, a) => {
             subst_full_noop(*f, substs, offset);
             subst_full_noop(*a, substs, offset);
@@ -183,6 +197,7 @@ pub fn dup(e: &ExprSpec) -> (result: ExprSpec)
         ExprSpec::Var(i) => ExprSpec::Var(*i),
         ExprSpec::Free(i) => ExprSpec::Free(*i),
         ExprSpec::Closed => ExprSpec::Closed,
+        ExprSpec::Const(i) => ExprSpec::Const(*i),
         ExprSpec::App(f, a) => {
             let sf = dup(f);
             let sa = dup(a);
@@ -239,7 +254,7 @@ pub fn nlbv_exec(e: &ExprSpec) -> (result: u32)
 {
     match e {
         ExprSpec::Var(i) => *i + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
         ExprSpec::App(f, a) => {
             let nf = nlbv_exec(f);
             let na = nlbv_exec(a);
@@ -289,7 +304,7 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
                     e
                 }
             }
-            ExprSpec::Free(_) | ExprSpec::Closed => e,
+            ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
             ExprSpec::App(f, a) => {
                 let sf = inst_model(*f, substs, offset);
                 let sa = inst_model(*a, substs, offset);
@@ -341,7 +356,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed => e,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
         ExprSpec::Free(id) => match find_from_end(locals, id) {
             Some(p) => ExprSpec::Var((offset + p) as u32),
             None => e,
@@ -374,7 +389,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed => {}
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
         ExprSpec::Free(_) => {}
         ExprSpec::App(f, a) => {
             abstr_full_noop(*f, locals, offset);
@@ -401,7 +416,7 @@ pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => {
             let rf = has_fv_exec(f);
@@ -441,7 +456,7 @@ pub fn abstr_model(e: ExprSpec, locals: &[u32], offset: u32) -> (result: ExprSpe
         e
     } else {
         match e {
-            ExprSpec::Var(_) | ExprSpec::Closed => e,
+            ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
             ExprSpec::Free(id) => {
                 match find_pos_from_end(locals, id) {
                     Some(p) => ExprSpec::Var(offset + p),
