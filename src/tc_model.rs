@@ -73,9 +73,14 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
-use crate::env_model::{get_constructor_num_params, get_recursor_data};
+use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
+#[cfg(verus_only)]
+use crate::env_model::to_model_of_declar_hint;
+#[cfg(verus_only)]
+use crate::env_model::to_model as reducibility_hint_to_model;
+use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n};
 #[cfg(verus_only)]
@@ -1813,6 +1818,45 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             verified_def_eq(ctx, xp, yp, fuel - 1)
         }
         _ => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::get_applied_def`
+/// (`tc.rs:1133-1142`) -- the SECOND piece of `lazy_delta_step`'s
+/// machinery (alongside `verified_def_eq_nat`), and the one that decides
+/// which side of `x`/`y` is "further" from being fully unfolded. Peels
+/// the applied spine (`verified_unfold_apps`), checks the head is a real
+/// `Const`, then looks up its reducibility hint via `get_declar_hint`
+/// (`env_model.rs`, new this commit) -- `None` covers both "not an
+/// applied Const at all" and "that Const isn't a Definition/Theorem"
+/// (e.g. it's an Axiom, Inductive, Constructor, ...), matching the real
+/// function's own single `Option` return exactly.
+pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
+    ensures match result {
+        Some((_, hint)) =>
+            exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
+                to_model(e) == spine_app(to_model(fun), args_model_of(args))
+                && is_const_shape(fun)
+                && to_model_of_declar_hint(*env).contains_key(const_id(fun))
+                && to_model_of_declar_hint(*env)[const_id(fun)] == reducibility_hint_to_model(hint),
+        None => true,
+    }
+{
+    let (fun, _args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    match get_declar_hint(env, &name) {
+        Some((info_name, hint)) => {
+            assert(to_model(e) == spine_app(to_model(fun), args_model_of(_args@)));
+            Some((info_name, hint))
+        }
+        None => None,
     }
 }
 

@@ -31,7 +31,7 @@
 
 use vstd::prelude::*;
 use std::sync::Arc;
-use crate::env::{ReducibilityHint, Env, RecRule};
+use crate::env::{ReducibilityHint, Env, RecRule, Declar};
 use crate::util::{NamePtr, LevelsPtr, ExprPtr};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -69,6 +69,22 @@ pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
 pub(crate) fn get_recursor_data<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)> {
     let rec = env.get_recursor(n)?;
     Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
+}
+
+/// `tc.rs::TypeChecker::get_applied_def`'s own env-level classification
+/// (`tc.rs:1133-1142`): a name is "an applied def" exactly when it's a
+/// `Definition` (real hint) or `Theorem` (treated as `Opaque` -- theorems
+/// are never unfolded during delta reduction, but ARE tracked so `lazy_
+/// delta_step` knows to keep looking at the OTHER side instead of giving
+/// up immediately). Same "extract only what's needed" approach as `get_
+/// constructor_num_params`/`get_recursor_data` above.
+#[allow(dead_code)]
+pub(crate) fn get_declar_hint<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ReducibilityHint)> {
+    match env.get_declar(n) {
+        Some(Declar::Definition { info, hint, .. }) => Some((info.name, *hint)),
+        Some(Declar::Theorem { info, .. }) => Some((info.name, ReducibilityHint::Opaque)),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]
@@ -217,6 +233,25 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
                 == (level_names(to_model_of_levels(uparams)), expr_to_model(val))
             && nlbv(expr_to_model(val)) == 0
             && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
+        None => !to_model_of_env(*env).contains_key(name_id(*n)),
+    };
+
+/// A real environment's `Definition`/`Theorem` reducibility hints, as a
+/// NAME-id-keyed map (mirrors `to_model_of_ctor_num_params`'s shape) --
+/// `get_declar_hint`'s only real-world claim beyond bookkeeping is that
+/// this key set is EXACTLY `to_model_of_env`'s own domain (`get_declar_
+/// val`, above): the same real match arms (`Definition`/`Theorem`) decide
+/// both, so "has a value to unfold" and "has a reducibility hint" are the
+/// same set of names, not independently-axiomatized facts that could
+/// silently drift apart.
+pub uninterp spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, ReducibilityHintSpec>;
+
+pub assume_specification<'x, 'a> [get_declar_hint] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ReducibilityHint)>)
+    ensures match result {
+        Some((_, hint)) =>
+            to_model_of_env(*env).contains_key(name_id(*n))
+            && to_model_of_declar_hint(*env).contains_key(name_id(*n))
+            && to_model_of_declar_hint(*env)[name_id(*n)] == to_model(hint),
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
     };
 
