@@ -73,7 +73,7 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
-use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint};
+use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
@@ -1858,6 +1858,98 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_eq_const_app`
+/// (`tc.rs:1196-1238`) -- the THIRD piece of `lazy_delta_step`'s
+/// machinery: a specialized congruence fast-path for "same applied
+/// definition on both sides" (`f a_0 .. a_N` vs `f b_0 .. b_N`, same
+/// `f`), used to avoid unfolding `f` at all when its arguments already
+/// match. Fires only when both def names agree, both hints are `Regular`
+/// with the SAME regularity number (`reducibility_hint_as_regular`,
+/// avoiding a separate `ReducibilityHint::==` bridge), every arg pairwise
+/// `def_eq`s (via `verified_def_eq_core`, same leaf-cluster-only
+/// limitation `verified_def_eq_app` already has), and the heads' level
+/// arguments are `eq_antisymm_many`. Does NOT model the real function's
+/// `failure_cache` (a pure memoization optimization -- skipping it just
+/// means this bridge may recompute what the real code would have
+/// short-circuited, never a soundness difference) or its final `_ =>
+/// panic!()` arm (structurally unreachable once both heads are confirmed
+/// `Const`-shaped, so `None` here covers it harmlessly). Simplified from
+/// the real `Option<DeltaResult<'t>>` to `Option<bool>` -- this bridge
+/// only ever produces the `FoundEqResult(true)` case, never `Exhausted`.
+pub fn verified_try_eq_const_app<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>, x_defname: NamePtr<'t>, x_hint: ReducibilityHint,
+    y: ExprPtr<'t>, y_defname: NamePtr<'t>, y_hint: ReducibilityHint,
+    fuel: u32,
+) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+            to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+            && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+            && argsx.len() == argsy.len()
+            && is_const_shape(fx) && is_const_shape(fy) && const_id(fx) == const_id(fy),
+        _ => true,
+    }
+{
+    if !name_ptr_eq(x_defname, y_defname) {
+        return None;
+    }
+    let xn = match reducibility_hint_as_regular(&x_hint) {
+        Some(n) => n,
+        None => return None,
+    };
+    let yn = match reducibility_hint_as_regular(&y_hint) {
+        Some(n) => n,
+        None => return None,
+    };
+    if xn != yn {
+        return None;
+    }
+    let (l_fun, l_args) = match verified_unfold_apps(ctx, x, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let (r_fun, r_args) = match verified_unfold_apps(ctx, y, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let l_fun_el = ctx.read_expr(l_fun);
+    let (l_name, l_levels) = match expr_as_const(l_fun, &l_fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let r_fun_el = ctx.read_expr(r_fun);
+    let (r_name, r_levels) = match expr_as_const(r_fun, &r_fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    if !name_ptr_eq(l_name, r_name) {
+        return None;
+    }
+    if l_args.len() != r_args.len() {
+        return None;
+    }
+    let mut i: usize = 0;
+    while i < l_args.len()
+        invariant
+            i <= l_args.len(),
+            l_args.len() == r_args.len(),
+        decreases l_args.len() - i
+    {
+        match verified_def_eq_core(ctx, l_args[i], r_args[i], fuel) {
+            Some(true) => {},
+            _ => return None,
+        }
+        i += 1;
+    }
+    if !verified_eq_antisymm_many(ctx, l_levels, r_levels, fuel) {
+        return None;
+    }
+    assert(to_model(x) == spine_app(to_model(l_fun), args_model_of(l_args@)));
+    assert(to_model(y) == spine_app(to_model(r_fun), args_model_of(r_args@)));
+    Some(true)
 }
 
 }
