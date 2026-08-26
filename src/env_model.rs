@@ -27,7 +27,20 @@
 //! proving it equal to the spec version.
 
 use vstd::prelude::*;
-use crate::env::ReducibilityHint;
+use crate::env::{ReducibilityHint, Env};
+use crate::util::{NamePtr, LevelsPtr, ExprPtr};
+#[allow(unused_imports)]
+use crate::expr_model::ExprSpec;
+#[cfg(verus_only)]
+use crate::expr_model::{nlbv, depth};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::to_model as expr_to_model;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{name_id, to_model_of_levels};
+#[cfg(verus_only)]
+use crate::level_model::level_names;
+#[cfg(verus_only)]
+use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below, env_wf};
 
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> bool {
@@ -137,6 +150,68 @@ pub fn verified_is_lt(a: &ReducibilityHint, b: &ReducibilityHint) -> (result: bo
             (Some(h1), Some(h2)) => h1 < h2,
             _ => false,
         }
+    }
+}
+
+/// A real declaration environment's contents, as a `pstep`-family `env`
+/// value: for each constant NAME id (matching `Const`'s own `const_id`
+/// convention), its universe-parameter names and its (model-erased) value.
+/// Uninterpreted, same trust-boundary style as `to_model` elsewhere --
+/// `Env`'s actual `IndexMap`-based storage isn't reverse-engineered, only
+/// its OBSERVABLE behavior through `get_declar_val` is axiomatized below.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExEnv<'x, 'a>(Env<'x, 'a>) where 'a: 'x;
+
+pub uninterp spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
+
+/// The trust boundary: `get_declar_val` (only definitions/theorems have a
+/// value -- `env.rs:320-327`) returns exactly what `to_model_of_env` says
+/// this name maps to, AND -- the one substantive real-world fact this
+/// axiom asserts beyond pure bookkeeping -- a real declaration's stored
+/// value is always a CLOSED term (`nlbv == 0`), matching how a top-level
+/// Lean definition can never have a de-Bruijn index escaping past its own
+/// body (this is exactly the property `beta_model.rs`'s `env_wf` doc
+/// comment already anticipated needing). Everything else `env_wf` requires
+/// (`size`/`max_var_below`/`depth` bounded by some `cap`) then follows for
+/// free from `nlbv == 0` alone via `nlbv_bound_implies_max_var_below`/
+/// `depth_le_size` -- no further trust needed.
+pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
+    ensures match result {
+        Some((uparams, val)) =>
+            to_model_of_env(*env).contains_key(name_id(*n))
+            && to_model_of_env(*env)[name_id(*n)]
+                == (level_names(to_model_of_levels(uparams)), expr_to_model(val))
+            && nlbv(expr_to_model(val)) == 0,
+        None => !to_model_of_env(*env).contains_key(name_id(*n)),
+    };
+
+/// A real declaration's fetched value, alone in an otherwise-empty `env`,
+/// is `env_wf` -- exactly what `pstep`'s delta rule needs to fire on it.
+/// `cap := size(val)` works: `size(val) <= cap` trivially, `depth(val) <=
+/// cap` via `depth_le_size`, and `max_var_below(val, cap)` via `nlbv(val)
+/// == 0` (just proven above) composed through `nlbv_bound_implies_max_var_
+/// below`/`max_var_below_mono`.
+pub proof fn env_declar_singleton_wf(id: u64, ks: Seq<u64>, val: ExprSpec)
+    requires nlbv(val) == 0
+    ensures env_wf(Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)), size(val))
+{
+    let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
+    nlbv_bound_implies_max_var_below(val, 0);
+    depth_le_size(val);
+    max_var_below_mono(val, depth(val), size(val));
+    broadcast use vstd::map::lemma_map_insert_domain;
+    broadcast use vstd::map::lemma_map_insert_same;
+    assert(singleton.dom() =~= Set::<u64>::empty().insert(id));
+    assert forall |id2: u64| #[trigger] singleton.contains_key(id2) implies {
+        &&& nlbv(singleton[id2].1) == 0
+        &&& size(singleton[id2].1) <= size(val)
+        &&& max_var_below(singleton[id2].1, size(val))
+        &&& depth(singleton[id2].1) <= size(val)
+    } by {
+        assert(id2 == id);
+        assert(singleton[id2] == (ks, val));
     }
 }
 
