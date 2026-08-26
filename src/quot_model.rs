@@ -17,15 +17,16 @@
 //! `quot.rs`: `check_eq`'s construction of `Eq`'s expected type,
 //! `Π (α : Sort u), α → α → Prop`, built as
 //! `abstr_pi(alpha, mk_pi(_, _, alpha, mk_pi(_, _, alpha, prop)))`
-//! (`quot.rs:85-87`). Doesn't touch `expr_model.rs`'s core `ExprSpec`
-//! structure at all (`Sort`/`Const` stay content-erased `Closed`, as
-//! already established there and in `expr_arena_bridge.rs` -- sufficient
-//! for a *structural* shape claim like this one, which doesn't need to
-//! distinguish *which* sort/name is involved) -- just layers a couple of
-//! new trusted facts (`mk_unique`, `mk_sort`, `prop`, `abstr_pi`) on top of
-//! what's already bridged (`mk_pi`, `abstr_full`), each a small,
-//! independently-inspectable composition of primitives already trusted,
-//! same spirit as `env_model.rs`'s `is_lt`.
+//! (`quot.rs:85-87`). This is purely a *structural* shape claim (binder
+//! nesting, de-Bruijn indexing) -- it doesn't need to distinguish which
+//! universe level is involved, but DOES need `mk_sort`'s/`prop`'s results
+//! correctly typed as `ExprSpec::Sort(_)` (not the old, now-stale
+//! `Closed`-for-everything simplification) so the leaves' actual shape in
+//! the final AST is stated accurately, not just structurally consistent by
+//! accident -- just layers a couple of new trusted facts (`mk_unique`,
+//! `mk_sort`, `prop`, `abstr_pi`) on top of what's already bridged (`mk_pi`,
+//! `abstr_full`), each a small, independently-inspectable composition of
+//! primitives already trusted, same spirit as `env_model.rs`'s `is_lt`.
 //!
 //! `check_quot`'s larger constructions (`Quot`, `Quot.mk`, `Quot.lift`,
 //! `Quot.ind`, each 2-4 binders deep) follow the exact same pattern --
@@ -39,10 +40,14 @@ use crate::expr::BinderStyle;
 use crate::util::{ExprPtr, LevelPtr, NamePtr};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, expr_id};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
 
 verus! {
 
@@ -58,10 +63,10 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'
         local_type(result) == to_model(binder_type);
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_sort] (ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Closed;
+    ensures to_model(result) == ExprSpec::Sort(level_to_model(level));
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::prop] (ctx: &mut TcCtx<'t, 'p>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Closed;
+    ensures to_model(result) == ExprSpec::Sort(LevelSpec::Zero);
 
 /// `TcCtx::abstr_pi`'s real body (`expr.rs`) is `self.mk_pi(binder_name,
 /// binder_style, binder_type, self.abstr(body, &[binder]))` after reading
@@ -90,16 +95,18 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     alpha_style: BinderStyle, arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
     ensures to_model(expected) == ExprSpec::Bind(
-        Box::new(ExprSpec::Closed),
+        Box::new(ExprSpec::Sort(level_to_model(u))),
         Box::new(ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
         )),
     )
 {
     let uparam = ctx.mk_sort(u);
+    assert(to_model(uparam) == ExprSpec::Sort(level_to_model(u)));
     let alpha = ctx.mk_unique(alpha_name, alpha_style, uparam);
     let prop = ctx.prop();
+    assert(to_model(prop) == ExprSpec::Sort(LevelSpec::Zero));
     let inner1 = ctx.mk_pi(anon, arrow_style, alpha, prop);
     assert(to_model(inner1) == ExprSpec::Bind(Box::new(to_model(alpha)), Box::new(to_model(prop))));
     let inner = ctx.mk_pi(anon, arrow_style, alpha, inner1);
@@ -110,31 +117,31 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
         Box::new(local_type(alpha)),
         Box::new(abstr_full(to_model(inner), seq![expr_id(alpha)], 0)),
     ));
-    assert(local_type(alpha) == ExprSpec::Closed);
+    assert(local_type(alpha) == ExprSpec::Sort(level_to_model(u)));
 
     proof {
         let id_alpha = expr_id(alpha);
         assert(to_model(inner) == ExprSpec::Bind(
             Box::new(ExprSpec::Free(id_alpha)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Closed))),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
         ));
 
         // Unfold abstr_full one Bind-layer at a time, matching its recursive
         // definition exactly (same pattern used throughout expr_model.rs's
         // own abstr_full proofs).
         let inner_t = ExprSpec::Free(id_alpha);
-        let inner_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Closed));
+        let inner_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Sort(LevelSpec::Zero)));
         assert(to_model(inner) == ExprSpec::Bind(Box::new(inner_t), Box::new(inner_b)));
         assert(abstr_full(to_model(inner), seq![id_alpha], 0)
             == ExprSpec::Bind(Box::new(abstr_full(inner_t, seq![id_alpha], 0)), Box::new(abstr_full(inner_b, seq![id_alpha], 1))));
         assert(abstr_full(inner_t, seq![id_alpha], 0) == ExprSpec::Var(0));
         assert(abstr_full(inner_b, seq![id_alpha], 1)
-            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1)), Box::new(abstr_full(ExprSpec::Closed, seq![id_alpha], 2))));
+            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1)), Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2))));
         assert(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1) == ExprSpec::Var(1));
-        assert(abstr_full(ExprSpec::Closed, seq![id_alpha], 2) == ExprSpec::Closed);
+        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2) == ExprSpec::Sort(LevelSpec::Zero));
         assert(abstr_full(to_model(inner), seq![id_alpha], 0) == ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
         ));
     }
 
@@ -154,19 +161,21 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     a_style: BinderStyle, r_style: BinderStyle, arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
     ensures to_model(expected) == ExprSpec::Bind(
-        Box::new(ExprSpec::Closed),
+        Box::new(ExprSpec::Sort(level_to_model(u))),
         Box::new(ExprSpec::Bind(
             Box::new(ExprSpec::Bind(
                 Box::new(ExprSpec::Var(0)),
-                Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+                Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
             )),
-            Box::new(ExprSpec::Closed),
+            Box::new(ExprSpec::Sort(level_to_model(u))),
         )),
     )
 {
     let sort_u = ctx.mk_sort(u);
+    assert(to_model(sort_u) == ExprSpec::Sort(level_to_model(u)));
     let a = ctx.mk_unique(a_name, a_style, sort_u);
     let prop = ctx.prop();
+    assert(to_model(prop) == ExprSpec::Sort(LevelSpec::Zero));
     let aa1 = ctx.mk_pi(anon, arrow_style, a, prop);
     assert(to_model(aa1) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(prop))));
     let a_a_prop = ctx.mk_pi(anon, arrow_style, a, aa1);
@@ -179,50 +188,50 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
         Box::new(abstr_full(to_model(sort_u), seq![expr_id(r)], 0)),
     ));
     assert(local_type(r) == to_model(a_a_prop));
-    assert(abstr_full(to_model(sort_u), seq![expr_id(r)], 0) == ExprSpec::Closed);
+    assert(abstr_full(to_model(sort_u), seq![expr_id(r)], 0) == ExprSpec::Sort(level_to_model(u)));
 
     let expected = ctx.abstr_pi(a, inner);
     assert(to_model(expected) == ExprSpec::Bind(
         Box::new(local_type(a)),
         Box::new(abstr_full(to_model(inner), seq![expr_id(a)], 0)),
     ));
-    assert(local_type(a) == ExprSpec::Closed);
+    assert(local_type(a) == ExprSpec::Sort(level_to_model(u)));
 
     proof {
         let id_a = expr_id(a);
         assert(to_model(inner) == ExprSpec::Bind(
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed))))),
-            Box::new(ExprSpec::Closed),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))))),
+            Box::new(ExprSpec::Sort(level_to_model(u))),
         ));
 
-        let t = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed))));
-        let b = ExprSpec::Closed;
+        let t = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))));
+        let b = ExprSpec::Sort(level_to_model(u));
         assert(to_model(inner) == ExprSpec::Bind(Box::new(t), Box::new(b)));
 
         // Outer unfold: abstr_full(Bind(t, b), [id_a], 0) == Bind(abstr_full(t, [id_a], 0), abstr_full(b, [id_a], 1))
         assert(abstr_full(to_model(inner), seq![id_a], 0)
             == ExprSpec::Bind(Box::new(abstr_full(t, seq![id_a], 0)), Box::new(abstr_full(b, seq![id_a], 1))));
-        assert(abstr_full(b, seq![id_a], 1) == ExprSpec::Closed);
+        assert(abstr_full(b, seq![id_a], 1) == ExprSpec::Sort(level_to_model(u)));
 
-        // Inner unfold: abstr_full(t, [id_a], 0), where t = Bind(Free(id_a), Bind(Free(id_a), Closed))
+        // Inner unfold: abstr_full(t, [id_a], 0), where t = Bind(Free(id_a), Bind(Free(id_a), Sort(Zero)))
         let t_t = ExprSpec::Free(id_a);
-        let t_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Closed));
+        let t_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)));
         assert(t == ExprSpec::Bind(Box::new(t_t), Box::new(t_b)));
         assert(abstr_full(t, seq![id_a], 0)
             == ExprSpec::Bind(Box::new(abstr_full(t_t, seq![id_a], 0)), Box::new(abstr_full(t_b, seq![id_a], 1))));
         assert(abstr_full(t_t, seq![id_a], 0) == ExprSpec::Var(0));
         assert(abstr_full(t_b, seq![id_a], 1)
-            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1)), Box::new(abstr_full(ExprSpec::Closed, seq![id_a], 2))));
+            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1)), Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2))));
         assert(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1) == ExprSpec::Var(1));
-        assert(abstr_full(ExprSpec::Closed, seq![id_a], 2) == ExprSpec::Closed);
+        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2) == ExprSpec::Sort(LevelSpec::Zero));
         assert(abstr_full(t, seq![id_a], 0) == ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
         ));
 
         assert(abstr_full(to_model(inner), seq![id_a], 0) == ExprSpec::Bind(
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Closed))))),
-            Box::new(ExprSpec::Closed),
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))))),
+            Box::new(ExprSpec::Sort(level_to_model(u))),
         ));
     }
 
