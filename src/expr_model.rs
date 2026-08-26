@@ -630,6 +630,45 @@ pub fn find_pos_from_end(locals: &[u32], id: u32) -> (result: Option<u32>)
     }
 }
 
+/// Relational (not functional) characterization of "`result` is `e` with
+/// level parameters `ks` substituted by `vs` throughout" -- a RELATION,
+/// deliberately, rather than a `fn e -> ExprSpec` reference definition
+/// (the way `subst_full`/`abstr_full` characterize de-Bruijn substitution):
+/// building a fresh `Const`'s `Vec<LevelSpec>` payload isn't something spec
+/// code can do (`Vec` has no spec-mode constructor, only `Seq` does), so
+/// this instead walks `e` and a caller-supplied `result` IN PARALLEL,
+/// pinning down `result`'s `Vec` fields with purely extensional (`@`-based)
+/// conditions rather than ever constructing one. `Sort`/`Const` route
+/// through `level_model::interp`/`subst_env` directly (the same semantic
+/// characterization `level_model::subst_levels` itself is specified by),
+/// matching `subst_aux`'s real behavior without redefining it structurally.
+pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, result: ExprSpec) -> bool
+    decreases e
+{
+    match (e, result) {
+        (ExprSpec::Var(i), ExprSpec::Var(j)) => i == j,
+        (ExprSpec::Free(i), ExprSpec::Free(j)) => i == j,
+        (ExprSpec::Closed, ExprSpec::Closed) => true,
+        (ExprSpec::Sort(l), ExprSpec::Sort(l2)) =>
+            forall |rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, rho)
+                == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vs)),
+        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) =>
+            id1 == id2 && ls1@.len() == ls2@.len()
+            && forall |j: int, rho: Map<nat, nat>| 0 <= j < ls1@.len() ==>
+                #[trigger] crate::level_model::interp(ls2@[j], rho)
+                    == crate::level_model::interp(ls1@[j], crate::level_model::subst_env(rho, ks, vs)),
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
+            subst_expr_levels_rel(*f1, ks, vs, *f2) && subst_expr_levels_rel(*a1, ks, vs, *a2),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
+            subst_expr_levels_rel(*t1, ks, vs, *t2) && subst_expr_levels_rel(*b1, ks, vs, *b2),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
+            subst_expr_levels_rel(*t1, ks, vs, *t2) && subst_expr_levels_rel(*v1, ks, vs, *v2)
+                && subst_expr_levels_rel(*b1, ks, vs, *b2),
+        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => subst_expr_levels_rel(*s1, ks, vs, *s2),
+        _ => false,
+    }
+}
+
 /// Real `subst_aux`'s structural mirror (`expr.rs:333-380`): substitutes
 /// universe-level *parameters* (not de Bruijn indices) throughout an
 /// expression, routing `Sort`/`Const`'s level payload through
@@ -652,6 +691,7 @@ pub fn subst_expr_levels_model(e: ExprSpec, ks: &[u64], vs: &[LevelSpec]) -> (re
         nlbv(result) == nlbv(e),
         depth(result) == depth(e),
         has_fv(result) == has_fv(e),
+        subst_expr_levels_rel(e, ks@, vs@, result),
     decreases e
 {
     match e {
@@ -671,9 +711,13 @@ pub fn subst_expr_levels_model(e: ExprSpec, ks: &[u64], vs: &[LevelSpec]) -> (re
                     result_ls.len() == i,
                     ks.len() == vs.len(),
                     ks.len() <= 1_000_000_000,
+                    forall |j: int, rho: Map<nat, nat>| 0 <= j < i ==>
+                        #[trigger] crate::level_model::interp(result_ls@[j], rho)
+                            == crate::level_model::interp(ls@[j], crate::level_model::subst_env(rho, ks@, vs@)),
                 decreases ls.len() - i
             {
                 let dup_l = crate::level_model::dup(&ls[i]);
+                assert(dup_l == ls@[i as int]);
                 let l2 = crate::level_model::subst_levels(dup_l, ks, vs);
                 result_ls.push(l2);
                 i += 1;
