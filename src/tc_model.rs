@@ -34,7 +34,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::env::{RecRule, Env};
-use crate::util::{ExprPtr, NamePtr, TcCtx};
+use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
 use crate::expr::Expr;
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app};
@@ -68,7 +68,7 @@ use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans};
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth};
+use crate::expr_model::{nlbv, depth, subst_expr_levels_rel};
 
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
@@ -906,6 +906,83 @@ pub fn verified_reduce_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         assert(pstep_star(to_model_of_env(*env), to_model(qmk_arg), to_model(qmk)));
     }
     Some(result)
+}
+
+/// The CORE composition inside `tc.rs::reduce_rec` (`tc.rs:1098-1101`):
+/// once the matching computation rule (`rec_rule`) for the major
+/// premise's constructor has been found, its value gets the recursor's
+/// own universe-level arguments substituted in, then gets refolded with
+/// THREE separate argument groups in sequence -- the recursor's own
+/// leading params/motives/minors, the major premise constructor's own
+/// (params-stripped) arguments, and whatever args came after the major
+/// premise in the original application.
+///
+/// Deliberately scoped to just this composition -- the trickiest
+/// arithmetic piece, and the one with no precedent yet in this codebase
+/// (`verified_unfold_def_step` only ever needed ONE `foldl_apps`, not
+/// three in sequence) -- NOT the surrounding prelude (`whnf`-ing the
+/// major premise, `unfold_apps` to expose its constructor head, `get_rec_
+/// rule` to find `rec_rule`, `to_ctor_when_k`/`nat_lit_to_constructor`/
+/// `str_lit_to_ctor_reducing`/`iota_try_eta_struct`'s special-case
+/// conversions), all of which are either already-verified building
+/// blocks this doesn't re-derive (`verified_whnf_step`, `verified_get_
+/// rec_rule`/`verified_find_rec_rule`) or not yet modeled at all (the K-
+/// reduction/structure-eta/literal-to-constructor conversions). Composing
+/// this with those pieces into a single `verified_reduce_rec_step` is
+/// real remaining work, not attempted this session.
+///
+/// Unlike `verified_reduce_proj_step`/`verified_reduce_quot_step`, this
+/// is NOT wrapped in a `pstep_star`-style reduction-soundness claim --
+/// same reason `get_rec_rule`'s own doc comment gives for why it's a
+/// manual TRANSCRIPTION rather than a reduction rule: there's no existing,
+/// independently-motivated notion of "recursor iota reduction" in this
+/// codebase to relate the computation to (unlike proj/quot-iota, which
+/// this session defined as clean, self-evidently-correct new relations).
+/// This proves the computation matches a precisely-stated FORMULA, which
+/// is the same value proposition `get_rec_rule` itself already has: a bug
+/// in transcribing this composition would make the type checker apply
+/// the wrong reduction, a real soundness hole, independent of whether
+/// it's phrased as a `pstep_star` fact.
+pub fn verified_reduce_rec_core<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    rec_rule_val: ExprPtr<'t>,
+    uparams: LevelsPtr<'t>,
+    const_levels: LevelsPtr<'t>,
+    prefix_args: &[ExprPtr<'t>],
+    ctor_args_wo_params: &[ExprPtr<'t>],
+    post_args: &[ExprPtr<'t>],
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        to_model_of_levels(uparams).len() == to_model_of_levels(const_levels).len(),
+        forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
+    ensures match result {
+        Some(r) => exists |subst_val: ExprSpec|
+            subst_expr_levels_rel(
+                to_model(rec_rule_val),
+                level_names(to_model_of_levels(uparams)),
+                to_model_of_levels(const_levels),
+                subst_val,
+            )
+            && to_model(r) == spine_app(
+                spine_app(
+                    spine_app(subst_val, Seq::new(prefix_args@.len(), |i: int| to_model(prefix_args@[i]))),
+                    Seq::new(ctor_args_wo_params@.len(), |i: int| to_model(ctor_args_wo_params@[i])),
+                ),
+                Seq::new(post_args@.len(), |i: int| to_model(post_args@[i])),
+            ),
+        None => true,
+    }
+{
+    match verified_subst_expr_levels(ctx, rec_rule_val, uparams, const_levels, fuel) {
+        Some(subst_val) => {
+            let r1 = verified_foldl_apps(ctx, subst_val, prefix_args);
+            let r2 = verified_foldl_apps(ctx, r1, ctor_args_wo_params);
+            let r3 = verified_foldl_apps(ctx, r2, post_args);
+            Some(r3)
+        }
+        None => None,
+    }
 }
 
 }
