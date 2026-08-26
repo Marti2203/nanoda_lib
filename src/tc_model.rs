@@ -1952,4 +1952,52 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     Some(true)
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_unfold_proj_app`
+/// (`tc.rs:1240-1248`) -- the FOURTH piece of `lazy_delta_step`'s
+/// machinery: when a side is applying a `Proj`-headed spine (`s.1 a_0 ..
+/// a_N`), try reducing through the projection instead of unfolding a
+/// definition. Deliberately uses ONE application of `verified_whnf_no_
+/// unfolding_step`, not the real function's actual behavior (which
+/// recurses to an genuine FIXPOINT -- `whnf_no_unfolding_aux` calls
+/// itself again on a successfully-reduced result, `tc.rs:794-799`) --
+/// same "one round first" scoping choice as `verified_whnf_beta_step`/
+/// `verified_def_eq_binder_step` before their own fixpoint/telescoping
+/// extensions. Honestly incomplete (a deeper Proj-of-Proj chain won't
+/// fully reduce here), not unsound: every `Some(r)` this returns is a
+/// genuine `pstep_star` step that ACTUALLY changed something (mirrors
+/// the real function's own `eprime != e` check via real pointer
+/// inequality), never a fabricated claim of "no further reduction
+/// possible."
+pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)) && r != e,
+        None => true,
+    }
+{
+    let (fun, _args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    if expr_as_proj(&fun_el).is_none() {
+        return None;
+    }
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+        Some(r) => {
+            if expr_ptr_eq(e, r) {
+                None
+            } else {
+                Some(r)
+            }
+        }
+        None => None,
+    }
+}
+
 }
