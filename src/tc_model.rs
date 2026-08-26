@@ -49,7 +49,7 @@ use crate::expr_arena_bridge::to_model;
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, expr_as_nat_lit, read_bignum_value};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value};
-use crate::nat_lit_model::biguint_succ;
+use crate::nat_lit_model::{biguint_succ, biguint_add};
 #[cfg(verus_only)]
 use crate::nat_lit_model::to_nat;
 #[cfg(verus_only)]
@@ -549,6 +549,61 @@ pub fn verified_try_reduce_nat_succ_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
     };
     let succ_bn = biguint_succ(bn);
     ctx.mk_nat_lit_quick(succ_bn)
+}
+
+/// `tc.rs::do_nat_bin`'s `Add` case (`tc.rs:372-375`): whnf BOTH operands
+/// (via `verified_whnf_step`, one round each), extract their `BigUint`
+/// values, add via the now-bridged `biguint_add`, reconstruct. Same
+/// honest scope as `verified_try_reduce_nat_succ_step`: doesn't model
+/// `try_reduce_nat`'s outer dispatch (matching `x`/`y`'s head against a
+/// specific `NatBinOp`-cached constant name).
+pub fn verified_do_nat_bin_add_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_lit_value(vx) + nat_lit_value(vy),
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let sum = biguint_add(bx, by);
+    ctx.mk_nat_lit_quick(sum)
 }
 
 }
