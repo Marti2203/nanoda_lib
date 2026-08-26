@@ -36,6 +36,8 @@ use crate::expr_model::subst_full;
 use crate::expr_model::nlbv;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
 
 verus! {
 
@@ -2916,6 +2918,7 @@ pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
 /// below -- exactly the kind of purely-polynomial (not exponential)
 /// headroom this file's `growth`/`pstep_bounds` machinery is built to
 /// absorb.
+#[verifier::spinoff_prover]
 pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
     ensures size(subst(j, s, e)) <= size(e) * (size(s) + 1)
     decreases e
@@ -3177,6 +3180,7 @@ pub open spec fn size_growth(n: nat) -> nat
 /// to re-derive this nonlinear fact inline every time -- Z3's nonlinear
 /// arithmetic is unreliable on compound expressions unless the
 /// multiplication step is isolated like this.
+#[verifier::spinoff_prover]
 pub proof fn cap_mul_mono(cap: nat, x: nat, y: nat)
     requires x <= y
     ensures cap * x <= cap * y
@@ -3194,6 +3198,7 @@ pub proof fn cap_mul_mono(cap: nat, x: nat, y: nat)
 /// clauses as facts the surrounding proof must already have in hand, not
 /// sub-goals the tactic proves fresh, so a nonlinear fact used as such a
 /// hypothesis has to be asserted (via its own nonlinear_arith) first.
+#[verifier::spinoff_prover]
 pub proof fn cap_mul_distrib(cap: nat, x: nat, y: nat)
     ensures cap * x + cap * y <= cap * (x + y)
 {
@@ -3209,6 +3214,7 @@ pub proof fn cap_mul_distrib(cap: nat, x: nat, y: nat)
 /// Z3's nonlinear arithmetic even when every hypothesis was already
 /// established immediately beforehand -- isolating it here made it close
 /// on the first attempt.
+#[verifier::spinoff_prover]
 pub proof fn depth_sum_cap_bound(cap: nat, s1: nat, s2: nat, n: nat, d1: nat, d2: nat)
     requires
         d1 <= s1 + cap * size_growth(s1),
@@ -3234,6 +3240,7 @@ pub proof fn depth_sum_cap_bound(cap: nat, s1: nat, s2: nat, n: nat, d1: nat, d2
 /// (already bound in terms of the DOMINATING child's own recursive
 /// result) and `bdepth` (always the body/b side) combine into the final
 /// `mvb2` headroom check, isolated for the same Z3-reliability reason.
+#[verifier::spinoff_prover]
 pub proof fn mvb_sum_cap_bound(cap: nat, sc: nat, sb: nat, n: nat, common: nat, bdepth: nat, extra: nat)
     requires
         common <= extra + growth(sc) + cap * size_growth(sc),
@@ -3280,6 +3287,7 @@ pub proof fn depth_succ_cap_bound(cap: nat, s: nat, n: nat, d: nat)
 /// `pstep_bounds(env, cap, bound, s1, s2)`) -- deliberately generous
 /// (not tightly tuned), matching this file's established practice for
 /// `pstep_subst`'s headroom (see its own doc comment).
+#[verifier::spinoff_prover]
 pub proof fn subst_headroom_bound(cap: nat, se1: nat, ss1: nat, bound: nat, common: nat, bdepth: nat, adepth: nat)
     requires
         common <= bound + growth(se1) + growth(ss1) + cap * size_growth(se1) + cap * size_growth(ss1) + 1,
@@ -3307,6 +3315,7 @@ pub proof fn subst_headroom_bound(cap: nat, se1: nat, ss1: nat, bound: nat, comm
 /// size bound `se1`. Needs the caller's ceiling to carry `5 * cap *
 /// size_growth(se1)` worth of slack (not just `1 *`), matching
 /// `pstep_subst`'s established multiplier for this same combination shape.
+#[verifier::spinoff_prover]
 pub proof fn shift_down_headroom_bound(cap: nat, se1: nat, bound: nat, common: nat, bdepth: nat, adepth: nat)
     requires
         common <= bound + growth(se1) + cap * size_growth(se1),
@@ -3328,6 +3337,7 @@ pub proof fn shift_down_headroom_bound(cap: nat, se1: nat, bound: nat, common: n
 /// `bdepth` are governed by the SAME child `sb`, so `2 * size_growth(sb)
 /// <= size_growth(n)` (via `size_growth_double_bound`) suffices, tighter
 /// than routing through the two-distinct-children congruence bound.
+#[verifier::spinoff_prover]
 pub proof fn mvb_sum_cap_bound_same_child(cap: nat, sb: nat, n: nat, common: nat, bdepth: nat, extra: nat)
     requires
         common <= extra + growth(sb) + cap * size_growth(sb),
@@ -3437,6 +3447,7 @@ pub proof fn size_growth_congr_bound(a: nat, b: nat, n: nat)
 /// child `b`) doubles the required headroom at that one level, and
 /// `size_growth`'s base-3-per-2-levels margin (`size_growth(b+2) == 9 *
 /// size_growth(b)`) covers a factor of 2 with plenty to spare.
+#[verifier::spinoff_prover]
 pub proof fn size_growth_double_bound(b: nat, n: nat)
     requires b + 2 <= n
     ensures 2 * size_growth(b) <= size_growth(n)
@@ -3543,6 +3554,103 @@ pub proof fn size_growth_beta_bound(a: nat, b: nat, n: nat)
 /// size(e1)*(cap+1)`, which reduces to `2 <= (size(e1) - size(*body) -
 /// size(*a)) * (cap+1)`, true since the left factor is already `>= 2` and
 /// `cap+1 >= 1`.
+/// `subst_expr_levels_rel` never touches de-Bruijn/binder structure (`Sort`/
+/// `Const` are leaves as far as `size`/`max_var_below` are concerned, same
+/// as `nlbv`/`depth`/`has_fv` in `expr_model.rs`) -- so, unlike `env[id]`
+/// itself, ANY `e2` related to a body by it has exactly the same `size` and
+/// `max_var_below` as the body. Needed for Phase 2b's level-aware delta
+/// rule: `env_wf`'s `size`/`max_var_below` bounds on a definition's body
+/// carry over unchanged to whatever `subst_expr_levels_rel` relates it to.
+///
+/// `#[verifier::spinoff_prover]`: this pair of small, self-contained lemmas
+/// referencing a cross-module recursive spec fn (`expr_model::subst_expr_
+/// levels_rel`) was previously found to make an unrelated, already-fragile
+/// `by (nonlinear_arith)` proof elsewhere in this file (`pstep_subst`) hang
+/// -- root-caused to Verus's bucketing: non-`spinoff_prover` functions in a
+/// module share ONE pruning bucket (pruned via the WHOLE module as roots,
+/// not the specific function being checked), so any new function anywhere
+/// in the file becomes part of every other function's SMT background,
+/// which fragile nonlinear-arithmetic search is highly sensitive to.
+/// `spinoff_prover` gives a function its own bucket with real per-function
+/// reachability pruning. See `docs/guide/src/checklist.md`'s "flaky proof"
+/// entry -- this is that exact scenario, now with a confirmed root cause.
+#[verifier::spinoff_prover]
+pub proof fn subst_expr_levels_rel_size(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, e2: ExprSpec)
+    requires crate::expr_model::subst_expr_levels_rel(e, ks, vs, e2)
+    ensures size(e2) == size(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
+        ExprSpec::App(f, a) => match e2 {
+            ExprSpec::App(f2, a2) => {
+                subst_expr_levels_rel_size(*f, ks, vs, *f2);
+                subst_expr_levels_rel_size(*a, ks, vs, *a2);
+            }
+            _ => {}
+        },
+        ExprSpec::Bind(t, b) => match e2 {
+            ExprSpec::Bind(t2, b2) => {
+                subst_expr_levels_rel_size(*t, ks, vs, *t2);
+                subst_expr_levels_rel_size(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Let(t, v, b) => match e2 {
+            ExprSpec::Let(t2, v2, b2) => {
+                subst_expr_levels_rel_size(*t, ks, vs, *t2);
+                subst_expr_levels_rel_size(*v, ks, vs, *v2);
+                subst_expr_levels_rel_size(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Proj(s) => match e2 {
+            ExprSpec::Proj(s2) => subst_expr_levels_rel_size(*s, ks, vs, *s2),
+            _ => {}
+        },
+    }
+}
+
+#[verifier::spinoff_prover]
+pub proof fn subst_expr_levels_rel_max_var_below(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, e2: ExprSpec, bound: nat)
+    requires crate::expr_model::subst_expr_levels_rel(e, ks, vs, e2)
+    ensures max_var_below(e2, bound) == max_var_below(e, bound)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
+        ExprSpec::App(f, a) => match e2 {
+            ExprSpec::App(f2, a2) => {
+                subst_expr_levels_rel_max_var_below(*f, ks, vs, *f2, bound);
+                subst_expr_levels_rel_max_var_below(*a, ks, vs, *a2, bound);
+            }
+            _ => {}
+        },
+        ExprSpec::Bind(t, b) => match e2 {
+            ExprSpec::Bind(t2, b2) => {
+                subst_expr_levels_rel_max_var_below(*t, ks, vs, *t2, bound);
+                subst_expr_levels_rel_max_var_below(*b, ks, vs, *b2, bound);
+            }
+            _ => {}
+        },
+        ExprSpec::Let(t, v, b) => match e2 {
+            ExprSpec::Let(t2, v2, b2) => {
+                subst_expr_levels_rel_max_var_below(*t, ks, vs, *t2, bound);
+                subst_expr_levels_rel_max_var_below(*v, ks, vs, *v2, bound);
+                subst_expr_levels_rel_max_var_below(*b, ks, vs, *b2, bound);
+            }
+            _ => {}
+        },
+        ExprSpec::Proj(s) => match e2 {
+            ExprSpec::Proj(s2) => subst_expr_levels_rel_max_var_below(*s, ks, vs, *s2, bound),
+            _ => {}
+        },
+    }
+}
+
+#[verifier::spinoff_prover]
 pub proof fn pstep_size_bound(env: Map<u64, ExprSpec>, cap: nat, e1: ExprSpec, e2: ExprSpec) -> (result: nat)
     requires pstep(env, e1, e2), env_wf(env, cap)
     ensures size(e2) <= result, result <= size_growth(size(e1) * (cap + 1))
@@ -3788,6 +3896,7 @@ pub proof fn beta_size_headroom_mono(n1: nat, n2: nat)
 /// existing `growth(size_e)`-based headroom is comparatively negligible)
 /// -- concretely `size_e <= 9` or so before `3*M*M` alone exceeds
 /// `0xFFFF_0000`.
+#[verifier::spinoff_prover]
 pub proof fn pstep_subst1_size_headroom(c1: nat, size_fb: nat, size_a: nat, size_e: nat, bsize: nat, asize: nat)
     requires
         size_fb + size_a + 2 <= size_e,
@@ -3883,6 +3992,7 @@ pub proof fn pstep_subst1_size_headroom(c1: nat, size_fb: nat, size_a: nat, size
 /// in that case), so `cap * size_growth(size(e1))` is the right scale --
 /// congruence cases (pure `max`, not `sum`, of two recursive slacks) don't
 /// even need the doubling, but reuse the same bound for uniformity.
+#[verifier::spinoff_prover]
 pub proof fn pstep_bounds(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (nat, nat))
     requires
         pstep(env, e1, e2),
@@ -4834,6 +4944,7 @@ pub proof fn pstep_subst_refl(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: 
 /// nailing an exact linear constant on top buys nothing for realistic
 /// terms and risks yet another off-by-one; see this file's established
 /// practice of generous slack over tight constants throughout.
+#[verifier::spinoff_prover]
 pub proof fn pstep_subst(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
@@ -5408,6 +5519,7 @@ pub proof fn pstep_subst(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, 
 /// search for an alternative route before any of this was written)
 /// found exactly this decomposition and confirmed it was tractable
 /// without reformulating substitution to simultaneous/parallel style.
+#[verifier::spinoff_prover]
 pub proof fn pstep_subst1(env: Map<u64, ExprSpec>, cap: nat, bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
     requires
         pstep(env, body1, body3),
@@ -5534,6 +5646,7 @@ pub proof fn pstep_subst1(env: Map<u64, ExprSpec>, cap: nat, bound: nat, body1: 
 /// back to EXACTLY its pre-delta form (`size_growth(size_fb * (0 + 1)) ==
 /// size_growth(size_fb)`, `... + 10 * 0 * size_growth(...) == ...`), so
 /// none of this function's own arithmetic needed to change at all.
+#[verifier::spinoff_prover]
 pub proof fn pstep_diamond_beta_step(env: Map<u64, ExprSpec>, cap: nat, c: nat, size_e: nat, bdepth: nat, fb: ExprSpec, a: ExprSpec, body: ExprSpec, arg: ExprSpec, body3: ExprSpec, arg3: ExprSpec)
     requires
         env == Map::<u64, ExprSpec>::empty(),
@@ -5654,6 +5767,7 @@ pub proof fn pstep_diamond_beta_step(env: Map<u64, ExprSpec>, cap: nat, c: nat, 
 /// `e == ExprSpec::Const(id)`, which is exactly the `if e == e1 { e2 }`
 /// case already handled above -- this branch is unreachable, matching
 /// the pre-delta catch-all.
+#[verifier::spinoff_prover]
 pub proof fn pstep_diamond(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
     requires
         env == Map::<u64, ExprSpec>::empty(),
