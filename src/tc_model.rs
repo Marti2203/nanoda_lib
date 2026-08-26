@@ -37,9 +37,11 @@ use crate::env::{RecRule, Env};
 use crate::util::{ExprPtr, NamePtr, TcCtx};
 use crate::expr::Expr;
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::expr_arena_bridge::expr_as_const;
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_id, const_levels_vec, is_const_shape_model, const_levels_vec_model};
 #[cfg(verus_only)]
@@ -813,6 +815,97 @@ pub fn verified_do_nat_bin_mod_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     };
     let rem = nat_mod(bx, by);
     ctx.mk_nat_lit_quick(rem)
+}
+
+/// Manual transcription of `tc.rs::reduce_quot`'s CORE reduction content
+/// (`tc.rs:1104-1130`) -- the quot-iota rule: once `qmk_arg` whnf's to a
+/// saturated 3-argument application of `Quot.mk`, `Quot.lift`/`Quot.ind`
+/// applied to it reduce to `f` applied to `Quot.mk`'s third argument
+/// (the "underlying" value), refolded with whatever args came after the
+/// `qmk`/`f` positions in the original application.
+///
+/// Does NOT model the OUTER dispatch real `reduce_quot` does first
+/// (checking `c_name` is actually a `Declar::Quot`, matching it against
+/// `name_cache.quot_lift`/`quot_ind` to pick WHICH argument position is
+/// `qmk` vs `rest_idx` vs `f`) -- same scoping choice as `try_reduce_
+/// nat`'s bridges this session: that's a separate `Env`/config lookup
+/// from the reduction's actual computational content, which is what this
+/// models. Callers are expected to have already picked out `qmk_arg`
+/// (the un-whnf'd `Quot.mk`-application argument), `f` (`args[3]` in
+/// BOTH the `lift` and `ind` cases -- the one thing shared between them),
+/// and `rest` (whatever args came after) by other means.
+///
+/// New reduction rule, same category as `pstep_star_proj` (proj-iota):
+/// genuinely not a `pstep` disjunct (constant identity is an `Env`-
+/// adjacent, not `ExprSpec`-level, fact) -- but unlike `pstep_star_proj`,
+/// stated directly in this function's own `ensures` rather than as a
+/// separately-named relation, since nothing else needs to refer to it yet.
+pub fn verified_reduce_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, qmk_arg: ExprPtr<'t>, quot_mk_name: NamePtr<'t>, f: ExprPtr<'t>, rest: &[ExprPtr<'t>], fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(qmk_arg)) <= 0,
+        max_var_below(to_model(qmk_arg), bound),
+        depth(to_model(qmk_arg)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |reduced: ExprSpec, levels: Vec<LevelSpec>, qmk_args: Seq<ExprSpec>|
+            pstep_star(to_model_of_env(*env), to_model(qmk_arg), reduced)
+            && reduced == spine_app(ExprSpec::Const(name_id(quot_mk_name), levels), qmk_args)
+            && qmk_args.len() == 3
+            && to_model(r) == spine_app(
+                ExprSpec::App(Box::new(to_model(f)), Box::new(qmk_args[2])),
+                Seq::new(rest@.len(), |i: int| to_model(rest@[i])),
+            ),
+        None => true,
+    }
+{
+    let qmk = match verified_whnf_step(ctx, env, qmk_arg, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let (qmk_const, qmk_args) = match verified_unfold_apps(ctx, qmk, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    if qmk_args.len() != 3 {
+        return None;
+    }
+    let qmk_const_el = ctx.read_expr(qmk_const);
+    let (name, _levels) = match expr_as_const(qmk_const, &qmk_const_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    if !name_ptr_eq(name, quot_mk_name) {
+        return None;
+    }
+    let qmk_el = ctx.read_expr(qmk);
+    let (_qmk_fun, arg) = match expr_as_app(&qmk_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let appd = ctx.mk_app(f, arg);
+    let result = verified_foldl_apps(ctx, appd, rest);
+    proof {
+        is_const_shape_model(qmk_const);
+        const_levels_vec_model(qmk_const);
+        assert(name == quot_mk_name);
+        assert(const_id(qmk_const) == name_id(quot_mk_name));
+        let ghost qmk_args_model = Seq::new(qmk_args@.len(), |i: int| to_model(qmk_args@[i]));
+        assert(to_model(qmk) == spine_app(to_model(qmk_const), qmk_args_model));
+        assert(to_model(qmk_const) == ExprSpec::Const(const_id(qmk_const), const_levels_vec(qmk_const)));
+        assert(to_model(qmk) == spine_app(ExprSpec::Const(name_id(quot_mk_name), const_levels_vec(qmk_const)), qmk_args_model));
+        assert(qmk_args_model.len() == 3);
+        assert(qmk_args_model == qmk_args_model.subrange(0, 2) + seq![qmk_args_model[2]]);
+        assert(spine_app(to_model(qmk_const), qmk_args_model)
+            == ExprSpec::App(Box::new(spine_app(to_model(qmk_const), qmk_args_model.subrange(0, 2))), Box::new(qmk_args_model[2])));
+        assert(to_model(qmk) == ExprSpec::App(Box::new(spine_app(to_model(qmk_const), qmk_args_model.subrange(0, 2))), Box::new(qmk_args_model[2])));
+        assert(to_model(qmk) == ExprSpec::App(Box::new(to_model(_qmk_fun)), Box::new(to_model(arg))));
+        assert(to_model(arg) == qmk_args_model[2]);
+        assert(to_model(appd) == ExprSpec::App(Box::new(to_model(f)), Box::new(to_model(arg))));
+        assert(to_model(result) == spine_app(to_model(appd), Seq::new(rest@.len(), |i: int| to_model(rest@[i]))));
+        assert(pstep_star(to_model_of_env(*env), to_model(qmk_arg), to_model(qmk)));
+    }
+    Some(result)
 }
 
 }
