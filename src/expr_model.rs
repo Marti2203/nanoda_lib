@@ -630,6 +630,79 @@ pub fn find_pos_from_end(locals: &[u32], id: u32) -> (result: Option<u32>)
     }
 }
 
+/// Real `subst_aux`'s structural mirror (`expr.rs:333-380`): substitutes
+/// universe-level *parameters* (not de Bruijn indices) throughout an
+/// expression, routing `Sort`/`Const`'s level payload through
+/// `level_model::subst_levels` and recursing structurally everywhere else.
+/// Unlike `inst_model`/`abstr_model`, there's no separate naive reference
+/// definition to validate a short-circuit against -- `subst_aux`'s only
+/// optimization is caching (`subst_cache`/`dsubst_cache`), already outside
+/// this model's scope everywhere else -- so this function's own structure
+/// *is* the model, characterized instead by what it provably leaves alone:
+/// `nlbv`/`depth`/`has_fv` are all unaffected, since level substitution
+/// never touches de-Bruijn/binder structure (`Sort`/`Const` are leaves as
+/// far as all three are concerned, and their variant tag is preserved).
+/// `subst_aux` panics on `Local` (`expr.rs:371`) since it's only ever
+/// called on expressions freshly pulled from the environment, which have
+/// none; `Free` (this model's `Local` stand-in) is left unchanged here
+/// purely for totality -- it's never expected to occur in practice.
+pub fn subst_expr_levels_model(e: ExprSpec, ks: &[u64], vs: &[LevelSpec]) -> (result: ExprSpec)
+    requires ks.len() == vs.len(), ks.len() <= 1_000_000_000
+    ensures
+        nlbv(result) == nlbv(e),
+        depth(result) == depth(e),
+        has_fv(result) == has_fv(e),
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => ExprSpec::Var(i),
+        ExprSpec::Free(i) => ExprSpec::Free(i),
+        ExprSpec::Closed => ExprSpec::Closed,
+        ExprSpec::Sort(l) => {
+            let l2 = crate::level_model::subst_levels(l, ks, vs);
+            ExprSpec::Sort(l2)
+        }
+        ExprSpec::Const(id, ls) => {
+            let mut result_ls: Vec<LevelSpec> = Vec::new();
+            let mut i: usize = 0;
+            while i < ls.len()
+                invariant
+                    i <= ls.len(),
+                    result_ls.len() == i,
+                    ks.len() == vs.len(),
+                    ks.len() <= 1_000_000_000,
+                decreases ls.len() - i
+            {
+                let dup_l = crate::level_model::dup(&ls[i]);
+                let l2 = crate::level_model::subst_levels(dup_l, ks, vs);
+                result_ls.push(l2);
+                i += 1;
+            }
+            ExprSpec::Const(id, result_ls)
+        }
+        ExprSpec::App(f, a) => {
+            let sf = subst_expr_levels_model(*f, ks, vs);
+            let sa = subst_expr_levels_model(*a, ks, vs);
+            ExprSpec::App(Box::new(sf), Box::new(sa))
+        }
+        ExprSpec::Bind(t, b) => {
+            let st = subst_expr_levels_model(*t, ks, vs);
+            let sb = subst_expr_levels_model(*b, ks, vs);
+            ExprSpec::Bind(Box::new(st), Box::new(sb))
+        }
+        ExprSpec::Let(t, v, b) => {
+            let st = subst_expr_levels_model(*t, ks, vs);
+            let sv = subst_expr_levels_model(*v, ks, vs);
+            let sb = subst_expr_levels_model(*b, ks, vs);
+            ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
+        }
+        ExprSpec::Proj(s) => {
+            let ss = subst_expr_levels_model(*s, ks, vs);
+            ExprSpec::Proj(Box::new(ss))
+        }
+    }
+}
+
 }
 
 #[cfg(test)]
