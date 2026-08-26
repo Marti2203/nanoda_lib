@@ -47,7 +47,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -1051,7 +1051,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
         Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
             && nlbv(to_model(r)) <= 0
             && max_var_below(to_model(r), bound + d * d * d + d * d)
-            && depth(to_model(r)) <= d * d + 4 * d + 1,
+            && depth(to_model(r)) <= d * d + 4 * d,
         None => true,
     }
 {
@@ -1133,7 +1133,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                                         sr_bound == bound + prefix.len() * d + prefix.len() * prefix.len() * d,
                                 {}
                                 max_var_below_mono(to_model(r), sr_bound, bound + d * d * d + d * d);
-                                assert(sr_depth + d + suffix.len() <= d * d + 4 * d + 1) by (nonlinear_arith)
+                                assert(sr_depth + d + suffix.len() <= d * d + 4 * d) by (nonlinear_arith)
                                     requires
                                         prefix.len() <= d,
                                         suffix.len() <= d,
@@ -1191,7 +1191,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                             spine_app_bounds(subst1(to_model(body), to_model(val)), args_model, new_bound, new_hd, d);
                             assert(to_model(r) == spine_app(subst1(to_model(body), to_model(val)), args_model));
                             assert(new_bound <= bound + d * d * d + d * d) by (nonlinear_arith) requires new_bound <= bound + d {}
-                            assert(new_hd + d + args_model.len() <= d * d + 4 * d + 1) by (nonlinear_arith)
+                            assert(new_hd + d + args_model.len() <= d * d + 4 * d) by (nonlinear_arith)
                                 requires new_hd <= 2 * d, args_model.len() <= d
                             {}
                             max_var_below_mono(to_model(r), new_bound, bound + d * d * d + d * d);
@@ -1213,6 +1213,79 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                 max_var_below_mono(to_model(e), bound, bound + d * d * d + d * d);
             }
             Some(e)
+        }
+        None => None,
+    }
+}
+
+/// `verified_whnf_no_unfolding_step`'s own growth formula, one call's
+/// worth: `d` (a depth cap) becomes `d*d + 4*d + 1`, `bound` becomes
+/// `bound + d*d*d + d*d`. Named so the fixpoint below can thread them
+/// without repeating the formula inline.
+pub open spec fn whnf_step_next_d(d: nat) -> nat { d * d + 4 * d }
+pub open spec fn whnf_step_next_bound(bound: nat, d: nat) -> nat { bound + d * d * d + d * d }
+
+/// "`bound`/`d` have enough headroom for `n` MORE chained calls to
+/// `verified_whnf_no_unfolding_step`": checks THIS call's own headroom
+/// precondition, then recurses on what the NEXT call would see
+/// (`whnf_step_next_bound`/`whnf_step_next_d`) for the remaining `n - 1`
+/// calls. Deliberately recursive rather than a closed-form bound on `n`:
+/// letting Verus unfold this one level per `verified_whnf_no_unfolding_
+/// fixpoint` recursive call, matching its own `decreases n`, means no
+/// separate monotonicity lemma is needed to relate "headroom for `n`
+/// steps" to "headroom for `n - 1` steps" -- the recursive definition
+/// IS that relationship.
+pub open spec fn whnf_fixpoint_ok(bound: nat, d: nat, n: nat) -> bool
+    decreases n
+{
+    d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && (n == 0 || whnf_fixpoint_ok(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat))
+}
+
+/// Chains `verified_whnf_no_unfolding_step` up to `n` times, stitching
+/// the individual `pstep_star` facts together via `pstep_star_trans`
+/// (free, by chain concatenation -- see `pstep_star_trans`'s own doc
+/// comment). This is the "small fixed iteration cap" this arc settled
+/// on for the outer fixpoint-chaining question `verified_whnf_no_
+/// unfolding_step` alone left open -- but `n` is a genuine PARAMETER
+/// here, not a hardcoded constant: the caller picks however many
+/// iterations their own headroom (`bound`/`d`) can actually afford, per
+/// `whnf_fixpoint_ok`'s real (not arbitrary) numeric consequence of
+/// `verified_whnf_no_unfolding_step`'s own growth formula. `None`
+/// propagates immediately from any failed sub-step (fuel exhaustion in
+/// `verified_unfold_apps`/`verified_peel_lambdas`/`verified_inst`,
+/// exactly as elsewhere in this file) rather than returning the best
+/// partial progress -- matches this file's established, simpler
+/// precedent (`verified_unfold_def_step`, `verified_reduce_proj_step`).
+pub fn verified_whnf_no_unfolding_fixpoint<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)),
+        None => true,
+    }
+    decreases n
+{
+    if n == 0 {
+        proof {
+            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+        }
+        return Some(e);
+    }
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+        Some(r) => {
+            match verified_whnf_no_unfolding_fixpoint(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
+            }
         }
         None => None,
     }
