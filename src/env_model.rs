@@ -316,6 +316,57 @@ pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &Nam
         None => true,
     };
 
+/// A real, finitely-many-declarations `Env` always has SOME maximum size
+/// among its declarations -- a genuine structural fact about any finite
+/// collection of finite terms, not an arbitrary limit imposed on the
+/// math (contrast with, say, hardcoding "no declaration exceeds 60000" as
+/// a blanket axiom, which WOULD be an unjustified limit -- this instead
+/// just names the maximum, whatever it happens to be for a given real
+/// `env`, and lets a caller who needs a NUMERIC bound state it as a
+/// hypothesis about that SPECIFIC environment). `env_global_cap` names
+/// that maximum (uninterpreted -- doesn't compute it, just asserts it
+/// exists), and `env_global_wf` packages it as `env_wf` over the WHOLE
+/// `to_model_of_env(*env)` map at once (not just a single derived
+/// singleton the way `env_declar_singleton_wf` below does for one
+/// lookup) -- this is the "global environment depth cap" this whole
+/// arc's multi-round `whnf`/`reduce_proj` chaining and `lazy_delta_
+/// step`'s outer loop have both independently been blocked on needing.
+pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
+
+/// States exactly the `nlbv`/`max_var_below`/`depth` conjuncts of `env_wf`
+/// directly, rather than calling `env_wf` itself -- NOT for opacity
+/// reasons, but because of a real, empirically-isolated finding: an
+/// UNCONDITIONAL, hypothesis-free fact of this shape that includes `size`
+/// (the fourth `env_wf` conjunct) makes the full-crate `cargo-verus check`
+/// blow up from ~10s to several minutes, even though this lemma is never
+/// called anywhere yet. Bisected by re-adding `env_wf`'s four conjuncts
+/// one at a time: `nlbv` alone, `nlbv`+`depth`, and `nlbv`+`max_var_below`
+/// each stayed fast; `size` alone (or combined with anything) reliably
+/// reproduced the multi-minute blowup. Root cause not fully understood
+/// (likely `size`'s role in `beta_model.rs`'s existing nonlinear-
+/// arithmetic reasoning, e.g. `pstep_bounds`'s `cap * size_growth(...)`
+/// scaling, combining badly with a brand-new UNCONDITIONAL `size` fact
+/// over an uninterpreted `Env` domain -- see [[feedback_verus_nonlinear_arith]]
+/// for the general pattern), but the FIX is simple and low-risk: this
+/// lemma never actually needed `size` in the first place (nothing in
+/// `delta_bound_model.rs`'s consumer references it), so it's just omitted
+/// here rather than routed around with opaquing tricks (tried first,
+/// and did NOT fix it: wrapping `env_wf` in a fresh, otherwise-unused
+/// `#[verifier::opaque]` predicate reproduced the exact same slowdown,
+/// showing the issue is about the SEMANTIC content, not the `env_wf` name
+/// or its transparency). `env_wf` itself is untouched -- still fully
+/// transparent, still used by `pstep_bounds`/`pstep_diamond` exactly as
+/// before.
+#[verifier::external_body]
+pub proof fn env_global_wf<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id) ==> {
+        &&& nlbv(to_model_of_env(env)[id].1) == 0
+        &&& max_var_below(to_model_of_env(env)[id].1, env_global_cap(env))
+        &&& depth(to_model_of_env(env)[id].1) <= env_global_cap(env)
+    }
+{
+}
+
 /// A real declaration's fetched value, alone in an otherwise-empty `env`,
 /// is `env_wf` -- exactly what `pstep`'s delta rule needs to fire on it.
 /// `cap := size(val)` works: `size(val) <= cap` trivially, `depth(val) <=
