@@ -352,6 +352,43 @@ pub proof fn find_level_idx_bound(ks: Seq<u64>, q: u64)
     }
 }
 
+/// Converse direction of `find_level_idx`'s definition: if index `i` is a
+/// match and every earlier index isn't, `i` IS the (first, hence unique)
+/// match `find_level_idx` reports. Needed by `verified_subst_level`'s
+/// real-arena scan, which discovers a match by pointer equality one index
+/// at a time and needs to connect "this specific index matched, and I've
+/// already ruled out everything before it" back to `find_level_idx`'s own
+/// definition (which recurses front-to-back over the whole sequence).
+pub proof fn find_level_idx_first_match(ks: Seq<u64>, q: u64, i: nat)
+    requires
+        i < ks.len(),
+        ks[i as int] == q,
+        forall |j: int| 0 <= j < i ==> ks[j] != q,
+    ensures find_level_idx(ks, q) == Some(i)
+    decreases i
+{
+    if i == 0 {
+    } else {
+        assert(ks[0] != q);
+        find_level_idx_first_match(ks.subrange(1, ks.len() as int), q, (i - 1) as nat);
+    }
+}
+
+/// `find_level_idx`'s other converse: if NO index matches, the search
+/// reports `None`. Needed by `verified_subst_level` for the "scanned the
+/// whole list, no pointer match" case.
+pub proof fn find_level_idx_no_match(ks: Seq<u64>, q: u64)
+    requires forall |j: int| 0 <= j < ks.len() ==> ks[j] != q
+    ensures find_level_idx(ks, q) is None
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+    } else {
+        assert(ks[0] != q);
+        find_level_idx_no_match(ks.subrange(1, ks.len() as int), q);
+    }
+}
+
 /// The parameter environment `subst_levels` implicitly substitutes into:
 /// every param `p` found (via `find_level_idx`) in `ks` is replaced by
 /// whatever `vs` denotes at that SAME index, interpreted under the
@@ -367,6 +404,21 @@ pub proof fn find_level_idx_bound(ks: Seq<u64>, q: u64)
 /// provably finite -- awkward for an unbounded `nat` domain, so this
 /// builds the map via plain `insert` instead of `Map::new` with a
 /// predicate-defined domain.)
+pub open spec fn level_spec_param_name(l: LevelSpec) -> u64 {
+    match l { LevelSpec::Param(q) => q, _ => 0 }
+}
+
+/// Extracts the parameter name of every (assumed-`Param`-shaped) element of
+/// a level list -- the bridge between a real `LevelsPtr` uparams list's
+/// `to_model_of_levels` (a `Seq<LevelSpec>`) and `subst_env`/`find_level_idx`
+/// (which operate on the raw `Seq<u64>` names). `level_spec_param_name`'s
+/// arbitrary `0` fallback for non-`Param` shapes is never actually reached
+/// for a genuine uparams list (every real declaration parameter IS a
+/// `Param` level), so it's never observed by any proof that uses this.
+pub open spec fn level_names(ls: Seq<LevelSpec>) -> Seq<u64> {
+    Seq::new(ls.len(), |i: int| level_spec_param_name(ls[i]))
+}
+
 pub open spec fn subst_env(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Map<nat, nat>
     decreases ks.len()
 {

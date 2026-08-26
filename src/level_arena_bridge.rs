@@ -36,6 +36,8 @@ use crate::name::Name;
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib};
+#[cfg(verus_only)]
+use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, which are erased under plain (non-Verus) compilation — hence the
@@ -141,6 +143,22 @@ pub assume_specification<'t> [name_ptr_eq] (a: NamePtr<'t>, b: NamePtr<'t>) -> (
 
 pub assume_specification<'t> [level_ptr_eq] (a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
     ensures result == (a == b);
+
+/// Hash-consing's contrapositive for `Param`-shaped levels specifically:
+/// two `Param` pointers denoting DIFFERENT names can never be the same
+/// pointer (and conversely). Needed by `verified_subst_level`'s scan over
+/// a `LevelsPtr` uparams list, which -- mirroring the real `subst_level`'s
+/// own `for (k, v) in ks.iter().zip(vs.iter()) { if level == k { ... } }`
+/// -- matches by raw POINTER equality, while the model's `find_level_idx`
+/// (`level_model.rs`) matches by NAME. The forward direction (same pointer
+/// implies same name) is free from `to_model` being a pure function of the
+/// pointer; this axiom supplies the missing reverse direction.
+#[verifier::external_body]
+pub proof fn level_ptr_eq_iff_same_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>, na: NamePtr<'a>, nb: NamePtr<'a>)
+    requires to_model(a) == LevelSpec::Param(name_id(na)), to_model(b) == LevelSpec::Param(name_id(nb))
+    ensures (a == b) <==> (name_id(na) == name_id(nb))
+{
+}
 
 /// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
 /// declaration's `uparams`, or a `Const`'s level arguments) denotes: the
@@ -420,6 +438,185 @@ pub fn verified_subst1<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, p: 
                         max_nat(
                             interp(to_model(a), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
                             interp(to_model(b), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
+                        )
+                    });
+                Some(result)
+            }
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Real-arena counterpart to `level_model`'s multi-parameter substitution
+/// semantics (`subst_env`/`find_level_idx`) for a SINGLE level -- the
+/// building block `unfold_def`'s real level substitution needs, since a
+/// definition's `uparams` are a whole LIST, not one parameter the way
+/// `verified_subst1` handles. Mirrors `TcCtx::subst_level`'s structure
+/// (`level.rs:108-135`): `Param`'s case scans `ks` (here as a `Vec` via
+/// `read_levels_vec`) for a match, `Zero` is a no-op, `Succ`/`Max`/`IMax`
+/// recurse. The real `subst_level` scans by raw POINTER equality; this
+/// reimplementation instead reads each `ks` element's own level (needed to
+/// extract its `NamePtr` for `level_ptr_eq_iff_same_param`, the hash-
+/// consing axiom bridging pointer (in)equality to name (in)equality) --
+/// a different but equally sound way to compute the same result, matching
+/// this file's existing convention of hand-verified reimplementations
+/// (`verified_subst1`, `verified_simplify`) rather than literal mirrors.
+/// `ks`'s elements are REQUIRED to be `Param`-shaped, matching every real
+/// declaration's `uparams` list. Like `verified_subst1`, fuel exhaustion
+/// returns `None` rather than a wrong answer.
+pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
+    requires
+        to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+    ensures match result {
+        Some(r) => forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
+            == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let ll = ctx.read_level(level);
+
+    if level_is_zero(&ll) {
+        return Some(level);
+    }
+    if let Some(n) = level_as_param(&ll) {
+        assert(to_model_of_level(ll) == to_model(level));
+        assert(to_model_of_level(ll) == LevelSpec::Param(name_id(n)));
+        assert(to_model(level) == LevelSpec::Param(name_id(n)));
+        let ks_vec = read_levels_vec(ctx, ks);
+        let vs_vec = read_levels_vec(ctx, vs);
+        assert(ks_vec@.len() == to_model_of_levels(ks).len());
+        assert(vs_vec@.len() == to_model_of_levels(vs).len());
+        let mut i: usize = 0;
+        let mut found: Option<LevelPtr<'t>> = None;
+        let mut found_idx: usize = 0;
+        while i < ks_vec.len() && found.is_none()
+            invariant
+                i <= ks_vec.len(),
+                found_idx <= i,
+                to_model(level) == LevelSpec::Param(name_id(n)),
+                ks_vec@.len() == to_model_of_levels(ks).len(),
+                vs_vec@.len() == to_model_of_levels(vs).len(),
+                ks_vec@.len() == vs_vec@.len(),
+                forall |j: int| 0 <= j < ks_vec@.len() ==> #[trigger] to_model(ks_vec@[j]) == to_model_of_levels(ks)[j],
+                forall |j: int| 0 <= j < vs_vec@.len() ==> #[trigger] to_model(vs_vec@[j]) == to_model_of_levels(vs)[j],
+                forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+                forall |j: int| 0 <= j < i && level_names(to_model_of_levels(ks))[j] == name_id(n)
+                    ==> found is Some && j == found_idx,
+                found matches Some(r) ==> (found_idx as int) < ks_vec@.len()
+                    && level_names(to_model_of_levels(ks))[found_idx as int] == name_id(n)
+                    && to_model(r) == to_model_of_levels(vs)[found_idx as int],
+            decreases ks_vec.len() - i
+        {
+            let ki_level = ctx.read_level(ks_vec[i]);
+            assert(to_model_of_level(ki_level) == to_model(ks_vec[i as int]));
+            assert(to_model_of_levels(ks)[i as int] is Param);
+            match level_as_param(&ki_level) {
+                Some(ni) => {
+                    assert(to_model_of_level(ki_level) == LevelSpec::Param(name_id(ni)));
+                    if level_ptr_eq(level, ks_vec[i]) {
+                        proof { level_ptr_eq_iff_same_param(level, ks_vec[i as int], n, ni); }
+                        assert(level_names(to_model_of_levels(ks))[i as int] == name_id(n));
+                        found = Some(vs_vec[i]);
+                        found_idx = i;
+                        i += 1;
+                    } else {
+                        proof { level_ptr_eq_iff_same_param(level, ks_vec[i as int], n, ni); }
+                        assert(level_names(to_model_of_levels(ks))[i as int] != name_id(n));
+                        i += 1;
+                    }
+                }
+                None => {
+                    assert(false);
+                    i += 1;
+                }
+            }
+        }
+        match found {
+            Some(r) => {
+                proof {
+                    assert forall |j: int| 0 <= j < found_idx implies level_names(to_model_of_levels(ks))[j] != name_id(n) by {
+                        assert(j < i);
+                    }
+                    find_level_idx_first_match(level_names(to_model_of_levels(ks)), name_id(n), found_idx as nat);
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
+                        == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {
+                        subst_env_param(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs), name_id(n));
+                    }
+                }
+                return Some(r);
+            }
+            None => {
+                assert(i == ks_vec.len());
+                proof {
+                    assert forall |j: int| 0 <= j < to_model_of_levels(ks).len() implies level_names(to_model_of_levels(ks))[j] != name_id(n) by {
+                        assert(j < i);
+                    }
+                    find_level_idx_no_match(level_names(to_model_of_levels(ks)), name_id(n));
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho)
+                        == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {
+                        subst_env_param(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs), name_id(n));
+                    }
+                }
+                return Some(level);
+            }
+        }
+    }
+    if let Some(a) = level_as_succ(&ll) {
+        return match verified_subst_level(ctx, a, ks, vs, fuel1) {
+            Some(sub) => {
+                let result = ctx.succ(sub);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sub), rho)
+                    == interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(sub), rho) + 1);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)))
+                    == interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) + 1);
+                Some(result)
+            }
+            None => None,
+        };
+    }
+    if let Some((a, b)) = level_as_max(&ll) {
+        return match (verified_subst_level(ctx, a, ks, vs, fuel1), verified_subst_level(ctx, b, ks, vs, fuel1)) {
+            (Some(sa), Some(sb)) => {
+                let result = ctx.max(sa, sb);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho)
+                    == interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho)
+                    == interp(to_model(b), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                    == max_nat(interp(to_model(sa), rho), interp(to_model(sb), rho)));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)))
+                    == max_nat(
+                        interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+                        interp(to_model(b), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+                    ));
+                Some(result)
+            }
+            _ => None,
+        };
+    }
+    if let Some((a, b)) = level_as_imax(&ll) {
+        return match (verified_subst_level(ctx, a, ks, vs, fuel1), verified_subst_level(ctx, b, ks, vs, fuel1)) {
+            (Some(sa), Some(sb)) => {
+                let result = ctx.imax(sa, sb);
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho)
+                    == interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho)
+                    == interp(to_model(b), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                    == if interp(to_model(sb), rho) == 0 { 0 } else { max_nat(interp(to_model(sa), rho), interp(to_model(sb), rho)) });
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)))
+                    == if interp(to_model(b), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) == 0 { 0 } else {
+                        max_nat(
+                            interp(to_model(a), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+                            interp(to_model(b), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
                         )
                     });
                 Some(result)
