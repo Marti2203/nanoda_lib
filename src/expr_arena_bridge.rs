@@ -47,7 +47,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -998,6 +998,73 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
             }
             Some(result)
+        }
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs`'s `whnf_no_unfolding_aux`, ONE pass
+/// through its match (not chasing its own further recursive call on the
+/// result -- matching this file's existing precedent of `verified_
+/// whnf_beta_step`/`verified_whnf_zeta_step` each modeling one telescoped
+/// step rather than a full fixpoint): peel the applied spine via `verified_
+/// unfold_apps`, then dispatch on the (real) head shape exactly like the
+/// real match does -- `Lambda` with args reuses `verified_whnf_beta_step`,
+/// `Let` reuses `verified_whnf_zeta_step`, and every other shape (`Pi`,
+/// `Local`, `NatLit`, `StringLit`, a no-arg `Lambda`, and -- honestly NOT
+/// yet modeled -- `Proj`/`Sort`'s `simplify` call/`Const`'s `reduce_quot`/
+/// `reduce_rec`) falls through to the identity `pstep_star` step, which is
+/// always sound (if incomplete) regardless of shape.
+///
+/// `spine_app_decompose` (`beta_model.rs`) is what makes this possible at
+/// all: `verified_whnf_beta_step`/`verified_whnf_zeta_step` both require
+/// `nlbv`/`max_var_below`/`depth` facts about `e_fun`/`args`
+/// *individually*, but this function's own precondition only gives those
+/// facts about the WHOLE spine `e` -- `spine_app_decompose` is the
+/// converse of `spine_app`'s own construction, carrying the whole-spine
+/// facts down to the peeled head and each argument.
+pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)),
+        None => true,
+    }
+{
+    match verified_unfold_apps(ctx, e, fuel) {
+        Some((e_fun, args)) => {
+            let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+            proof {
+                spine_app_decompose(to_model(e_fun), args_model, bound);
+                assert forall|i: int| 0 <= i < args@.len() implies
+                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound)
+                by {
+                    assert(args_model[i] == to_model(args@[i]));
+                }
+            }
+            let e_fun_el = ctx.read_expr(e_fun);
+            if args.len() > 0 {
+                if let Some(_) = expr_as_lambda(&e_fun_el) {
+                    return match verified_whnf_beta_step(ctx, e_fun, &args, fuel, bound) {
+                        Some(r) => Some(r),
+                        None => None,
+                    };
+                }
+            }
+            if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
+                assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
+                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, bound) {
+                    Some(r) => Some(r),
+                    None => None,
+                };
+            }
+            proof {
+                pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+            }
+            Some(e)
         }
         None => None,
     }

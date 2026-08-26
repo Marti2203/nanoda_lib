@@ -6992,6 +6992,46 @@ pub open spec fn spine_app(base: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
     }
 }
 
+/// The converse of building a spine via `spine_app`: if the WHOLE applied
+/// spine is closed (`nlbv == 0`) and every variable in it stays below some
+/// `bound`, so is the head and every individual argument -- needed to hand
+/// `unfold_apps`'s peeled `(e_fun, args)` pair to `verified_whnf_beta_step`/
+/// `verified_whnf_zeta_step`, both of which require exactly these facts
+/// about `e_fun`/`args` individually, not just about the combined spine.
+/// `depth(base) <= depth(spine_app(base, args))` similarly carries a
+/// `depth`-headroom bound on the whole spine down to just the head.
+pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat)
+    requires
+        nlbv(spine_app(base, args)) == 0,
+        max_var_below(spine_app(base, args), bound),
+    ensures
+        nlbv(base) == 0,
+        max_var_below(base, bound),
+        depth(base) <= depth(spine_app(base, args)),
+        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0 && max_var_below(args[i], bound),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let prefix = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, prefix)), Box::new(last)));
+        spine_app_decompose(base, prefix, bound);
+        assert(nlbv(spine_app(base, prefix)) == 0);
+        assert(nlbv(last) == 0);
+        assert(max_var_below(spine_app(base, prefix), bound));
+        assert(max_var_below(last, bound));
+        assert forall |i: int| 0 <= i < args.len() implies nlbv(#[trigger] args[i]) == 0 && max_var_below(args[i], bound) by {
+            if i < args.len() - 1 {
+                assert(args[i] == prefix[i]);
+            } else {
+                assert(i == args.len() - 1);
+                assert(args[i] == last);
+            }
+        }
+    }
+}
+
 /// The REAL telescopic beta-reduction step (`tc.rs`'s `whnf_no_unfolding_aux`
 /// `Lambda` case), computed as a sequence of ORDINARY single-argument beta
 /// steps instead of one combined `subst_full` call: peel one `Bind` off
