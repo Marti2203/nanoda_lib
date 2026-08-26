@@ -295,6 +295,102 @@ pub open spec fn env_wf(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat) -> bool {
     }
 }
 
+/// `pstep` is monotone in `env`: growing the environment (adding more
+/// declarations, or agreeing on the ones already there) can only add MORE
+/// possible delta reductions, never remove a beta/zeta/congruence step
+/// that already fired -- `env` is referenced ONLY in `pstep`'s `Const`
+/// case, so every other case's witness carries over unchanged (structural
+/// recursion), and the `Const` case is immediate from the hypothesis.
+/// Needed to compose a `pstep_star` fact proven under `Map::empty()`
+/// (beta/zeta, e.g. `verified_whnf_no_unfolding_step`'s conclusion) with
+/// one proven under a non-empty singleton delta env (e.g. `verified_
+/// unfold_def_step`'s) into a single chain under one shared, larger env --
+/// `Map::empty()` trivially satisfies this lemma's subset hypothesis
+/// against ANY `env2` (it has no keys to check).
+pub proof fn pstep_env_weaken(env1: Map<u64, (Seq<u64>, ExprSpec)>, env2: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+    requires
+        pstep(env1, e1, e2),
+        forall |k: u64| #[trigger] env1.contains_key(k) ==> env2.contains_key(k) && env1[k] == env2[k],
+    ensures pstep(env2, e1, e2)
+    decreases e1
+{
+    if e1 == e2 {
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                    (match *f { ExprSpec::Bind(_, body) => pstep(env1, *body, body2) && pstep(env1, *a, a2), _ => false })
+                    && e2 == subst1(body2, a2)
+                {
+                    let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                        (match *f { ExprSpec::Bind(_, body) => pstep(env1, *body, body2) && pstep(env1, *a, a2), _ => false })
+                        && e2 == subst1(body2, a2);
+                    match *f {
+                        ExprSpec::Bind(_, body) => {
+                            pstep_env_weaken(env1, env2, *body, body2);
+                            pstep_env_weaken(env1, env2, *a, a2);
+                        }
+                        _ => { assert(false); }
+                    }
+                } else {
+                    let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env1, *f, f2) && pstep(env1, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                    pstep_env_weaken(env1, env2, *f, f2);
+                    pstep_env_weaken(env1, env2, *a, a2);
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env1, *t, t2) && pstep(env1, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_env_weaken(env1, env2, *t, t2);
+                pstep_env_weaken(env1, env2, *b, b2);
+            }
+            ExprSpec::Let(t, v, b) => {
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(env1, *b, b2) && pstep(env1, *v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(env1, *b, b2) && pstep(env1, *v, v2) && e2 == subst1(b2, v2);
+                    pstep_env_weaken(env1, env2, *b, b2);
+                    pstep_env_weaken(env1, env2, *v, v2);
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env1, *t, t2) && pstep(env1, *v, v2) && pstep(env1, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_env_weaken(env1, env2, *t, t2);
+                    pstep_env_weaken(env1, env2, *v, v2);
+                    pstep_env_weaken(env1, env2, *b, b2);
+                }
+            }
+            ExprSpec::Proj(inner) => {
+                match e2 {
+                    ExprSpec::Proj(inner2) => pstep_env_weaken(env1, env2, *inner, *inner2),
+                    _ => { assert(false); }
+                }
+            }
+            ExprSpec::Const(id, levels) => {
+                assert(env1.contains_key(id));
+                assert(env2.contains_key(id));
+                assert(env1[id] == env2[id]);
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
+/// `pstep_env_weaken` lifted from a single `pstep` step to a `pstep_star`
+/// chain -- maps `pstep_env_weaken` over each link of the witness chain.
+pub proof fn pstep_star_env_weaken(env1: Map<u64, (Seq<u64>, ExprSpec)>, env2: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+    requires
+        pstep_star(env1, e1, e2),
+        forall |k: u64| #[trigger] env1.contains_key(k) ==> env2.contains_key(k) && env1[k] == env2[k],
+    ensures pstep_star(env2, e1, e2)
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == e1 && c[c.len() - 1] == e2 && pstep_chain_valid(env1, c);
+    assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep(env2, chain[i], chain[i + 1]) by {
+        assert(pstep(env1, chain[i], chain[i + 1]));
+        pstep_env_weaken(env1, env2, chain[i], chain[i + 1]);
+    }
+    assert(pstep_chain_valid(env2, chain));
+}
+
 /// Support lemma for the diamond property: `pstep` is preserved by
 /// `shift`. Needed because the substitution lemma's induction has to go
 /// under `Bind`, where `subst`'s recursive call re-shifts its substituted
