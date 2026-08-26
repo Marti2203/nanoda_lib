@@ -87,6 +87,19 @@ pub(crate) fn get_declar_hint<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Opt
     }
 }
 
+/// `tc.rs::TypeChecker::infer_const`'s own declaration lookup
+/// (`tc.rs:221-231`, `InferOnly` case): unlike `get_declar_val` (only
+/// `Definition`/`Theorem` have a VALUE to unfold), `infer_const` needs a
+/// TYPE, which `Declar::info()` (`env.rs:167-180`) extracts uniformly
+/// from EVERY declaration kind (`Axiom`/`Quot`/`Theorem`/`Definition`/
+/// `Inductive`/`Constructor`/`Recursor`/`Opaque`) -- a strictly LARGER
+/// domain than `get_declar_val`'s, so this needs its own map rather than
+/// reusing `to_model_of_env`.
+#[allow(dead_code)]
+pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(LevelsPtr<'a>, ExprPtr<'a>)> {
+    env.get_declar(n).map(|d| { let info = d.info(); (info.uparams, info.ty) })
+}
+
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> bool {
     matches!(h, ReducibilityHint::Opaque)
@@ -234,6 +247,27 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
             && nlbv(expr_to_model(val)) == 0
             && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
+    };
+
+/// A real environment's declaration TYPES, as a name-id-keyed map --
+/// same shape as `to_model_of_env` (uparams + a value), but covering
+/// EVERY declaration kind (see `get_declar_info_ty`'s doc comment), not
+/// just `Definition`/`Theorem`. Same two substantive facts as `get_
+/// declar_val`'s trust boundary: a declaration's TYPE is always CLOSED
+/// (`nlbv == 0` -- a top-level type can no more have an escaping de-
+/// Bruijn index than a top-level value can), and its `uparams` are always
+/// genuinely `Param`-shaped.
+pub uninterp spec fn to_model_of_declar_ty<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
+
+pub assume_specification<'x, 'a> [get_declar_info_ty] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
+    ensures match result {
+        Some((uparams, ty)) =>
+            to_model_of_declar_ty(*env).contains_key(name_id(*n))
+            && to_model_of_declar_ty(*env)[name_id(*n)]
+                == (level_names(to_model_of_levels(uparams)), expr_to_model(ty))
+            && nlbv(expr_to_model(ty)) == 0
+            && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
+        None => !to_model_of_declar_ty(*env).contains_key(name_id(*n)),
     };
 
 /// A real environment's `Definition`/`Theorem` reducibility hints, as a

@@ -38,7 +38,6 @@ use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
 use crate::expr::{Expr, BinderStyle};
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::level_arena_bridge::{verified_eq_antisymm, verified_eq_antisymm_many};
-#[cfg(verus_only)]
 use crate::util::LevelPtr;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
@@ -46,7 +45,7 @@ use crate::level_arena_bridge::to_model as level_to_model;
 use crate::level_model::interp;
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_local_shape, local_id_of};
+use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
@@ -73,7 +72,9 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
-use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular};
+use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular, get_declar_info_ty};
+#[cfg(verus_only)]
+use crate::env_model::to_model_of_declar_ty;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
@@ -1998,6 +1999,73 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s `Local` arm
+/// (`tc.rs:522`): trivial, no computation -- a `Local`'s type IS its
+/// stored `binder_type` field. First piece of the `infer` subsystem
+/// bridged (needed for `proof_irrel_eq`/`try_eta_expansion`/`try_eta_
+/// struct`/`def_eq_unit`, all of which depend on `infer`/`infer_then_
+/// whnf` -- a completely separate, previously zero-coverage subsystem in
+/// this whole arc). Only the `InferOnly` flag is modeled anywhere in this
+/// subsystem so far -- `Check` mode's extra well-formedness assertions
+/// (`all_uparams_defined` etc.) are not.
+pub fn verified_infer_local<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => is_local_shape(e) && local_binder_type_of(e) == r,
+        None => !is_local_shape(e),
+    }
+{
+    let el = ctx.read_expr(e);
+    match expr_as_local(e, &el) {
+        Some((_, ty)) => Some(ty),
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_sort`
+/// (`tc.rs:552-558`), `InferOnly` case: `Sort(l) : Sort(succ(l))`.
+/// `TcCtx::succ`/`TcCtx::mk_sort` are both already bridged (`level_arena_
+/// bridge.rs`/`quot_model.rs`), so this composes directly with no new
+/// trust boundary.
+pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: ExprPtr<'t>)
+    ensures to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l))))
+{
+    let out = ctx.succ(l);
+    ctx.mk_sort(out)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_const`
+/// (`tc.rs:221-231`), `InferOnly` case: look up the declaration's TYPE
+/// (`Declar::info().ty`, via the new `get_declar_info_ty` bridge in
+/// `env_model.rs` -- broader than `get_declar_val`'s Definition/Theorem-
+/// only domain, since EVERY declaration kind has a type), then
+/// level-substitute it by the `Const`'s own level arguments -- exactly
+/// `subst_declar_info_levels`'s real composition (`expr.rs:393-399`),
+/// reusing `verified_subst_expr_levels` unchanged. The length-mismatch
+/// check (`uparams_vec.len() != c_uparams_vec.len()`) mirrors `verified_
+/// unfold_def_step`'s own defensive check for the analogous situation --
+/// a well-formed export file never actually hits it, but nothing in this
+/// bridge's trust boundary rules it out structurally.
+pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => exists |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+            to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+            && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+            && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)),
+        None => true,
+    }
+{
+    let (uparams, ty) = match get_declar_info_ty(env, &c_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let uparams_vec = read_levels_vec(ctx, uparams);
+    let c_uparams_vec = read_levels_vec(ctx, c_uparams);
+    if uparams_vec.len() != c_uparams_vec.len() {
+        return None;
+    }
+    verified_subst_expr_levels(ctx, ty, uparams, c_uparams, fuel)
 }
 
 }
