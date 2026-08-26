@@ -168,22 +168,26 @@ pub uninterp spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<
 
 /// The trust boundary: `get_declar_val` (only definitions/theorems have a
 /// value -- `env.rs:320-327`) returns exactly what `to_model_of_env` says
-/// this name maps to, AND -- the one substantive real-world fact this
-/// axiom asserts beyond pure bookkeeping -- a real declaration's stored
-/// value is always a CLOSED term (`nlbv == 0`), matching how a top-level
-/// Lean definition can never have a de-Bruijn index escaping past its own
-/// body (this is exactly the property `beta_model.rs`'s `env_wf` doc
-/// comment already anticipated needing). Everything else `env_wf` requires
-/// (`size`/`max_var_below`/`depth` bounded by some `cap`) then follows for
-/// free from `nlbv == 0` alone via `nlbv_bound_implies_max_var_below`/
-/// `depth_le_size` -- no further trust needed.
+/// this name maps to, plus two substantive real-world facts this axiom
+/// asserts beyond pure bookkeeping: a real declaration's stored value is
+/// always a CLOSED term (`nlbv == 0`, matching how a top-level Lean
+/// definition can never have a de-Bruijn index escaping past its own body
+/// -- exactly the property `beta_model.rs`'s `env_wf` doc comment already
+/// anticipated needing), and its `uparams` list is always genuinely
+/// `Param`-shaped throughout (a declaration's own universe parameters are
+/// bare parameter levels, never `Zero`/`Succ`/`Max`/`IMax` -- exactly what
+/// `verified_subst_expr_levels`'s `ks` argument requires). Everything else
+/// `env_wf` requires (`size`/`max_var_below`/`depth` bounded by some `cap`)
+/// then follows for free from `nlbv == 0` alone via `nlbv_bound_implies_
+/// max_var_below`/`depth_le_size` -- no further trust needed.
 pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
     ensures match result {
         Some((uparams, val)) =>
             to_model_of_env(*env).contains_key(name_id(*n))
             && to_model_of_env(*env)[name_id(*n)]
                 == (level_names(to_model_of_levels(uparams)), expr_to_model(val))
-            && nlbv(expr_to_model(val)) == 0,
+            && nlbv(expr_to_model(val)) == 0
+            && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
     };
 
