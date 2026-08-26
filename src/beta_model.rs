@@ -7078,6 +7078,132 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
 /// c`) or a `has_escaping_ref`-based "untouched tail" argument built on
 /// `subst_no_escaping_ref_at`-style facts. Flagged honestly as open,
 /// same as this file's practice for `pstep_subst1` before it was closed.
+/// `spine_app` preserves boundedness -- unlike `spine_reduce` below, this
+/// is simple: no substitution happens, `spine_app` just wraps `head` in
+/// `args.len()` more `App` nodes, so `max_var_below`'s bound doesn't grow
+/// at all (`App`'s case is a plain conjunction) and `depth` grows by
+/// EXACTLY `args.len()` (one `+1` per wrap), not a nonlinear function of
+/// it.
+pub proof fn spine_app_bounds(head: ExprSpec, args: Seq<ExprSpec>, bound: nat, hd: nat, ad: nat)
+    requires
+        max_var_below(head, bound),
+        depth(head) <= hd,
+        forall |i: int| 0 <= i < args.len() ==> max_var_below(args[i], bound) && depth(args[i]) <= ad,
+    ensures
+        max_var_below(spine_app(head, args), bound),
+        depth(spine_app(head, args)) <= hd + ad + args.len(),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let prefix = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, prefix)), Box::new(last)));
+        assert forall |i: int| 0 <= i < prefix.len() implies max_var_below(prefix[i], bound) && depth(prefix[i]) <= ad by {
+            assert(prefix[i] == args[i]);
+        }
+        spine_app_bounds(head, prefix, bound, hd, ad);
+        assert(max_var_below(last, bound));
+        assert(depth(last) <= ad);
+    }
+}
+
+/// The telescoped-substitution analogue of `spine_app_bounds`/`pstep_
+/// bounds`: `spine_reduce` peels one `Bind` and does one `subst1` per
+/// argument, so (unlike `spine_app`) BOTH `max_var_below` and `depth` can
+/// grow each peel -- `subst1_max_var_below`/`subst1_depth_bound`'s own
+/// per-substitution formula, chained `args.len()` times. Growth here is
+/// polynomial in `args.len()` (quadratic for `max_var_below`, linear for
+/// `depth`), not exponential -- driven by HOW MANY binders get peeled in
+/// one telescoped step, not by nested-redex compounding the way `pstep_
+/// bounds`'s `size_growth` scaling is. The `bound`/`hd`/`ad`/`k` formulas
+/// below are deliberately LOOSE over-approximations (e.g. `k*k` in place
+/// of the tighter `k*(k-1)/2`) chosen so each recursive step's headroom
+/// need is provably no worse than the top-level one -- see the `<=`
+/// chains proved inline, not just asserted.
+pub proof fn spine_reduce_bounds(head: ExprSpec, args: Seq<ExprSpec>, bound: nat, hd: nat, ad: nat)
+    requires
+        max_var_below(head, bound),
+        depth(head) <= hd,
+        forall |i: int| 0 <= i < args.len() ==> nlbv(args[i]) <= 0 && max_var_below(args[i], bound) && depth(args[i]) <= ad,
+        bound + args.len() * hd + args.len() * args.len() * ad + args.len() + 1 <= 0xFFFF_0000,
+        ad >= 1,
+    ensures
+        max_var_below(spine_reduce(head, args), bound + args.len() * hd + args.len() * args.len() * ad),
+        depth(spine_reduce(head, args)) <= hd + ad * (args.len() + 1),
+    decreases args.len()
+{
+    let k = args.len();
+    if k == 0 {
+        assert(spine_reduce(head, args) == head);
+        assert(bound + k * hd + k * k * ad == bound) by (nonlinear_arith) requires k == 0 {}
+        assert(hd + ad * (k + 1) == hd + ad) by (nonlinear_arith) requires k == 0 {}
+    } else {
+        match head {
+            ExprSpec::Bind(t, b) => {
+                let k1: nat = (k - 1) as nat;
+                assert(max_var_below(*b, bound));
+                assert(depth(*b) + 1 <= depth(head));
+                assert(depth(*b) < hd);
+                assert(max_var_below(args[0], bound));
+                assert(bound + depth(*b) + 1 <= bound + hd);
+                assert(bound + depth(*b) + 1 <= 0xFFFF_0000) by (nonlinear_arith)
+                    requires
+                        bound + depth(*b) + 1 <= bound + hd,
+                        bound + k * hd + k * k * ad + k + 1 <= 0xFFFF_0000,
+                        k >= 1,
+                {}
+                subst1_max_var_below(bound, *b, args[0]);
+                subst1_depth_bound(*b, args[0]);
+                let new_head = subst1(*b, args[0]);
+                let new_bound = (bound + 1 + depth(*b)) as nat;
+                let new_hd = (depth(*b) + depth(args[0])) as nat;
+                assert(max_var_below(new_head, new_bound));
+                assert(depth(new_head) <= new_hd);
+                assert(new_bound <= bound + hd);
+                assert(new_hd <= hd + ad - 1);
+                let rest = args.subrange(1, k as int);
+                assert(rest.len() == k1);
+                assert forall |i: int| 0 <= i < rest.len() implies
+                    nlbv(rest[i]) <= 0 && max_var_below(rest[i], new_bound) && depth(rest[i]) <= ad
+                by {
+                    assert(rest[i] == args[i + 1]);
+                    max_var_below_mono(args[i + 1], bound, new_bound);
+                }
+                assert(new_bound + k1 * new_hd + k1 * k1 * ad + k1 + 1 <= bound + k * hd + k * k * ad + k + 1)
+                    by (nonlinear_arith)
+                    requires
+                        new_bound <= bound + hd,
+                        new_hd <= hd + ad - 1,
+                        k1 == k - 1,
+                        k >= 1,
+                {}
+                assert(new_bound + k1 * new_hd + k1 * k1 * ad + k1 + 1 <= 0xFFFF_0000);
+                spine_reduce_bounds(new_head, rest, new_bound, new_hd, ad);
+                assert(spine_reduce(head, args) == spine_reduce(new_head, rest));
+                assert(new_bound + k1 * new_hd + k1 * k1 * ad <= bound + k * hd + k * k * ad)
+                    by (nonlinear_arith)
+                    requires
+                        new_bound <= bound + hd,
+                        new_hd <= hd + ad - 1,
+                        k1 == k - 1,
+                        k >= 1,
+                {}
+                assert(new_hd + ad * (k1 + 1) <= hd + ad * (k + 1)) by (nonlinear_arith)
+                    requires new_hd <= hd + ad - 1, k1 == k - 1, k >= 1
+                {}
+                max_var_below_mono(spine_reduce(new_head, rest), new_bound + k1 * new_hd + k1 * k1 * ad, bound + k * hd + k * k * ad);
+            }
+            _ => {
+                assert(spine_reduce(head, args) == spine_app(head, args));
+                spine_app_bounds(head, args, bound, hd, ad);
+                assert(hd + ad + k <= hd + ad * (k + 1)) by (nonlinear_arith) requires k >= 1, ad >= 1 {}
+                max_var_below_mono(spine_app(head, args), bound, bound + k * hd + k * k * ad);
+            }
+        }
+    }
+}
+
 pub open spec fn spine_reduce(head: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
     decreases args.len()
 {
