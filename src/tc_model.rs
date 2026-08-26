@@ -37,7 +37,7 @@ use crate::env::{RecRule, Env};
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
 use crate::expr::Expr;
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::level_arena_bridge::verified_eq_antisymm;
+use crate::level_arena_bridge::{verified_eq_antisymm, verified_eq_antisymm_many};
 #[cfg(verus_only)]
 use crate::util::LevelPtr;
 #[cfg(verus_only)]
@@ -50,7 +50,7 @@ use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_id, const_levels_vec, is_const_shape_model, const_levels_vec_model};
+use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, const_id, const_levels_vec, is_const_shape_model, const_levels_vec_model};
 #[cfg(verus_only)]
 use crate::util_model::find_index;
 #[cfg(verus_only)]
@@ -1308,6 +1308,36 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
     };
     let r = verified_eq_antisymm(ctx, lx, ly, fuel);
     Some(r)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_const`
+/// (`tc.rs:920-926`): `Const(x_name,x_levels) def_eq Const(y_name,y_levels)
+/// <=> x_name == y_name && eq_antisymm_many(x_levels,y_levels)` -- the
+/// second leaf of `def_eq`'s cluster (again no further `def_eq` recursion
+/// inside it), unlocked by `verified_eq_antisymm_many` (two commits back).
+/// Name equality is real `NamePtr` pointer equality (`name_ptr_eq`), which
+/// by `name_id_injective` gives `const_id(x) == const_id(y)` for free.
+pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: bool)
+    ensures result ==> is_const_shape(x) && is_const_shape(y)
+        && const_id(x) == const_id(y)
+        && to_model_of_levels(const_levels_of(x)).len() == to_model_of_levels(const_levels_of(y)).len()
+        && forall |i: int| #![trigger to_model_of_levels(const_levels_of(x))[i]] 0 <= i < to_model_of_levels(const_levels_of(x)).len() ==>
+            forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho)
+{
+    let x_el = ctx.read_expr(x);
+    let (x_name, x_levels) = match expr_as_const(x, &x_el) {
+        Some(p) => p,
+        None => return false,
+    };
+    let y_el = ctx.read_expr(y);
+    let (y_name, y_levels) = match expr_as_const(y, &y_el) {
+        Some(p) => p,
+        None => return false,
+    };
+    if !name_ptr_eq(x_name, y_name) {
+        return false;
+    }
+    verified_eq_antisymm_many(ctx, x_levels, y_levels, fuel)
 }
 
 }
