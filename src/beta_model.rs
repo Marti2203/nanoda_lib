@@ -3650,6 +3650,89 @@ pub proof fn subst_expr_levels_rel_max_var_below(e: ExprSpec, ks: Seq<u64>, vs: 
     }
 }
 
+/// Same preservation story as `subst_expr_levels_rel_size`/`_max_var_below`
+/// above, for `nlbv`. Needed by `pstep_shift`/`pstep_shift_down`/`pstep_
+/// preserves_no_escaping_ref`/`pstep_subst`'s `Const` cases, which all lean
+/// on a definition body's `nlbv == 0` (from `env_wf`) transferring to
+/// whatever `subst_expr_levels_rel` relates it to.
+#[verifier::spinoff_prover]
+pub proof fn subst_expr_levels_rel_nlbv(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, e2: ExprSpec)
+    requires crate::expr_model::subst_expr_levels_rel(e, ks, vs, e2)
+    ensures nlbv(e2) == nlbv(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
+        ExprSpec::App(f, a) => match e2 {
+            ExprSpec::App(f2, a2) => {
+                subst_expr_levels_rel_nlbv(*f, ks, vs, *f2);
+                subst_expr_levels_rel_nlbv(*a, ks, vs, *a2);
+            }
+            _ => {}
+        },
+        ExprSpec::Bind(t, b) => match e2 {
+            ExprSpec::Bind(t2, b2) => {
+                subst_expr_levels_rel_nlbv(*t, ks, vs, *t2);
+                subst_expr_levels_rel_nlbv(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Let(t, v, b) => match e2 {
+            ExprSpec::Let(t2, v2, b2) => {
+                subst_expr_levels_rel_nlbv(*t, ks, vs, *t2);
+                subst_expr_levels_rel_nlbv(*v, ks, vs, *v2);
+                subst_expr_levels_rel_nlbv(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Proj(s) => match e2 {
+            ExprSpec::Proj(s2) => subst_expr_levels_rel_nlbv(*s, ks, vs, *s2),
+            _ => {}
+        },
+    }
+}
+
+/// Same preservation story again, for `depth`. Needed by `pstep_bounds`'s
+/// `Const` case (`env_wf`'s `depth(env[id]) <= cap` transferring to `e2`).
+#[verifier::spinoff_prover]
+pub proof fn subst_expr_levels_rel_depth(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, e2: ExprSpec)
+    requires crate::expr_model::subst_expr_levels_rel(e, ks, vs, e2)
+    ensures depth(e2) == depth(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
+        ExprSpec::App(f, a) => match e2 {
+            ExprSpec::App(f2, a2) => {
+                subst_expr_levels_rel_depth(*f, ks, vs, *f2);
+                subst_expr_levels_rel_depth(*a, ks, vs, *a2);
+            }
+            _ => {}
+        },
+        ExprSpec::Bind(t, b) => match e2 {
+            ExprSpec::Bind(t2, b2) => {
+                subst_expr_levels_rel_depth(*t, ks, vs, *t2);
+                subst_expr_levels_rel_depth(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Let(t, v, b) => match e2 {
+            ExprSpec::Let(t2, v2, b2) => {
+                subst_expr_levels_rel_depth(*t, ks, vs, *t2);
+                subst_expr_levels_rel_depth(*v, ks, vs, *v2);
+                subst_expr_levels_rel_depth(*b, ks, vs, *b2);
+            }
+            _ => {}
+        },
+        ExprSpec::Proj(s) => match e2 {
+            ExprSpec::Proj(s2) => subst_expr_levels_rel_depth(*s, ks, vs, *s2),
+            _ => {}
+        },
+    }
+}
+
 #[verifier::spinoff_prover]
 pub proof fn pstep_size_bound(env: Map<u64, ExprSpec>, cap: nat, e1: ExprSpec, e2: ExprSpec) -> (result: nat)
     requires pstep(env, e1, e2), env_wf(env, cap)
