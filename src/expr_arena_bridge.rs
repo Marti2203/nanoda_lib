@@ -32,7 +32,7 @@ use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::util::TcCtx;
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr};
-use crate::expr::{Expr, BinderStyle};
+use crate::expr::{Expr, BinderStyle, FVarId};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[allow(unused_imports)]
@@ -124,6 +124,24 @@ pub(crate) fn expr_as_proj<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, usize, Expr
     match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
 }
 
+/// `Local`'s payload (the real `def_eq_local` compares `id`/`binder_type`,
+/// not the pointer itself) -- takes the pointer too, same reason
+/// `expr_as_const` does (so the contract can talk about `is_local_shape`
+/// keyed by the pointer, distinct from `expr_id`'s coarser pointer-identity
+/// notion -- see the module doc comment on why the two must be separate).
+#[allow(dead_code)]
+pub(crate) fn expr_as_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(FVarId, ExprPtr<'t>)> {
+    match e { Expr::Local { id, binder_type, .. } => Some((*id, *binder_type)), _ => None }
+}
+
+/// Verus can't relate an external type's real `==` to spec-level equality
+/// on the opaque ghost value without an explicit bridge -- same trick as
+/// `level_arena_bridge::name_ptr_eq`.
+#[allow(dead_code)]
+pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> bool {
+    a == b
+}
+
 #[allow(dead_code)]
 pub(crate) fn expr_as_nat_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<crate::util::BigUintPtr<'t>> {
     match e { Expr::NatLit { ptr, .. } => Some(*ptr), _ => None }
@@ -154,6 +172,11 @@ pub struct ExExpr<'a>(Expr<'a>);
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExBinderStyle(BinderStyle);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExFVarId(FVarId);
 
 /// What an `ExprPtr` denotes in our `ExprSpec` model. Uninterpreted, same
 /// trust boundary as `level_arena_bridge::to_model`.
@@ -244,6 +267,25 @@ pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
     ensures match result {
         Some((n, l)) => is_const_shape(ptr) && const_name_of(ptr) == n && const_levels_of(ptr) == l,
         None => !is_const_shape(ptr),
+    };
+
+/// `Local`'s payload, same trust-boundary shape as `Const`'s
+/// `is_const_shape`/`const_name_of`/`const_levels_of`: `local_id_of` is the
+/// `FVarId` a `Local`-shaped pointer carries (deliberately separate from
+/// `expr_id`, which models pointer identity, not the `FVarId` field value
+/// -- see the module doc comment), and `local_binder_type_of` is its
+/// `binder_type: ExprPtr`.
+pub uninterp spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
+pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
+
+pub assume_specification [fvar_id_eq] (a: FVarId, b: FVarId) -> (result: bool)
+    ensures result == (a == b);
+
+pub assume_specification<'t> [expr_as_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(FVarId, ExprPtr<'t>)>)
+    ensures match result {
+        Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(ptr) == t,
+        None => !is_local_shape(ptr),
     };
 
 /// A freshly-constructed `Const` node is `is_const_shape` with exactly the

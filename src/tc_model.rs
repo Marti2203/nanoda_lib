@@ -44,7 +44,9 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{is_local_shape, local_id_of};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
@@ -1338,6 +1340,88 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
         return false;
     }
     verified_eq_antisymm_many(ctx, x_levels, y_levels, fuel)
+}
+
+/// Real-arena counterpart to the START of `tc.rs::TypeChecker::def_eq`'s
+/// mutually-recursive cluster (`tc.rs:913-926`, `def_eq_local`/
+/// `def_eq_const`, plus `def_eq_proj` at `tc.rs:903-911`) -- the first
+/// piece of the cluster that genuinely recurses back into itself
+/// (`def_eq_local`/`def_eq_proj` both call `self.def_eq` on a subterm),
+/// a step up from `verified_def_eq_sort`/`verified_def_eq_const` (true
+/// leaves, no recursion at all). `fuel` bounds the recursion depth --
+/// `Some(true)` means the comparison genuinely succeeded within budget,
+/// `None` means fuel ran out before a verdict (honestly incomplete, same
+/// "None = not yet enough headroom" convention as `verified_whnf_step`
+/// etc.), `Some(false)` means every disjunct was tried and failed.
+///
+/// Deliberately does NOT yet model `def_eq_app`/`def_eq_unit`/
+/// `def_eq_nat`/`lazy_delta_step`/`proof_irrel_eq`/`try_eta_*`/`whnf`
+/// preprocessing, or `def_eq`'s own top-level `def_eq_quick_check`/whnf
+/// dance (`tc.rs:957-1004`) -- this is exactly `def_eq_sort ||
+/// def_eq_const || def_eq_local || def_eq_proj`, the same four-way
+/// disjunction `tc.rs:982` itself tries right after `lazy_delta_step`
+/// (Exhausted case), before falling further into app/eta. `Local`'s
+/// identity is `local_id_of` (the real `FVarId` payload), deliberately
+/// separate from `expr_id` (pointer identity) -- see
+/// `expr_arena_bridge.rs`'s module doc comment. `Proj`'s `ty_name`/`idx`
+/// are compared as real exec values (native `usize`/`name_ptr_eq`) but
+/// not surfaced in the ensures, since `ExprSpec::Proj` itself erases them
+/// (same scoping choice `pstep_star_proj` already made for `idx`).
+pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) =>
+            (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                to_model(x) == ExprSpec::Sort(level_to_model(lx))
+                && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+                && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
+            || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
+            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy)))),
+        _ => true,
+    }
+    decreases fuel
+{
+    if let Some(r) = verified_def_eq_sort(ctx, x, y, fuel) {
+        if r {
+            return Some(true);
+        }
+    }
+    if verified_def_eq_const(ctx, x, y, fuel) {
+        return Some(true);
+    }
+    let x_el = ctx.read_expr(x);
+    if let Some((x_id, x_ty)) = expr_as_local(x, &x_el) {
+        let y_el = ctx.read_expr(y);
+        if let Some((y_id, y_ty)) = expr_as_local(y, &y_el) {
+            if fvar_id_eq(x_id, y_id) {
+                if fuel == 0 {
+                    return None;
+                }
+                if let Some(true) = verified_def_eq_core(ctx, x_ty, y_ty, fuel - 1) {
+                    return Some(true);
+                }
+                return Some(false);
+            }
+        }
+        return Some(false);
+    }
+    if let Some((x_ty_name, x_idx, x_struct)) = expr_as_proj(&x_el) {
+        let y_el = ctx.read_expr(y);
+        if let Some((y_ty_name, y_idx, y_struct)) = expr_as_proj(&y_el) {
+            if name_ptr_eq(x_ty_name, y_ty_name) && x_idx == y_idx {
+                if fuel == 0 {
+                    return None;
+                }
+                if let Some(true) = verified_def_eq_core(ctx, x_struct, y_struct, fuel - 1) {
+                    return Some(true);
+                }
+            }
+        }
+        return Some(false);
+    }
+    Some(false)
 }
 
 }
