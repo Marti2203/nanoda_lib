@@ -42,7 +42,10 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end, subst_expr_levels_rel};
+#[cfg(verus_only)]
+use crate::level_model::{level_names, subst_env, interp};
+use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
 use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one};
 
@@ -563,6 +566,131 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
         assert(depth(to_model(structure)) < depth(to_model(e)));
         return match verified_abstr(ctx, structure, locals, offset, fuel1) {
+            Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
+            None => None,
+        };
+    }
+    None
+}
+
+/// Real-arena counterpart to real `TcCtx::subst_aux`/`subst_expr_levels`
+/// (`expr.rs:333-391`): substitutes universe-level PARAMETERS (not de
+/// Bruijn indices) throughout an expression -- the building block
+/// `unfold_def`'s real delta-reduction step needs, since unfolding
+/// `foo.{u,v}` means substituting `foo`'s definition body's own level
+/// parameters by `u,v` before use. Mirrors `expr_model::subst_expr_levels_
+/// model`'s structure (`Sort`/`Const` route through `verified_subst_level`/
+/// `verified_subst_levels`, everything else recurses structurally), proven
+/// against `subst_expr_levels_rel` the same way that model function is.
+/// Like `subst_aux`'s own comment, this is only ever meant to be called on
+/// expressions freshly pulled from the environment (no `Local`s) --
+/// `expr_is_local` is treated as a no-op here purely for totality, mirroring
+/// `subst_expr_levels_model`'s `Free` case, not because it's expected to
+/// fire.
+pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+    ensures match result {
+        Some(r) => subst_expr_levels_rel(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs), to_model(r)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(e);
+    if let Some(dbj_idx) = expr_as_var(&el) {
+        assert(to_model(e) == ExprSpec::Var(dbj_idx as u32));
+        return Some(e);
+    }
+    if expr_is_local(e, &el) {
+        assert(to_model(e) == ExprSpec::Free(expr_id(e)));
+        return Some(e);
+    }
+    if let Some(level) = expr_as_sort(&el) {
+        assert(to_model(e) == ExprSpec::Sort(level_to_model(level)));
+        return match verified_subst_level(ctx, level, ks, vs, fuel1) {
+            Some(new_level) => {
+                let result = ctx.mk_sort(new_level);
+                assert(to_model(result) == ExprSpec::Sort(level_to_model(new_level)));
+                Some(result)
+            }
+            None => None,
+        };
+    }
+    if let Some((name, levels)) = expr_as_const(e, &el) {
+        assert(is_const_shape(e) && const_name_of(e) == name && const_levels_of(e) == levels);
+        proof {
+            is_const_shape_model(e);
+            const_levels_vec_model(e);
+        }
+        assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+        assert(const_levels_vec(e)@ =~= to_model_of_levels(levels));
+        return match verified_subst_levels(ctx, levels, ks, vs, fuel1) {
+            Some(new_levels) => {
+                let result = ctx.mk_const(name, new_levels);
+                assert(is_const_shape(result) && const_name_of(result) == name && const_levels_of(result) == new_levels);
+                proof {
+                    is_const_shape_model(result);
+                    const_levels_vec_model(result);
+                }
+                assert(to_model(result) == ExprSpec::Const(const_id(result), const_levels_vec(result)));
+                assert(const_levels_vec(result)@ =~= to_model_of_levels(new_levels));
+                assert(const_id(result) == const_id(e));
+                assert(to_model_of_levels(new_levels).len() == to_model_of_levels(levels).len());
+                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < to_model_of_levels(levels).len() implies
+                    #[trigger] interp(to_model_of_levels(new_levels)[j], rho)
+                        == interp(to_model_of_levels(levels)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                assert(const_levels_vec(result)@.len() == const_levels_vec(e)@.len());
+                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < const_levels_vec(e)@.len() implies
+                    #[trigger] interp(const_levels_vec(result)@[j], rho)
+                        == interp(const_levels_vec(e)@[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                Some(result)
+            }
+            None => None,
+        };
+    }
+    if expr_is_closed_leaf(e, &el) {
+        assert(to_model(e) == ExprSpec::Closed);
+        return Some(e);
+    }
+    if let Some((fun, arg)) = expr_as_app(&el) {
+        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
+        return match (verified_subst_expr_levels(ctx, fun, ks, vs, fuel1), verified_subst_expr_levels(ctx, arg, ks, vs, fuel1)) {
+            (Some(sf), Some(sa)) => Some(ctx.mk_app(sf, sa)),
+            _ => None,
+        };
+    }
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, body, ks, vs, fuel1)) {
+            (Some(st), Some(sb)) => Some(ctx.mk_pi(binder_name, binder_style, st, sb)),
+            _ => None,
+        };
+    }
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, body, ks, vs, fuel1)) {
+            (Some(st), Some(sb)) => Some(ctx.mk_lambda(binder_name, binder_style, st, sb)),
+            _ => None,
+        };
+    }
+    if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
+        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))));
+        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, val, ks, vs, fuel1)) {
+            (Some(st), Some(sv)) => match verified_subst_expr_levels(ctx, body, ks, vs, fuel1) {
+                Some(sb) => Some(ctx.mk_let(binder_name, st, sv, sb, nondep)),
+                None => None,
+            },
+            _ => None,
+        };
+    }
+    if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
+        assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
+        return match verified_subst_expr_levels(ctx, structure, ks, vs, fuel1) {
             Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
             None => None,
         };
