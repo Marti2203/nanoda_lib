@@ -46,7 +46,9 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_id, const_le
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::whnf_fixpoint_ok;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_arena_bridge::read_levels_vec;
@@ -58,7 +60,7 @@ use crate::env_model::get_constructor_num_params;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth};
 
@@ -333,6 +335,80 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                 Some(r)
             } else {
                 None
+            }
+        }
+        None => None,
+    }
+}
+
+/// Manual transcription of ONE round of real `whnf`'s outer loop
+/// (`tc.rs:764-783`): `whnf_no_unfolding` (here, `verified_whnf_no_
+/// unfolding_fixpoint`, up to `n` telescoped beta/zeta steps) followed by
+/// ONE attempt at delta-unfolding (`verified_unfold_def_step`). Does NOT
+/// yet model `try_reduce_nat` (nat-literal arithmetic reduction -- a
+/// genuinely new relation, not yet started, see the project memory) or
+/// repeating this whole round more than once (the real loop repeats
+/// until NEITHER nat-reduction NOR delta-unfolding apply) -- both
+/// honestly incomplete, not unsound: when delta-unfolding fails, this
+/// returns the no-unfolding result unchanged (`Some(whnfd)`), exactly
+/// like the real loop's own final `return whnfd` when both its checks
+/// fail, so a single round is already a faithful (if not necessarily
+/// maximal) WHNF step whenever nat-reduction doesn't apply.
+///
+/// The real payoff is composing `verified_whnf_no_unfolding_fixpoint`'s
+/// `Map::empty()`-env `pstep_star` fact with `verified_unfold_def_step`'s
+/// non-empty singleton-env one into ONE chain under `to_model_of_env`'s
+/// FULL real environment -- `pstep_env_weaken`/`pstep_star_env_weaken`
+/// (`beta_model.rs`) make this free: both the empty env (vacuously) and
+/// the one-definition singleton env (directly, since `verified_unfold_
+/// def_step`'s own existential witness is already drawn from `to_model_
+/// of_env(*env)`) are subsets of the real env's own model, so both
+/// `pstep_star` facts weaken into it without needing a growing synthetic
+/// environment assembled by hand.
+pub fn verified_whnf_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => pstep_star(to_model_of_env(*env), to_model(e), to_model(r)),
+        None => true,
+    }
+{
+    match verified_whnf_no_unfolding_fixpoint(ctx, e, fuel, bound, d, n) {
+        Some(whnfd) => {
+            proof {
+                assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                    to_model_of_env(*env).contains_key(k)
+                    && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+                by {}
+                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(e), to_model(whnfd));
+            }
+            match verified_unfold_def_step(ctx, env, whnfd, fuel) {
+                Some(r) => {
+                    proof {
+                        let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
+                            &&& to_model_of_env(*env).contains_key(id)
+                            &&& to_model_of_env(*env)[id] == (ks, val)
+                            &&& pstep_star(
+                                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                                    to_model(whnfd),
+                                    to_model(r),
+                                )
+                        };
+                        let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
+                        assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
+                            to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
+                        by {
+                            assert(k == id);
+                        }
+                        pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(whnfd), to_model(r));
+                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(whnfd), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => Some(whnfd),
             }
         }
         None => None,
