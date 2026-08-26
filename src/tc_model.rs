@@ -44,7 +44,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of};
 #[allow(unused_imports)]
@@ -1496,6 +1496,58 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         Some(false) => Some(false),
         None => None,
     }
+}
+
+/// Real-arena counterpart to the START of `tc.rs::TypeChecker::def_eq`
+/// itself (`tc.rs:957-1004`) -- composes `verified_def_eq_core` (the
+/// sort/const/local/proj leaf cluster) and `verified_def_eq_app` (the
+/// later applied-spine stage) behind one entry point, plus the one
+/// genuinely trivial piece of `def_eq_quick_check` (`tc.rs:1172-1186`):
+/// real `ExprPtr` reflexivity (`x == y`), which needs no lemma at all --
+/// `to_model` is a pure function of the pointer, so `x == y` gives
+/// `to_model(x) == to_model(y)` by plain SMT congruence.
+///
+/// Deliberately NOT modeled here, still: `def_eq_quick_check`'s cache
+/// lookup and `def_eq_binder_multi` disjunct, the bool-true short-circuit
+/// (`tc.rs:965-970`), `proof_irrel_eq`, `lazy_delta_step`, the
+/// `whnf_no_unfolding` re-check-and-recurse step (`tc.rs:986-989`), and
+/// the final `try_eta_expansion`/`try_eta_struct`/
+/// `try_string_lit_expansion`/`def_eq_unit` fallback group (`tc.rs:990-
+/// 995`). This is an honest, partial `def_eq`: `Some(true)`/`Some(false)`
+/// are genuine verdicts reached via the pieces bridged so far, `None`
+/// covers both "ran out of fuel" AND "would need one of the unmodeled
+/// pieces to decide" -- so `None` here is a strictly weaker signal than
+/// `Some(false)`'s "the modeled pieces establish it's not equal via them",
+/// not a claim the real terms are actually unrelated.
+pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) =>
+            to_model(x) == to_model(y)
+            || (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                to_model(x) == ExprSpec::Sort(level_to_model(lx))
+                && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+                && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
+            || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
+            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+            || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+                to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+                && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+                && argsx.len() == argsy.len() && argsx.len() > 0),
+        _ => true,
+    }
+{
+    if expr_ptr_eq(x, y) {
+        return Some(true);
+    }
+    match verified_def_eq_core(ctx, x, y, fuel) {
+        Some(true) => return Some(true),
+        Some(false) => {},
+        None => return None,
+    }
+    verified_def_eq_app(ctx, x, y, fuel)
 }
 
 }
