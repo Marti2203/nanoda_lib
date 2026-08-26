@@ -46,7 +46,7 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_id, const_le
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_arena_bridge::read_levels_vec;
@@ -54,8 +54,13 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
+use crate::env_model::get_constructor_num_params;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app};
+use crate::env_model::to_model_of_ctor_num_params;
+#[cfg(verus_only)]
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below};
+#[cfg(verus_only)]
+use crate::expr_model::{nlbv, depth};
 
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
@@ -242,6 +247,92 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
             assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
             assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
             Some(result)
+        }
+        None => None,
+    }
+}
+
+/// Manual transcription of real `reduce_proj`'s "cheap" path (`tc.rs:447-
+/// 458`, `cheap_proj == true`, i.e. `structure`'s WHNF is computed via
+/// `whnf_no_unfolding_cheap_proj`/`verified_whnf_no_unfolding_step`, not
+/// the full `whnf` -- the full-`whnf` path needs `try_reduce_nat`/
+/// `unfold_def`/`reduce_quot`/`reduce_rec` composed in too, not yet done):
+/// reduce `structure` to WHNF, peel its applied-`Const` head, look up the
+/// name as a constructor in the real environment (`get_constructor_num_
+/// params`, `env_model.rs`), and index `num_params + idx` into the peeled
+/// args -- exactly the real algorithm, MINUS the `StringLit`-to-
+/// constructor conversion step (`str_lit_to_ctor_reducing`, not yet
+/// bridged -- if `structure` whnf's to a `StringLit`, this conservatively
+/// returns `None` rather than the real function's literal-to-constructor
+/// rewrite).
+///
+/// The result is packaged as `pstep_star_proj` (`beta_model.rs`), the
+/// dedicated proj-iota relation -- `is_const_shape_model`/`const_levels_
+/// vec_model`/`const_id`/`const_levels_vec` connect the peeled `Const`
+/// node's `to_model` to `pstep_star_proj`'s existential witness the same
+/// way `verified_unfold_def_step` already does for delta.
+pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(structure)) <= 0,
+        max_var_below(to_model(structure), bound),
+        depth(to_model(structure)) <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+        idx <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => pstep_star_proj(
+            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+            to_model_of_ctor_num_params(*env),
+            to_model(structure),
+            idx as nat,
+            to_model(r),
+        ),
+        None => true,
+    }
+{
+    let whnfd = match verified_whnf_no_unfolding_step(ctx, structure, fuel, bound) {
+        Some(w) => w,
+        None => return None,
+    };
+    let (fun, args) = match verified_unfold_apps(ctx, whnfd, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    match get_constructor_num_params(env, &name) {
+        Some(num_params) => {
+            let i = num_params as usize + idx;
+            if i < args.len() {
+                let r = args[i];
+                let ghost args_model = Seq::new(args@.len(), |j: int| to_model(args@[j]));
+                proof {
+                    is_const_shape_model(fun);
+                    const_levels_vec_model(fun);
+                }
+                assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+                assert(to_model(whnfd) == spine_app(to_model(fun), args_model));
+                assert(const_id(fun) == name_id(name));
+                assert(to_model_of_ctor_num_params(*env).contains_key(name_id(name)));
+                assert(to_model_of_ctor_num_params(*env)[name_id(name)] == num_params);
+                assert(args_model[i as int] == to_model(r));
+                assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(structure), to_model(whnfd)));
+                assert((num_params as nat) + (idx as nat) < args_model.len());
+                assert(pstep_star_proj(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(structure),
+                    idx as nat,
+                    to_model(r),
+                )) by {
+                    assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
+                }
+                Some(r)
+            } else {
+                None
+            }
         }
         None => None,
     }

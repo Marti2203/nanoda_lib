@@ -7459,4 +7459,41 @@ pub proof fn pstep_star_spine_reduce(env: Map<u64, (Seq<u64>, ExprSpec)>, head: 
     }
 }
 
+/// Structure-projection ("proj-iota") reduction: `tc.rs`'s `reduce_proj`,
+/// once its `structure` argument reduces (via ordinary beta/zeta/delta,
+/// `pstep_star`) down to a saturated constructor application, picks out
+/// field `idx` by indexing `num_params + idx` into that application's
+/// spine. This is a genuinely NEW reduction rule -- `pstep` itself has no
+/// notion of it (constructor-ness is an `Env` fact, not something
+/// `ExprSpec` alone can see, and `ExprSpec::Proj` doesn't even carry an
+/// `idx`, deliberately erased in `expr_model.rs` as irrelevant to
+/// substitution mechanics) -- so it is deliberately kept as its OWN
+/// relation layered on top of `pstep_star`, rather than a new disjunct
+/// inside `pstep` itself: adding a disjunct there would require redoing
+/// `pstep_diamond`'s (already large, `rlimit`-sensitive) confluence proof
+/// for it too, which nothing downstream yet needs.
+///
+/// `ctor_env` mirrors `env_model.rs`'s `to_model_of_ctor_num_params`
+/// trust boundary (`Env::get_constructor`'s bridge) the same way `pstep`'s
+/// own `env` mirrors `to_model_of_env`'s delta-declaration lookup --
+/// `idx`/`result` are NOT existentially quantified (they're the actual
+/// real-code inputs/output being related), everything else describing
+/// "which constructor, which spine" is.
+pub open spec fn pstep_star_proj(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    ctor_env: Map<u64, u16>,
+    structure: ExprSpec,
+    idx: nat,
+    result: ExprSpec,
+) -> bool {
+    exists |reduced: ExprSpec, ctor_id: u64, levels: Vec<LevelSpec>, ctor_args: Seq<ExprSpec>, num_params: u16|
+        #![trigger pstep_star(env, structure, reduced), spine_app(ExprSpec::Const(ctor_id, levels), ctor_args), ctor_args[(num_params as nat + idx) as int]]
+        pstep_star(env, structure, reduced)
+        && reduced == spine_app(ExprSpec::Const(ctor_id, levels), ctor_args)
+        && ctor_env.contains_key(ctor_id)
+        && ctor_env[ctor_id] == num_params
+        && num_params as nat + idx < ctor_args.len()
+        && result == ctor_args[(num_params as nat + idx) as int]
+}
+
 }
