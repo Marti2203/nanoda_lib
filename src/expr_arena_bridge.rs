@@ -31,7 +31,7 @@
 use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::util::TcCtx;
-use crate::util::{ExprPtr, NamePtr, LevelsPtr};
+use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr};
 use crate::expr::{Expr, BinderStyle};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -39,6 +39,8 @@ use crate::expr_model::ExprSpec;
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
 #[cfg(verus_only)]
@@ -49,6 +51,11 @@ use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_sub
 #[allow(dead_code)]
 pub(crate) fn expr_as_var(e: &Expr) -> Option<u16> {
     match e { Expr::Var { dbj_idx, .. } => Some(*dbj_idx), _ => None }
+}
+
+#[allow(dead_code)]
+pub(crate) fn expr_as_sort<'t>(e: &Expr<'t>) -> Option<LevelPtr<'t>> {
+    match e { Expr::Sort { level, .. } => Some(*level), _ => None }
 }
 
 /// Takes the pointer itself (not just the shallow value) purely so its
@@ -64,12 +71,13 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 /// `num_loose_bvars() == 0` and `has_fvars() == false` (see
 /// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
 /// bound-variable-inert for `inst`/`abstr`'s purposes regardless of
-/// payload -- `Sort`/`StringLit`/`NatLit` collapse to `ExprSpec::Closed`;
-/// `Const` gets its own distinct `ExprSpec::Const(id)` (see `ExprSpec`'s
-/// doc comment in `expr_model.rs`), so this function's *contract* now
-/// gives `matches!(..., Closed) || is_const_shape(ptr)`, not `Closed`
-/// alone -- the real boolean result is unchanged, still true for all
-/// four variants; only the trust boundary's own precision improved.
+/// payload -- `StringLit`/`NatLit` collapse to `ExprSpec::Closed`; `Sort`
+/// and `Const` each get their own distinct variant (`ExprSpec::Sort`/
+/// `ExprSpec::Const`, see `ExprSpec`'s doc comment in `expr_model.rs`), so
+/// this function's *contract* gives `matches!(..., Closed) ||
+/// is_const_shape(ptr) || matches!(..., Sort(_))`, not `Closed` alone --
+/// the real boolean result is unchanged, still true for all four variants;
+/// only the trust boundary's own precision improved.
 #[allow(dead_code)]
 pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
@@ -166,7 +174,7 @@ pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
         !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
 
 pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
-    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed) || is_const_shape(ptr));
+    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr));
 
 pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
@@ -219,6 +227,37 @@ pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
     ensures match result {
         Some((n, l)) => is_const_shape(ptr) && const_name_of(ptr) == n && const_levels_of(ptr) == l,
         None => !is_const_shape(ptr),
+    };
+
+/// A freshly-constructed `Const` node is `is_const_shape` with exactly the
+/// given name/levels -- the construction-side mirror of `expr_as_const`'s
+/// read-side contract above (same three facts), letting `is_const_shape_
+/// model`/`const_levels_vec_model` derive `to_model(result)` the same way
+/// for either a freshly-built or a pre-existing `Const` pointer.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t, 'p>, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+    ensures
+        is_const_shape(result),
+        const_name_of(result) == name,
+        const_levels_of(result) == levels;
+
+/// `Sort`'s level, read directly off the shallow value -- simpler than
+/// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s
+/// payload (one `LevelPtr`) needs no `const_id`-style derivation or
+/// `Vec`-vs-`Seq` bridging, so its contract can state `to_model_of_expr`
+/// directly, the same way `expr_as_var` does. Needed now that `Sort`
+/// carries its own `ExprSpec::Sort(LevelSpec)` payload (Phase 2a) rather
+/// than collapsing into `Closed` -- until this was added,
+/// `expr_is_closed_leaf`'s axiom below (which real `Expr::Sort` values DO
+/// satisfy, since the real function pattern-matches `Sort`/`Const`/
+/// `StringLit`/`NatLit` together) FORCED `to_model_of_expr` to be
+/// `ExprSpec::Closed` for every real `Sort` node -- an actively false,
+/// silently unsound axiom once `Sort` became a distinct variant, not just
+/// an underspecified one (nothing previously exercised it against a
+/// genuine `Sort` node to surface the inconsistency).
+pub assume_specification<'t> [expr_as_sort] (e: &Expr<'t>) -> (result: Option<LevelPtr<'t>>)
+    ensures match result {
+        Some(level) => to_model_of_expr(*e) == ExprSpec::Sort(level_to_model(level)),
+        None => !matches!(to_model_of_expr(*e), ExprSpec::Sort(_)),
     };
 
 pub assume_specification<'t> [expr_as_pi] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
