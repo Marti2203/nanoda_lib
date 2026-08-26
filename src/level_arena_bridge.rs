@@ -1003,4 +1003,81 @@ fn verified_leq_core_imax_rewrite_right<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: 
     false
 }
 
+/// Real-arena counterpart to `TcCtx::leq` (`level.rs:229-233`): simplify
+/// both sides, then decide via `verified_leq_core` at `diff := 0` -- the
+/// top-level entry point the whole `verified_simplify`/`verified_leq_
+/// core`/`verified_leq_imax_by_cases` tower (all already built, real work
+/// from an earlier pass through this file) was building toward, but that
+/// hadn't been wired together yet. Sound (if incomplete, matching `verified_
+/// leq_core`'s own `is_any_max` gaps): `result == true` only when the
+/// semantic inequality genuinely holds, for every parameter assignment.
+pub fn verified_leq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, fuel: u32) -> (result: bool)
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho)
+{
+    let l_prime = verified_simplify(ctx, l, fuel);
+    let r_prime = verified_simplify(ctx, r, fuel);
+    let result = verified_leq_core(ctx, l_prime, r_prime, 0, fuel);
+    assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_prime), rho) as int <= interp(to_model(r_prime), rho) as int);
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_prime), rho) == interp(to_model(l), rho));
+    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_prime), rho) == interp(to_model(r), rho));
+    assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho)) by {
+        if result {
+            assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho) by {
+                assert(interp(to_model(l_prime), rho) as int <= interp(to_model(r_prime), rho) as int);
+                assert(interp(to_model(l_prime), rho) == interp(to_model(l), rho));
+                assert(interp(to_model(r_prime), rho) == interp(to_model(r), rho));
+            }
+        }
+    }
+    result
+}
+
+/// Real-arena counterpart to `TcCtx::eq_antisymm` (`level.rs:235`):
+/// `leq(l,r) && leq(r,l)`. Sound: `result == true` only when the two
+/// levels genuinely denote the same value under every parameter
+/// assignment.
+pub fn verified_eq_antisymm<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, fuel: u32) -> (result: bool)
+    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho)
+{
+    let a = verified_leq(ctx, l, r, fuel);
+    let b = verified_leq(ctx, r, l, fuel);
+    let result = a && b;
+    assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho));
+    assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) <= interp(to_model(l), rho));
+    result
+}
+
+/// Real-arena counterpart to `TcCtx::eq_antisymm_many` (`level.rs:237-244`):
+/// pointwise `eq_antisymm` over two equal-length level lists, `false`
+/// immediately on a length mismatch (matching the real function exactly).
+pub fn verified_eq_antisymm_many<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>, fuel: u32) -> (result: bool)
+    ensures result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len()
+        && forall |i: int| #![trigger to_model_of_levels(xs)[i]] 0 <= i < to_model_of_levels(xs).len() ==>
+            forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(xs)[i], rho) == interp(to_model_of_levels(ys)[i], rho)
+{
+    let xs_vec = read_levels_vec(ctx, xs);
+    let ys_vec = read_levels_vec(ctx, ys);
+    if xs_vec.len() != ys_vec.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < xs_vec.len()
+        invariant
+            xs_vec@.len() == ys_vec@.len(),
+            i <= xs_vec@.len(),
+            forall |j: int| #![trigger xs_vec@[j]] 0 <= j < i ==>
+                forall |rho: Map<nat, nat>| #[trigger] interp(to_model(xs_vec@[j]), rho) == interp(to_model(ys_vec@[j]), rho),
+            forall |j: int| 0 <= j < xs_vec@.len() ==> to_model(xs_vec@[j]) == to_model_of_levels(xs)[j],
+            forall |j: int| 0 <= j < ys_vec@.len() ==> to_model(ys_vec@[j]) == to_model_of_levels(ys)[j],
+        decreases xs_vec.len() - i
+    {
+        let ok = verified_eq_antisymm(ctx, xs_vec[i], ys_vec[i], fuel);
+        if !ok {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 }
