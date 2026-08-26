@@ -307,10 +307,21 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
 /// `dbj_level_counter`), a deliberate scoping choice for the first,
 /// single-binder bridge that needs this (`verified_def_eq_binder_step`);
 /// a future multi-binder telescoping bridge would need to extend this.
+/// Also states the link to the OLDER, pre-existing `expr_is_local`/
+/// `expr_id` free-variable bridge (`to_model(result) ==
+/// ExprSpec::Free(expr_id(result))`) -- `is_local_shape`/`expr_is_local`
+/// are two independently-added notions of "this pointer denotes a Local"
+/// (the latter predates this session, built for `inst`/`abstr`'s bound-
+/// variable mechanics) that were never explicitly connected; stating it
+/// here, at the one place that actually constructs a fresh Local, is
+/// enough for what `verified_def_eq_binder_step`'s depth bookkeeping
+/// needs (`depth(ExprSpec::Free(_)) == 0`) without a separate linking
+/// lemma between the two notions in general.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         is_local_shape(result),
-        local_binder_type_of(result) == binder_type;
+        local_binder_type_of(result) == binder_type,
+        to_model(result) == ExprSpec::Free(expr_id(result));
 
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
