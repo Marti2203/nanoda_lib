@@ -37,7 +37,14 @@ use crate::env::{RecRule, Env};
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
 use crate::expr::Expr;
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app};
+use crate::level_arena_bridge::verified_eq_antisymm;
+#[cfg(verus_only)]
+use crate::util::LevelPtr;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
+#[cfg(verus_only)]
+use crate::level_model::interp;
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
@@ -1271,6 +1278,36 @@ pub fn verified_do_nat_bin_ble_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     };
     let le = biguint_le(&bx, &by);
     ctx.bool_to_expr(le)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_sort`
+/// (`tc.rs:1165-1170`): `Sort(l) def_eq Sort(r) <=> eq_antisymm(l,r)` --
+/// the one genuine LEAF of `def_eq`'s whole mutually-recursive cluster
+/// (no further `def_eq` recursion inside it at all), and the first piece
+/// of that cluster bridged. Was unreachable before `verified_leq`/
+/// `verified_eq_antisymm` (previous commit) existed, since `eq_antisymm`
+/// is exactly what this bottoms out in.
+pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(r) => exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+            to_model(x) == ExprSpec::Sort(level_to_model(lx))
+            && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+            && (r ==> forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho)),
+        None => true,
+    }
+{
+    let x_el = ctx.read_expr(x);
+    let lx = match expr_as_sort(&x_el) {
+        Some(l) => l,
+        None => return None,
+    };
+    let y_el = ctx.read_expr(y);
+    let ly = match expr_as_sort(&y_el) {
+        Some(l) => l,
+        None => return None,
+    };
+    let r = verified_eq_antisymm(ctx, lx, ly, fuel);
+    Some(r)
 }
 
 }
