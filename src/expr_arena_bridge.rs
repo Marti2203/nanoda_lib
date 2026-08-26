@@ -47,7 +47,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, max_var_below, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -861,6 +861,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         bound + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => exists|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
+            && spine_bind(to_model(e_fun), n) is Some
             && to_model(r) == spine_app(
                 spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
                 Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
@@ -1023,14 +1024,34 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
 /// facts about the WHOLE spine `e` -- `spine_app_decompose` is the
 /// converse of `spine_app`'s own construction, carrying the whole-spine
 /// facts down to the peeled head and each argument.
-pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+///
+/// Also proves a growth bound on the result (`max_var_below`/`depth`
+/// grow by at most a computable amount from the input's own `d`), via
+/// `spine_reduce_bounds`/`spine_app_bounds` (`beta_model.rs`) at the beta
+/// case -- the WITHIN-one-call half of what a fixpoint composing several
+/// calls needs. `args.len()` is bounded by `d` itself (`spine_app_
+/// decompose`'s own `args.len() <= depth(spine_app(...))` fact -- a real
+/// structural truth, not a chosen restriction: an App-spine with `n`
+/// arguments genuinely has depth at least `n`), so NO separate cap on how
+/// many arguments one redex may apply is imposed -- the cost of that
+/// generality is that the growth formula below is CUBIC in `d` (`spine_
+/// reduce_bounds`'s quadratic-in-`args.len()` growth, itself scaled by
+/// `args.len() <= d` once more), so `d` itself must stay modest (low
+/// thousands, not tens of thousands) for the arithmetic to fit in
+/// `0xFFFF_0000` -- a real, motivated numeric consequence of proving the
+/// fully general (any `args.len()`) statement, not an arbitrary choice.
+pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= 60000,
-        bound + 10 <= 0xFFFF_0000,
+        depth(to_model(e)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)),
+        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+            && nlbv(to_model(r)) <= 0
+            && max_var_below(to_model(r), bound + d * d * d + d * d)
+            && depth(to_model(r)) <= d * d + 4 * d + 1,
         None => true,
     }
 {
@@ -1038,18 +1059,101 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
         Some((e_fun, args)) => {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             proof {
+                assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                 spine_app_decompose(to_model(e_fun), args_model, bound);
                 assert forall|i: int| 0 <= i < args@.len() implies
-                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound)
+                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound) && depth(to_model(args@[i])) <= d
                 by {
                     assert(args_model[i] == to_model(args@[i]));
                 }
+                assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
+                assert(depth(spine_app(to_model(e_fun), args_model)) == depth(to_model(e)));
+                assert(args_model.len() <= d);
             }
             let e_fun_el = ctx.read_expr(e_fun);
             if args.len() > 0 {
                 if let Some(_) = expr_as_lambda(&e_fun_el) {
                     return match verified_whnf_beta_step(ctx, e_fun, &args, fuel, bound) {
-                        Some(r) => Some(r),
+                        Some(r) => {
+                            proof {
+                                assert(to_model(e) == spine_app(to_model(e_fun), args_model));
+                                spine_app_decompose(to_model(e_fun), args_model, bound);
+                                assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
+                                assert(depth(spine_app(to_model(e_fun), args_model)) == depth(to_model(e)));
+                                assert(args_model.len() <= d);
+                                assert(nlbv(to_model(e_fun)) <= 0);
+                                assert(depth(to_model(e_fun)) <= d);
+                                let ghost n = choose|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
+                                    && spine_bind(to_model(e_fun), n) is Some
+                                    && to_model(r) == spine_app(
+                                        spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
+                                        Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                                    );
+                                assert(n <= args_model.len());
+                                let ghost prefix = args_model.subrange(0, n as int);
+                                let ghost suffix = args_model.subrange(n as int, args_model.len() as int);
+                                assert(prefix.len() == n);
+                                assert(suffix.len() == args_model.len() - n);
+                                assert(prefix =~= Seq::new(n, |i: int| to_model(args@[i])));
+                                assert(suffix =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
+                                assert(to_model(r) == spine_app(spine_reduce(to_model(e_fun), prefix), suffix));
+                                assert forall|i: int| 0 <= i < prefix.len() implies
+                                    nlbv(prefix[i]) <= 0 && max_var_below(prefix[i], bound) && depth(prefix[i]) <= d
+                                by { assert(prefix[i] == args_model[i]); }
+                                assert forall|i: int| 0 <= i < suffix.len() implies
+                                    nlbv(suffix[i]) <= 0 && max_var_below(suffix[i], bound) && depth(suffix[i]) <= d
+                                by { assert(suffix[i] == args_model[n as int + i]); }
+                                assert(prefix.len() <= d) by (nonlinear_arith)
+                                    requires prefix.len() == n, n <= args_model.len(), args_model.len() <= d
+                                {}
+                                assert(suffix.len() <= d) by (nonlinear_arith)
+                                    requires suffix.len() == args_model.len() - n, n <= args_model.len(), args_model.len() <= d
+                                {}
+                                assert(bound + prefix.len() * d + prefix.len() * prefix.len() * d + prefix.len() + 1 <= 0xFFFF_0000)
+                                    by (nonlinear_arith)
+                                    requires
+                                        prefix.len() <= d,
+                                        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
+                                {}
+                                spine_reduce_bounds(to_model(e_fun), prefix, bound, d, d);
+                                let ghost sr_bound = (bound + prefix.len() * d + prefix.len() * prefix.len() * d) as nat;
+                                let ghost sr_depth = (d + d * (prefix.len() + 1)) as nat;
+                                assert(max_var_below(spine_reduce(to_model(e_fun), prefix), sr_bound));
+                                assert(depth(spine_reduce(to_model(e_fun), prefix)) <= sr_depth);
+                                assert(bound <= sr_bound) by (nonlinear_arith)
+                                    requires sr_bound == bound + prefix.len() * d + prefix.len() * prefix.len() * d
+                                {}
+                                assert forall|i: int| 0 <= i < suffix.len() implies max_var_below(suffix[i], sr_bound) by {
+                                    max_var_below_mono(suffix[i], bound, sr_bound);
+                                }
+                                spine_app_bounds(spine_reduce(to_model(e_fun), prefix), suffix, sr_bound, sr_depth, d);
+                                assert(sr_bound <= bound + d * d * d + d * d) by (nonlinear_arith)
+                                    requires
+                                        prefix.len() <= d,
+                                        sr_bound == bound + prefix.len() * d + prefix.len() * prefix.len() * d,
+                                {}
+                                max_var_below_mono(to_model(r), sr_bound, bound + d * d * d + d * d);
+                                assert(sr_depth + d + suffix.len() <= d * d + 4 * d + 1) by (nonlinear_arith)
+                                    requires
+                                        prefix.len() <= d,
+                                        suffix.len() <= d,
+                                        sr_depth == d + d * (prefix.len() + 1),
+                                {}
+                                assert(spine_bind(to_model(e_fun), n) is Some);
+                                let ghost peeled_model = spine_bind(to_model(e_fun), n)->0;
+                                assert(spine_bind(to_model(e_fun), n) == Some(peeled_model));
+                                assert(nlbv(to_model(e_fun)) <= 0);
+                                spine_bind_nlbv(to_model(e_fun), n, peeled_model, 0);
+                                assert(nlbv(peeled_model) <= n);
+                                subst_full_nlbv_bound_n(peeled_model, prefix, 0);
+                                spine_reduce_eq_subst_full(to_model(e_fun), prefix, peeled_model, bound);
+                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(peeled_model, prefix, 0));
+                                assert(nlbv(spine_reduce(to_model(e_fun), prefix)) <= 0);
+                                spine_app_nlbv(spine_reduce(to_model(e_fun), prefix), suffix);
+                                assert(nlbv(to_model(r)) <= 0);
+                            }
+                            Some(r)
+                        }
                         None => None,
                     };
                 }
@@ -1057,12 +1161,56 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
             if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
                 assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
                 return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, bound) {
-                    Some(r) => Some(r),
+                    Some(r) => {
+                        proof {
+                            assert(max_var_below(to_model(e_fun), bound));
+                            assert(max_var_below(to_model(body), bound));
+                            assert(max_var_below(to_model(val), bound));
+                            assert(depth(to_model(body)) < depth(to_model(e_fun)));
+                            assert(depth(to_model(body)) < d);
+                            assert(nlbv(to_model(body)) <= 1);
+                            assert(nlbv(to_model(val)) <= 0);
+                            subst1_max_var_below(bound, to_model(body), to_model(val));
+                            subst1_depth_bound(to_model(body), to_model(val));
+                            let ghost new_bound = (bound + 1 + depth(to_model(body))) as nat;
+                            let ghost new_hd = (depth(to_model(body)) + depth(to_model(val))) as nat;
+                            assert(max_var_below(subst1(to_model(body), to_model(val)), new_bound));
+                            assert(depth(subst1(to_model(body), to_model(val))) <= new_hd);
+                            assert(new_bound <= bound + d);
+                            assert(new_hd <= 2 * d);
+                            assert(to_model(e) == spine_app(to_model(e_fun), args_model));
+                            spine_app_decompose(to_model(e_fun), args_model, bound);
+                            assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
+                            assert(depth(spine_app(to_model(e_fun), args_model)) == depth(to_model(e)));
+                            assert(args_model.len() <= d);
+                            assert forall|i: int| 0 <= i < args_model.len() implies
+                                max_var_below(args_model[i], new_bound) && depth(args_model[i]) <= d
+                            by {
+                                max_var_below_mono(args_model[i], bound, new_bound);
+                            }
+                            spine_app_bounds(subst1(to_model(body), to_model(val)), args_model, new_bound, new_hd, d);
+                            assert(to_model(r) == spine_app(subst1(to_model(body), to_model(val)), args_model));
+                            assert(new_bound <= bound + d * d * d + d * d) by (nonlinear_arith) requires new_bound <= bound + d {}
+                            assert(new_hd + d + args_model.len() <= d * d + 4 * d + 1) by (nonlinear_arith)
+                                requires new_hd <= 2 * d, args_model.len() <= d
+                            {}
+                            max_var_below_mono(to_model(r), new_bound, bound + d * d * d + d * d);
+                            subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
+                            assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                            subst_full_nlbv_bound(to_model(body), to_model(val), 0);
+                            assert(nlbv(subst_full(to_model(body), seq![to_model(val)], 0)) <= 0);
+                            assert(nlbv(subst1(to_model(body), to_model(val))) <= 0);
+                            spine_app_nlbv(subst1(to_model(body), to_model(val)), args_model);
+                            assert(nlbv(to_model(r)) <= 0);
+                        }
+                        Some(r)
+                    }
                     None => None,
                 };
             }
             proof {
                 pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+                max_var_below_mono(to_model(e), bound, bound + d * d * d + d * d);
             }
             Some(e)
         }

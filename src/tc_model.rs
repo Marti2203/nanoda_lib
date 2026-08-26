@@ -271,12 +271,13 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 /// vec_model`/`const_id`/`const_levels_vec` connect the peeled `Const`
 /// node's `to_model` to `pstep_star_proj`'s existential witness the same
 /// way `verified_unfold_def_step` already does for delta.
-pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(structure)) <= 0,
         max_var_below(to_model(structure), bound),
-        depth(to_model(structure)) <= 60000,
-        bound + 10 <= 0xFFFF_0000,
+        depth(to_model(structure)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
         idx <= 0xFFFF_0000,
     ensures match result {
         Some(r) => pstep_star_proj(
@@ -289,7 +290,7 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         None => true,
     }
 {
-    let whnfd = match verified_whnf_no_unfolding_step(ctx, structure, fuel, bound) {
+    let whnfd = match verified_whnf_no_unfolding_step(ctx, structure, fuel, bound, d) {
         Some(w) => w,
         None => return None,
     };

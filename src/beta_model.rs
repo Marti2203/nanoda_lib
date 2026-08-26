@@ -6764,6 +6764,93 @@ pub proof fn subst_full_nlbv_bound(e: ExprSpec, s: ExprSpec, offset: nat)
     }
 }
 
+/// `subst_full_nlbv_bound` generalized from a single substitution
+/// (`seq![s]`) to an arbitrary list -- same structural induction, same
+/// per-case reasoning, just indexing into `substs` instead of returning
+/// the one fixed `s`. Needed for `spine_reduce`'s telescoped substitution
+/// (which substitutes `args.len()` values at once via one `subst_full`
+/// call, per `spine_reduce_eq_subst_full`), not just a single `subst1`.
+pub proof fn subst_full_nlbv_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
+    requires
+        nlbv(e) <= offset + substs.len(),
+        forall |i: int| 0 <= i < substs.len() ==> nlbv(substs[i]) <= 0,
+    ensures nlbv(subst_full(e, substs, offset)) <= offset
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            assert(nlbv(e) == i as nat + 1);
+            if (i as nat) < offset {
+                assert(subst_full(e, substs, offset) == e);
+            } else if (i as nat - offset) < substs.len() {
+                let j = (substs.len() - 1 - (i as nat - offset)) as int;
+                assert(subst_full(e, substs, offset) == substs[j]);
+                assert(nlbv(substs[j]) <= 0);
+            } else {
+                assert(false);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(subst_full(e, substs, offset) == e);
+        }
+        ExprSpec::App(f, a) => {
+            subst_full_nlbv_bound_n(*f, substs, offset);
+            subst_full_nlbv_bound_n(*a, substs, offset);
+            assert(subst_full(e, substs, offset) == ExprSpec::App(
+                Box::new(subst_full(*f, substs, offset)),
+                Box::new(subst_full(*a, substs, offset)),
+            ));
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_full_nlbv_bound_n(*t, substs, offset);
+            subst_full_nlbv_bound_n(*b, substs, (offset + 1) as nat);
+            assert(subst_full(e, substs, offset) == ExprSpec::Bind(
+                Box::new(subst_full(*t, substs, offset)),
+                Box::new(subst_full(*b, substs, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_nlbv_bound_n(*t, substs, offset);
+            subst_full_nlbv_bound_n(*v, substs, offset);
+            subst_full_nlbv_bound_n(*b, substs, (offset + 1) as nat);
+            assert(subst_full(e, substs, offset) == ExprSpec::Let(
+                Box::new(subst_full(*t, substs, offset)),
+                Box::new(subst_full(*v, substs, offset)),
+                Box::new(subst_full(*b, substs, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Proj(st) => {
+            subst_full_nlbv_bound_n(*st, substs, offset);
+            assert(subst_full(e, substs, offset) == ExprSpec::Proj(Box::new(subst_full(*st, substs, offset))));
+        }
+    }
+}
+
+/// `spine_app` preserves closedness -- a plain structural fact (`spine_
+/// app` only ever wraps in `App`, and `nlbv(App(f,a)) == max(nlbv(f),
+/// nlbv(a))`), needed alongside `subst_full_nlbv_bound_n` to close the
+/// loop on `verified_whnf_beta_step`'s ACTUAL output (`spine_app` of a
+/// `spine_reduce`d prefix with the untouched argument suffix).
+pub proof fn spine_app_nlbv(base: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        nlbv(base) <= 0,
+        forall |i: int| 0 <= i < args.len() ==> nlbv(args[i]) <= 0,
+    ensures nlbv(spine_app(base, args)) <= 0
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let prefix = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, prefix)), Box::new(last)));
+        assert forall |i: int| 0 <= i < prefix.len() implies nlbv(prefix[i]) <= 0 by {
+            assert(prefix[i] == args[i]);
+        }
+        spine_app_nlbv(base, prefix);
+        assert(nlbv(last) <= 0);
+    }
+}
+
 /// The composition law that lets the main telescopic-reduction theorem
 /// process `args` one at a time and still land on `subst_full` against
 /// the WHOLE list: substituting `s` in first (at the position it lands,
@@ -7008,6 +7095,7 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
         nlbv(base) == 0,
         max_var_below(base, bound),
         depth(base) <= depth(spine_app(base, args)),
+        args.len() <= depth(spine_app(base, args)),
         forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0
             && max_var_below(args[i], bound) && depth(args[i]) <= depth(spine_app(base, args)),
     decreases args.len()
@@ -7024,6 +7112,14 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
         assert(max_var_below(last, bound));
         assert(depth(spine_app(base, prefix)) <= depth(spine_app(base, args)));
         assert(depth(last) <= depth(spine_app(base, args)));
+        assert(prefix.len() <= depth(spine_app(base, prefix)));
+        assert(depth(spine_app(base, args)) >= 1 + depth(spine_app(base, prefix)));
+        assert(args.len() <= depth(spine_app(base, args))) by (nonlinear_arith)
+            requires
+                prefix.len() <= depth(spine_app(base, prefix)),
+                depth(spine_app(base, args)) >= 1 + depth(spine_app(base, prefix)),
+                args.len() == prefix.len() + 1,
+        {}
         assert forall |i: int| 0 <= i < args.len() implies nlbv(#[trigger] args[i]) == 0
             && max_var_below(args[i], bound) && depth(args[i]) <= depth(spine_app(base, args)) by {
             if i < args.len() - 1 {
