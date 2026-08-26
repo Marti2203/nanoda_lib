@@ -1,11 +1,14 @@
-//! Exploratory Verus model of `env.rs`'s `ReducibilityHint::is_lt`.
+//! Exploratory Verus model of `env.rs`'s `ReducibilityHint::is_lt`, plus a
+//! real trust boundary for `Env`'s declaration lookups (`get_declar_val`,
+//! `get_constructor`'s `num_params`) that `tc.rs`'s delta reduction and
+//! `Proj` reduction need.
 //!
-//! Most of `env.rs` is thin `IndexMap`/`HashMap` lookup plumbing (`Env`'s
-//! `get_declar`/`get_inductive`/etc., the `cutoff`-based visibility scheme)
-//! over an external, unverified map type -- there's no real algorithmic
-//! content there to formally model beyond what's already evident from
-//! inspection, so it isn't given a standalone model the way `name.rs`'s
-//! functions were.
+//! Most of `env.rs` beyond that is thin `IndexMap`/`HashMap` lookup
+//! plumbing (`Env`'s `get_declar`/`get_inductive`/etc., the `cutoff`-based
+//! visibility scheme) over an external, unverified map type -- there's no
+//! real algorithmic content there to formally model beyond what's already
+//! evident from inspection, so it isn't given a standalone model the way
+//! `name.rs`'s functions were.
 //!
 //! `ReducibilityHint::is_lt`, though, is genuinely worth pinning down:
 //! `tc.rs`'s delta reduction (unfolding definitions during `def_eq`) uses it
@@ -41,6 +44,17 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below, env_wf};
+
+/// `Env::get_constructor` returns `Option<&ConstructorData>`, a reference
+/// to a struct with several fields -- rather than registering the whole
+/// struct with Verus, this plain wrapper extracts just the one field
+/// `reduce_proj` (`tc.rs:447-458`) actually needs, the same "extract only
+/// what's needed, axiomatize that" approach `rec_rule_ctor_name` (`tc_model.rs`)
+/// already uses for `RecRule`.
+#[allow(dead_code)]
+pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
+    env.get_constructor(n).map(|cd| cd.num_params)
+}
 
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> bool {
@@ -189,6 +203,18 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
             && nlbv(expr_to_model(val)) == 0
             && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
+    };
+
+/// A real environment's constructors, as a NAME-id-keyed `num_params` map
+/// -- `reduce_proj`'s only real dependency on `ConstructorData`.
+pub uninterp spec fn to_model_of_ctor_num_params<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
+
+pub assume_specification<'x, 'a> [get_constructor_num_params] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
+    ensures match result {
+        Some(num_params) =>
+            to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
+            && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
+        None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
     };
 
 /// A real declaration's fetched value, alone in an otherwise-empty `env`,
