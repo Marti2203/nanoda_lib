@@ -35,6 +35,10 @@ use crate::util::{ExprPtr, NamePtr, LevelsPtr};
 use crate::expr::{Expr, BinderStyle};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end};
 #[cfg(verus_only)]
@@ -172,16 +176,30 @@ pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(Ex
 
 /// `Const`'s name/levels, keyed by the pointer (like `expr_id`) --
 /// `const_name_of`/`const_levels_of` are a separate side channel from
-/// `to_model`, carrying the FULL name/levels payload `ExprSpec::Const`'s
-/// single `u32` id can't (see `ExprSpec`'s doc comment: the id "mirrors
-/// `Free`'s pointer-identity convention... not the name's actual
-/// content"). `const_id` bridges the two: `is_const_shape_model` below
-/// is the trusted fact that a `Const`-shaped pointer's `to_model` is
-/// exactly `ExprSpec::Const(const_id(ptr))`.
+/// `to_model`, carrying the real `NamePtr`/`LevelsPtr` that `to_model`'s
+/// `ExprSpec::Const(u64, Vec<LevelSpec>)` payload is derived from.
+/// `const_id` is NOT a fresh axiomatized identity -- it's DERIVED from
+/// `name_id` (the pre-existing NAME-identity bridge in
+/// `level_arena_bridge.rs`), so "same name implies same id" falls out of
+/// `name_id_injective` automatically rather than needing its own axiom.
+/// `const_levels_vec` is the analogous Vec-shaped side channel for the
+/// levels payload, connected to `to_model_of_levels` by
+/// `const_levels_vec_model` below. `is_const_shape_model` is the trusted
+/// fact that a `Const`-shaped pointer's `to_model` is exactly
+/// `ExprSpec::Const(const_id(ptr), const_levels_vec(ptr))`.
 pub uninterp spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool;
 pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
 pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
-pub uninterp spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u32;
+pub open spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u64 {
+    name_id(const_name_of(ptr))
+}
+pub uninterp spec fn const_levels_vec<'a>(ptr: ExprPtr<'a>) -> Vec<LevelSpec>;
+
+#[verifier::external_body]
+pub proof fn const_levels_vec_model<'a>(ptr: ExprPtr<'a>)
+    ensures const_levels_vec(ptr)@ =~= to_model_of_levels(const_levels_of(ptr))
+{
+}
 
 /// The trust boundary connecting `is_const_shape` to `to_model`: stated
 /// as a standalone callable lemma (rather than folded into
@@ -193,7 +211,7 @@ pub uninterp spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u32;
 #[verifier::external_body]
 pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
     requires is_const_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::Const(const_id(ptr))
+    ensures to_model(ptr) == ExprSpec::Const(const_id(ptr), const_levels_vec(ptr))
 {
 }
 
@@ -338,7 +356,7 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
         proof {
             if is_const_shape(e) {
                 is_const_shape_model(e);
-                assert(to_model(e) == ExprSpec::Const(const_id(e)));
+                assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
             } else {
                 assert(to_model(e) == ExprSpec::Closed);
             }
@@ -449,7 +467,7 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         proof {
             if is_const_shape(e) {
                 is_const_shape_model(e);
-                assert(to_model(e) == ExprSpec::Const(const_id(e)));
+                assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
             } else {
                 assert(to_model(e) == ExprSpec::Closed);
             }
@@ -680,7 +698,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
                 Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
             )
-            && pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
+            && pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
     }
 {
@@ -724,17 +742,17 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                         let full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                         assert(consumed_model + remaining_model =~= full_model);
 
-                        pstep_star_spine_reduce(Map::<u32, ExprSpec>::empty(), to_model(e_fun), consumed_model);
-                        assert(pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
+                        pstep_star_spine_reduce(Map::<u64, ExprSpec>::empty(), to_model(e_fun), consumed_model);
+                        assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
 
                         pstep_spine_app_star(
-                            Map::<u32, ExprSpec>::empty(),
+                            Map::<u64, ExprSpec>::empty(),
                             spine_app(to_model(e_fun), consumed_model),
                             spine_reduce(to_model(e_fun), consumed_model),
                             remaining_model,
                         );
                         assert(pstep_star(
-                            Map::<u32, ExprSpec>::empty(),
+                            Map::<u64, ExprSpec>::empty(),
                             spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model),
                             spine_app(spine_reduce(to_model(e_fun), consumed_model), remaining_model),
                         ));
@@ -743,7 +761,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                         assert(spine_app(to_model(e_fun), full_model)
                             == spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model));
 
-                        assert(pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), full_model), to_model(result)));
+                        assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), full_model), to_model(result)));
                     }
                     Some(result)
                 }
@@ -780,7 +798,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         bound + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
+            && pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
     }
 {
@@ -803,14 +821,14 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 assert(to_model(result) == spine_app(to_model(inst_result), args_model));
                 assert(to_model(result) == spine_app(subst1(to_model(body), to_model(val)), args_model));
 
-                assert(pstep(Map::<u32, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
-                    assert(pstep(Map::<u32, ExprSpec>::empty(), to_model(body), to_model(body)));
-                    assert(pstep(Map::<u32, ExprSpec>::empty(), to_model(val), to_model(val)));
+                assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
+                    assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(body), to_model(body)));
+                    assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(val), to_model(val)));
                 }
-                pstep_star_one(Map::<u32, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)));
-                pstep_spine_app_star(Map::<u32, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
-                assert(pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
-                assert(pstep_star(Map::<u32, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
+                pstep_star_one(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)));
+                pstep_spine_app_star(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
+                assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
+                assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
             }
             Some(result)
         }

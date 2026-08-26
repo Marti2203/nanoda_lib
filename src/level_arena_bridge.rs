@@ -29,7 +29,7 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{TcCtx, LevelPtr, NamePtr, Ptr};
+use crate::util::{TcCtx, LevelPtr, LevelsPtr, NamePtr, Ptr};
 use crate::level::Level;
 use crate::name::Name;
 #[allow(unused_imports)]
@@ -81,6 +81,17 @@ pub(crate) fn level_ptr_eq<'t>(a: LevelPtr<'t>, b: LevelPtr<'t>) -> bool {
     a == b
 }
 
+/// Plain owned-`Vec` counterpart of `TcCtx::read_levels`, purely so Verus
+/// has something to attach a contract to -- `Arc<[LevelPtr]>` (what
+/// `read_levels` actually returns) isn't given a spec contract elsewhere
+/// in this bridge, matching how this file already routes real-`Expr`
+/// pattern-matching through plain helper functions before axiomatizing
+/// them (see `level_as_succ` etc. above).
+#[allow(dead_code)]
+pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> Vec<LevelPtr<'t>> {
+    ctx.read_levels(p).iter().copied().collect()
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -130,6 +141,17 @@ pub assume_specification<'t> [name_ptr_eq] (a: NamePtr<'t>, b: NamePtr<'t>) -> (
 
 pub assume_specification<'t> [level_ptr_eq] (a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
     ensures result == (a == b);
+
+/// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
+/// declaration's `uparams`, or a `Const`'s level arguments) denotes: the
+/// sequence of models its elements denote, in order. Same trust boundary
+/// as `to_model` itself, just lifted to lists.
+pub uninterp spec fn to_model_of_levels<'a>(ptr: LevelsPtr<'a>) -> Seq<LevelSpec>;
+
+pub assume_specification<'t, 'p> [read_levels_vec] (ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<LevelPtr<'t>>)
+    ensures
+        result@.len() == to_model_of_levels(p).len(),
+        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;

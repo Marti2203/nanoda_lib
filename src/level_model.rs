@@ -23,6 +23,7 @@ verus! {
 /// semantics below (only equality) — and unlike a ghost `nat`, `u64` is a
 /// real runtime value, so exec code can actually compare two params' ids
 /// (needed by `leq_core_partial` below).
+#[derive(Debug, PartialEq)]
 pub enum LevelSpec {
     Zero,
     Succ(Box<LevelSpec>),

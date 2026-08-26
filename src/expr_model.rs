@@ -28,6 +28,7 @@
 //! its own one-child variant (`structure`, same offset, no shift at all).
 
 use vstd::prelude::*;
+use crate::level_model::LevelSpec;
 
 verus! {
 
@@ -35,21 +36,34 @@ verus! {
 pub enum ExprSpec {
     Var(u32),
     Free(u32),
+    /// Stands in for `StringLit`/`NatLit` only now -- `Sort` and `Const`
+    /// used to collapse into this too (their payload was irrelevant to
+    /// pure de-Bruijn substitution), but both now carry real level data
+    /// (see `Sort`/`Const` below) so `subst_expr_levels_model` can be
+    /// genuinely modeled, not just trusted at the real-code bridge.
     Closed,
-    /// A named global constant reference (`Expr::Const`), distinguished
-    /// from the undifferentiated `Closed` leaf specifically so a future
-    /// delta-reduction rule can be stated at all: `Closed` alone (which
-    /// `Sort`/`StringLit`/`NatLit` still collapse to, per this file's
-    /// original simplification -- their payload is equally irrelevant to
-    /// substitution and there's no analogous "unfold by identity" rule
-    /// for them) carries no identity to unfold BY. Bound-variable-inert
-    /// in every other respect, identically to `Closed`, in every
-    /// function below -- a constant reference is never itself a loose
-    /// bound variable or a `Local`, so it behaves exactly like `Closed`
-    /// for `nlbv`/`has_fv`/`subst_full`/`abstr_full` and their exec
-    /// counterparts. The `u32` mirrors `Free`'s pointer-identity
-    /// convention (an uninterpreted id, not the name's actual content).
-    Const(u32),
+    /// `Expr::Sort`'s universe level. Bound-variable-inert exactly like
+    /// `Closed` in every function below -- substitution never touches a
+    /// `Sort`'s level, only `subst_expr_levels_model` does.
+    Sort(LevelSpec),
+    /// A named global constant reference (`Expr::Const`), carrying both
+    /// its name identity and its level ARGUMENTS -- unlike the bare id
+    /// this variant started as, this now supports genuinely relating two
+    /// occurrences of the SAME constant at DIFFERENT levels (needed to
+    /// state `unfold_def`'s real level-substitution step at all, not just
+    /// trust its result per-occurrence). The `u64` mirrors
+    /// `level_model::LevelSpec::Param`'s `name_id`-based convention
+    /// (an uninterpreted NAME id, not the name's actual content) --
+    /// deliberately NAME identity, not per-occurrence identity, since two
+    /// `Const` nodes with the same name but different levels must share
+    /// this id to be related by delta reduction at all. Bound-variable-
+    /// inert in every other respect, identically to `Closed`/`Sort`, in
+    /// every function below -- a constant reference is never itself a
+    /// loose bound variable or a `Local`, so it behaves exactly like
+    /// `Closed` for `nlbv`/`has_fv`/`subst_full`/`abstr_full` and their
+    /// exec counterparts (none of which ever look at, let alone touch,
+    /// its levels).
+    Const(u64, Vec<LevelSpec>),
     App(Box<ExprSpec>, Box<ExprSpec>),
     Bind(Box<ExprSpec>, Box<ExprSpec>),
     Let(Box<ExprSpec>, Box<ExprSpec>, Box<ExprSpec>),
@@ -64,7 +78,7 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
 {
     match e {
         ExprSpec::Var(i) => i as nat + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => if nlbv(*f) >= nlbv(*a) { nlbv(*f) } else { nlbv(*a) },
         ExprSpec::Bind(t, b) => {
             let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
@@ -84,7 +98,7 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
@@ -104,7 +118,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) { depth(*f) } else { depth(*a) },
         ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) { depth(*t) } else { depth(*b) },
         ExprSpec::Let(t, v, b) => {
@@ -135,7 +149,7 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
                 e
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(
             Box::new(subst_full(*f, substs, offset)),
             Box::new(subst_full(*a, substs, offset)),
@@ -165,7 +179,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
 {
     match e {
         ExprSpec::Var(_) => {}
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
         ExprSpec::App(f, a) => {
             subst_full_noop(*f, substs, offset);
             subst_full_noop(*a, substs, offset);
@@ -185,45 +199,130 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
     }
 }
 
+/// Structural duplicate of a level list, needed by `dup`'s `Const` arm for
+/// the same reason `dup` itself exists: `Vec::index` only gives a
+/// reference, and neither `ExprSpec` nor `LevelSpec` is (or can cheaply
+/// be) `Copy`/`Clone`.
+pub fn dup_levels(ls: &Vec<LevelSpec>) -> (result: Vec<LevelSpec>)
+    ensures result@ =~= ls@
+{
+    let mut result: Vec<LevelSpec> = Vec::new();
+    let mut i: usize = 0;
+    while i < ls.len()
+        invariant
+            i <= ls.len(),
+            result@ =~= ls@.subrange(0, i as int),
+        decreases ls.len() - i
+    {
+        let l2 = crate::level_model::dup(&ls[i]);
+        assert(l2 == ls@[i as int]);
+        result.push(l2);
+        i += 1;
+    }
+    result
+}
+
+/// Structural equality for `ExprSpec`, used in place of native `==` wherever
+/// a `Const`'s `Vec<LevelSpec>` payload is involved: this vstd fork's `Vec`
+/// `PartialEq` `assume_specification` carries no `ensures` at all, so `v1 ==
+/// v2` can never be derived from `v1@ =~= v2@` (or anything else) -- the
+/// only fact available about two `Vec`s is on their `@` views. Elsewhere
+/// (`Var`/`Free`/`Closed`/`Sort`/the `Box`-recursive shapes) this is
+/// definitionally identical to native `==`.
+pub open spec fn expr_spec_eq(a: ExprSpec, b: ExprSpec) -> bool
+    decreases a
+{
+    match (a, b) {
+        (ExprSpec::Var(i), ExprSpec::Var(j)) => i == j,
+        (ExprSpec::Free(i), ExprSpec::Free(j)) => i == j,
+        (ExprSpec::Closed, ExprSpec::Closed) => true,
+        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => l1 == l2,
+        (ExprSpec::Const(i1, ls1), ExprSpec::Const(i2, ls2)) => i1 == i2 && ls1@ =~= ls2@,
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
+            expr_spec_eq(*f1, *f2) && expr_spec_eq(*a1, *a2),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
+            expr_spec_eq(*t1, *t2) && expr_spec_eq(*b1, *b2),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
+            expr_spec_eq(*t1, *t2) && expr_spec_eq(*v1, *v2) && expr_spec_eq(*b1, *b2),
+        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => expr_spec_eq(*s1, *s2),
+        _ => false,
+    }
+}
+
+pub proof fn expr_spec_eq_refl(e: ExprSpec)
+    ensures expr_spec_eq(e, e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
+        ExprSpec::App(f, a) => {
+            expr_spec_eq_refl(*f);
+            expr_spec_eq_refl(*a);
+        }
+        ExprSpec::Bind(t, b) => {
+            expr_spec_eq_refl(*t);
+            expr_spec_eq_refl(*b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            expr_spec_eq_refl(*t);
+            expr_spec_eq_refl(*v);
+            expr_spec_eq_refl(*b);
+        }
+        ExprSpec::Proj(s) => {
+            expr_spec_eq_refl(*s);
+        }
+    }
+}
+
 /// Structural duplicate, needed because `Vec::index` only gives a
 /// reference and `ExprSpec` isn't (and, being `Box`-recursive, can't
 /// cheaply be) `Copy`/`Clone` — same situation and same fix as
 /// `level_model::dup`.
 pub fn dup(e: &ExprSpec) -> (result: ExprSpec)
-    ensures result == *e
+    ensures expr_spec_eq(result, *e)
     decreases e
 {
     match e {
         ExprSpec::Var(i) => ExprSpec::Var(*i),
         ExprSpec::Free(i) => ExprSpec::Free(*i),
         ExprSpec::Closed => ExprSpec::Closed,
-        ExprSpec::Const(i) => ExprSpec::Const(*i),
+        ExprSpec::Sort(l) => {
+            let l2 = crate::level_model::dup(l);
+            assert(l2 == *l);
+            ExprSpec::Sort(l2)
+        }
+        ExprSpec::Const(i, ls) => {
+            let ls2 = dup_levels(ls);
+            assert(ls2@ =~= ls@);
+            ExprSpec::Const(*i, ls2)
+        }
         ExprSpec::App(f, a) => {
             let sf = dup(f);
             let sa = dup(a);
-            assert(sf == **f);
-            assert(sa == **a);
+            assert(expr_spec_eq(sf, **f));
+            assert(expr_spec_eq(sa, **a));
             ExprSpec::App(Box::new(sf), Box::new(sa))
         }
         ExprSpec::Bind(t, b) => {
             let st = dup(t);
             let sb = dup(b);
-            assert(st == **t);
-            assert(sb == **b);
+            assert(expr_spec_eq(st, **t));
+            assert(expr_spec_eq(sb, **b));
             ExprSpec::Bind(Box::new(st), Box::new(sb))
         }
         ExprSpec::Let(t, v, b) => {
             let st = dup(t);
             let sv = dup(v);
             let sb = dup(b);
-            assert(st == **t);
-            assert(sv == **v);
-            assert(sb == **b);
+            assert(expr_spec_eq(st, **t));
+            assert(expr_spec_eq(sv, **v));
+            assert(expr_spec_eq(sb, **b));
             ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
         }
         ExprSpec::Proj(s) => {
             let ss = dup(s);
-            assert(ss == **s);
+            assert(expr_spec_eq(ss, **s));
             ExprSpec::Proj(Box::new(ss))
         }
     }
@@ -254,7 +353,7 @@ pub fn nlbv_exec(e: &ExprSpec) -> (result: u32)
 {
     match e {
         ExprSpec::Var(i) => *i + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => {
             let nf = nlbv_exec(f);
             let na = nlbv_exec(a);
@@ -288,11 +387,14 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
     requires
         offset as nat + depth(e) <= 1_000_000_000,
         nlbv(e) + depth(e) <= 1_000_000_000,
-    ensures result == subst_full(e, substs@, offset as nat)
+    ensures expr_spec_eq(result, subst_full(e, substs@, offset as nat))
     decreases e
 {
     if nlbv_exec(&e) <= offset {
-        proof { subst_full_noop(e, substs@, offset as nat); }
+        proof {
+            subst_full_noop(e, substs@, offset as nat);
+            assert(expr_spec_eq(e, e)) by { expr_spec_eq_refl(e); }
+        }
         e
     } else {
         match e {
@@ -304,25 +406,33 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
                     e
                 }
             }
-            ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
+            ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
             ExprSpec::App(f, a) => {
                 let sf = inst_model(*f, substs, offset);
                 let sa = inst_model(*a, substs, offset);
+                assert(expr_spec_eq(sf, subst_full(*f, substs@, offset as nat)));
+                assert(expr_spec_eq(sa, subst_full(*a, substs@, offset as nat)));
                 ExprSpec::App(Box::new(sf), Box::new(sa))
             }
             ExprSpec::Bind(t, b) => {
                 let st = inst_model(*t, substs, offset);
                 let sb = inst_model(*b, substs, offset + 1);
+                assert(expr_spec_eq(st, subst_full(*t, substs@, offset as nat)));
+                assert(expr_spec_eq(sb, subst_full(*b, substs@, (offset + 1) as nat)));
                 ExprSpec::Bind(Box::new(st), Box::new(sb))
             }
             ExprSpec::Let(t, v, b) => {
                 let st = inst_model(*t, substs, offset);
                 let sv = inst_model(*v, substs, offset);
                 let sb = inst_model(*b, substs, offset + 1);
+                assert(expr_spec_eq(st, subst_full(*t, substs@, offset as nat)));
+                assert(expr_spec_eq(sv, subst_full(*v, substs@, offset as nat)));
+                assert(expr_spec_eq(sb, subst_full(*b, substs@, (offset + 1) as nat)));
                 ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
             }
             ExprSpec::Proj(s) => {
                 let ss = inst_model(*s, substs, offset);
+                assert(expr_spec_eq(ss, subst_full(*s, substs@, offset as nat)));
                 ExprSpec::Proj(Box::new(ss))
             }
         }
@@ -356,7 +466,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
         ExprSpec::Free(id) => match find_from_end(locals, id) {
             Some(p) => ExprSpec::Var((offset + p) as u32),
             None => e,
@@ -389,7 +499,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => {}
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
         ExprSpec::Free(_) => {}
         ExprSpec::App(f, a) => {
             abstr_full_noop(*f, locals, offset);
@@ -416,7 +526,7 @@ pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => {
             let rf = has_fv_exec(f);
@@ -456,7 +566,7 @@ pub fn abstr_model(e: ExprSpec, locals: &[u32], offset: u32) -> (result: ExprSpe
         e
     } else {
         match e {
-            ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_) => e,
+            ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
             ExprSpec::Free(id) => {
                 match find_pos_from_end(locals, id) {
                     Some(p) => ExprSpec::Var(offset + p),
