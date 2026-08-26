@@ -35,7 +35,7 @@
 use vstd::prelude::*;
 use crate::env::{RecRule, Env};
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
-use crate::expr::Expr;
+use crate::expr::{Expr, BinderStyle};
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::level_arena_bridge::{verified_eq_antisymm, verified_eq_antisymm_many};
 #[cfg(verus_only)]
@@ -1569,31 +1569,45 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
     verified_def_eq_app(ctx, x, y, fuel)
 }
 
-/// Real-arena counterpart to ONE step of `tc.rs::TypeChecker::
-/// def_eq_binder_aux`'s telescoping loop (`tc.rs:873-901`, called from
-/// `def_eq_binder_multi`, `tc.rs:864-870`): opens a single matching Pi/Pi
-/// or Lambda/Lambda binder pair with one fresh local (`mk_dbj_level`),
-/// checks the (instantiated) binder types `def_eq`, then checks the
-/// (instantiated) bodies `def_eq` too. Deliberately does NOT model the
-/// real function's TELESCOPING (it doesn't loop to peel further Pi/Lambda
-/// layers the way the real `while let` does for curried binders like
-/// `A -> B -> C`) -- same "one round first" scoping choice already used
-/// for `verified_whnf_beta_step` before its fixpoint chaining, and for
-/// the same reason: peeling multiple binders needs a GROWING list of
-/// pairwise-DISTINCT fresh locals (hygiene), which `mk_dbj_level`'s
-/// bridge deliberately does not yet track (see its doc comment in
-/// `expr_arena_bridge.rs`). For a real single-binder Pi/Lambda pair (the
-/// overwhelmingly common case for non-curried types), this is already a
-/// complete, faithful bridge; only genuinely curried binders are left
-/// unmodeled here.
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_binder_aux`'s
+/// FULL telescoping loop (`tc.rs:873-901`, called from `def_eq_binder_
+/// multi`, `tc.rs:864-870`): peels every matching Pi/Pi or Lambda/Lambda
+/// binder layer in sequence (curried types like `A -> B -> C` peel THREE
+/// times, not just once), opening each with a fresh local (`mk_dbj_
+/// level`), checking each layer's (instantiated) binder types `def_eq`,
+/// then finally checking the (instantiated) trailing bodies `def_eq`
+/// once no more matching binder layers remain.
+///
+/// An earlier version of this function only peeled ONE layer, reasoning
+/// that telescoping would need a NEW freshness/distinctness trust
+/// boundary for `mk_dbj_level` (to justify that multiple fresh locals
+/// don't alias). That reasoning was too cautious: every fact this bridge
+/// states is purely STRUCTURAL (shape and `depth`), never dependent on
+/// distinctness -- `verified_inst`'s own contract doesn't care whether
+/// `substs` contains repeated/aliased values, it substitutes by position
+/// regardless. What telescoping genuinely needs is just a termination
+/// argument for the loop, which falls out for free: every substituted
+/// local has `depth == 0` (via `ExprSpec::Free`'s depth formula, see
+/// `mk_dbj_level`'s own doc comment), so `subst_full_depth_bound_n` gives
+/// `depth(inst(body, locals)) <= depth(body) + 0 == depth(body)` --
+/// instantiation NEVER grows depth when every substituted value has depth
+/// 0, at ANY accumulated `locals` length -- and the RAW (uninstantiated)
+/// next-iteration body is always strictly SHALLOWER than the current
+/// term (`depth(Bind(t,b)) == 1 + max(depth(t),depth(b)) > depth(b)`), so
+/// `depth(to_model(cur_x))` is a genuine, always-decreasing loop measure.
+///
+/// The ensures is proven once, from the FIRST binder layer only (which
+/// `def_eq_binder_multi`'s own gate guarantees exists) -- since
+/// `to_model(x)`/`to_model(y)` never change, nothing about LATER layers
+/// needs to be threaded through the loop's own invariants.
 ///
 /// Wired into `verified_def_eq`'s own dispatch (mirrors `def_eq_binder_
-/// multi` being tried inside `def_eq_quick_check`). Its own recursive
-/// calls into `verified_def_eq` use `fuel - 1` (guarded by an explicit
-/// `fuel == 0` check first) so the two functions' mutual recursion has a
-/// genuine decreasing measure: `verified_def_eq` may call this at the
-/// SAME `fuel`, but this only ever calls `verified_def_eq` back at a
-/// STRICTLY SMALLER one, so any cycle through the pair strictly decreases.
+/// multi` being tried inside `def_eq_quick_check`). Every call into
+/// `verified_def_eq` (one per binder layer, plus the final trailing-body
+/// check) uses a strictly decreasing `fuel_left < fuel`, so `verified_
+/// def_eq`'s own `decreases fuel` clause is satisfied at every one of
+/// these mutually-recursive call sites, not just once.
+#[allow(while_true)]
 pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
@@ -1606,103 +1620,140 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     }
     decreases fuel
 {
-    if fuel == 0 {
-        return None;
-    }
-    let fuel1 = fuel - 1;
     let x_el = ctx.read_expr(x);
     let y_el = ctx.read_expr(y);
-    if let Some((name, style, t1, body1)) = expr_as_pi(&x_el) {
-        if let Some((_, _, t2, body2)) = expr_as_pi(&y_el) {
-            assert(depth(to_model(t1)) <= 60000);
-            assert(depth(to_model(t2)) <= 60000);
-            let empty_substs: &[ExprPtr<'t>] = &[];
-            let t1i = match verified_inst(ctx, t1, empty_substs, 0, fuel) {
-                Some(v) => v,
-                None => return None,
-            };
-            let t2i = match verified_inst(ctx, t2, empty_substs, 0, fuel) {
-                Some(v) => v,
-                None => return None,
-            };
-            proof {
-                subst_full_depth_bound_n(to_model(t1), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
-                subst_full_depth_bound_n(to_model(t2), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
+    let first: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)> =
+        if let Some((name, style, t1, body1)) = expr_as_pi(&x_el) {
+            match expr_as_pi(&y_el) {
+                Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
+                None => None,
             }
-            if let Some(true) = verified_def_eq(ctx, t1i, t2i, fuel1) {
-                let local = ctx.mk_dbj_level(name, style, t1i);
-                assert(depth(to_model(body1)) <= 60000);
-                assert(depth(to_model(body2)) <= 60000);
-                assert(depth(to_model(local)) == 0);
-                let subst_slice: &[ExprPtr<'t>] = &[local];
-                let b1i = match verified_inst(ctx, body1, subst_slice, 0, fuel) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                let b2i = match verified_inst(ctx, body2, subst_slice, 0, fuel) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                proof {
-                    let substs_model: Seq<ExprSpec> = Seq::new(subst_slice@.len(), |i: int| to_model(subst_slice@[i]));
-                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
-                        assert(subst_slice@[i] == local);
-                    }
-                    subst_full_depth_bound_n(to_model(body1), substs_model, 0, 0);
-                    subst_full_depth_bound_n(to_model(body2), substs_model, 0, 0);
-                }
-                return verified_def_eq(ctx, b1i, b2i, fuel1);
+        } else if let Some((name, style, t1, body1)) = expr_as_lambda(&x_el) {
+            match expr_as_lambda(&y_el) {
+                Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
+                None => None,
             }
-            return Some(false);
-        }
+        } else {
+            None
+        };
+    let (name, style, t1, body1, t2, body2) = match first {
+        Some(p) => p,
+        None => return None,
+    };
+    // Ensures witness established here, from the FIRST layer only --
+    // to_model(x)/to_model(y) never change again below.
+    assert(depth(to_model(t1)) <= 60000);
+    assert(depth(to_model(t2)) <= 60000);
+    let empty_substs: &[ExprPtr<'t>] = &[];
+    let t1i = match verified_inst(ctx, t1, empty_substs, 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let t2i = match verified_inst(ctx, t2, empty_substs, 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        subst_full_depth_bound_n(to_model(t1), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
+        subst_full_depth_bound_n(to_model(t2), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
+    }
+    let mut fuel_left = fuel;
+    if fuel_left == 0 {
         return None;
     }
-    if let Some((name, style, t1, body1)) = expr_as_lambda(&x_el) {
-        if let Some((_, _, t2, body2)) = expr_as_lambda(&y_el) {
-            assert(depth(to_model(t1)) <= 60000);
-            assert(depth(to_model(t2)) <= 60000);
-            let empty_substs: &[ExprPtr<'t>] = &[];
-            let t1i = match verified_inst(ctx, t1, empty_substs, 0, fuel) {
-                Some(v) => v,
-                None => return None,
-            };
-            let t2i = match verified_inst(ctx, t2, empty_substs, 0, fuel) {
-                Some(v) => v,
-                None => return None,
-            };
-            proof {
-                subst_full_depth_bound_n(to_model(t1), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
-                subst_full_depth_bound_n(to_model(t2), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
-            }
-            if let Some(true) = verified_def_eq(ctx, t1i, t2i, fuel1) {
-                let local = ctx.mk_dbj_level(name, style, t1i);
-                assert(depth(to_model(body1)) <= 60000);
-                assert(depth(to_model(body2)) <= 60000);
-                assert(depth(to_model(local)) == 0);
-                let subst_slice: &[ExprPtr<'t>] = &[local];
-                let b1i = match verified_inst(ctx, body1, subst_slice, 0, fuel) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                let b2i = match verified_inst(ctx, body2, subst_slice, 0, fuel) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                proof {
-                    let substs_model: Seq<ExprSpec> = Seq::new(subst_slice@.len(), |i: int| to_model(subst_slice@[i]));
-                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
-                        assert(subst_slice@[i] == local);
-                    }
-                    subst_full_depth_bound_n(to_model(body1), substs_model, 0, 0);
-                    subst_full_depth_bound_n(to_model(body2), substs_model, 0, 0);
+    fuel_left = fuel_left - 1;
+    if verified_def_eq(ctx, t1i, t2i, fuel_left) != Some(true) {
+        return Some(false);
+    }
+    let local = ctx.mk_dbj_level(name, style, t1i);
+    assert(depth(to_model(local)) == 0);
+    assert(depth(to_model(body1)) <= 60000);
+    assert(depth(to_model(body2)) <= 60000);
+
+    let mut locals: Vec<ExprPtr<'t>> = Vec::new();
+    locals.push(local);
+    let mut cur_x = body1;
+    let mut cur_y = body2;
+
+    // Telescoping loop: peel additional Pi/Pi or Lambda/Lambda layers,
+    // one fresh local per layer, until neither side matches anymore.
+    while true
+        invariant
+            depth(to_model(cur_x)) <= 60000,
+            depth(to_model(cur_y)) <= 60000,
+            forall |i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
+            fuel_left < fuel,
+        decreases depth(to_model(cur_x))
+    {
+        let cx_el = ctx.read_expr(cur_x);
+        let cy_el = ctx.read_expr(cur_y);
+        let next: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)> =
+            if let Some((n, s, nt1, nb1)) = expr_as_pi(&cx_el) {
+                match expr_as_pi(&cy_el) {
+                    Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
+                    None => None,
                 }
-                return verified_def_eq(ctx, b1i, b2i, fuel1);
-            }
+            } else if let Some((n, s, nt1, nb1)) = expr_as_lambda(&cx_el) {
+                match expr_as_lambda(&cy_el) {
+                    Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
+                    None => None,
+                }
+            } else {
+                None
+            };
+        let (n, s, nt1, nb1, nt2, nb2) = match next {
+            Some(p) => p,
+            None => break,
+        };
+        assert(depth(to_model(nt1)) <= 60000);
+        assert(depth(to_model(nt2)) <= 60000);
+        let nt1i = match verified_inst(ctx, nt1, locals.as_slice(), 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        let nt2i = match verified_inst(ctx, nt2, locals.as_slice(), 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+            subst_full_depth_bound_n(to_model(nt1), substs_model, 0, 0);
+            subst_full_depth_bound_n(to_model(nt2), substs_model, 0, 0);
+        }
+        if fuel_left == 0 {
+            return None;
+        }
+        fuel_left = fuel_left - 1;
+        if verified_def_eq(ctx, nt1i, nt2i, fuel_left) != Some(true) {
             return Some(false);
         }
+        let nlocal = ctx.mk_dbj_level(n, s, nt1i);
+        assert(depth(to_model(nlocal)) == 0);
+        assert(depth(to_model(nb1)) <= 60000);
+        assert(depth(to_model(nb2)) <= 60000);
+        locals.push(nlocal);
+        cur_x = nb1;
+        cur_y = nb2;
+    }
+
+    let cxi = match verified_inst(ctx, cur_x, locals.as_slice(), 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let cyi = match verified_inst(ctx, cur_y, locals.as_slice(), 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+        subst_full_depth_bound_n(to_model(cur_x), substs_model, 0, 0);
+        subst_full_depth_bound_n(to_model(cur_y), substs_model, 0, 0);
+    }
+    if fuel_left == 0 {
         return None;
     }
-    None
+    fuel_left = fuel_left - 1;
+    verified_def_eq(ctx, cxi, cyi, fuel_left)
 }
 
 }
