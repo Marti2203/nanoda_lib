@@ -62,7 +62,7 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
-use crate::env_model::get_constructor_num_params;
+use crate::env_model::{get_constructor_num_params, get_recursor_data};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
@@ -73,6 +73,16 @@ use crate::expr_model::{nlbv, depth, subst_expr_levels_rel};
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
     r.ctor_name
+}
+
+#[allow(dead_code)]
+pub(crate) fn rec_rule_ctor_telescope_size_wo_params<'t>(r: &RecRule<'t>) -> u16 {
+    r.ctor_telescope_size_wo_params
+}
+
+#[allow(dead_code)]
+pub(crate) fn rec_rule_val<'t>(r: &RecRule<'t>) -> ExprPtr<'t> {
+    r.val
 }
 
 verus! {
@@ -88,6 +98,21 @@ pub uninterp spec fn rec_rule_ctor_name_of<'a>(r: RecRule<'a>) -> NamePtr<'a>;
 
 pub assume_specification<'t> [rec_rule_ctor_name] (r: &RecRule<'t>) -> (result: NamePtr<'t>)
     ensures result == rec_rule_ctor_name_of(*r);
+
+/// Small helper so `verified_reduce_rec_step`'s `ensures` can use `.
+/// subrange(...)` (a valid quantifier trigger) instead of a fresh
+/// `Seq::new(...)` closure at each slicing point (not a valid trigger).
+pub open spec fn args_model_of<'t>(xs: Seq<ExprPtr<'t>>) -> Seq<ExprSpec> {
+    Seq::new(xs.len(), |i: int| to_model(xs[i]))
+}
+
+pub uninterp spec fn rec_rule_ctor_telescope_size_wo_params_of<'a>(r: RecRule<'a>) -> u16;
+pub assume_specification<'t> [rec_rule_ctor_telescope_size_wo_params] (r: &RecRule<'t>) -> (result: u16)
+    ensures result == rec_rule_ctor_telescope_size_wo_params_of(*r);
+
+pub uninterp spec fn rec_rule_val_of<'a>(r: RecRule<'a>) -> ExprPtr<'a>;
+pub assume_specification<'t> [rec_rule_val] (r: &RecRule<'t>) -> (result: ExprPtr<'t>)
+    ensures result == rec_rule_val_of(*r);
 
 pub open spec fn rec_rule_ctor_names<'a>(rec_rules: Seq<RecRule<'a>>) -> Seq<NamePtr<'a>> {
     Seq::new(rec_rules.len(), |i: int| rec_rule_ctor_name_of(rec_rules[i]))
@@ -980,6 +1005,160 @@ pub fn verified_reduce_rec_core<'t, 'p: 't>(
             let r2 = verified_foldl_apps(ctx, r1, ctor_args_wo_params);
             let r3 = verified_foldl_apps(ctx, r2, post_args);
             Some(r3)
+        }
+        None => None,
+    }
+}
+
+/// Glues `verified_reduce_rec_core`'s composition to the real `Env`
+/// lookup (`get_recursor_data`, `env_model.rs`) and the prelude
+/// `reduce_rec` performs first: `whnf` the major premise (`verified_
+/// whnf_step`, one round -- same honest incompleteness as elsewhere this
+/// session), peel its applied-`Const` head, and find the matching
+/// computation rule (`verified_find_rec_rule`, an earlier session's
+/// work). Still does NOT model `to_ctor_when_k`/`nat_lit_to_constructor`/
+/// `str_lit_to_ctor_reducing`/`iota_try_eta_struct`'s special-case
+/// conversions -- if the major premise's `whnf` doesn't ALREADY directly
+/// expose a matching constructor `Const` head (no K-reduction, literal
+/// conversion, or structure-eta needed), this returns `None`
+/// conservatively rather than the real function's fuller behavior.
+///
+/// `major_idx`/`num_params`/`num_motives`/`num_minors` come from `get_
+/// recursor_data`, used only for REAL slicing (`args.get`/`args[..]`) --
+/// no separate model fact is needed for them, since (like `get_rec_rule`)
+/// this isn't claiming a `pstep_star`-style reduction-soundness fact for
+/// the WHOLE step, only that the composition matches a precisely-stated
+/// formula (the same value proposition `verified_reduce_rec_core` itself
+/// already has), PLUS a genuine `pstep_star` fact for the major premise's
+/// own reduction to whnf.
+pub fn verified_reduce_rec_step<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    const_name: NamePtr<'t>,
+    const_levels: LevelsPtr<'t>,
+    args: &[ExprPtr<'t>],
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    n: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < args@.len() ==>
+            nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound) && depth(to_model(args@[i])) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Vec<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
+            #![trigger pstep_star(to_model_of_env(*env), to_model(args@[major_idx as int]), reduced_major), spine_app(ExprSpec::Const(ctor_id, levels), ctor_args), subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val), ctor_args.subrange(num_extra as int, ctor_args.len() as int), args_model_of(args@).subrange(0, prefix_len as int)]
+            major_idx < args@.len()
+            && pstep_star(to_model_of_env(*env), to_model(args@[major_idx as int]), reduced_major)
+            && reduced_major == spine_app(ExprSpec::Const(ctor_id, levels), ctor_args)
+            && num_extra <= ctor_args.len()
+            && prefix_len <= args_model_of(args@).len()
+            && subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val)
+            && to_model(r) == spine_app(
+                spine_app(
+                    spine_app(subst_val, args_model_of(args@).subrange(0, prefix_len as int)),
+                    ctor_args.subrange(num_extra as int, ctor_args.len() as int),
+                ),
+                args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int),
+            ),
+        None => true,
+    }
+{
+    let (num_params, num_motives, num_minors, major_idx, uparams, rec_rules) = match get_recursor_data(env, &const_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    if major_idx >= args.len() {
+        return None;
+    }
+    let major_arg = args[major_idx];
+    let major = match verified_whnf_step(ctx, env, major_arg, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let (major_ctor, major_ctor_args) = match verified_unfold_apps(ctx, major, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let major_ctor_el = ctx.read_expr(major_ctor);
+    let (major_ctor_name, _levels) = match expr_as_const(major_ctor, &major_ctor_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let rec_rule = match verified_find_rec_rule(&rec_rules, major_ctor_name) {
+        Some(rr) => rr,
+        None => return None,
+    };
+    let telescope_size = rec_rule_ctor_telescope_size_wo_params(&rec_rule);
+    let num_extra_params_to_major = match major_ctor_args.len().checked_sub(telescope_size as usize) {
+        Some(k) => k,
+        None => return None,
+    };
+    // NOTE: `RangeTo`/`RangeFrom` slice indexing (`&s[..n]`/`&s[n..]`) does
+    // not reliably discharge its precondition in this Verus/vstd fork,
+    // confirmed via an isolated minimal repro completely independent of
+    // this function (reproduces even for `&args[..0]` with NO other
+    // preconditions involved). Full `Range<usize>` syntax (`&s[a..b]`,
+    // matching e.g. `verified_whnf_beta_step`'s own established slicing)
+    // verifies fine -- used throughout below for exactly that reason.
+    let major_ctor_args_wo_params = &major_ctor_args[num_extra_params_to_major..major_ctor_args.len()];
+    let num_prefix = (num_params as usize) + (num_motives as usize) + (num_minors as usize);
+    if num_prefix > args.len() {
+        return None;
+    }
+    let prefix_args = &args[0..num_prefix];
+    let post_args = &args[(major_idx + 1)..args.len()];
+    let rule_val = rec_rule_val(&rec_rule);
+    let uparams_vec = read_levels_vec(ctx, uparams);
+    let const_levels_vec_local = read_levels_vec(ctx, const_levels);
+    if uparams_vec.len() != const_levels_vec_local.len() {
+        return None;
+    }
+    assert(to_model_of_levels(uparams).len() == to_model_of_levels(const_levels).len());
+    match verified_reduce_rec_core(ctx, rule_val, uparams, const_levels, prefix_args, major_ctor_args_wo_params, post_args, fuel) {
+        Some(r) => {
+            proof {
+                is_const_shape_model(major_ctor);
+                const_levels_vec_model(major_ctor);
+                let ghost ctor_args_model = args_model_of(major_ctor_args@);
+                assert(to_model(major) == spine_app(ExprSpec::Const(const_id(major_ctor), const_levels_vec(major_ctor)), ctor_args_model));
+                assert(pstep_star(to_model_of_env(*env), to_model(args@[major_idx as int]), to_model(major)));
+                assert(major_ctor_args_wo_params@ =~= major_ctor_args@.subrange(num_extra_params_to_major as int, major_ctor_args@.len() as int));
+                assert(prefix_args@ =~= args@.subrange(0, num_prefix as int));
+                assert(post_args@ =~= args@.subrange((major_idx + 1) as int, args@.len() as int));
+                let ghost subst_val = choose |sv: ExprSpec|
+                    subst_expr_levels_rel(
+                        to_model(rule_val),
+                        level_names(to_model_of_levels(uparams)),
+                        to_model_of_levels(const_levels),
+                        sv,
+                    )
+                    && to_model(r) == spine_app(
+                        spine_app(
+                            spine_app(sv, args_model_of(prefix_args@)),
+                            args_model_of(major_ctor_args_wo_params@),
+                        ),
+                        args_model_of(post_args@),
+                    );
+                assert(args_model_of(prefix_args@) =~= args_model_of(args@).subrange(0, num_prefix as int));
+                assert(args_model_of(post_args@) =~= args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int));
+                assert(args_model_of(major_ctor_args_wo_params@)
+                    =~= ctor_args_model.subrange(num_extra_params_to_major as int, ctor_args_model.len() as int));
+                assert((major_idx as nat) < args@.len());
+                assert((num_extra_params_to_major as nat) <= ctor_args_model.len());
+                assert((num_prefix as nat) <= args_model_of(args@).len());
+                assert(subst_expr_levels_rel(to_model(rule_val), level_names(to_model_of_levels(uparams)), to_model_of_levels(const_levels), subst_val));
+                assert(to_model(r) == spine_app(
+                    spine_app(
+                        spine_app(subst_val, args_model_of(args@).subrange(0, num_prefix as int)),
+                        ctor_args_model.subrange(num_extra_params_to_major as int, ctor_args_model.len() as int),
+                    ),
+                    args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int),
+                ));
+            }
+            Some(r)
         }
         None => None,
     }

@@ -1348,4 +1348,31 @@ pub fn verified_whnf_no_unfolding_fixpoint<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, 
     }
 }
 
+/// Plain range-slicing on `&[ExprPtr<'t>]`, factored out here specifically
+/// (rather than written inline at each call site) because slice-index
+/// preconditions for `ExprPtr` slices verify fine in THIS file (see
+/// `verified_whnf_beta_step`'s own `&args[0..n]`/`&args[n..args.len()]`,
+/// already-committed and working) but do NOT discharge in `tc_model.rs`
+/// for reasons not fully root-caused (confirmed reproducible there even
+/// for the most trivial possible slice, `&args[..0]`, with NO other
+/// preconditions involved, and confirmed NOT caused by anything from this
+/// session's own changes -- reproduces identically on a clean, unmodified
+/// `HEAD`). Slicing `&[RecRule<'t>]` in `tc_model.rs` (`verified_find_rec_
+/// rule`, elsewhere in that file) is unaffected -- the failure is specific
+/// to `ExprPtr` slices in that one file. Routing the actual index
+/// operation through here sidesteps it entirely.
+pub fn verified_slice_to<'a, 't>(args: &'a [ExprPtr<'t>], n: usize) -> (result: &'a [ExprPtr<'t>])
+    requires n <= args.len()
+    ensures result@ == args@.subrange(0, n as int)
+{
+    &args[0..n]
+}
+
+pub fn verified_slice_from<'a, 't>(args: &'a [ExprPtr<'t>], n: usize) -> (result: &'a [ExprPtr<'t>])
+    requires n <= args.len()
+    ensures result@ == args@.subrange(n as int, args@.len() as int)
+{
+    &args[n..args.len()]
+}
+
 }

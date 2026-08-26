@@ -30,7 +30,8 @@
 //! proving it equal to the spec version.
 
 use vstd::prelude::*;
-use crate::env::{ReducibilityHint, Env};
+use std::sync::Arc;
+use crate::env::{ReducibilityHint, Env, RecRule};
 use crate::util::{NamePtr, LevelsPtr, ExprPtr};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -54,6 +55,20 @@ use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, 
 #[allow(dead_code)]
 pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
     env.get_constructor(n).map(|cd| cd.num_params)
+}
+
+/// `Env::get_recursor` returns `Option<&RecursorData>`; this wrapper
+/// extracts exactly the fields `reduce_rec` (`tc.rs:1070-1102`) actually
+/// reads (`num_params`/`num_motives`/`num_minors`, the computed `major_
+/// idx()`, the recursor's own `uparams`, and its computation rules) into
+/// an owned tuple, same "extract only what's needed" approach `get_
+/// constructor_num_params` above already uses for `ConstructorData`.
+/// `rec_rules` is cloned (an `Arc`, cheap) rather than borrowed, sidestepping
+/// tying the result's lifetime to the `Env` reference.
+#[allow(dead_code)]
+pub(crate) fn get_recursor_data<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)> {
+    let rec = env.get_recursor(n)?;
+    Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
 }
 
 #[allow(dead_code)]
@@ -215,6 +230,21 @@ pub assume_specification<'x, 'a> [get_constructor_num_params] (env: &Env<'x, 'a>
             to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
             && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
         None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
+    };
+
+/// The one substantive real-world fact `get_recursor_data` asserts beyond
+/// bookkeeping: a recursor's own universe parameters are always genuinely
+/// `Param`-shaped (same fact `get_declar_val` already asserts for plain
+/// declarations, needed for the exact same reason -- `verified_subst_
+/// expr_levels`'s `ks` argument requires it). No `to_model_of_env`-style
+/// keyed map is needed here: unlike delta/proj/quot, nothing downstream
+/// needs to relate TWO separate calls' results back to the same identity,
+/// so this is a plain per-call fact, not a lookup table.
+pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
+    ensures match result {
+        Some((_, _, _, _, uparams, _)) =>
+            forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
+        None => true,
     };
 
 /// A real declaration's fetched value, alone in an otherwise-empty `env`,
