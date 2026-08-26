@@ -7008,7 +7008,8 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
         nlbv(base) == 0,
         max_var_below(base, bound),
         depth(base) <= depth(spine_app(base, args)),
-        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0 && max_var_below(args[i], bound),
+        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0
+            && max_var_below(args[i], bound) && depth(args[i]) <= depth(spine_app(base, args)),
     decreases args.len()
 {
     if args.len() == 0 {
@@ -7021,9 +7022,13 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
         assert(nlbv(last) == 0);
         assert(max_var_below(spine_app(base, prefix), bound));
         assert(max_var_below(last, bound));
-        assert forall |i: int| 0 <= i < args.len() implies nlbv(#[trigger] args[i]) == 0 && max_var_below(args[i], bound) by {
+        assert(depth(spine_app(base, prefix)) <= depth(spine_app(base, args)));
+        assert(depth(last) <= depth(spine_app(base, args)));
+        assert forall |i: int| 0 <= i < args.len() implies nlbv(#[trigger] args[i]) == 0
+            && max_var_below(args[i], bound) && depth(args[i]) <= depth(spine_app(base, args)) by {
             if i < args.len() - 1 {
                 assert(args[i] == prefix[i]);
+                assert(depth(prefix[i]) <= depth(spine_app(base, prefix)));
             } else {
                 assert(i == args.len() - 1);
                 assert(args[i] == last);
