@@ -1133,6 +1133,56 @@ pub proof fn max_var_below_mono(e: ExprSpec, b1: nat, b2: nat)
     }
 }
 
+/// Connects `nlbv` (loose-bound-variable count, binder-relative -- shrinks
+/// by one per `Bind`/`Let` body descended into) to `max_var_below` (a flat,
+/// non-binder-relative bound on every `Var` node's raw index, per its own
+/// definition above). Generalized over an escaping-reference "budget" `k`
+/// (not just `nlbv(e) == 0`) because the induction genuinely needs it:
+/// `Bind(t, b)`'s body can have `nlbv(b)` up to ONE MORE than `nlbv(Bind(t,
+/// b))` itself (nlbv's own definition subtracts exactly one crossing a
+/// binder), so the recursive call on `b` needs `k + 1`, not `k`. `depth(e)
+/// + k` is exactly the bound this composes to: `depth` grows by exactly 1
+/// per `Bind`/`Let` too, absorbing the `k + 1` the body's own recursive
+/// instance produces. Needed to give `env_model.rs`'s real-`Env` bridge a
+/// computable `max_var_below` witness from just `nlbv(e) == 0` (a real
+/// declaration's value being closed) -- `env_wf` needs `max_var_below`
+/// explicitly, not just `nlbv == 0`, since `nlbv` alone says nothing about
+/// deeply-nested-but-validly-bound `Var` indices.
+#[verifier::spinoff_prover]
+pub proof fn nlbv_bound_implies_max_var_below(e: ExprSpec, k: nat)
+    requires nlbv(e) <= k
+    ensures max_var_below(e, (depth(e) + k) as nat)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::App(f, a) => {
+            nlbv_bound_implies_max_var_below(*f, k);
+            nlbv_bound_implies_max_var_below(*a, k);
+            max_var_below_mono(*f, (depth(*f) + k) as nat, (depth(e) + k) as nat);
+            max_var_below_mono(*a, (depth(*a) + k) as nat, (depth(e) + k) as nat);
+        }
+        ExprSpec::Bind(t, b) => {
+            nlbv_bound_implies_max_var_below(*t, k);
+            nlbv_bound_implies_max_var_below(*b, (k + 1) as nat);
+            max_var_below_mono(*t, (depth(*t) + k) as nat, (depth(e) + k) as nat);
+            max_var_below_mono(*b, (depth(*b) + (k + 1)) as nat, (depth(e) + k) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            nlbv_bound_implies_max_var_below(*t, k);
+            nlbv_bound_implies_max_var_below(*v, k);
+            nlbv_bound_implies_max_var_below(*b, (k + 1) as nat);
+            max_var_below_mono(*t, (depth(*t) + k) as nat, (depth(e) + k) as nat);
+            max_var_below_mono(*v, (depth(*v) + k) as nat, (depth(e) + k) as nat);
+            max_var_below_mono(*b, (depth(*b) + (k + 1)) as nat, (depth(e) + k) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            nlbv_bound_implies_max_var_below(*s, k);
+            max_var_below_mono(*s, (depth(*s) + k) as nat, (depth(e) + k) as nat);
+        }
+    }
+}
+
 /// `max_var_below` after a substitution: NOT preserved at the *same*
 /// bound -- substituting `s` deep under `k` nested binders re-shifts `s`
 /// up by `k`, which can genuinely raise its maximum index by `k` (concrete
