@@ -75,6 +75,13 @@ pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
     x + y
 }
 
+/// `tc.rs::do_nat_bin`'s `Mul` case (`arg1 * arg2`) -- also a plain
+/// delegation, no custom branching.
+#[allow(dead_code)]
+pub(crate) fn biguint_mul(x: BigUint, y: BigUint) -> BigUint {
+    x * y
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -114,6 +121,9 @@ pub assume_specification [biguint_succ] (x: BigUint) -> (result: BigUint)
 
 pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + to_nat(y);
+
+pub assume_specification [biguint_mul] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) * to_nat(y);
 
 /// Real-code counterpart to `util.rs::nat_sub`, built only from the
 /// axiomatized wrappers above, proving Lean's saturating-subtraction

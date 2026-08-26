@@ -49,7 +49,8 @@ use crate::expr_arena_bridge::to_model;
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, expr_as_nat_lit, read_bignum_value};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value};
-use crate::nat_lit_model::{biguint_succ, biguint_add};
+use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul};
+use crate::util::{nat_sub, nat_div, nat_mod};
 #[cfg(verus_only)]
 use crate::nat_lit_model::to_nat;
 #[cfg(verus_only)]
@@ -604,6 +605,214 @@ pub fn verified_do_nat_bin_add_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     };
     let sum = biguint_add(bx, by);
     ctx.mk_nat_lit_quick(sum)
+}
+
+/// `tc.rs::do_nat_bin`'s `Mul` case (`tc.rs:377`), same shape as `Add`.
+pub fn verified_do_nat_bin_mul_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_lit_value(vx) * nat_lit_value(vy),
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let prod = biguint_mul(bx, by);
+    ctx.mk_nat_lit_quick(prod)
+}
+
+/// `tc.rs::do_nat_bin`'s `Sub` case (`tc.rs:376`): Lean's `Nat.sub`
+/// saturates at zero rather than underflowing -- `crate::util::nat_sub`
+/// (bridged in `nat_lit_model.rs`, an earlier session's work) already
+/// proves this branching correct; this composes it with `verified_whnf_
+/// step` the same way `Add`/`Mul` do.
+pub fn verified_do_nat_bin_sub_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == if nat_lit_value(vy) > nat_lit_value(vx) { 0 } else { (nat_lit_value(vx) - nat_lit_value(vy)) as nat },
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let diff = nat_sub(bx, by);
+    ctx.mk_nat_lit_quick(diff)
+}
+
+/// `tc.rs::do_nat_bin`'s `Div` case (`tc.rs:379`): Lean's `Nat.div`
+/// defines division by zero as `0` -- `crate::util::nat_div` (bridged in
+/// `nat_lit_model.rs`) already proves this branching correct.
+pub fn verified_do_nat_bin_div_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == if nat_lit_value(vy) == 0 { 0 } else { (nat_lit_value(vx) / nat_lit_value(vy)) as nat },
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let quot = nat_div(bx, by);
+    ctx.mk_nat_lit_quick(quot)
+}
+
+/// `tc.rs::do_nat_bin`'s `Mod` case (`tc.rs:380`): Lean's `Nat.mod`
+/// defines mod by zero as the dividend -- `crate::util::nat_mod`
+/// (bridged in `nat_lit_model.rs`) already proves this branching correct.
+pub fn verified_do_nat_bin_mod_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == if nat_lit_value(vy) == 0 { nat_lit_value(vx) } else { (nat_lit_value(vx) % nat_lit_value(vy)) as nat },
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let rem = nat_mod(bx, by);
+    ctx.mk_nat_lit_quick(rem)
 }
 
 }
