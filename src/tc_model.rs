@@ -415,4 +415,82 @@ pub fn verified_whnf_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     }
 }
 
+/// `verified_reduce_proj_step`'s non-cheap counterpart: uses `verified_
+/// whnf_step` (beta/zeta* THEN one delta attempt) instead of bare `
+/// verified_whnf_no_unfolding_step` to reduce `structure` -- a real,
+/// honest step up from the cheap path (now covers definitions that need
+/// ONE constant unfolded before exposing their constructor head), though
+/// still not the full real `reduce_proj(cheap=false)` (needs `try_reduce_
+/// nat` and possibly repeated delta rounds, neither modeled yet). `env`'s
+/// FULL model (`to_model_of_env`) is what `pstep_star_proj`'s own `env`
+/// parameter carries here, rather than `Map::empty()` -- exactly what
+/// `verified_whnf_step`'s `pstep_star` conclusion is already stated over.
+pub fn verified_reduce_proj_step_full<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(structure)) <= 0,
+        max_var_below(to_model(structure), bound),
+        depth(to_model(structure)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+        idx <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => pstep_star_proj(
+            to_model_of_env(*env),
+            to_model_of_ctor_num_params(*env),
+            to_model(structure),
+            idx as nat,
+            to_model(r),
+        ),
+        None => true,
+    }
+{
+    let whnfd = match verified_whnf_step(ctx, env, structure, fuel, bound, d, n) {
+        Some(w) => w,
+        None => return None,
+    };
+    let (fun, args) = match verified_unfold_apps(ctx, whnfd, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    match get_constructor_num_params(env, &name) {
+        Some(num_params) => {
+            let i = num_params as usize + idx;
+            if i < args.len() {
+                let r = args[i];
+                let ghost args_model = Seq::new(args@.len(), |j: int| to_model(args@[j]));
+                proof {
+                    is_const_shape_model(fun);
+                    const_levels_vec_model(fun);
+                }
+                assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+                assert(to_model(whnfd) == spine_app(to_model(fun), args_model));
+                assert(const_id(fun) == name_id(name));
+                assert(to_model_of_ctor_num_params(*env).contains_key(name_id(name)));
+                assert(to_model_of_ctor_num_params(*env)[name_id(name)] == num_params);
+                assert(args_model[i as int] == to_model(r));
+                assert(pstep_star(to_model_of_env(*env), to_model(structure), to_model(whnfd)));
+                assert((num_params as nat) + (idx as nat) < args_model.len());
+                assert(pstep_star_proj(
+                    to_model_of_env(*env),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(structure),
+                    idx as nat,
+                    to_model(r),
+                )) by {
+                    assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
+                }
+                Some(r)
+            } else {
+                None
+            }
+        }
+        None => None,
+    }
+}
+
 }
