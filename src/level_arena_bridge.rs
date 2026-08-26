@@ -171,6 +171,11 @@ pub assume_specification<'t, 'p> [read_levels_vec] (ctx: &TcCtx<'t, 'p>, p: Leve
         result@.len() == to_model_of_levels(p).len(),
         forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
 
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mut TcCtx<'t, 'p>, ls: &[LevelPtr<'t>]) -> (result: LevelsPtr<'t>) where 'p: 't
+    ensures
+        to_model_of_levels(result).len() == ls@.len(),
+        forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]);
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
 
@@ -625,6 +630,57 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
         };
     }
     None
+}
+
+/// Real-arena counterpart to real `TcCtx::subst_levels` (`level.rs:101-105`,
+/// the list-of-levels wrapper around `subst_level`): substitutes every
+/// element of `uparams` via `verified_subst_level`, then reallocates the
+/// results as a new `LevelsPtr` -- exactly `unfold_def`'s real level-
+/// substitution step needs, since a `Const`'s level ARGUMENTS are
+/// substituted into a definition's whole `uparams`-indexed body via this
+/// list operation, not a single level. Fuel exhaustion (any element's
+/// `verified_subst_level` running out) propagates as `None`.
+pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: LevelsPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<LevelsPtr<'t>>)
+    requires
+        to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+    ensures match result {
+        Some(r) =>
+            to_model_of_levels(r).len() == to_model_of_levels(uparams).len()
+            && forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
+                #[trigger] interp(to_model_of_levels(r)[i], rho)
+                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+        None => true,
+    }
+{
+    let uparams_vec = read_levels_vec(ctx, uparams);
+    let mut out: Vec<LevelPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < uparams_vec.len()
+        invariant
+            i <= uparams_vec.len(),
+            out@.len() == i,
+            to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+            uparams_vec@.len() == to_model_of_levels(uparams).len(),
+            forall |j: int| 0 <= j < uparams_vec@.len() ==> #[trigger] to_model(uparams_vec@[j]) == to_model_of_levels(uparams)[j],
+            forall |j: int, rho: Map<nat, nat>| 0 <= j < i ==>
+                #[trigger] interp(to_model(out@[j]), rho)
+                    == interp(to_model_of_levels(uparams)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+        decreases uparams_vec.len() - i
+    {
+        match verified_subst_level(ctx, uparams_vec[i], ks, vs, fuel) {
+            Some(r) => {
+                out.push(r);
+                i += 1;
+            }
+            None => {
+                return None;
+            }
+        }
+    }
+    let result = ctx.alloc_levels_slice(&out);
+    Some(result)
 }
 
 /// Real-arena counterpart to `level_model::leq_imax_by_cases_fueled`,
