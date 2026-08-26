@@ -299,6 +299,19 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
         const_name_of(result) == name,
         const_levels_of(result) == levels;
 
+/// Construction-side mirror for `Local`, same pattern as `mk_const` above:
+/// `mk_dbj_level` (`util.rs:612-623`, "open a binder with a fresh free
+/// variable") always produces an `is_local_shape` node carrying exactly
+/// the given `binder_type` -- freshness/distinctness of the allocated
+/// `FVarId` itself is NOT captured here (no ghost tracking of
+/// `dbj_level_counter`), a deliberate scoping choice for the first,
+/// single-binder bridge that needs this (`verified_def_eq_binder_step`);
+/// a future multi-binder telescoping bridge would need to extend this.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+    ensures
+        is_local_shape(result),
+        local_binder_type_of(result) == binder_type;
+
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
 /// `bool_false_id` are uninterpreted NAME ids (same "just an identity,

@@ -44,7 +44,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of};
 #[allow(unused_imports)]
@@ -1548,6 +1548,103 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
         None => return None,
     }
     verified_def_eq_app(ctx, x, y, fuel)
+}
+
+/// Real-arena counterpart to ONE step of `tc.rs::TypeChecker::
+/// def_eq_binder_aux`'s telescoping loop (`tc.rs:873-901`, called from
+/// `def_eq_binder_multi`, `tc.rs:864-870`): opens a single matching Pi/Pi
+/// or Lambda/Lambda binder pair with one fresh local (`mk_dbj_level`),
+/// checks the (instantiated) binder types `def_eq`, then checks the
+/// (instantiated) bodies `def_eq` too. Deliberately does NOT model the
+/// real function's TELESCOPING (it doesn't loop to peel further Pi/Lambda
+/// layers the way the real `while let` does for curried binders like
+/// `A -> B -> C`) -- same "one round first" scoping choice already used
+/// for `verified_whnf_beta_step` before its fixpoint chaining, and for
+/// the same reason: peeling multiple binders needs a GROWING list of
+/// pairwise-DISTINCT fresh locals (hygiene), which `mk_dbj_level`'s
+/// bridge deliberately does not yet track (see its doc comment in
+/// `expr_arena_bridge.rs`). For a real single-binder Pi/Lambda pair (the
+/// overwhelmingly common case for non-curried types), this is already a
+/// complete, faithful bridge; only genuinely curried binders are left
+/// unmodeled here.
+///
+/// NOT yet wired into `verified_def_eq`'s own dispatch (mirrors
+/// `def_eq_binder_multi` being tried inside `def_eq_quick_check`, not
+/// `def_eq`'s own body directly) -- composing it in is future work.
+pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(y)) <= 60000,
+    ensures match result {
+        Some(true) => exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
+            to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
+            && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))),
+        _ => true,
+    }
+{
+    let x_el = ctx.read_expr(x);
+    let y_el = ctx.read_expr(y);
+    if let Some((name, style, t1, body1)) = expr_as_pi(&x_el) {
+        if let Some((_, _, t2, body2)) = expr_as_pi(&y_el) {
+            assert(depth(to_model(t1)) <= 60000);
+            assert(depth(to_model(t2)) <= 60000);
+            let t1i = match verified_inst(ctx, t1, &[], 0, fuel) {
+                Some(v) => v,
+                None => return None,
+            };
+            let t2i = match verified_inst(ctx, t2, &[], 0, fuel) {
+                Some(v) => v,
+                None => return None,
+            };
+            if let Some(true) = verified_def_eq(ctx, t1i, t2i, fuel) {
+                let local = ctx.mk_dbj_level(name, style, t1i);
+                assert(depth(to_model(body1)) <= 60000);
+                assert(depth(to_model(body2)) <= 60000);
+                let b1i = match verified_inst(ctx, body1, &[local], 0, fuel) {
+                    Some(v) => v,
+                    None => return None,
+                };
+                let b2i = match verified_inst(ctx, body2, &[local], 0, fuel) {
+                    Some(v) => v,
+                    None => return None,
+                };
+                return verified_def_eq(ctx, b1i, b2i, fuel);
+            }
+            return Some(false);
+        }
+        return None;
+    }
+    if let Some((name, style, t1, body1)) = expr_as_lambda(&x_el) {
+        if let Some((_, _, t2, body2)) = expr_as_lambda(&y_el) {
+            assert(depth(to_model(t1)) <= 60000);
+            assert(depth(to_model(t2)) <= 60000);
+            let t1i = match verified_inst(ctx, t1, &[], 0, fuel) {
+                Some(v) => v,
+                None => return None,
+            };
+            let t2i = match verified_inst(ctx, t2, &[], 0, fuel) {
+                Some(v) => v,
+                None => return None,
+            };
+            if let Some(true) = verified_def_eq(ctx, t1i, t2i, fuel) {
+                let local = ctx.mk_dbj_level(name, style, t1i);
+                assert(depth(to_model(body1)) <= 60000);
+                assert(depth(to_model(body2)) <= 60000);
+                let b1i = match verified_inst(ctx, body1, &[local], 0, fuel) {
+                    Some(v) => v,
+                    None => return None,
+                };
+                let b2i = match verified_inst(ctx, body2, &[local], 0, fuel) {
+                    Some(v) => v,
+                    None => return None,
+                };
+                return verified_def_eq(ctx, b1i, b2i, fuel);
+            }
+            return Some(false);
+        }
+        return None;
+    }
+    None
 }
 
 }
