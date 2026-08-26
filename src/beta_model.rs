@@ -207,27 +207,37 @@ pub proof fn step_identity_sanity_check()
 /// directly sidesteps needing an existential at all and reliably works;
 /// switching to this style is the fix, not a workaround pasted over an
 /// unexplained gap.
-/// Parallel reduction, parameterized by `env`: a `Const(id)`'s delta-
-/// unfolding target, `env[id]`, when `env` has it. `env` is DELIBERATELY
-/// a bare `Map<u64, ExprSpec>` -- "which constant ids have a known
-/// definition, and what's its (model-erased) value" -- not a model of
-/// the real `Env` struct itself; every real-environment concern (level
-/// substitution, arity checks, `temp_declars` visibility) belongs to the
-/// real-code BRIDGE, not this file's reduction theory.
+/// Parallel reduction, parameterized by `env`: a `Const(id, levels)`'s
+/// delta-unfolding target, `env[id]`'s body with its own level parameters
+/// substituted by `levels` (via `subst_expr_levels_rel`), when `env` has
+/// `id`. `env` is DELIBERATELY a bare `Map<u64, (Seq<u64>, ExprSpec)>` --
+/// "which constant ids have a known definition, and what's its (model-
+/// erased) level-parameter-name list and body" -- not a model of the real
+/// `Env` struct itself; every real-environment concern (arity checks,
+/// `temp_declars` visibility) belongs to the real-code BRIDGE, not this
+/// file's reduction theory. Level substitution itself IS modeled here
+/// (not deferred to the bridge) since it's genuinely part of what delta
+/// reduction means, not an arena-specific detail.
 ///
-/// The delta rule is deliberately NON-recursive (`e2 == env[id]`
-/// directly, not `pstep(env, env, env[id], e2)` the way beta/zeta recurse
-/// into their substituted result) -- unlike beta/zeta, `env[id]` is NOT
-/// a structural subterm of `Const(id)` (it can be arbitrarily large, and
-/// can itself contain more `Const`s), so recursing into it would break
-/// `pstep`'s own `decreases e1` termination measure entirely. This also
-/// makes delta fully DETERMINISTIC (exactly one non-reflexive target per
-/// `Const`, no `choose`-style freedom the way beta/zeta have) -- which in
-/// turn makes `pstep_diamond`'s new `Const` case markedly simpler than
-/// its beta/zeta cases: two terms both delta-related to the same
-/// `Const(id)` are already syntactically IDENTICAL (`env[id]`), so no
-/// size/headroom machinery is needed to reconcile them.
-pub open spec fn pstep(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec) -> bool
+/// The delta rule is deliberately NON-recursive (`subst_expr_levels_rel
+/// (env[id].1, env[id].0, levels, e2)` directly, not `pstep(env, env[id].1,
+/// e2)` the way beta/zeta recurse into their substituted result) -- unlike
+/// beta/zeta, `env[id].1` is NOT a structural subterm of `Const(id,
+/// levels)` (it can be arbitrarily large, and can itself contain more
+/// `Const`s), so recursing into it would break `pstep`'s own `decreases
+/// e1` termination measure entirely. Unlike the old bare-equality version,
+/// delta is no longer fully deterministic in the SYNTACTIC sense (`subst_
+/// expr_levels_rel` is a relation, satisfiable by any `e2` with the right
+/// `interp`-level semantics, not just one canonical value) -- but every
+/// growth-bound lemma below only ever needed `nlbv`/`size`/`max_var_below`/
+/// `depth` facts about the delta target, never syntactic identity, and the
+/// `subst_expr_levels_rel_*` preservation lemmas give exactly those, so the
+/// existing headroom machinery carries over unchanged. `pstep_diamond`'s
+/// own `Const` case remains trivial regardless, since it's restricted to
+/// `env == Map::empty()` (see its own doc comment) -- `env.contains_key
+/// (id)` is always false there, so delta never actually fires in that
+/// proof.
+pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool
     decreases e1
 {
     ||| e1 == e2
@@ -254,7 +264,9 @@ pub open spec fn pstep(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec) -> b
             ExprSpec::Proj(inner2) => pstep(env, *inner, *inner2),
             _ => false,
         },
-        ExprSpec::Const(id, _levels) => env.contains_key(id) && e2 == env[id],
+        ExprSpec::Const(id, levels) =>
+            env.contains_key(id)
+            && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2),
         _ => false,
     }
 }
@@ -274,12 +286,12 @@ pub open spec fn pstep(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec) -> b
 /// case somewhere to point for a bound on `env[id]` -- reusing one `cap`
 /// for all three measures rather than three separate parameters, since
 /// every use site only ever needs SOME finite headroom, not a tight one.
-pub open spec fn env_wf(env: Map<u64, ExprSpec>, cap: nat) -> bool {
+pub open spec fn env_wf(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat) -> bool {
     forall |id: u64| #[trigger] env.contains_key(id) ==> {
-        &&& nlbv(env[id]) == 0
-        &&& size(env[id]) <= cap
-        &&& max_var_below(env[id], cap)
-        &&& depth(env[id]) <= cap
+        &&& nlbv(env[id].1) == 0
+        &&& size(env[id].1) <= cap
+        &&& max_var_below(env[id].1, cap)
+        &&& depth(env[id].1) <= cap
     }
 }
 
@@ -309,7 +321,7 @@ pub open spec fn env_wf(env: Map<u64, ExprSpec>, cap: nat) -> bool {
 /// bounds, `pstep_shift` recursively for the witnesses' own
 /// shift-preservation, `shift_subst1_commute` to reassemble); the
 /// congruence cases are direct structural recursion.
-pub proof fn pstep_shift(env: Map<u64, ExprSpec>, cap: nat, bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
         env_wf(env, cap),
@@ -583,8 +595,10 @@ pub proof fn pstep_shift(env: Map<u64, ExprSpec>, cap: nat, bound: nat, c: nat, 
                     _ => { assert(false); }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels@, e2);
+                assert(nlbv(e2) == 0);
                 assert(shift(1, c, e1) == e1);
                 nlbv_shift_noop(1, c, e2);
                 assert(shift(1, c, e2) == e2);
@@ -611,7 +625,7 @@ pub proof fn pstep_shift(env: Map<u64, ExprSpec>, cap: nat, bound: nat, c: nat, 
 /// and `shift_subst1_commute_down` + `pstep_preserves_no_escaping_ref`
 /// (to establish ITS OWN `has_escaping_ref` hypotheses on the beta
 /// witnesses) in place of `shift_subst1_commute`.
-pub proof fn pstep_shift_down(env: Map<u64, ExprSpec>, cap: nat, bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
         env_wf(env, cap),
@@ -1024,8 +1038,10 @@ pub proof fn pstep_shift_down(env: Map<u64, ExprSpec>, cap: nat, bound: nat, c: 
                     _ => { assert(false); }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels@, e2);
+                assert(nlbv(e2) == 0);
                 assert(shift(-1, c, e1) == e1);
                 nlbv_shift_noop(-1, c, e2);
                 assert(shift(-1, c, e2) == e2);
@@ -3734,7 +3750,7 @@ pub proof fn subst_expr_levels_rel_depth(e: ExprSpec, ks: Seq<u64>, vs: Seq<Leve
 }
 
 #[verifier::spinoff_prover]
-pub proof fn pstep_size_bound(env: Map<u64, ExprSpec>, cap: nat, e1: ExprSpec, e2: ExprSpec) -> (result: nat)
+pub proof fn pstep_size_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e1: ExprSpec, e2: ExprSpec) -> (result: nat)
     requires pstep(env, e1, e2), env_wf(env, cap)
     ensures size(e2) <= result, result <= size_growth(size(e1) * (cap + 1))
     decreases e1
@@ -3919,8 +3935,9 @@ pub proof fn pstep_size_bound(env: Map<u64, ExprSpec>, cap: nat, e1: ExprSpec, e
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_size(env[id].1, env[id].0, levels@, e2);
                 assert(size(e2) <= cap);
                 assert(size(e1) == 1);
                 assert(size(e1) * (cap + 1) == cap + 1) by (nonlinear_arith)
@@ -4076,7 +4093,7 @@ pub proof fn pstep_subst1_size_headroom(c1: nat, size_fb: nat, size_a: nat, size
 /// congruence cases (pure `max`, not `sum`, of two recursive slacks) don't
 /// even need the doubling, but reuse the same bound for uniformity.
 #[verifier::spinoff_prover]
-pub proof fn pstep_bounds(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (nat, nat))
+pub proof fn pstep_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec) -> (result: (nat, nat))
     requires
         pstep(env, e1, e2),
         env_wf(env, cap),
@@ -4385,8 +4402,10 @@ pub proof fn pstep_bounds(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e1: Exp
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_max_var_below(env[id].1, env[id].0, levels@, e2, cap);
+                subst_expr_levels_rel_depth(env[id].1, env[id].0, levels@, e2);
                 assert(max_var_below(e2, cap));
                 assert(depth(e2) <= cap);
                 size_growth_pos(size(e1));
@@ -4420,7 +4439,7 @@ pub proof fn pstep_bounds(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e1: Exp
 /// membership at one fixed point `k`). Only the beta case needs
 /// `pstep_bounds` at all, and only for the unrelated overflow-safety
 /// bookkeeping `subst1_no_escaping_ref` itself requires.
-pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, ExprSpec>, cap: nat, bound: nat, k: nat, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, k: nat, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
         env_wf(env, cap),
@@ -4699,8 +4718,9 @@ pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, ExprSpec>, cap: nat, 
                     _ => { assert(false); }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels@, e2);
                 assert(nlbv(e2) == 0);
                 nlbv_no_escaping_ref(e2, k);
             }
@@ -4949,7 +4969,7 @@ pub proof fn subst_shift_down_commute(bound: nat, c0: nat, j: nat, s: ExprSpec, 
 /// with `depth(e)` for exactly that reason (one more unit of `s1`'s own
 /// headroom consumed per level, same bookkeeping pattern as everywhere
 /// else in this file).
-pub proof fn pstep_subst_refl(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e: ExprSpec)
+pub proof fn pstep_subst_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e: ExprSpec)
     requires
         pstep(env, s1, s2),
         env_wf(env, cap),
@@ -5028,7 +5048,7 @@ pub proof fn pstep_subst_refl(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: 
 /// terms and risks yet another off-by-one; see this file's established
 /// practice of generous slack over tight constants throughout.
 #[verifier::spinoff_prover]
-pub proof fn pstep_subst(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, j: nat, s1: ExprSpec, s2: ExprSpec, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
         pstep(env, s1, s2),
@@ -5552,8 +5572,9 @@ pub proof fn pstep_subst(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, 
                     _ => { assert(false); }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id) && e2 == env[id]);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2));
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels@, e2);
                 assert(subst(j, s1, e1) == e1);
                 assert(nlbv(e2) == 0);
                 nlbv_subst_noop(j, s2, e2);
@@ -5603,7 +5624,7 @@ pub proof fn pstep_subst(env: Map<u64, ExprSpec>, cap: nat, bound: nat, j: nat, 
 /// found exactly this decomposition and confirmed it was tractable
 /// without reformulating substitution to simultaneous/parallel style.
 #[verifier::spinoff_prover]
-pub proof fn pstep_subst1(env: Map<u64, ExprSpec>, cap: nat, bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
+pub proof fn pstep_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec)
     requires
         pstep(env, body1, body3),
         pstep(env, a1, a3),
@@ -5730,9 +5751,9 @@ pub proof fn pstep_subst1(env: Map<u64, ExprSpec>, cap: nat, bound: nat, body1: 
 /// size_growth(size_fb)`, `... + 10 * 0 * size_growth(...) == ...`), so
 /// none of this function's own arithmetic needed to change at all.
 #[verifier::spinoff_prover]
-pub proof fn pstep_diamond_beta_step(env: Map<u64, ExprSpec>, cap: nat, c: nat, size_e: nat, bdepth: nat, fb: ExprSpec, a: ExprSpec, body: ExprSpec, arg: ExprSpec, body3: ExprSpec, arg3: ExprSpec)
+pub proof fn pstep_diamond_beta_step(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, c: nat, size_e: nat, bdepth: nat, fb: ExprSpec, a: ExprSpec, body: ExprSpec, arg: ExprSpec, body3: ExprSpec, arg3: ExprSpec)
     requires
-        env == Map::<u64, ExprSpec>::empty(),
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         pstep(env, fb, body),
         pstep(env, a, arg),
         pstep(env, body, body3),
@@ -5851,9 +5872,9 @@ pub proof fn pstep_diamond_beta_step(env: Map<u64, ExprSpec>, cap: nat, c: nat, 
 /// case already handled above -- this branch is unreachable, matching
 /// the pre-delta catch-all.
 #[verifier::spinoff_prover]
-pub proof fn pstep_diamond(env: Map<u64, ExprSpec>, cap: nat, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
+pub proof fn pstep_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
     requires
-        env == Map::<u64, ExprSpec>::empty(),
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         pstep(env, e, e1),
         pstep(env, e, e2),
         max_var_below(e, bound),
@@ -7135,7 +7156,7 @@ pub proof fn spine_app_concat(base: ExprSpec, args1: Seq<ExprSpec>, args2: Seq<E
 /// recursive `bool` spec fn, sidestepping any need for a `decreases`
 /// measure on "how many steps" (parallel reduction can grow a term's
 /// size, so there's no obvious structural bound on chain length).
-pub open spec fn pstep_chain_valid(env: Map<u64, ExprSpec>, chain: Seq<ExprSpec>) -> bool {
+pub open spec fn pstep_chain_valid(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: Seq<ExprSpec>) -> bool {
     forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 ==> pstep(env, chain[i], chain[i + 1])
 }
 
@@ -7148,13 +7169,13 @@ pub open spec fn pstep_chain_valid(env: Map<u64, ExprSpec>, chain: Seq<ExprSpec>
 /// concatenation) -- unlike `pstep` itself, which is NOT known to be
 /// transitive and whose transitivity is a genuinely hard, classically
 /// subtle property this file deliberately avoids needing.
-pub open spec fn pstep_star(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec) -> bool {
+pub open spec fn pstep_star(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool {
     exists |chain: Seq<ExprSpec>|
         chain.len() >= 1 && chain[0] == e1 && chain[chain.len() - 1] == e2 && pstep_chain_valid(env, chain)
 }
 
 /// `pstep_star` is reflexive: the length-1 chain `[e]`.
-pub proof fn pstep_star_refl(env: Map<u64, ExprSpec>, e: ExprSpec)
+pub proof fn pstep_star_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
     ensures pstep_star(env, e, e)
 {
     let chain = seq![e];
@@ -7166,7 +7187,7 @@ pub proof fn pstep_star_refl(env: Map<u64, ExprSpec>, e: ExprSpec)
 
 /// A single `pstep` step is (trivially) a `pstep_star` step: the
 /// length-2 chain `[e1, e2]`.
-pub proof fn pstep_star_one(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_star_one(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
     requires pstep(env, e1, e2)
     ensures pstep_star(env, e1, e2)
 {
@@ -7187,7 +7208,7 @@ pub proof fn pstep_star_one(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec)
 /// `pstep_star` instead of trying to prove `pstep` itself transitive:
 /// this proof is pure `Seq` index bookkeeping, no reasoning about
 /// `pstep`'s own redex structure at all.
-pub proof fn pstep_star_trans(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpec, e3: ExprSpec)
+pub proof fn pstep_star_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec, e3: ExprSpec)
     requires pstep_star(env, e1, e2), pstep_star(env, e2, e3)
     ensures pstep_star(env, e1, e3)
 {
@@ -7243,7 +7264,7 @@ pub proof fn pstep_star_trans(env: Map<u64, ExprSpec>, e1: ExprSpec, e2: ExprSpe
 /// each individual step uses `pstep`'s own congruence rule (the argument
 /// side taken reflexively via `pstep(env, a, a)`), so this needs no
 /// transitivity of `pstep` itself either.
-pub proof fn pstep_star_app_congr(env: Map<u64, ExprSpec>, x: ExprSpec, y: ExprSpec, a: ExprSpec)
+pub proof fn pstep_star_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, a: ExprSpec)
     requires pstep_star(env, x, y)
     ensures pstep_star(env, ExprSpec::App(Box::new(x), Box::new(a)), ExprSpec::App(Box::new(y), Box::new(a)))
 {
@@ -7271,7 +7292,7 @@ pub proof fn pstep_star_app_congr(env: Map<u64, ExprSpec>, x: ExprSpec, y: ExprS
 /// `spine_app`: `pstep_star(env, x, y)` gives `pstep_star(env, spine_app(x, args),
 /// spine_app(y, args))` for any fixed `args`. By induction on
 /// `args.len()`, matching `spine_app`'s own back-peeling recursion.
-pub proof fn pstep_spine_app_star(env: Map<u64, ExprSpec>, x: ExprSpec, y: ExprSpec, args: Seq<ExprSpec>)
+pub proof fn pstep_spine_app_star(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, args: Seq<ExprSpec>)
     requires pstep_star(env, x, y)
     ensures pstep_star(env, spine_app(x, args), spine_app(y, args))
     decreases args.len()
@@ -7309,7 +7330,7 @@ pub proof fn pstep_spine_app_star(env: Map<u64, ExprSpec>, x: ExprSpec, y: ExprS
 /// `pstep_spine_app_star`, and the IH on the remaining `args[1..]` --
 /// stitched together with `pstep_star_trans`, which (unlike `pstep`
 /// transitivity) is free.
-pub proof fn pstep_star_spine_reduce(env: Map<u64, ExprSpec>, head: ExprSpec, args: Seq<ExprSpec>)
+pub proof fn pstep_star_spine_reduce(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>)
     ensures pstep_star(env, spine_app(head, args), spine_reduce(head, args))
     decreases args.len()
 {

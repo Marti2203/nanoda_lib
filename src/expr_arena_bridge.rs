@@ -698,7 +698,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
                 Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
             )
-            && pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
+            && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
     }
 {
@@ -742,17 +742,17 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                         let full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                         assert(consumed_model + remaining_model =~= full_model);
 
-                        pstep_star_spine_reduce(Map::<u64, ExprSpec>::empty(), to_model(e_fun), consumed_model);
-                        assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
+                        pstep_star_spine_reduce(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), consumed_model);
+                        assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
 
                         pstep_spine_app_star(
-                            Map::<u64, ExprSpec>::empty(),
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
                             spine_app(to_model(e_fun), consumed_model),
                             spine_reduce(to_model(e_fun), consumed_model),
                             remaining_model,
                         );
                         assert(pstep_star(
-                            Map::<u64, ExprSpec>::empty(),
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
                             spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model),
                             spine_app(spine_reduce(to_model(e_fun), consumed_model), remaining_model),
                         ));
@@ -761,7 +761,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                         assert(spine_app(to_model(e_fun), full_model)
                             == spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model));
 
-                        assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), full_model), to_model(result)));
+                        assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), full_model), to_model(result)));
                     }
                     Some(result)
                 }
@@ -798,7 +798,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         bound + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
+            && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
     }
 {
@@ -821,14 +821,14 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                 assert(to_model(result) == spine_app(to_model(inst_result), args_model));
                 assert(to_model(result) == spine_app(subst1(to_model(body), to_model(val)), args_model));
 
-                assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
-                    assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(body), to_model(body)));
-                    assert(pstep(Map::<u64, ExprSpec>::empty(), to_model(val), to_model(val)));
+                assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
+                    assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(body), to_model(body)));
+                    assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(val), to_model(val)));
                 }
-                pstep_star_one(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)));
-                pstep_spine_app_star(Map::<u64, ExprSpec>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
-                assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
-                assert(pstep_star(Map::<u64, ExprSpec>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
+                pstep_star_one(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)));
+                pstep_spine_app_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
+                assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
+                assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
             }
             Some(result)
         }
