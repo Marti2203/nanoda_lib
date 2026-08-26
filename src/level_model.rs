@@ -314,6 +314,219 @@ pub fn subst1(l: LevelSpec, p: u64, v: &LevelSpec) -> (result: LevelSpec)
     }
 }
 
+/// Mirrors `TcCtx::subst_level`'s linear scan (`for (k, v) in
+/// ks.iter().zip(vs.iter()) { if level == k { return v } }`): the index of
+/// the FIRST position in `ks` equal to `q`, or `None` if `q` doesn't occur
+/// -- scanning from the front, unlike `find_from_end` in `expr_model.rs`
+/// (which scans backward for a different real-code loop).
+pub open spec fn find_level_idx(ks: Seq<u64>, q: u64) -> Option<nat>
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+        None
+    } else if ks[0] == q {
+        Some(0)
+    } else {
+        match find_level_idx(ks.subrange(1, ks.len() as int), q) {
+            Some(p) => Some((p + 1) as nat),
+            None => None,
+        }
+    }
+}
+
+/// `find_level_idx`'s in-bounds guarantee, split out as its own lemma
+/// (mirroring `find_pos_from_end`'s ensures in `expr_model.rs`, which
+/// bundles this fact directly into an `pub fn`'s contract -- `find_level_idx`
+/// is a `spec fn`, so the same fact needs a companion `proof fn` instead).
+pub proof fn find_level_idx_bound(ks: Seq<u64>, q: u64)
+    ensures match find_level_idx(ks, q) {
+        Some(i) => i < ks.len(),
+        None => true,
+    }
+    decreases ks.len()
+{
+    if ks.len() == 0 || ks[0] == q {
+    } else {
+        find_level_idx_bound(ks.subrange(1, ks.len() as int), q);
+    }
+}
+
+/// The parameter environment `subst_levels` implicitly substitutes into:
+/// every param `p` found (via `find_level_idx`) in `ks` is replaced by
+/// whatever `vs` denotes at that SAME index, interpreted under the
+/// ORIGINAL `rho` (simultaneous substitution -- mirrors `subst1`'s
+/// `rho.insert(p, interp(*v, rho))`, generalized from one override to a
+/// whole list); every other param keeps its original `rho` assignment
+/// untouched. Built by recursing to the END of `ks`/`vs` first (base case
+/// `rho` itself) and inserting front-to-back on the way back OUT of the
+/// recursion, so an EARLIER entry's insert (applied LAST) always wins over
+/// a later one for a repeated key -- matching `find_level_idx`'s
+/// first-match semantics exactly. (`Set::new`/`Set::full` in this Verus's
+/// `vstd` return `Option<Set<A>>`, `None` unless the predicate is
+/// provably finite -- awkward for an unbounded `nat` domain, so this
+/// builds the map via plain `insert` instead of `Map::new` with a
+/// predicate-defined domain.)
+pub open spec fn subst_env(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Map<nat, nat>
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+        rho
+    } else {
+        subst_env(rho, ks.subrange(1, ks.len() as int), vs.subrange(1, vs.len() as int))
+            .insert(ks[0] as nat, interp(vs[0], rho))
+    }
+}
+
+/// `subst_env`'s defining correctness property, for exactly the query
+/// `interp` itself performs at a `Param` node: substituted param `q`
+/// denotes whatever `vs` says at `find_level_idx`'s matching index
+/// (interpreted under the ORIGINAL `rho`); every other param denotes
+/// exactly what it denoted under `rho` before the substitution.
+pub proof fn subst_env_param(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>, q: u64)
+    requires ks.len() == vs.len()
+    ensures
+        interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == match find_level_idx(ks, q) {
+            Some(i) => interp(vs[i as int], rho),
+            None => interp(LevelSpec::Param(q), rho),
+        },
+    decreases ks.len()
+{
+    find_level_idx_bound(ks, q);
+    if ks.len() == 0 {
+        assert(subst_env(rho, ks, vs) == rho);
+        assert(find_level_idx(ks, q) is None);
+        assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), rho));
+    } else {
+        let tail_ks = ks.subrange(1, ks.len() as int);
+        let tail_vs = vs.subrange(1, vs.len() as int);
+        subst_env_param(rho, tail_ks, tail_vs, q);
+        let tail_env = subst_env(rho, tail_ks, tail_vs);
+        let v0 = interp(vs[0], rho);
+        vstd::map::lemma_map_insert_domain(tail_env, ks[0] as nat, v0);
+        assert(subst_env(rho, ks, vs) == tail_env.insert(ks[0] as nat, v0));
+        assert(subst_env(rho, ks, vs).dom() == tail_env.dom().insert(ks[0] as nat));
+        if ks[0] == q {
+            vstd::map::lemma_map_insert_same(tail_env, ks[0] as nat, v0);
+            assert(subst_env(rho, ks, vs)[q as nat] == v0);
+            assert(subst_env(rho, ks, vs).contains_key(q as nat));
+            assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == v0);
+            assert(find_level_idx(ks, q) == Some(0nat));
+        } else {
+            assert(subst_env(rho, ks, vs).contains_key(q as nat) == tail_env.contains_key(q as nat));
+            if tail_env.contains_key(q as nat) {
+                vstd::map::axiom_map_insert_different(tail_env, q as nat, ks[0] as nat, v0);
+                assert(subst_env(rho, ks, vs)[q as nat] == tail_env[q as nat]);
+                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), tail_env));
+            } else {
+                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == 0);
+                assert(interp(LevelSpec::Param(q), tail_env) == 0);
+                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), tail_env));
+            }
+            assert(find_level_idx(ks, q) == match find_level_idx(tail_ks, q) {
+                Some(p) => Some((p + 1) as nat),
+                None => None::<nat>,
+            });
+        }
+    }
+}
+
+/// Exec counterpart of `find_level_idx`, mirroring `TcCtx::subst_level`'s
+/// real loop directly (recursion over the slice instead of a `for` loop,
+/// matching this file's existing `find_pos_from_end`-style convention in
+/// `expr_model.rs`).
+pub fn find_level(ks: &[u64], q: u64) -> (result: Option<usize>)
+    requires ks.len() <= 1_000_000_000
+    ensures
+        match result {
+            Some(i) => find_level_idx(ks@, q) == Some(i as nat) && (i as nat) < ks.len(),
+            None => find_level_idx(ks@, q) is None,
+        }
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+        None
+    } else if ks[0] == q {
+        Some(0)
+    } else {
+        let sub = &ks[1..ks.len()];
+        assert(sub@ =~= ks@.subrange(1, ks@.len() as int));
+        match find_level(sub, q) {
+            Some(p) => Some(p + 1),
+            None => None,
+        }
+    }
+}
+
+/// Mirrors `TcCtx::subst_level`/`subst_levels`: simultaneous, list-indexed
+/// level substitution -- the multi-parameter generalization of `subst1`
+/// (which `leq_imax_by_cases` only ever needed for a single param).
+/// Structurally identical to `subst1` case-by-case; the only real
+/// difference is the `Param` case, which does a linear scan (`find_level`)
+/// instead of a single equality check.
+pub fn subst_levels(l: LevelSpec, ks: &[u64], vs: &[LevelSpec]) -> (result: LevelSpec)
+    requires ks.len() == vs.len(), ks.len() <= 1_000_000_000
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@))
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => LevelSpec::Zero,
+        LevelSpec::Param(q) => {
+            match find_level(ks, q) {
+                Some(i) => {
+                    let result = dup(&vs[i]);
+                    assert(result == vs@[i as int]);
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(LevelSpec::Param(q), subst_env(rho, ks@, vs@)) by {
+                        subst_env_param(rho, ks@, vs@, q);
+                    }
+                    result
+                }
+                None => {
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Param(q), rho) == interp(LevelSpec::Param(q), subst_env(rho, ks@, vs@)) by {
+                        subst_env_param(rho, ks@, vs@, q);
+                    }
+                    LevelSpec::Param(q)
+                }
+            }
+        }
+        LevelSpec::Succ(a) => {
+            let sub = subst_levels(*a, ks, vs);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            let result = LevelSpec::Succ(Box::new(sub));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(sub, rho) + 1);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@)) == interp(*a, subst_env(rho, ks@, vs@)) + 1);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            result
+        }
+        LevelSpec::Max(a, b) => {
+            let sa = subst_levels(*a, ks, vs);
+            let sb = subst_levels(*b, ks, vs);
+            let result = combining(sa, sb);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@))
+                == max_nat(interp(*a, subst_env(rho, ks@, vs@)), interp(*b, subst_env(rho, ks@, vs@))));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            result
+        }
+        LevelSpec::IMax(a, b) => {
+            let sa = subst_levels(*a, ks, vs);
+            let sb = subst_levels(*b, ks, vs);
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
+            let result = LevelSpec::IMax(Box::new(sa), Box::new(sb));
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho)
+                == if interp(sb, rho) == 0 { 0 } else { max_nat(interp(sa, rho), interp(sb, rho)) });
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@))
+                == if interp(*b, subst_env(rho, ks@, vs@)) == 0 { 0 } else {
+                    max_nat(interp(*a, subst_env(rho, ks@, vs@)), interp(*b, subst_env(rho, ks@, vs@)))
+                });
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            result
+        }
+    }
+}
+
 pub open spec fn is_zero_or_succ(l: LevelSpec) -> bool {
     match l { LevelSpec::Zero => true, LevelSpec::Succ(_) => true, _ => false }
 }
