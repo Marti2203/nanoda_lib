@@ -59,6 +59,22 @@ pub(crate) fn biguint_rem(x: BigUint, y: BigUint) -> BigUint {
     x % y
 }
 
+/// `expr.rs::get_bignum_succ_from_expr`'s own arithmetic (`n + 1usize`) --
+/// a plain delegation to `BigUint`'s `Add<usize>` impl, no custom
+/// branching, same spirit as `nat_gcd`/`nat_xor` etc. per this file's own
+/// doc comment.
+#[allow(dead_code)]
+pub(crate) fn biguint_succ(x: BigUint) -> BigUint {
+    x + 1usize
+}
+
+/// `tc.rs::do_nat_bin`'s `Add` case (`arg1 + arg2`) -- also a plain
+/// delegation, no custom branching.
+#[allow(dead_code)]
+pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
+    x + y
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -92,6 +108,12 @@ pub assume_specification [biguint_div] (x: BigUint, y: BigUint) -> (result: BigU
 pub assume_specification [biguint_rem] (x: BigUint, y: BigUint) -> (result: BigUint)
     requires to_nat(y) > 0
     ensures to_nat(result) == to_nat(x) % to_nat(y);
+
+pub assume_specification [biguint_succ] (x: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) + 1;
+
+pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) + to_nat(y);
 
 /// Real-code counterpart to `util.rs::nat_sub`, built only from the
 /// axiomatized wrappers above, proving Lean's saturating-subtraction

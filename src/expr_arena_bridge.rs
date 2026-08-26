@@ -125,8 +125,22 @@ pub(crate) fn expr_as_proj<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, usize, Expr
 }
 
 #[allow(dead_code)]
+pub(crate) fn expr_as_nat_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<crate::util::BigUintPtr<'t>> {
+    match e { Expr::NatLit { ptr, .. } => Some(*ptr), _ => None }
+}
+
+#[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
     a == b
+}
+
+/// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: dereference
+/// and clone the arena-stored `BigUint` (real `read_bignum` returns
+/// `Option<&BigUint>`; bridged as one opaque real function rather than
+/// separately bridging `Option::cloned`/`Clone` for a foreign type).
+#[allow(dead_code)]
+pub(crate) fn read_bignum_value<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> Option<num_bigint::BigUint> {
+    ctx.read_bignum(p).cloned()
 }
 
 verus! {
@@ -242,6 +256,49 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
         is_const_shape(result),
         const_name_of(result) == name,
         const_levels_of(result) == levels;
+
+/// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
+/// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
+/// shaped pointer (bound-variable-inert, collapses to `ExprSpec::Closed`
+/// like every other closed leaf), `bignum_ptr_value` is the uninterpreted
+/// value a `BigUintPtr` denotes (mirrors `nat_lit_model.rs`'s `to_nat`,
+/// but keyed by the ARENA pointer rather than a `BigUint` value directly,
+/// exactly the same "pointer identity, not structural content" pattern
+/// `name_id`/`expr_id` already use), and `nat_lit_value` composes the two
+/// so callers can talk about "the nat this `ExprPtr` denotes" in one step.
+pub uninterp spec fn is_nat_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub uninterp spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr<'a>;
+pub uninterp spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat;
+pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
+    bignum_ptr_value(nat_lit_ptr_of(ptr))
+}
+
+#[verifier::external_body]
+pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
+    requires is_nat_lit_shape(ptr)
+    ensures to_model(ptr) == ExprSpec::Closed
+{}
+
+pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<crate::util::BigUintPtr<'t>>)
+    ensures match result {
+        Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
+        None => !is_nat_lit_shape(ptr),
+    };
+
+pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
+    ensures match result {
+        Some(v) => crate::nat_lit_model::to_nat(v) == bignum_ptr_value(p),
+        None => true,
+    };
+
+/// Construction-side mirror: a freshly-built `NatLit` (via `mk_nat_lit_
+/// quick`) is `is_nat_lit_shape` and denotes exactly the given `BigUint`'s
+/// value -- same pattern as `mk_const` above.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_nat_lit_quick] (ctx: &mut TcCtx<'t, 'p>, n: num_bigint::BigUint) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_nat_lit_shape(e) && nat_lit_value(e) == crate::nat_lit_model::to_nat(n),
+        None => true,
+    };
 
 /// `Sort`'s level, read directly off the shallow value -- simpler than
 /// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s

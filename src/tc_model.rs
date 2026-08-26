@@ -46,9 +46,12 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_id, const_le
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, expr_as_nat_lit, read_bignum_value};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::whnf_fixpoint_ok;
+use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value};
+use crate::nat_lit_model::biguint_succ;
+#[cfg(verus_only)]
+use crate::nat_lit_model::to_nat;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_arena_bridge::read_levels_vec;
@@ -491,6 +494,61 @@ pub fn verified_reduce_proj_step_full<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         }
         None => None,
     }
+}
+
+/// Manual transcription of `tc.rs`'s `try_reduce_nat`'s FIRST branch
+/// (`Nat.succ` applied to one argument, `tc.rs:404-407`) composed with
+/// its callee `expr.rs::get_bignum_succ_from_expr`'s `NatLit` case
+/// (`tc.rs:597-599`; the `Const Nat.zero []` representation of zero,
+/// `get_bignum_succ_from_expr`'s OTHER branch, is not modeled -- returns
+/// `None` conservatively): whnf `arg` (via `verified_whnf_step`, one
+/// round -- same honest incompleteness as `verified_reduce_proj_step_
+/// full`), extract its `BigUint` value, add one, and reconstruct.
+///
+/// Does NOT model the outer dispatch (`Some(name) == self.ctx.export_
+/// file.name_cache.nat_succ`, i.e. "is this application's head actually
+/// the `Nat.succ` constant") -- that's a real-`Env`/`export_file`-config
+/// lookup, a separate piece of plumbing from the arithmetic content this
+/// models. Callers are expected to have already established `arg` is
+/// `Nat.succ`'s argument by other means; this only proves the succ
+/// computation itself sound.
+///
+/// The result is a genuine `pstep_star` fact (from `verified_whnf_step`)
+/// PLUS a real `BigUint`-arithmetic fact (`nat_lit_value(r) == nat_lit_
+/// value(v) + 1`, via `nat_lit_model.rs`'s `biguint_succ`/`to_nat` trust
+/// boundary) -- the first bridge in this codebase connecting `whnf`
+/// composition to the nat-literal kernel extension at all.
+pub fn verified_try_reduce_nat_succ_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, arg: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(arg)) <= 0,
+        max_var_below(to_model(arg), bound),
+        depth(to_model(arg)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |v: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(arg), to_model(v))
+            && is_nat_lit_shape(v)
+            && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_lit_value(v) + 1,
+        None => true,
+    }
+{
+    let v_expr = match verified_whnf_step(ctx, env, arg, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let v_el = ctx.read_expr(v_expr);
+    let ptr = match expr_as_nat_lit(v_expr, &v_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bn = match read_bignum_value(ctx, ptr) {
+        Some(b) => b,
+        None => return None,
+    };
+    let succ_bn = biguint_succ(bn);
+    ctx.mk_nat_lit_quick(succ_bn)
 }
 
 }
