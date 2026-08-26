@@ -85,7 +85,7 @@ use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n};
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth, subst_expr_levels_rel};
+use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
@@ -2066,6 +2066,59 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         return None;
     }
     verified_subst_expr_levels(ctx, ty, uparams, c_uparams, fuel)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_app`'s own
+/// (commented-out, reference) single-argument simplification
+/// (`tc.rs:597-621`: `self.ctx.inst(body, &[arg])` once `fun`'s type is
+/// confirmed `Pi`-shaped) -- the CORE piece `infer_app`'s real multi-arg
+/// telescoping loop (`tc.rs:560-595`) repeats once per argument. Takes
+/// `fun_ty` (the CALLEE's already-inferred type) as an explicit
+/// parameter rather than computing it via a full `infer` dispatch
+/// internally.
+///
+/// **Genuine open problem surfaced while scoping this, not specific to
+/// `infer_app`:** composing this with `verified_infer_dispatch`/`verified_
+/// infer_const` to get `fun_ty` automatically needs `depth(to_model(
+/// fun_ty)) <= d` for SOME `d` -- but `verified_infer_const`'s result
+/// (a declaration's TYPE, substituted) has NO depth bound in its own
+/// ensures, for the exact same reason `verified_unfold_def_step`'s
+/// result doesn't: a declaration's type can be arbitrarily large, and
+/// nothing in this bridge's trust boundary caps it (adding a blanket
+/// "types are always <= 60000 deep" axiom would be exactly the kind of
+/// arbitrary cap the user's standing directive rules out -- it isn't a
+/// structural guarantee the way `nlbv == 0` is, just an untrue-in-general
+/// practical assumption). This is the SAME global-environment-depth-cap
+/// problem already blocking `lazy_delta_step`'s outer loop, confirmed
+/// here to be a MORE PERVASIVE blocker than that scoping first suggested
+/// -- it also stands between `infer_app`'s full composition and being
+/// buildable, not just delta-unfolding. `d`/`fun_ty` are therefore left
+/// as explicit parameters here rather than internally derived, matching
+/// the `verified_def_eq`/`verified_def_eq_binder_step` precedent of
+/// threading depth bounds in from the caller rather than deriving them.
+pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, arg: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        depth(to_model(fun_ty)) <= d,
+        d <= 60000,
+    ensures match result {
+        Some(r) => exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>|
+            to_model(fun_ty) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            && to_model(r) == subst_full(to_model(body), seq![to_model(arg)], 0),
+        None => true,
+    }
+{
+    let fun_ty_el = ctx.read_expr(fun_ty);
+    let (_, _, _binder_type, body) = match expr_as_pi(&fun_ty_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(depth(to_model(body)) <= d);
+    let arg_slice: &[ExprPtr<'t>] = &[arg];
+    let result = verified_inst(ctx, body, arg_slice, 0, fuel);
+    proof {
+        assert(Seq::new(arg_slice@.len(), |i: int| to_model(arg_slice@[i])) =~= seq![to_model(arg)]);
+    }
+    result
 }
 
 }
