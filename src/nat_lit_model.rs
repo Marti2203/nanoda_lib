@@ -44,6 +44,18 @@ pub(crate) fn biguint_gt(x: &BigUint, y: &BigUint) -> bool {
     x > y
 }
 
+/// `tc.rs::do_nat_bin`'s `Beq` case (`arg1 == arg2`).
+#[allow(dead_code)]
+pub(crate) fn biguint_eq(x: &BigUint, y: &BigUint) -> bool {
+    x == y
+}
+
+/// `tc.rs::do_nat_bin`'s `Ble` case (`arg1 <= arg2`).
+#[allow(dead_code)]
+pub(crate) fn biguint_le(x: &BigUint, y: &BigUint) -> bool {
+    x <= y
+}
+
 #[allow(dead_code)]
 pub(crate) fn biguint_sub(x: BigUint, y: BigUint) -> BigUint {
     x - y
@@ -103,6 +115,12 @@ pub assume_specification [biguint_is_zero] (x: &BigUint) -> (result: bool)
 
 pub assume_specification [biguint_gt] (x: &BigUint, y: &BigUint) -> (result: bool)
     ensures result == (to_nat(*x) > to_nat(*y));
+
+pub assume_specification [biguint_eq] (x: &BigUint, y: &BigUint) -> (result: bool)
+    ensures result == (to_nat(*x) == to_nat(*y));
+
+pub assume_specification [biguint_le] (x: &BigUint, y: &BigUint) -> (result: bool)
+    ensures result == (to_nat(*x) <= to_nat(*y));
 
 pub assume_specification [biguint_sub] (x: BigUint, y: BigUint) -> (result: BigUint)
     requires to_nat(y) <= to_nat(x)

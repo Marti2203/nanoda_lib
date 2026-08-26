@@ -257,6 +257,27 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
         const_name_of(result) == name,
         const_levels_of(result) == levels;
 
+/// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
+/// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
+/// `bool_false_id` are uninterpreted NAME ids (same "just an identity,
+/// not the name's content" convention `const_id`/`name_id` already use)
+/// standing in for `export_file.name_cache.bool_true`/`bool_false`'s
+/// real, per-export-file `NamePtr`s. A model-level simplification (this
+/// doesn't distinguish between different `ctx`/`export_file` instances
+/// possibly caching different pointers for "the" `Bool.true`/`Bool.false`
+/// constant), consistent with how every other `name_id`-keyed fact in
+/// this codebase already treats identity globally rather than per-`ctx`.
+/// `None` covers the real function's only failure mode (the name isn't
+/// present in this export file's cache at all).
+pub uninterp spec fn bool_true_id() -> u64;
+pub uninterp spec fn bool_false_id() -> u64;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCtx<'t, 'p>, b: bool) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == if b { bool_true_id() } else { bool_false_id() },
+        None => true,
+    };
+
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
 /// shaped pointer (bound-variable-inert, collapses to `ExprSpec::Closed`
