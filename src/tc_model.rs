@@ -59,10 +59,10 @@ use crate::util_model::find_index;
 use crate::expr_arena_bridge::to_model;
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, expr_as_nat_lit, read_bignum_value};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value};
+use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{bool_true_id, bool_false_id};
+use crate::expr_arena_bridge::{bool_true_id, bool_false_id, nat_zero_id, nat_succ_id, nat_repr_is_zero, nat_repr_pred};
 use crate::util::{nat_sub, nat_div, nat_mod};
 #[cfg(verus_only)]
 use crate::nat_lit_model::to_nat;
@@ -1754,6 +1754,66 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     }
     fuel_left = fuel_left - 1;
     verified_def_eq(ctx, cxi, cyi, fuel_left)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_nat`
+/// (`tc.rs:849-862`) -- the first piece of `lazy_delta_step`'s own
+/// `delta_try_nat` sub-check (`tc.rs:1250-1262`), and independently
+/// scoped since (unlike everything else `lazy_delta_step` touches) it
+/// needs no new subsystem: `is_nat_zero`/`pred_of_nat_succ` are plain
+/// shape/value checks, not `infer`-dependent. Three cases, mirroring the
+/// real function exactly: both sides are SOME representation of zero
+/// (`NatLit` valued 0, or the cached `Const Nat.zero []`); both sides are
+/// `NatLit`s (compared by real pointer equality, matching hash-consing --
+/// `x == y` in the real code); or both sides have a `Nat` predecessor
+/// (peeling `Nat.succ` or decrementing a nonzero `NatLit`), recursing via
+/// `verified_def_eq` on the two predecessors. NOT yet wired into `lazy_
+/// delta_step`'s own composition (that needs `try_reduce_nat` too, for
+/// `delta_try_nat`'s second half) -- standalone for now, same "build the
+/// piece, wire it in later" pattern as `verified_def_eq_app`/`_binder_
+/// step` originally were.
+pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(y)) <= 60000,
+    ensures match result {
+        Some(true) =>
+            (nat_repr_is_zero(x) && nat_repr_is_zero(y))
+            || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y))
+            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp)),
+        _ => true,
+    }
+    decreases fuel
+{
+    if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
+        return Some(true);
+    }
+    let x_el = ctx.read_expr(x);
+    let y_el = ctx.read_expr(y);
+    if expr_as_nat_lit(x, &x_el).is_some() && expr_as_nat_lit(y, &y_el).is_some() {
+        return Some(expr_ptr_eq(x, y));
+    }
+    let x_pred = ctx.pred_of_nat_succ(x);
+    let y_pred = ctx.pred_of_nat_succ(y);
+    match (x_pred, y_pred) {
+        (Some(xp), Some(yp)) => {
+            assert(depth(to_model(xp)) <= 60000) by {
+                if is_nat_lit_shape(xp) {
+                    is_nat_lit_shape_model(xp);
+                }
+            }
+            assert(depth(to_model(yp)) <= 60000) by {
+                if is_nat_lit_shape(yp) {
+                    is_nat_lit_shape_model(yp);
+                }
+            }
+            if fuel == 0 {
+                return None;
+            }
+            verified_def_eq(ctx, xp, yp, fuel - 1)
+        }
+        _ => None,
+    }
 }
 
 }

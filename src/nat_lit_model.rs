@@ -80,6 +80,13 @@ pub(crate) fn biguint_succ(x: BigUint) -> BigUint {
     x + 1usize
 }
 
+/// `expr.rs::pred_of_nat_succ`'s `NatLit` arm (`n - 1u8`, only reached
+/// when `n` is already known nonzero) -- same plain-delegation spirit.
+#[allow(dead_code)]
+pub(crate) fn biguint_pred(x: BigUint) -> BigUint {
+    x - 1u8
+}
+
 /// `tc.rs::do_nat_bin`'s `Add` case (`arg1 + arg2`) -- also a plain
 /// delegation, no custom branching.
 #[allow(dead_code)]
@@ -136,6 +143,10 @@ pub assume_specification [biguint_rem] (x: BigUint, y: BigUint) -> (result: BigU
 
 pub assume_specification [biguint_succ] (x: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + 1;
+
+pub assume_specification [biguint_pred] (x: BigUint) -> (result: BigUint)
+    requires to_nat(x) > 0
+    ensures to_nat(result) == (to_nat(x) - 1) as nat;
 
 pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + to_nat(y);

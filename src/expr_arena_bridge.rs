@@ -344,6 +344,42 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCt
         None => true,
     };
 
+/// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
+/// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`
+/// above -- `nat_zero_id`/`nat_succ_id` stand in for `export_file.
+/// name_cache.nat_zero`/`nat_succ`'s real per-export-file `NamePtr`s.
+/// `is_nat_zero` accepts EITHER representation of zero (a real `NatLit`
+/// with value 0, or the `Const Nat.zero []` node); `pred_of_nat_succ`
+/// mirrors this for the predecessor: either peel `Nat.succ`off an `App`,
+/// or decrement a nonzero `NatLit` in place (`biguint_pred`, previous
+/// commit).
+pub uninterp spec fn nat_zero_id() -> u64;
+pub uninterp spec fn nat_succ_id() -> u64;
+
+/// `e` is SOME representation of `Nat` zero -- reused by `verified_def_
+/// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
+/// itself.
+pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
+    (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e) == nat_zero_id())
+}
+
+/// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
+pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
+    (exists |fun: ExprPtr<'a>|
+        to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
+        && is_const_shape(fun) && const_id(fun) == nat_succ_id())
+    || (is_nat_lit_shape(e) && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e) - 1) as nat)
+}
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
+    ensures result == nat_repr_is_zero(e);
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(r) => nat_repr_pred(e, r),
+        None => true,
+    };
+
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
 /// shaped pointer (bound-variable-inert, collapses to `ExprSpec::Closed`
