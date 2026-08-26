@@ -1424,4 +1424,78 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
     Some(false)
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_app`
+/// (`tc.rs:928-953`): both sides must unfold to a genuine (nonempty)
+/// applied spine of matching arg count, every arg pair `def_eq`, and the
+/// two heads `def_eq`. Unlike `def_eq_sort`/`def_eq_const`/`def_eq_local`/
+/// `def_eq_proj` (all tried together right after `lazy_delta_step` is
+/// exhausted, `tc.rs:982`), the real `def_eq_app` is a LATER, separate
+/// stage of `def_eq` (only reached after a further `whnf_no_unfolding`
+/// round confirms neither side reduces further, `tc.rs:986-990`) -- kept
+/// as its own standalone bridge rather than folded into
+/// `verified_def_eq_core`, for the same reason `verified_whnf_beta_step`/
+/// `verified_whnf_zeta_step`/`verified_unfold_def_step` were built
+/// separately before being composed into `verified_whnf_step`: each stage
+/// bridges cleanly on its own, and composing them into a faithful
+/// top-level `def_eq` is future work, not assumed here.
+///
+/// Every arg/head comparison routes through `verified_def_eq_core`, so
+/// this can only certify args/heads related by the sort/const/local/proj
+/// leaf cluster -- an arg that itself needs `def_eq_app` (nested
+/// application equality) isn't covered, same honest incompleteness as
+/// everywhere else in this arc (`None` = ran out of fuel before a
+/// verdict, not "definitely unequal").
+pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+            to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+            && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+            && argsx.len() == argsy.len() && argsx.len() > 0,
+        _ => true,
+    }
+{
+    let (f1, args1) = match verified_unfold_apps(ctx, x, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    if args1.len() == 0 {
+        return Some(false);
+    }
+    let (f2, args2) = match verified_unfold_apps(ctx, y, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    if args2.len() == 0 {
+        return Some(false);
+    }
+    if args1.len() != args2.len() {
+        return Some(false);
+    }
+    let mut i: usize = 0;
+    while i < args1.len()
+        invariant
+            i <= args1.len(),
+            args1.len() == args2.len(),
+        decreases args1.len() - i
+    {
+        match verified_def_eq_core(ctx, args1[i], args2[i], fuel) {
+            Some(true) => {},
+            Some(false) => { return Some(false); },
+            None => { return None; },
+        }
+        i += 1;
+    }
+    match verified_def_eq_core(ctx, f1, f2, fuel) {
+        Some(true) => {
+            assert(to_model(x) == spine_app(to_model(f1), args_model_of(args1@)));
+            assert(to_model(y) == spine_app(to_model(f2), args_model_of(args2@)));
+            assert(args1@.len() == args2@.len());
+            assert(args1@.len() > 0);
+            Some(true)
+        },
+        Some(false) => Some(false),
+        None => None,
+    }
+}
+
 }
