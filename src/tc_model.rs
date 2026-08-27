@@ -536,6 +536,30 @@ pub open spec fn whnf_proj_fixpoint_ok(bound: nat, d: nat, n: nat) -> bool
         && (n == 0 || whnf_proj_fixpoint_ok(whnf_proj_step_next_bound(bound, d), whnf_proj_step_next_d(d), (n - 1) as nat))
 }
 
+/// The `(bound, d)` a caller should assume `verified_whnf_no_unfolding_
+/// fixpoint_with_proj`'s result satisfies after `n` rounds -- defined
+/// recursively exactly like `delta_loop_bound_after`/`_d_after`, for the
+/// identical "a recursive call's ensures composes for free by definitional
+/// unfolding" reason. Unlike the delta loop, NO monotonicity lemma is
+/// needed here: `verified_whnf_no_unfolding_step_with_proj`'s own ensures
+/// already reports the SAME grown bound uniformly regardless of which
+/// internal branch fired (including its identity/no-progress case, since
+/// that was already weakened to match via `max_var_below_mono` when it was
+/// built) -- there's no "unchanged, ungrown" terminal case the way `verified_
+/// lazy_delta_round`'s `Exhausted` (returning `x2 == x` at the OLD bound)
+/// has, so every successful round's output already sits exactly at the
+/// next level's expected bound.
+pub open spec fn whnf_proj_loop_bound_after(bound: nat, d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { bound } else { whnf_proj_loop_bound_after(whnf_proj_step_next_bound(bound, d), whnf_proj_step_next_d(d), (n - 1) as nat) }
+}
+pub open spec fn whnf_proj_loop_d_after(bound: nat, d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { d } else { whnf_proj_loop_d_after(whnf_proj_step_next_bound(bound, d), whnf_proj_step_next_d(d), (n - 1) as nat) }
+}
+
 /// Chains `verified_whnf_no_unfolding_step_with_proj` up to `n` times --
 /// the genuine multi-round fixpoint the "mixed-kind chain" problem
 /// blocked, now resolved via `whnf_no_unfolding_with_proj_reaches`
@@ -559,13 +583,18 @@ pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut T
         depth(to_model(e)) <= d,
         whnf_proj_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(r) => whnf_no_unfolding_with_proj_reaches(
-            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-            to_model_of_ctor_num_params(*env),
-            to_model(e),
-            to_model(r),
-            n as nat,
-        ),
+        Some(r) => {
+            &&& whnf_no_unfolding_with_proj_reaches(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(e),
+                    to_model(r),
+                    n as nat,
+                )
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), whnf_proj_loop_bound_after(bound, d, n as nat))
+            &&& depth(to_model(r)) <= whnf_proj_loop_d_after(bound, d, n as nat)
+        },
         None => true,
     }
     decreases n
