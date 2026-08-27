@@ -268,6 +268,91 @@ pub fn verified_infer_const_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     }
 }
 
+/// Real-arena counterpart to the FIRST THIRD of `tc.rs::TypeChecker::
+/// infer_proj` (`tc.rs:465-474`): given the structure's ALREADY-INFERRED-
+/// AND-`whnf`'d type `structure_ty` as an EXTERNAL parameter (same wall
+/// `infer_pi`/`infer_lambda`'s single-binder bridges hit -- `infer`'s own
+/// result has no derivable depth/nlbv bound), unfolds its `Const`-
+/// application spine, looks up the underlying structure's first (and, for
+/// a structure, only) constructor, and computes THAT constructor's type
+/// with the structure's own level arguments substituted in.
+///
+/// This is `verified_infer_const_bounded`'s exact composition (`get_
+/// declar_info_ty` + `verified_subst_expr_levels` + `env_global_wf_ty` +
+/// `subst_expr_levels_rel_{nlbv,max_var_below,depth}`), reused verbatim:
+/// `get_declar_info_ty` extracts `(uparams, ty)` uniformly from EVERY
+/// declaration kind (`env_model.rs`'s own doc comment on it), so it
+/// applies to a `Constructor` exactly the way it already applies to a
+/// `Definition`/`Theorem`, and `env_global_wf_ty`'s bound is like`wise
+/// unconditional over every key in `to_model_of_declar_ty`, constructors
+/// included.
+///
+/// Stops here, deliberately: the REST of `infer_proj` (`tc.rs:475-510`)
+/// needs TWO bounded loops (peeling `num_params` then `idx` `Pi` layers
+/// via repeated `whnf` + `inst`), each round combining TWO different
+/// bound sources -- the constructor-telescope's own bound (rooted here)
+/// and `structure_ty`'s argument spine's bound (via `spine_app_
+/// decompose`). Doing that rigorously needs a NEW `subst_full` `max_var_
+/// below`-preservation lemma (only a `depth` one, `subst_full_depth_
+/// bound_n`, exists so far) plus a sixth instance of this whole arc's
+/// "one-round growth formula + `_fixpoint_ok` predicate" pattern (after
+/// `whnf_fixpoint_ok`/`delta_round_fixpoint_ok`/`infer_depth_fixpoint_ok`/
+/// `whnf_proj_fixpoint_ok`). Flagged for the next pass, not attempted
+/// here -- this piece stands alone as a real, useful, honestly-scoped
+/// prefix.
+pub fn verified_infer_proj_ctor_ty<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure_ty: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(structure_ty)) <= 0,
+        max_var_below(to_model(structure_ty), env_global_cap(*env)),
+        depth(to_model(structure_ty)) <= env_global_cap(*env),
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), env_global_cap(*env))
+            &&& depth(to_model(r)) <= env_global_cap(*env)
+        },
+        None => true,
+    }
+{
+    let (_, struct_ty_name, struct_ty_levels, _struct_ty_args) = match verified_unfold_const_apps(ctx, structure_ty, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let ctor_name = match get_structure_first_ctor(env, &struct_ty_name, true) {
+        Some(v) => v,
+        None => return None,
+    };
+    let (ctor_uparams, ctor_ty_raw) = match get_declar_info_ty(env, &ctor_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ctor_uparams_vec = read_levels_vec(ctx, ctor_uparams);
+    let struct_ty_levels_vec = read_levels_vec(ctx, struct_ty_levels);
+    if ctor_uparams_vec.len() != struct_ty_levels_vec.len() {
+        return None;
+    }
+    match verified_subst_expr_levels(ctx, ctor_ty_raw, ctor_uparams, struct_ty_levels, fuel) {
+        Some(r) => {
+            let ghost id = name_id(ctor_name);
+            let ghost ks = level_names(to_model_of_levels(ctor_uparams));
+            let ghost val = to_model(ctor_ty_raw);
+            assert(to_model_of_declar_ty(*env).contains_key(id));
+            assert(to_model_of_declar_ty(*env)[id] == (ks, val));
+            proof {
+                env_global_wf_ty(*env);
+                assert(nlbv(val) == 0);
+                assert(max_var_below(val, env_global_cap(*env)));
+                assert(depth(val) <= env_global_cap(*env));
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(struct_ty_levels), to_model(r));
+                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(struct_ty_levels), to_model(r), env_global_cap(*env));
+                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(struct_ty_levels), to_model(r));
+            }
+            Some(r)
+        }
+        None => None,
+    }
+}
+
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_app`'s single-
 /// argument case, FULLY composed: `verified_infer_app_single` (`tc_
 /// model.rs`) needed `fun_ty` and a depth cap `d` as explicit parameters
