@@ -58,7 +58,7 @@ use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, 
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::whnf_fixpoint_ok;
+use crate::expr_arena_bridge::{whnf_fixpoint_ok, whnf_step_next_bound, whnf_step_next_d};
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
@@ -68,7 +68,7 @@ use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n};
+use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -351,6 +351,138 @@ pub fn verified_infer_proj_ctor_ty<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         }
         None => None,
     }
+}
+
+/// One round's growth for `infer_proj`'s `num_params`/`idx` peeling loops
+/// (`verified_infer_proj_params_loop` below): `whnf_step_next_bound`/`_d`
+/// (`expr_arena_bridge.rs`) account for the `whnf` half of each round
+/// (peeling ONE MORE `Pi` layer, no const-unfolding -- same honest
+/// incompleteness `verified_whnf_recheck_loop_local` already uses), and
+/// the `+ cap` term accounts for the `inst` half (substituting one
+/// `struct_ty_args[i]`-or-`mk_proj`-built argument, itself bounded by
+/// `cap` == `env_global_cap(*env)`, the SAME bound `structure_ty`/`ctor_
+/// ty0` both already carry per `verified_infer_proj_ctor_ty`'s own
+/// convention).
+pub open spec fn infer_proj_params_step_next_bound(bound: nat, d: nat, cap: nat) -> nat {
+    if whnf_step_next_bound(bound, d) >= cap { whnf_step_next_bound(bound, d) } else { cap }
+}
+
+pub open spec fn infer_proj_params_step_next_d(d: nat, cap: nat) -> nat {
+    whnf_step_next_d(d) + cap
+}
+
+/// This arc's SIXTH instance of the "one-round growth formula + recursive
+/// feasibility predicate" pattern (after `whnf_fixpoint_ok`/`delta_round_
+/// fixpoint_ok`/`infer_depth_fixpoint_ok`/`whnf_proj_fixpoint_ok`/`whnf_
+/// proj_fixpoint_ok_local`), needed because `num_params`/`idx` are only
+/// discovered INSIDE `infer_proj` (from the environment), not known to
+/// the caller in advance the way `verified_infer_pi_telescoped`'s `bt_
+/// tys.len()` was -- so the caller instead supplies a CEILING on how many
+/// rounds there could be, and this predicate is checked against THAT
+/// ceiling; the real round count is checked at runtime against it,
+/// bailing to `None` if violated (`verified_infer_proj_params_loop`'s own
+/// caller does this check).
+///
+/// The THIRD conjunct (`whnf_step_next_d(d) <= 60000`) is the one new
+/// piece beyond `whnf_fixpoint_ok`'s own two: `verified_inst`'s hard
+/// `depth(e) <= 60000` requirement applies to the `Pi`'s BODY (depth
+/// STRICTLY less than the `whnf`'d result, itself bounded by `whnf_step_
+/// next_d(d)`), which `bound + d*d*d + ... <= 0xFFFF_0000` alone does
+/// NOT guarantee (that conjunct bounds a DIFFERENT quantity, the next
+/// round's `max_var_below`, not the next round's `depth`) -- without it,
+/// a `d` satisfying `whnf_fixpoint_ok` could still make `verified_inst`'s
+/// call fail.
+pub open spec fn infer_proj_params_fixpoint_ok(bound: nat, d: nat, cap: nat, k: nat) -> bool
+    decreases k
+{
+    d <= 60000
+        && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && whnf_step_next_d(d) <= 60000
+        && (k == 0 || infer_proj_params_fixpoint_ok(infer_proj_params_step_next_bound(bound, d, cap), infer_proj_params_step_next_d(d, cap), cap, (k - 1) as nat))
+}
+
+/// Real-arena counterpart to the MIDDLE THIRD of `tc.rs::TypeChecker::
+/// infer_proj` (`tc.rs:475-483`, the `num_params` loop -- `tc.rs:484-500`'s
+/// `idx` loop is a separate, follow-up piece): peels `remaining` `Pi`
+/// layers off `ctor_ty`, one per entry of `struct_ty_args` (consumed
+/// front-to-back, matching the real `for i in 0..num_params {
+/// ...struct_ty_args[i]... }` loop), via repeated `whnf` (no-unfolding,
+/// one round) + `inst`.
+///
+/// Written as RECURSION rather than a `while` loop -- same reason
+/// `verified_lazy_delta_loop`/`verified_whnf_no_unfolding_fixpoint_with_
+/// proj` are recursive: the bound GROWS every round, and `nat` is ghost-
+/// only, so a growing bound can only be threaded through repeated CALLS
+/// (fresh arguments each time, resolved at the spec level), not a
+/// mutable `while`-loop variable the way `verified_infer_pi_telescoped`'s
+/// FIXED-bound `bt_tys` loop could be.
+pub fn verified_infer_proj_params_loop<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    ctor_ty: ExprPtr<'t>,
+    struct_ty_args: &[ExprPtr<'t>],
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    cap: nat,
+    remaining: u16,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(ctor_ty)) <= 0,
+        max_var_below(to_model(ctor_ty), bound),
+        depth(to_model(ctor_ty)) <= d,
+        forall |i: int| 0 <= i < struct_ty_args@.len() ==>
+            #[trigger] nlbv(to_model(struct_ty_args@[i])) <= 0
+            && max_var_below(to_model(struct_ty_args@[i]), cap)
+            && depth(to_model(struct_ty_args@[i])) <= cap,
+        remaining as nat <= struct_ty_args@.len(),
+        infer_proj_params_fixpoint_ok(bound, d, cap, remaining as nat),
+    ensures true
+    decreases remaining
+{
+    if remaining == 0 {
+        return Some(ctor_ty);
+    }
+    let idx_here = struct_ty_args.len() - remaining as usize;
+    assert(nlbv(to_model(struct_ty_args@[idx_here as int])) <= 0
+        && max_var_below(to_model(struct_ty_args@[idx_here as int]), cap)
+        && depth(to_model(struct_ty_args@[idx_here as int])) <= cap);
+    let arg = struct_ty_args[idx_here];
+    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, bound, d) {
+        Some(v) => v,
+        None => return None,
+    };
+    let el = ctx.read_expr(ctor_ty_whnfd);
+    let (_, _, pi_bt, pi_body) = match expr_as_pi(&el) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(ctor_ty_whnfd) == ExprSpec::Bind(Box::new(to_model(pi_bt)), Box::new(to_model(pi_body))));
+    assert(depth(to_model(pi_body)) < depth(to_model(ctor_ty_whnfd)));
+    let next_bound: nat = if bound + d * d * d + d * d >= cap { bound + d * d * d + d * d } else { cap };
+    let next_d: nat = d * d + d + d + d + d + cap;
+    assert(next_bound == infer_proj_params_step_next_bound(bound, d, cap));
+    assert(next_d == infer_proj_params_step_next_d(d, cap));
+    let arg_slice: &[ExprPtr<'t>] = &[arg];
+    proof {
+        max_var_below_mono(to_model(pi_body), whnf_step_next_bound(bound, d), next_bound);
+        max_var_below_mono(to_model(arg), cap, next_bound);
+    }
+    let instd = match verified_inst(ctx, pi_body, arg_slice, 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        assert(Seq::new(arg_slice@.len(), |i: int| to_model(arg_slice@[i])) =~= seq![to_model(arg)]);
+        assert(nlbv(to_model(pi_body)) <= 1);
+        subst_full_nlbv_bound_n(to_model(pi_body), seq![to_model(arg)], 0);
+        subst_full_max_var_below_bound_n(to_model(pi_body), seq![to_model(arg)], 0, next_bound);
+        subst_full_depth_bound_n(to_model(pi_body), seq![to_model(arg)], 0, cap);
+        assert(nlbv(to_model(instd)) <= 0);
+        assert(max_var_below(to_model(instd), next_bound));
+        assert(depth(to_model(instd)) <= depth(to_model(pi_body)) + cap);
+        assert(depth(to_model(instd)) <= next_d);
+    }
+    verified_infer_proj_params_loop(ctx, instd, struct_ty_args, fuel, next_bound, next_d, cap, remaining - 1)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_app`'s single-
