@@ -49,7 +49,7 @@ use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels,
 use crate::tc_model::{verified_infer_app_single, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
-use crate::beta_model::pstep_star_trans;
+use crate::beta_model::{pstep_star_trans, pstep_star_refl};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec};
 use crate::level_arena_bridge::read_levels_vec;
@@ -480,6 +480,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
             &&& max_var_below(to_model(y2), bound2 + d2 * d2 * d2 + d2 * d2)
             &&& depth(to_model(y2)) <= d2 * d2 + d2 + d2 + d2 + d2
         },
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => x2 == x && y2 == y,
         _ => true,
     }
 {
@@ -578,6 +579,152 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                 }
             }
         }
+    }
+}
+
+/// `verified_lazy_delta_round`'s own growth formula, one round's worth,
+/// expressed purely in terms of `d` and the environment's own cap `cap`
+/// (an upper bound on `env_global_cap(*env)`, threaded explicitly since a
+/// ghost quantity can't flow into an exec call argument -- same reason
+/// `verified_delta_bounded`'s `bound2`/`d2` are explicit). Named so
+/// `delta_round_fixpoint_ok`/`verified_lazy_delta_loop` can thread them
+/// without repeating the formula inline. Mirrors `whnf_step_next_bound`/
+/// `whnf_step_next_d` (`expr_arena_bridge.rs`) exactly, composed with the
+/// `bound + cap` / `cap + d + d` step `verified_lazy_delta_round` itself
+/// takes from `(bound, d)` to `(bound2, d2)`.
+pub open spec fn delta_round_next_d(d: nat, cap: nat) -> nat {
+    let d2 = cap + d + d;
+    d2 * d2 + d2 + d2 + d2 + d2
+}
+pub open spec fn delta_round_next_bound(bound: nat, d: nat, cap: nat) -> nat {
+    let d2 = cap + d + d;
+    let bound2 = bound + cap;
+    bound2 + d2 * d2 * d2 + d2 * d2
+}
+
+/// "`bound`/`d` have enough headroom for `n` MORE chained rounds of
+/// `verified_lazy_delta_round`, given a fixed environment cap `cap`":
+/// checks THIS round's own two headroom preconditions (the `(bound, d)`
+/// pair `try_unfold_proj_app` uses directly, and the `(bound2, d2) = (bound
+/// + cap, cap + d + d)` pair `delta_bounded` derives from it), then
+/// recurses on what the NEXT round would see for the remaining `n - 1`
+/// rounds. Deliberately recursive rather than a closed-form bound on `n`,
+/// exactly mirroring `whnf_fixpoint_ok`'s own reasoning: letting Verus
+/// unfold this one level per `verified_lazy_delta_loop` recursive call
+/// (matching its own `decreases n`) means no separate monotonicity lemma
+/// is needed to relate "headroom for `n` rounds" to "headroom for `n - 1`
+/// rounds" -- the recursive definition IS that relationship.
+pub open spec fn delta_round_fixpoint_ok(bound: nat, d: nat, cap: nat, n: nat) -> bool
+    decreases n
+{
+    let d2 = cap + d + d;
+    let bound2 = bound + cap;
+    d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && d2 <= 60000 && bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000
+        && (n == 0 || delta_round_fixpoint_ok(delta_round_next_bound(bound, d, cap), delta_round_next_d(d, cap), cap, (n - 1) as nat))
+}
+
+/// Chains `verified_lazy_delta_round` up to `n` times -- the genuine
+/// multi-round `lazy_delta_step` this whole arc has been building toward,
+/// mirroring `tc.rs::TypeChecker::lazy_delta_step`'s own unbounded `loop`
+/// (`tc.rs:1270-1309`) the same way `verified_whnf_no_unfolding_fixpoint`
+/// mirrors `whnf`'s own unbounded loop: `n` is a genuine caller-supplied
+/// PARAMETER, not a hardcoded constant, and the caller picks however many
+/// rounds their own headroom (`bound`/`d`/`cap`) can actually afford, per
+/// `delta_round_fixpoint_ok`'s real (not arbitrary) numeric consequence of
+/// `verified_lazy_delta_round`'s own growth formula.
+///
+/// `n == 0` returns `Continue(x, y)` unchanged (via `pstep_star_refl`) --
+/// "ran out of round budget, here is where you got to" -- matching
+/// `verified_whnf_no_unfolding_fixpoint`'s own `n == 0` precedent (identity
+/// fixpoint, not `None`). A `Continue` from an interior round chains via
+/// `pstep_star_trans` into the recursive call's own accumulated facts,
+/// exactly like the `whnf` fixpoint's single-chain stitching -- here
+/// stitching TWO independent chains (one for `x`, one for `y`) at once,
+/// since either side (or both) can change in a given round. `None`
+/// propagates immediately from a failed round (fuel exhaustion somewhere
+/// inside it), matching this whole arc's established "no partial progress
+/// on internal failure" convention.
+pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    cap: nat,
+    n: u32,
+) -> (result: Option<DeltaRoundResult<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        env_global_cap(*env) <= cap,
+        delta_round_fixpoint_ok(bound, d, cap, n as nat),
+    ensures match result {
+        Some(DeltaRoundResult::Exhausted(x2, y2)) =>
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)),
+        Some(DeltaRoundResult::Continue(x2, y2)) =>
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)),
+        _ => true,
+    }
+    decreases n
+{
+    if n == 0 {
+        proof {
+            pstep_star_refl(to_model_of_env(*env), to_model(x));
+            pstep_star_refl(to_model_of_env(*env), to_model(y));
+        }
+        return Some(DeltaRoundResult::Continue(x, y));
+    }
+    let bound2 = bound + cap;
+    let d2 = cap + d + d;
+    match verified_lazy_delta_round(ctx, env, x, y, fuel, bound, d, bound2, d2) {
+        Some(DeltaRoundResult::Found(b)) => Some(DeltaRoundResult::Found(b)),
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => {
+            proof {
+                pstep_star_refl(to_model_of_env(*env), to_model(x));
+                pstep_star_refl(to_model_of_env(*env), to_model(y));
+            }
+            Some(DeltaRoundResult::Exhausted(x2, y2))
+        }
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            proof {
+                if x2 == x {
+                    pstep_star_refl(to_model_of_env(*env), to_model(x));
+                }
+                if y2 == y {
+                    pstep_star_refl(to_model_of_env(*env), to_model(y));
+                }
+                assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x2)));
+                assert(pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)));
+            }
+            match verified_lazy_delta_loop(ctx, env, x2, y2, fuel, bound2 + d2 * d2 * d2 + d2 * d2, d2 * d2 + d2 + d2 + d2 + d2, cap, n - 1) {
+                Some(DeltaRoundResult::Found(b)) => Some(DeltaRoundResult::Found(b)),
+                Some(DeltaRoundResult::Exhausted(x3, y3)) => {
+                    proof {
+                        pstep_star_trans(to_model_of_env(*env), to_model(x), to_model(x2), to_model(x3));
+                        pstep_star_trans(to_model_of_env(*env), to_model(y), to_model(y2), to_model(y3));
+                    }
+                    Some(DeltaRoundResult::Exhausted(x3, y3))
+                }
+                Some(DeltaRoundResult::Continue(x3, y3)) => {
+                    proof {
+                        pstep_star_trans(to_model_of_env(*env), to_model(x), to_model(x2), to_model(x3));
+                        pstep_star_trans(to_model_of_env(*env), to_model(y), to_model(y2), to_model(y3));
+                    }
+                    Some(DeltaRoundResult::Continue(x3, y3))
+                }
+                None => None,
+            }
+        }
+        None => None,
     }
 }
 
