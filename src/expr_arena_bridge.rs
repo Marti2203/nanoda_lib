@@ -182,6 +182,43 @@ pub(crate) fn get_eager_mode<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
     ctx.eager_mode
 }
 
+/// `TcCtx`'s `dbj_level_counter` field, read directly -- same "plain
+/// wrapper around an `external_body`-registered struct's field" reason as
+/// `get_eager_mode`. Needed by `infer_lambda`/`infer_pi`'s own telescoping
+/// (`tc.rs:625-674`), which captures the counter's value BEFORE opening
+/// any binders (`start_pos`) to know which locals `abstr_levels` should
+/// later abstract back out.
+#[allow(dead_code)]
+pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> u16 {
+    ctx.dbj_level_counter
+}
+
+/// `expr.rs::TcCtx::abstr_levels`, wrapped with an EXPLICIT `locals_hint`
+/// slice purely for the assume_specification below to reference -- the
+/// real function itself ignores it entirely (ordinary `abstr_levels(ctx,
+/// e, start_pos)` call, ghost-only extra parameter). `abstr_levels`'s
+/// real semantics (`expr.rs:273-276`, `abstr_aux_levels(e, start_pos,
+/// dbj_level_counter)`) abstract every `Local` whose `FVarId::DbjLevel`
+/// serial falls in `[start_pos, dbj_level_counter)` back into bound
+/// variables, matched by SERIAL RANGE rather than by an explicit array --
+/// mathematically the SAME operation `verified_abstr`/`abstr_full`
+/// already model (array-based matching), given the locals array is
+/// EXACTLY those allocated since `start_pos`, in allocation order (the
+/// same convention `inst`'s own `locals.as_slice()` already relies on for
+/// `infer_lambda`/`infer_pi`'s telescoping). Modeling the FULLY GENERAL
+/// `abstr_levels` (tracking `dbj_level_counter`'s real mutable state
+/// across, e.g., a recursive `infer` call in between) would need a new
+/// kind of stateful reasoning this whole project has deliberately avoided
+/// throughout (`ctx: &mut TcCtx` is always treated as an opaque
+/// allocation handle, never as carrying a tracked invariant) -- so this
+/// wrapper instead states a TARGETED trust fact for the exact call
+/// pattern `verified_infer_lambda`/`_pi` actually use: called immediately
+/// after `locals_hint` were the only locals allocated since `start_pos`.
+#[allow(dead_code)]
+pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, _locals_hint: &[ExprPtr<'t>]) -> ExprPtr<'t> {
+    ctx.abstr_levels(e, start_pos)
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -343,6 +380,13 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCt
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,
         to_model(result) == ExprSpec::Free(expr_id(result));
+
+pub assume_specification<'t, 'p> [get_dbj_level_counter] (ctx: &TcCtx<'t, 'p>) -> (result: u16) where 'p: 't;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't;
+
+pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, locals_hint: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>) where 'p: 't
+    ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0);
 
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/

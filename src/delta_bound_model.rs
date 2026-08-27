@@ -48,6 +48,11 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
+use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::expr_id;
+#[cfg(verus_only)]
+use crate::expr_model::abstr_full;
 use crate::expr_arena_bridge::get_eager_mode;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj};
 use crate::expr::BinderStyle;
@@ -1698,6 +1703,85 @@ pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_lambda`
+/// (`tc.rs:625-653`), `InferOnly` case, for a NON-CURRIED `Lambda` (i.e.
+/// `body` doesn't itself start with another `Lambda`) -- same "one round
+/// first" scoping choice `verified_def_eq_binder_step` originally made
+/// before its own telescoping, for the analogous reason: telescoping
+/// needs a GROWING array of pairwise-fresh locals threaded through both
+/// `inst` (already handles this generically) AND `abstr_levels_with_
+/// locals`'s own `locals_hint` (which would need to grow too) -- tractable
+/// in principle, just not attempted in this first pass.
+///
+/// Opens the one binder with a fresh local (`mk_dbj_level`), instantiates
+/// the body, infers ITS type (recursively, via `verified_infer`), then
+/// abstracts the fresh local back OUT of both the inferred type and the
+/// binder's own type (`abstr_levels_with_locals`, see its own doc comment
+/// in `expr_arena_bridge.rs` for why this needs a new, targeted trust
+/// boundary rather than reusing `verified_abstr` directly -- `abstr_
+/// levels` matches by `dbj_level_counter` SERIAL RANGE, not by an
+/// explicit array, and modeling that generally would need tracking
+/// `TcCtx`'s mutable counter state across the recursive `infer` call in
+/// between, a kind of stateful reasoning this whole project has
+/// deliberately avoided throughout), reconstructing the final `Pi` type
+/// via the already-bridged `mk_pi`. `Check`-mode's `infer_sort_of` call on
+/// the binder type is skipped (`InferOnly`-only, consistent with this
+/// whole arc's convention).
+pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+    ensures match result {
+        Some(r) => exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, instd: ExprPtr<'t>, infd: ExprPtr<'t>|
+            to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            && to_model(local) == ExprSpec::Free(expr_id(local))
+            && to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0)
+            && infer_spec(*env, instd, infd, fuel as nat)
+            && to_model(r) == ExprSpec::Bind(
+                    Box::new(abstr_full(to_model(binder_type), seq![expr_id(local)], 0)),
+                    Box::new(abstr_full(to_model(infd), seq![expr_id(local)], 0)),
+                ),
+        None => true,
+    }
+{
+    let e_el = ctx.read_expr(e);
+    let (binder_name, binder_style, binder_type, body) = match expr_as_lambda(&e_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+    assert(depth(to_model(body)) < depth(to_model(e)));
+    let start_pos = get_dbj_level_counter(ctx);
+    let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+    let locals_slice: &[ExprPtr<'t>] = &[local];
+    assert(depth(to_model(local)) == 0);
+    let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
+        assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+        subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+        assert(depth(to_model(instd)) <= depth(to_model(body)));
+        assert(depth(to_model(instd)) <= dd);
+    }
+    let infd = match verified_infer(ctx, env, instd, fuel, d, dd) {
+        Some(v) => v,
+        None => return None,
+    };
+    let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
+    ctx.replace_dbj_level(local);
+    let abstrd_binder_type = abstr_levels_with_locals(ctx, binder_type, start_pos, locals_slice);
+    let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
+    proof {
+        assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
+    }
+    Some(result)
 }
 
 }
