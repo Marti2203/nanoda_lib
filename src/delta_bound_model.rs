@@ -71,7 +71,7 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty};
 use crate::env_model::get_declar_info_ty;
-use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields};
+use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params};
 
 verus! {
 
@@ -1079,6 +1079,102 @@ pub fn verified_def_eq_unit<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         _ => return None,
     }
     verified_def_eq(ctx, x_ty, y_type, fuel)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_eta_struct_aux`
+/// (`tc.rs:312-329`): "if `y` is a saturated constructor application of a
+/// structure type, and `x`/`y` have the same type, check `x`'s fields
+/// (via `mk_proj`) against `y`'s constructor arguments one by one."
+///
+/// Given `x_type`/`y_type` (`x`/`y`'s already-inferred types) as explicit
+/// parameters, same reason as `verified_def_eq_unit`. `d` is an explicit
+/// depth cap on BOTH `x` and `y` -- needed for two different reasons:
+/// `x`'s own depth bounds each `mk_proj(inductive_name, _, x)` construction
+/// (`depth(Proj(s)) == 1 + depth(s)`), and `y`'s depth bounds each
+/// constructor ARGUMENT via `spine_app_decompose`'s per-argument fact
+/// (`depth(args[i]) <= depth(spine_app(base, args))`, the same lemma
+/// `verified_infer_app_bounded_multi`'s ensures leans on).
+///
+/// The field-comparison loop calls the FULL `verified_def_eq` (not just
+/// `verified_def_eq_core`, unlike `verified_def_eq_app`'s own loop) since
+/// fields can be arbitrary dependently-typed values, not just core-cluster
+/// shapes -- matching the real function's own `self.def_eq(proj, rhs)`.
+pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    x_type: ExprPtr<'t>,
+    y_type: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), d),
+        depth(to_model(y)) <= d,
+        depth(to_model(x)) <= d,
+        depth(to_model(x_type)) <= 60000,
+        depth(to_model(y_type)) <= 60000,
+        d + 1 <= 60000,
+    ensures match result {
+        Some(true) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+            to_model(y) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun),
+        _ => true,
+    }
+{
+    let (fun_ptr, name, _levels, args) = match verified_unfold_const_apps(ctx, y, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let inductive_name = match get_constructor_inductive_name(env, &name) {
+        Some(n) => n,
+        None => return None,
+    };
+    let num_params = match get_constructor_num_params(env, &name) {
+        Some(n) => n,
+        None => return None,
+    };
+    let num_fields = match get_constructor_num_fields(env, &name) {
+        Some(n) => n,
+        None => return None,
+    };
+    if args.len() != num_params as usize + num_fields as usize {
+        return None;
+    }
+    if !env.can_be_struct(&inductive_name) {
+        return None;
+    }
+    match verified_def_eq(ctx, x_type, y_type, fuel) {
+        Some(true) => {}
+        _ => return None,
+    }
+    proof {
+        spine_app_decompose(to_model(fun_ptr), Seq::new(args@.len(), |i: int| to_model(args@[i])), d);
+        assert forall |k: int| 0 <= k < args@.len() implies #[trigger] depth(to_model(args@[k])) <= d by {
+            assert(depth(Seq::new(args@.len(), |i: int| to_model(args@[i]))[k]) <= d);
+        }
+    }
+    let mut i: usize = num_params as usize;
+    while i < args.len()
+        invariant
+            num_params as usize <= i,
+            i <= args.len(),
+            depth(to_model(x)) <= d,
+            d + 1 <= 60000,
+            forall |k: int| 0 <= k < args@.len() ==> depth(to_model(args@[k])) <= d,
+        decreases args.len() - i
+    {
+        let proj = ctx.mk_proj(inductive_name, i - num_params as usize, x);
+        assert(depth(to_model(proj)) == 1 + depth(to_model(x)));
+        match verified_def_eq(ctx, proj, args[i], fuel) {
+            Some(true) => {}
+            _ => return None,
+        }
+        i += 1;
+    }
+    Some(true)
 }
 
 }

@@ -57,6 +57,14 @@ pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
     env.get_constructor(n).map(|cd| cd.num_params)
 }
 
+/// `try_eta_struct_aux`'s (`tc.rs:312-329`) other two `ConstructorData`
+/// field reads, sibling to `get_constructor_num_params`/`get_constructor_
+/// num_fields` (same struct, different fields).
+#[allow(dead_code)]
+pub(crate) fn get_constructor_inductive_name<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<NamePtr<'a>> {
+    env.get_constructor(n).map(|cd| cd.inductive_name)
+}
+
 /// `Env::get_recursor` returns `Option<&RecursorData>`; this wrapper
 /// extracts exactly the fields `reduce_rec` (`tc.rs:1070-1102`) actually
 /// reads (`num_params`/`num_motives`/`num_minors`, the computed `major_
@@ -345,6 +353,14 @@ pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &Nam
 pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<NamePtr<'a>>);
 
 pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>);
+
+pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
+
+/// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
+/// returns a plain `bool`, no struct field extraction required), same
+/// "plain per-call fact, no keyed map" convention as everywhere else on
+/// this page.
+pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool) where 'a: 'x;
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
 /// among its declarations -- a genuine structural fact about any finite
