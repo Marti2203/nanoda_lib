@@ -1300,4 +1300,68 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
     }
 }
 
+/// Extends `verified_def_eq_with_delta` with `proof_irrel_eq` (`tc.rs:976`
+/// -- the REAL function's own next check, tried BEFORE `lazy_delta_step`,
+/// matching `tc.rs:976-998`'s exact `if self.proof_irrel_eq(x_n, y_n) {
+/// true } else { match self.lazy_delta_step(...) { ... } }` shape).
+///
+/// Given `x_type`/`y_type` (`x`/`y`'s own already-inferred types) as
+/// explicit parameters, same reason `verified_proof_irrel_eq_of_types`
+/// itself takes them explicitly -- composing with `verified_infer`
+/// internally would hit the `Local`-has-no-depth-bound wall this whole
+/// arc has repeatedly worked around this way. This is honestly a
+/// SIMPLIFICATION relative to the real function's own `x_n`/`y_n` (the
+/// `whnf_no_unfolding_cheap_proj`'d versions of `x`/`y`, not `x`/`y`
+/// themselves) -- that pre-step is still not modeled here, same
+/// simplification `verified_def_eq_with_delta` itself already made.
+///
+/// `ensures true`, same reason as `verified_def_eq_with_delta`: `proof_
+/// irrel_eq`'s own `Some(true)` already carries a real claim (via
+/// `verified_proof_irrel_eq_of_types`'s own ensures) but restating it
+/// here disjunctively against `verified_def_eq_with_delta`'s vacuous
+/// ensures would only ever reduce to "true," so there's nothing gained by
+/// writing it out.
+pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    x_type: ExprPtr<'t>,
+    y_type: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    cap: nat,
+    n: u32,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        nlbv(to_model(x_type)) <= 0,
+        max_var_below(to_model(x_type), bound),
+        depth(to_model(x_type)) <= d,
+        depth(to_model(x_type)) <= 60000,
+        nlbv(to_model(y_type)) <= 0,
+        max_var_below(to_model(y_type), bound),
+        depth(to_model(y_type)) <= d,
+        depth(to_model(y_type)) <= 60000,
+        env_global_cap(*env) <= cap,
+        delta_round_fixpoint_ok(bound, d, cap, n as nat),
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures true
+{
+    if expr_ptr_eq(x, y) {
+        return Some(true);
+    }
+    match verified_proof_irrel_eq_of_types(ctx, env, x_type, y_type, fuel, bound, d, n) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n)
+}
+
 }
