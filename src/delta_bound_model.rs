@@ -45,7 +45,7 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, verified_whnf_no_unfolding_step};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of};
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
@@ -55,7 +55,7 @@ use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep_star_trans, pstep_star_refl};
+use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -329,48 +329,85 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d)
 }
 
+/// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in
+/// `verified_infer`'s own recursion": substituting `val` into `body` can
+/// nearly DOUBLE `depth` per `Let`-nesting level (`subst_full_depth_
+/// bound_n`'s sum bound, `depth(body) + depth(val)`, each up to `dd - 1`),
+/// so this mirrors `whnf_fixpoint_ok`/`delta_round_fixpoint_ok` exactly:
+/// check this level's own headroom, then recurse on what the NEXT level
+/// would see (`dd + dd`) for the remaining `fuel - 1` unwraps -- no
+/// separate monotonicity lemma needed, Verus unfolds it one level per
+/// `verified_infer` recursive call matching its own `decreases fuel`.
+pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
+    decreases fuel
+{
+    dd <= 60000 && (fuel == 0 || infer_depth_fixpoint_ok(dd + dd, (fuel - 1) as nat))
+}
+
+/// `verified_infer`'s own postcondition, factored into a standalone
+/// recursive predicate so its `Let` case (the only case that recurses)
+/// can refer to it directly. The four non-recursive disjuncts restate
+/// `verified_infer_local`/`verified_infer_sort`/`verified_infer_const`/
+/// `verified_infer_app_bounded_multi`'s own already-proven contracts
+/// verbatim; the fifth recurses on the REAL `ExprPtr` `verified_inst`
+/// actually produces for `Let`'s substituted body (not an abstract
+/// `ExprSpec` -- `subst_full`'s value and `verified_inst`'s real result
+/// coincide by `verified_inst`'s own postcondition, so the recursion stays
+/// entirely in terms of real arena pointers, exactly like every other
+/// function in this arc).
+pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool
+    decreases fuel
+{
+    ||| (is_local_shape(e) && local_binder_type_of(e) == r)
+    ||| (exists |l: LevelPtr<'t>|
+            to_model(e) == ExprSpec::Sort(level_to_model(l))
+            && to_model(r) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))))
+    ||| (exists |c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+            is_const_shape(e) && const_name_of(e) == c_name && const_levels_of(e) == c_uparams
+            && to_model_of_declar_ty(env).contains_key(name_id(c_name))
+            && to_model_of_declar_ty(env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+            && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)))
+    ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
+            to_model(e) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun)
+            && to_model(r) == subst_full(body, args_model, 0))
+    ||| (fuel > 0 && exists |ty: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, substituted: ExprPtr<'t>|
+            to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body)))
+            && to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0)
+            && infer_spec(env, substituted, r, (fuel - 1) as nat))
+}
+
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
-/// (`tc.rs:513-540`), `InferOnly` case, covering the four shapes that
-/// don't need `infer` to recurse any further: `Local` (`verified_infer_
-/// local`), `Sort` (`verified_infer_sort`), `Const` (`verified_infer_
-/// const`), and `App` (`verified_infer_app_bounded_multi`) -- all four are
-/// LEAVES of `infer`'s own recursion in this modeled subset (none of them
-/// call back into `infer` themselves), so this dispatcher needs no fuel-
-/// based termination argument of its own, unlike `verified_def_eq_core`'s
-/// `Local`/`Proj` cases. `Pi`/`Lambda`/`Let`/`Proj`/`NatLit`/`StringLit`
-/// all fall through to `None` -- `Pi`/`Lambda` need fresh-local machinery
-/// analogous to `verified_def_eq_binder_step`'s (not yet adapted for
-/// `infer`'s own return-a-type shape), `Let` needs a genuine recursive
-/// call into `infer` itself (a real, separately-scoped depth-growth
-/// question -- substituting `val` into `body` can nearly double `depth`
-/// per nesting level, the SAME compounding character `delta_round_
-/// fixpoint_ok`/`whnf_fixpoint_ok` already had to solve elsewhere in this
-/// arc, not yet attempted here), and `Proj`/`NatLit`/`StringLit` are
-/// entirely unmodeled for `infer` specifically (distinct from their
-/// existing `reduce_proj`/`try_reduce_nat` reduction-rule bridges, which
-/// answer a different question).
-pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+/// (`tc.rs:513-540`), `InferOnly` case, now covering FIVE of its eleven
+/// shapes: the four non-recursive leaves (`Local`/`Sort`/`Const`/`App`,
+/// same as before) plus `Let` (`tc.rs:676-692`, `InferOnly` skips the
+/// `Check`-mode `assert_def_eq` well-formedness check same as everywhere
+/// else in this arc) -- genuinely recursive now, via `verified_inst`
+/// substituting `val` into `body` then recursing on the result. `dd` is a
+/// SEPARATE depth budget from `d` (the env cap `verified_infer_const`/
+/// `verified_infer_app_bounded_multi` need) -- only the `Let` case
+/// consumes it, via `infer_depth_fixpoint_ok`'s doubling-per-level
+/// headroom, mirroring `delta_round_fixpoint_ok`/`whnf_fixpoint_ok`'s
+/// established shape exactly.
+///
+/// `Pi`/`Lambda`/`Proj`/`NatLit`/`StringLit` still fall through to `None`
+/// -- `Pi`/`Lambda` need fresh-local machinery analogous to `verified_def_
+/// eq_binder_step`'s (not yet adapted for `infer`'s own return-a-type
+/// shape); `Proj`/`NatLit`/`StringLit` are entirely unmodeled for `infer`
+/// specifically (their existing `reduce_proj`/`try_reduce_nat` bridges
+/// answer "what does this reduce to," a different question from "what is
+/// its type").
+pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         d <= 60000,
+        depth(to_model(e)) <= dd,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures match result {
-        Some(r) => {
-            ||| (is_local_shape(e) && local_binder_type_of(e) == r)
-            ||| (exists |l: LevelPtr<'t>|
-                    to_model(e) == ExprSpec::Sort(level_to_model(l))
-                    && to_model(r) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))))
-            ||| (exists |c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-                    is_const_shape(e) && const_name_of(e) == c_name && const_levels_of(e) == c_uparams
-                    && to_model_of_declar_ty(*env).contains_key(name_id(c_name))
-                    && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-                    && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)))
-            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
-                    to_model(e) == spine_app(to_model(fun), args_model)
-                    && is_const_shape(fun)
-                    && to_model(r) == subst_full(body, args_model, 0))
-        },
+        Some(r) => infer_spec(*env, e, r, fuel as nat),
         None => true,
     }
+    decreases fuel
 {
     let el = ctx.read_expr(e);
     if let Some((_, ty)) = expr_as_local(e, &el) {
@@ -385,7 +422,26 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     if expr_as_app(&el).is_some() {
         return verified_infer_app_bounded_multi(ctx, env, e, fuel, d);
     }
-    None
+    if fuel == 0 {
+        return None;
+    }
+    if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
+        assert(depth(to_model(body)) <= dd);
+        assert(depth(to_model(val)) <= dd);
+        let val_slice: &[ExprPtr<'t>] = &[val];
+        match verified_inst(ctx, body, val_slice, 0, fuel) {
+            Some(substituted) => {
+                proof {
+                    assert(Seq::new(val_slice@.len(), |i: int| to_model(val_slice@[i])) =~= seq![to_model(val)]);
+                    subst_full_depth_bound_n(to_model(body), seq![to_model(val)], 0, dd);
+                }
+                verified_infer(ctx, env, substituted, fuel - 1, d, dd + dd)
+            }
+            None => None,
+        }
+    } else {
+        None
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::delta`
