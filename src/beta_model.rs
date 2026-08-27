@@ -6991,6 +6991,71 @@ pub proof fn subst_full_depth_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset
     }
 }
 
+/// `max_var_below`'s analogue of `subst_full_depth_bound_n` above --
+/// same proof shape, but `max_var_below`'s own recursive definition
+/// keeps `bound` UNCHANGED at every level (unlike `depth`'s `1 + max(..)`
+/// growth), so unlike the depth lemma there's no `+ m` term here: as
+/// long as `e` and every entry of `substs` already satisfy `max_var_
+/// below(_, bound)` for the SAME `bound`, so does the result -- `subst_
+/// full` never shifts a substituted value's own indices to account for
+/// `offset` (consistent with `substs` always being closed, `nlbv <= 0`,
+/// values throughout this whole arc), so `bound` threads through
+/// unchanged regardless of how deep the recursion descends.
+pub proof fn subst_full_max_var_below_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, bound: nat)
+    requires
+        max_var_below(e, bound),
+        forall |i: int| 0 <= i < substs.len() ==> #[trigger] max_var_below(substs[i], bound),
+    ensures max_var_below(subst_full(e, substs, offset), bound)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) < offset {
+                assert(subst_full(e, substs, offset) == e);
+            } else if (i as nat - offset) < substs.len() {
+                let j = (substs.len() - 1 - (i as nat - offset)) as int;
+                assert(subst_full(e, substs, offset) == substs[j]);
+                assert(max_var_below(substs[j], bound));
+            } else {
+                assert(subst_full(e, substs, offset) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(subst_full(e, substs, offset) == e);
+        }
+        ExprSpec::App(f, a) => {
+            subst_full_max_var_below_bound_n(*f, substs, offset, bound);
+            subst_full_max_var_below_bound_n(*a, substs, offset, bound);
+            assert(subst_full(e, substs, offset) == ExprSpec::App(
+                Box::new(subst_full(*f, substs, offset)),
+                Box::new(subst_full(*a, substs, offset)),
+            ));
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_full_max_var_below_bound_n(*t, substs, offset, bound);
+            subst_full_max_var_below_bound_n(*b, substs, (offset + 1) as nat, bound);
+            assert(subst_full(e, substs, offset) == ExprSpec::Bind(
+                Box::new(subst_full(*t, substs, offset)),
+                Box::new(subst_full(*b, substs, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_full_max_var_below_bound_n(*t, substs, offset, bound);
+            subst_full_max_var_below_bound_n(*v, substs, offset, bound);
+            subst_full_max_var_below_bound_n(*b, substs, (offset + 1) as nat, bound);
+            assert(subst_full(e, substs, offset) == ExprSpec::Let(
+                Box::new(subst_full(*t, substs, offset)),
+                Box::new(subst_full(*v, substs, offset)),
+                Box::new(subst_full(*b, substs, (offset + 1) as nat)),
+            ));
+        }
+        ExprSpec::Proj(st) => {
+            subst_full_max_var_below_bound_n(*st, substs, offset, bound);
+            assert(subst_full(e, substs, offset) == ExprSpec::Proj(Box::new(subst_full(*st, substs, offset))));
+        }
+    }
+}
+
 /// `spine_app` preserves closedness -- a plain structural fact (`spine_
 /// app` only ever wraps in `App`, and `nlbv(App(f,a)) == max(nlbv(f),
 /// nlbv(a))`), needed alongside `subst_full_nlbv_bound_n` to close the
