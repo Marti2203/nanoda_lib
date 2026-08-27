@@ -45,11 +45,12 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
+    spine_bind,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
-use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi};
+use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi, verified_peel_pis};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
@@ -2727,6 +2728,50 @@ pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         j += 1;
     }
     Some(out)
+}
+
+/// Real-arena counterpart to `Expr::get_major_induct`/`get_nth_pi_binder`
+/// (`expr.rs:763-781`): find the recursor's major-premise BINDER (at
+/// telescope position `major_idx`, RAW -- no instantiation, matching the
+/// real `get_nth_pi_binder`'s own `e = body` loop exactly, unlike every
+/// other peeling function in this arc which instantiates via `inst`),
+/// then take that binder TYPE's applied-spine head, expecting a `Const`.
+///
+/// `verified_peel_pis` already IS the real-arena counterpart to `spine_
+/// bind` (a RAW peel, confirmed by re-reading its own doc comment/body --
+/// it never calls `verified_inst` at all, unlike its callers), so this
+/// composes directly: peel EXACTLY `major_idx` layers (checking the real
+/// peel count `n == major_idx`, since `verified_peel_pis` stops early if
+/// the term runs out of `Pi` layers), read the next layer's `binder_
+/// type`, `unfold_apps_fun` it, expect `Const`.
+pub fn verified_get_major_induct<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, rec_ty: ExprPtr<'t>, major_idx: usize, fuel: u32) -> (result: Option<NamePtr<'t>>)
+    ensures match result {
+        Some(_) => exists |peeled: ExprPtr<'t>|
+            spine_bind(to_model(rec_ty), major_idx as nat) == Some(to_model(peeled)),
+        None => true,
+    }
+{
+    let (peeled, n) = match verified_peel_pis(ctx, rec_ty, major_idx, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    if n != major_idx {
+        return None;
+    }
+    let peeled_el = ctx.read_expr(peeled);
+    let binder_type = match expr_as_pi(&peeled_el) {
+        Some((_, _, bt, _)) => bt,
+        None => return None,
+    };
+    let (fun, _args) = match verified_unfold_apps(ctx, binder_type, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    match expr_as_const(fun, &fun_el) {
+        Some((name, _levels)) => Some(name),
+        None => None,
+    }
 }
 
 /// The first genuinely faithful slice of `tc.rs::TypeChecker::def_eq`'s

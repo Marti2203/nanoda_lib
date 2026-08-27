@@ -79,6 +79,17 @@ pub(crate) fn get_recursor_data<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> O
     Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
 }
 
+/// `to_ctor_when_k`'s (`tc.rs:1015-1038`) own gate: `RecursorData::is_k`,
+/// a SEPARATE small accessor rather than extending `get_recursor_data`'s
+/// existing tuple (avoids touching that function's own already-verified
+/// `assume_specification`/call site), same "extract only what's needed,
+/// one field at a time" convention as `get_constructor_num_fields` next
+/// to `get_constructor_num_params`.
+#[allow(dead_code)]
+pub(crate) fn get_recursor_is_k<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<bool> {
+    env.get_recursor(n).map(|rec| rec.is_k)
+}
+
 /// `tc.rs::TypeChecker::get_applied_def`'s own env-level classification
 /// (`tc.rs:1133-1142`): a name is "an applied def" exactly when it's a
 /// `Definition` (real hint) or `Theorem` (treated as `Opaque` -- theorems
@@ -374,6 +385,8 @@ pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>
 pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
 
 pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
+
+pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<bool>);
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
 /// returns a plain `bool`, no struct field extraction required), same
