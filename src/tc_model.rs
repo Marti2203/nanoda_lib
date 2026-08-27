@@ -86,7 +86,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -440,17 +440,22 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => {
-            ||| pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
-            ||| (exists |structure: ExprPtr<'t>, idx: usize, reduced: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
-                    to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args))
-                    && pstep_star_proj(
-                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-                        to_model_of_ctor_num_params(*env),
-                        to_model(structure),
-                        idx as nat,
-                        to_model(reduced),
-                    )
-                    && to_model(r) == spine_app(to_model(reduced), args_model_of(args)))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound + d * d * d + d * d)
+            &&& depth(to_model(r)) <= d * d + d + d + d + d + d + d
+            &&& {
+                ||| pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+                ||| (exists |structure: ExprPtr<'t>, idx: usize, reduced: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
+                        to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args))
+                        && pstep_star_proj(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            to_model_of_ctor_num_params(*env),
+                            to_model(structure),
+                            idx as nat,
+                            to_model(reduced),
+                        )
+                        && to_model(r) == spine_app(to_model(reduced), args_model_of(args)))
+            }
         },
         None => true,
     }
@@ -481,6 +486,25 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
                     assert(args_model =~= args_model_of(args@));
                     assert(to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args@)));
                     assert(to_model(r) == spine_app(to_model(reduced), args_model_of(args@)));
+                    // `reduced`'s bound (from `verified_reduce_proj_step`) is already at
+                    // exactly the SAME (bound, d) formula as this function's own target
+                    // uniform bound's `max_var_below` term; only `args`' bound needs
+                    // weakening up from `bound` to `bound + d*d*d + d*d` before `spine_app_
+                    // bounds` can combine them (it requires the SAME bound for head and args).
+                    assert forall |i: int| 0 <= i < args_model.len() implies
+                        #[trigger] max_var_below(args_model[i], bound + d * d * d + d * d)
+                        && depth(args_model[i]) <= d
+                    by {
+                        max_var_below_mono(args_model[i], bound, bound + d * d * d + d * d);
+                    }
+                    spine_app_bounds(to_model(reduced), args_model, bound + d * d * d + d * d, d * d + d + d + d + d, d);
+                    spine_app_nlbv(to_model(reduced), args_model);
+                    assert(nlbv(to_model(r)) <= 0);
+                    assert(max_var_below(to_model(r), bound + d * d * d + d * d));
+                    assert(args_model.len() <= d) by (nonlinear_arith)
+                        requires args_model.len() <= depth(to_model(e)), depth(to_model(e)) <= d
+                    {}
+                    assert(depth(to_model(r)) <= d * d + d + d + d + d + d + d);
                 }
                 Some(r)
             }
