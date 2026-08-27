@@ -1028,6 +1028,32 @@ pub fn verified_unfold_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fue
     }
 }
 
+/// Real-arena counterpart to `expr.rs::TcCtx::unfold_const_apps`
+/// (`expr.rs:435-444`): `verified_unfold_apps` then require the peeled
+/// head be `Const`-shaped, exposing its name/levels directly -- needed by
+/// `try_eta_struct_aux`/`def_eq_unit`/`get_rec_rule`-adjacent callers that
+/// all want "is this an applied constant, and if so which one," not just
+/// the raw peeled spine.
+pub fn verified_unfold_const_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>)>)
+    ensures match result {
+        Some((f, c_name, c_levels, args)) =>
+            to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            && is_const_shape(f) && const_name_of(f) == c_name && const_levels_of(f) == c_levels,
+        None => true,
+    }
+{
+    match verified_unfold_apps(ctx, e, fuel) {
+        Some((f, args)) => {
+            let f_el = ctx.read_expr(f);
+            match expr_as_const(f, &f_el) {
+                Some((c_name, c_levels)) => Some((f, c_name, c_levels, args)),
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// Real-arena counterpart to `spine_bind`: mirrors
 /// `whnf_no_unfolding_aux`'s peeling `while let (Lambda { body, .. },
 /// [_arg, _rest @ ..]) = (read_expr(e), &args[n_args..]) { n_args += 1;

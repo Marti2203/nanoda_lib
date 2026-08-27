@@ -100,6 +100,25 @@ pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> 
     env.get_declar(n).map(|d| { let info = d.info(); (info.uparams, info.ty) })
 }
 
+/// `Env::get_structure` returns `Option<&InductiveData>`; this wrapper
+/// extracts just `all_ctor_names[0]` -- the ONE field `def_eq_unit`
+/// (`tc.rs:357-368`) actually reads, same "extract only what's needed"
+/// approach as `get_constructor_num_params` above. `get_structure`'s own
+/// match guard already guarantees `all_ctor_names.len() == 1` whenever it
+/// returns `Some`, so indexing `[0]` can't panic.
+#[allow(dead_code)]
+pub(crate) fn get_structure_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> Option<NamePtr<'a>> {
+    env.get_structure(n, rec_ok).map(|i| i.all_ctor_names[0])
+}
+
+/// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
+/// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
+/// `get_constructor_num_params` above (same struct, different field).
+#[allow(dead_code)]
+pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
+    env.get_constructor(n).map(|cd| cd.num_fields)
+}
+
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> bool {
     matches!(h, ReducibilityHint::Opaque)
@@ -315,6 +334,17 @@ pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &Nam
             forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => true,
     };
+
+/// `def_eq_unit`'s own env lookups -- unlike `get_declar_hint`/`get_
+/// constructor_num_params`, neither needs a semantic fact connecting the
+/// result back to `to_model_of_env`/a keyed map: nothing downstream
+/// relates two separate calls to the same ground truth, and the ENTIRE
+/// soundness content of `verified_def_eq_unit` is carried by its final
+/// `verified_def_eq` call, same "plain per-call fact, no keyed map"
+/// convention as `get_recursor_data` above.
+pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<NamePtr<'a>>);
+
+pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>);
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
 /// among its declarations -- a genuine structural fact about any finite

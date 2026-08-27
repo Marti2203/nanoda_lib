@@ -45,7 +45,7 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
@@ -71,6 +71,7 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty};
 use crate::env_model::get_declar_info_ty;
+use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields};
 
 verus! {
 
@@ -1033,6 +1034,51 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_unit`
+/// (`tc.rs:357-368`): "for structures that carry no additional
+/// information, elements with the same type are `def_eq`." Given `x_ty`
+/// (`x`'s ALREADY `infer_then_whnf`'d type) and `y_type` (`y`'s already-
+/// inferred type) as explicit parameters -- same "hard-to-derive value as
+/// an explicit externally-bounded parameter" pattern as `verified_infer_
+/// sort_of`/`verified_try_eta_expansion_aux`, for the identical reason
+/// (composing with `verified_infer`/`verified_whnf_step` internally would
+/// need depth bounds those don't expose in general).
+///
+/// `get_structure_first_ctor`/`get_constructor_num_fields` (`env_model.
+/// rs`) are new PLAIN per-call facts (no keyed map, same convention as
+/// `get_recursor_data`) -- the entire soundness content of this bridge is
+/// carried by the final `verified_def_eq` call, not by anything asserted
+/// about the structure/constructor lookups themselves. `None` covers
+/// EVERY way the real function's own `?`-chain can fall through (`x_ty`
+/// isn't a `Const` application, the name isn't a structure, its
+/// constructor has fields) collapsed into the SAME honest-incompleteness
+/// bucket `verified_def_eq`'s own fuel-exhaustion `None` already uses.
+pub fn verified_def_eq_unit<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x_ty: ExprPtr<'t>, y_type: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        depth(to_model(x_ty)) <= 60000,
+        depth(to_model(y_type)) <= 60000,
+    ensures match result {
+        Some(_) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+            to_model(x_ty) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun),
+        None => true,
+    }
+{
+    let (_fun, name, _levels, _args) = match verified_unfold_const_apps(ctx, x_ty, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ctor_name = match get_structure_first_ctor(env, &name, false) {
+        Some(c) => c,
+        None => return None,
+    };
+    match get_constructor_num_fields(env, &ctor_name) {
+        Some(0) => {}
+        _ => return None,
+    }
+    verified_def_eq(ctx, x_ty, y_type, fuel)
 }
 
 }
