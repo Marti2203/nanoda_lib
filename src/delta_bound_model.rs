@@ -48,7 +48,9 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::whnf_fixpoint_ok;
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
@@ -449,6 +451,45 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         }
     } else {
         None
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_sort_of`
+/// (`tc.rs:300-306`): `infer_then_whnf(e, flag)` (here: ONE round of
+/// `verified_whnf_step`, matching this whole arc's "one round first"
+/// convention for `whnf`) then expect the result to be `Sort`-shaped,
+/// returning its level.
+///
+/// Deliberately takes `ty` (the type whose sort is wanted) as an EXPLICIT
+/// parameter with its OWN `nlbv`/`max_var_below`/`depth` bounds, rather
+/// than computing it internally via `verified_infer` -- composing with
+/// `verified_infer` directly would need EVERY one of its six branches to
+/// expose a depth bound on its result, and the `Local` branch genuinely
+/// has none available (a `Local`'s `binder_type` is an arbitrary, already-
+/// existing real term with no general bound, the exact same character of
+/// gap `env_global_cap`/`env_global_wf` closed for DECLARATION values/
+/// types -- but for locals, not yet attempted). Same "take the hard-to-
+/// derive value as an explicit externally-bounded parameter" pattern as
+/// `verified_infer_app_single`'s `fun_ty`.
+pub fn verified_infer_sort_of<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<LevelPtr<'t>>)
+    requires
+        nlbv(to_model(ty)) <= 0,
+        max_var_below(to_model(ty), bound),
+        depth(to_model(ty)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(l) => exists |r: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && to_model(r) == ExprSpec::Sort(level_to_model(l)),
+        None => true,
+    }
+{
+    match verified_whnf_step(ctx, env, ty, fuel, bound, d, n) {
+        Some(whnfd) => {
+            let whnfd_el = ctx.read_expr(whnfd);
+            expr_as_sort(&whnfd_el)
+        }
+        None => None,
     }
 }
 
