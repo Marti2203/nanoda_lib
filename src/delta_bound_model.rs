@@ -49,7 +49,7 @@ use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps,
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
 use crate::expr_arena_bridge::get_eager_mode;
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -1324,6 +1324,13 @@ pub fn verified_try_eta_struct<'t, 'p: 't, 'x>(
 /// threaded consistently), not a strengthened soundness claim -- same
 /// role `get_rec_rule`/`verified_reduce_rec_core`'s "not wrapped in a
 /// pstep_star claim" precedent already established elsewhere in this arc.
+/// `bound3`/`d3`/`n2` are explicit caller-supplied parameters for the
+/// `whnf`-recheck stage (`tc.rs:986-989`), same "sufficient headroom,
+/// caller picks it" pattern as `verified_delta_bounded`'s `bound2`/`d2` --
+/// `delta_loop_bound_after(bound, d, cap, n as nat)` (`x_n`/`y_n`'s ACTUAL
+/// bound after the delta loop) has no closed form for a variable `n`, so
+/// there's no way to compute it internally; the caller must already know
+/// SOME sufficient `bound3`/`d3`.
 pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -1334,6 +1341,9 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
     d: nat,
     cap: nat,
     n: u32,
+    bound3: nat,
+    d3: nat,
+    n2: u32,
 ) -> (result: Option<bool>)
     requires
         nlbv(to_model(x)) <= 0,
@@ -1344,6 +1354,10 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
         depth(to_model(y)) <= d,
         env_global_cap(*env) <= cap,
         delta_round_fixpoint_ok(bound, d, cap, n as nat),
+        delta_loop_bound_after(bound, d, cap, n as nat) <= bound3,
+        delta_loop_d_after(bound, d, cap, n as nat) <= d3,
+        whnf_proj_fixpoint_ok_local(bound3, d3, n2 as nat),
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= 60000,
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -1357,9 +1371,119 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
                 Some(false) => {}
                 None => return None,
             }
-            verified_def_eq_app(ctx, x_n, y_n, fuel)
+            proof {
+                max_var_below_mono(to_model(x_n), delta_loop_bound_after(bound, d, cap, n as nat), bound3);
+                max_var_below_mono(to_model(y_n), delta_loop_bound_after(bound, d, cap, n as nat), bound3);
+                assert(depth(to_model(x_n)) <= d3);
+                assert(depth(to_model(y_n)) <= d3);
+            }
+            match verified_whnf_recheck_loop_local(ctx, env, x_n, fuel, bound3, d3, n2) {
+                Some(x_n2) => match verified_whnf_recheck_loop_local(ctx, env, y_n, fuel, bound3, d3, n2) {
+                    Some(y_n2) => {
+                        if !expr_ptr_eq(x_n2, x_n) || !expr_ptr_eq(y_n2, y_n) {
+                            // A real `whnf_no_unfolding` recheck changed something -- the
+                            // real function recurses into ITSELF (`self.def_eq(x_n2,
+                            // y_n2)`) here. Genuinely supporting that as unbounded self-
+                            // recursion would need a FRESH set of (bound, d, bound3, d3,
+                            // n2)-style parameters at EVERY nesting level (each level's
+                            // own values aren't expressible as a closed-form function of
+                            // the previous level's, the exact same "no closed form for an
+                            // iterated spec fn" reason `bound3`/`d3` themselves are
+                            // explicit above) -- so this approximates the recursive call
+                            // with the ALREADY-BUILT, simpler `verified_def_eq` (sort/
+                            // const/local/proj/app/binder-telescoping cluster, no further
+                            // delta-unfolding) instead of genuinely recursing. Honest,
+                            // bounded incompleteness: if `x_n2`/`y_n2` need MORE delta-
+                            // unfolding to confirm equal, this won't find it, but it never
+                            // claims a wrong answer either.
+                            verified_def_eq(ctx, x_n2, y_n2, fuel)
+                        } else {
+                            verified_def_eq_app(ctx, x_n, y_n, fuel)
+                        }
+                    }
+                    None => None,
+                },
+                None => None,
+            }
         }
         Some(DeltaRoundResult::Continue(_, _)) => None,
+        None => None,
+    }
+}
+
+/// `whnf_proj_fixpoint_ok`/`whnf_proj_loop_bound_after`/`_d_after`
+/// (`tc_model.rs`) are ALL genuinely un-nameable from this file -- a real,
+/// confirmed tooling bug (see [[feedback_verus_cross_file_spec_fn_export_bug]]):
+/// NEW `pub open spec fn` items fail `use`-import cross-file, in EITHER
+/// direction, for BOTH `tc_model.rs` and `delta_bound_model.rs` (and
+/// `nat_lit_model.rs`, discovered earlier). Confirmed via direct testing
+/// that this is NOT about literal values (a call with a hardcoded `n2 ==
+/// 0` verifies fine, since Verus fully unfolds a LITERAL-indexed
+/// recursive call to pure arithmetic with no need to reference the
+/// callee's predicate BY NAME) but genuinely blocks a VARIABLE `n2`
+/// (needs symbolic induction on the SAME spec-fn symbol on both sides,
+/// which two independently-defined, even structurally-identical, `open
+/// spec fn`s do NOT share).
+///
+/// The fix: don't reuse `verified_whnf_no_unfolding_fixpoint_with_proj`
+/// (tc_model.rs's ALREADY-BUILT fixpoint, gated by the un-nameable
+/// `whnf_proj_fixpoint_ok`) at all -- rebuild an equivalent fixpoint HERE,
+/// chaining `verified_whnf_no_unfolding_step_with_proj` (the SINGLE-round
+/// function, whose `requires` is plain arithmetic, no spec-fn naming
+/// needed) directly. Local duplicates of the growth-formula/feasibility
+/// spec fns below are the SAME formulas as `tc_model.rs`'s, just
+/// independently defined so THIS file can name them.
+pub open spec fn whnf_proj_fixpoint_ok_local(bound: nat, d: nat, n: nat) -> bool
+    decreases n
+{
+    let d2 = d * d + d + d + d + d + d + d;
+    let bound2 = bound + d * d * d + d * d;
+    d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && (n == 0 || whnf_proj_fixpoint_ok_local(bound2, d2, (n - 1) as nat))
+}
+pub open spec fn whnf_proj_loop_bound_after_local(bound: nat, d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { bound } else { whnf_proj_loop_bound_after_local(bound + d * d * d + d * d, d * d + d + d + d + d + d + d, (n - 1) as nat) }
+}
+pub open spec fn whnf_proj_loop_d_after_local(bound: nat, d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { d } else { whnf_proj_loop_d_after_local(bound + d * d * d + d * d, d * d + d + d + d + d + d + d, (n - 1) as nat) }
+}
+
+/// Chains `verified_whnf_no_unfolding_step_with_proj` (`tc_model.rs`) up
+/// to `n` times, exactly mirroring `verified_whnf_no_unfolding_fixpoint_
+/// with_proj`'s OWN logic -- rebuilt HERE rather than reused, purely to
+/// work around the cross-file spec-fn-naming bug documented above (the
+/// single-round step function itself imports and calls fine; only its
+/// sibling fixpoint's GATING PREDICATE couldn't be named from this file).
+/// Doesn't bother exposing `whnf_no_unfolding_with_proj_reaches` (the
+/// `beta_model.rs` soundness relation) since this composition's only
+/// caller (`verified_def_eq_with_delta`) already has a fully vacuous
+/// `ensures true` -- only the numeric bound is needed here, to type-check
+/// the subsequent `verified_def_eq` call.
+pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_proj_fixpoint_ok_local(bound, d, n as nat),
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), whnf_proj_loop_bound_after_local(bound, d, n as nat))
+            &&& depth(to_model(r)) <= whnf_proj_loop_d_after_local(bound, d, n as nat)
+        },
+        None => true,
+    }
+    decreases n
+{
+    if n == 0 {
+        return Some(e);
+    }
+    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, bound, d) {
+        Some(r) => verified_whnf_recheck_loop_local(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1),
         None => None,
     }
 }
@@ -1397,6 +1521,9 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
     d: nat,
     cap: nat,
     n: u32,
+    bound3: nat,
+    d3: nat,
+    n2: u32,
 ) -> (result: Option<bool>)
     requires
         nlbv(to_model(x)) <= 0,
@@ -1416,6 +1543,10 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         env_global_cap(*env) <= cap,
         delta_round_fixpoint_ok(bound, d, cap, n as nat),
         whnf_fixpoint_ok(bound, d, n as nat),
+        delta_loop_bound_after(bound, d, cap, n as nat) <= bound3,
+        delta_loop_d_after(bound, d, cap, n as nat) <= d3,
+        whnf_proj_fixpoint_ok_local(bound3, d3, n2 as nat),
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= 60000,
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -1425,7 +1556,7 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         Some(true) => return Some(true),
         _ => {}
     }
-    verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n)
+    verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n, bound3, d3, n2)
 }
 
 /// Real-arena counterpart to `def_eq`'s FINAL fallback group
