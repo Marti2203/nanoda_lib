@@ -48,7 +48,8 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::whnf_fixpoint_ok;
 use crate::env_model::verified_is_lt;
@@ -1220,6 +1221,83 @@ pub fn verified_try_eta_struct<'t, 'p: 't, 'x>(
         _ => {}
     }
     verified_try_eta_struct_aux(ctx, env, y, x, y_type, x_type, fuel, d)
+}
+
+/// The first genuinely faithful slice of `tc.rs::TypeChecker::def_eq`'s
+/// real top-level control flow (`tc.rs:957-998`): reflexivity, then
+/// `lazy_delta_step` (via `verified_lazy_delta_loop`), THEN `def_eq_const`/
+/// `def_eq_local`/`def_eq_proj` (via `verified_def_eq_core`) on whatever
+/// `Exhausted` leaves behind, then `def_eq_app`. This is the piece
+/// `verified_def_eq` (`tc_model.rs`) itself has always honestly documented
+/// as missing -- "`verified_def_eq_core`/`_app` never unfold definitions
+/// at all" -- now actually closed for the CORE control-flow skeleton.
+///
+/// Deliberately does NOT yet include: `def_eq_quick_check`'s cache/`def_eq_
+/// binder_multi` (a pure optimization/an already-separately-telescoped
+/// piece), the `c_bool_true` short-circuit, `proof_irrel_eq`, the `whnf_
+/// no_unfolding` recheck-and-RECURSE step (`tc.rs:986-989` -- needs the
+/// still-open "mixed-kind chain" question, see `verified_whnf_no_
+/// unfolding_step_with_proj`'s own doc comment), or the final `try_eta_
+/// expansion`/`try_eta_struct`/`try_string_lit_expansion`/`def_eq_unit`
+/// fallback group -- ALL FIVE of those need an externally-supplied
+/// inferred type at some point, which this function's callers don't have
+/// to supply (this composes ONLY the infer-independent pieces: `lazy_
+/// delta_step`, `def_eq_core`, `def_eq_app` need no types at all). `None`
+/// honestly conflates "ran out of budget" with "would need one of the
+/// unmodeled pieces," same convention as `verified_def_eq` itself.
+///
+/// `ensures true` -- deliberately vacuous, not an oversight: `verified_
+/// lazy_delta_round`'s (hence `verified_lazy_delta_loop`'s) `Found` case
+/// carries NO restated soundness fact by this whole arc's own established
+/// convention (its underlying `verified_def_eq_nat`/`verified_try_eq_
+/// const_app` are about value/congruence equality, not reduction
+/// reachability), so a `Some(true)` result reached via `Found` has nothing
+/// to attach a claim to -- attempting one anyway (an earlier draft tried
+/// "`x == y` or `pstep_star` to some reduct") failed to verify precisely
+/// because `Found` doesn't satisfy it. This function's value is CONTROL-
+/// FLOW fidelity (proving the real ordering -- delta first, then the core
+/// cluster, then app -- type-checks and composes with fuel/bound/d/cap/n
+/// threaded consistently), not a strengthened soundness claim -- same
+/// role `get_rec_rule`/`verified_reduce_rec_core`'s "not wrapped in a
+/// pstep_star claim" precedent already established elsewhere in this arc.
+pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    cap: nat,
+    n: u32,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        env_global_cap(*env) <= cap,
+        delta_round_fixpoint_ok(bound, d, cap, n as nat),
+    ensures true
+{
+    if expr_ptr_eq(x, y) {
+        return Some(true);
+    }
+    match verified_lazy_delta_loop(ctx, env, x, y, fuel, bound, d, cap, n) {
+        Some(DeltaRoundResult::Found(b)) => Some(b),
+        Some(DeltaRoundResult::Exhausted(x_n, y_n)) => {
+            match verified_def_eq_core(ctx, x_n, y_n, fuel) {
+                Some(true) => return Some(true),
+                Some(false) => {}
+                None => return None,
+            }
+            verified_def_eq_app(ctx, x_n, y_n, fuel)
+        }
+        Some(DeltaRoundResult::Continue(_, _)) => None,
+        None => None,
+    }
 }
 
 }
