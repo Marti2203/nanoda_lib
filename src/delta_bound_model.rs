@@ -38,7 +38,7 @@ use crate::env::Env;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth};
+use crate::expr_model::{nlbv, depth, subst_full};
 #[cfg(verus_only)]
 use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
@@ -46,12 +46,12 @@ use crate::beta_model::{
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, verified_whnf_no_unfolding_step};
-use crate::tc_model::{verified_infer_app_single, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep_star_trans, pstep_star_refl};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec};
+use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
@@ -283,6 +283,44 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     };
     assert(depth(to_model(fun_ty)) <= d);
     verified_infer_app_single(ctx, fun_ty, arg, fuel, d)
+}
+
+/// `verified_infer_app_bounded`'s multi-argument generalization: unfolds
+/// the WHOLE applied spine (`verified_unfold_apps`, not just one `App`
+/// layer) rather than requiring `x` be a single `App(Const, arg)` node,
+/// then composes `verified_infer_const_bounded` with `verified_infer_app_
+/// telescoped` (`tc_model.rs`) instead of the single-argument `verified_
+/// infer_app_single`. Same "happy path" scope as `verified_infer_app_
+/// telescoped` itself: `None` if the head isn't a bare `Const` application,
+/// or if the callee's type doesn't have at least as many Pi-layers as
+/// there are args (the real `ensure_pi`/WHNF fallback, not modeled).
+pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        d <= 60000,
+    ensures match result {
+        Some(r) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
+            to_model(x) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun)
+            && to_model(r) == subst_full(body, args_model, 0),
+        None => true,
+    }
+{
+    let (fun, args) = match verified_unfold_apps(ctx, x, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (c_name, c_uparams) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_ty = match verified_infer_const_bounded(ctx, env, c_name, c_uparams, fuel) {
+        Some(t) => t,
+        None => return None,
+    };
+    assert(depth(to_model(fun_ty)) <= d);
+    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::delta`
