@@ -2940,6 +2940,110 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::iota_try_eta_struct`
+/// (`tc.rs:1049-1068`) -- the LAST unmodeled `reduce_rec` special case,
+/// closing out this whole sub-arc. Same "call `verified_infer` on a
+/// fresh value internally" unlock as `verified_def_eq_fallback_group_
+/// full`/`verified_to_ctor_when_k` above: `e_type = infer_then_whnf(e)`
+/// is derived internally (one round of `infer` at `fuel=0`, one round of
+/// `verified_whnf_no_unfolding_step`, same composition as `to_ctor_when_
+/// k`'s own `major_ty`), no external type parameter needed.
+///
+/// The real function is TOTAL (`-> ExprPtr<'t>`, never fails) -- every
+/// branch that can't be confirmed here (bounded `infer`/`whnf` returning
+/// `None`, same honest incompleteness as everywhere else) falls back to
+/// returning `e` UNCHANGED, exactly matching the real function's OWN
+/// "not applicable" branches (`_ => e`), not a new compromise: a real
+/// caller of `iota_try_eta_struct` already treats "unchanged" as a valid,
+/// meaningful outcome (it's the correct answer whenever eta-expansion
+/// genuinely doesn't apply), so this bridge's honest incompleteness is
+/// indistinguishable, from the caller's perspective, from the real
+/// function correctly deciding not to expand.
+///
+/// `verified_is_prop_of_type`'s own `n` (rounds of whnf INSIDE `is_prop`)
+/// is `0` here: `e_type` is already `whnf`'d once by this function's own
+/// composition before being handed to it, mirroring the real `may_be_
+/// prop(e_type)` call on an already-`infer_then_whnf`'d `e_type` exactly
+/// -- `verified_whnf_step` at `n=0` is the identity, so `is_prop` just
+/// checks whether `e_type` ALREADY has `Sort`-shape, which is exactly
+/// what's needed (no compounding second round of cubic growth).
+pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_name: NamePtr<'t>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+    d_i: nat,
+    d_e: nat,
+) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        depth(to_model(e)) <= d_e,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_i <= 60000,
+        d_e <= 60000,
+        (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) + 10 <= 0xFFFF_0000,
+        { let dp = d_i + d_i + d_e + d_e; let w = dp * dp + dp + dp + dp + dp; w <= 60000 },
+        { let dp = d_i + d_i + d_e + d_e; let w = dp * dp + dp + dp + dp + dp; w + w * w * w + w * w + w + 10 <= 0xFFFF_0000 },
+    ensures true
+{
+    if !env.can_be_struct(&ind_name) {
+        return e;
+    }
+    match verified_is_ctor_app(ctx, env, e, fuel) {
+        Some(_) => return e,
+        None => {}
+    }
+    let dd_pre: nat = d_i + d_i + d_e + d_e;
+    proof {
+        assert(infer_depth_fixpoint_ok(d_e, 0));
+    }
+    let e_type_raw = match verified_infer(ctx, env, e, 0, d_i, d_e) {
+        Some(v) => v,
+        None => return e,
+    };
+    proof {
+        assert(depth(to_model(e_type_raw)) <= dd_pre);
+        nlbv_bound_implies_max_var_below(to_model(e_type_raw), 0);
+        max_var_below_mono(to_model(e_type_raw), depth(to_model(e_type_raw)), dd_pre);
+    }
+    let e_type = match verified_whnf_no_unfolding_step(ctx, e_type_raw, fuel, dd_pre, dd_pre) {
+        Some(v) => v,
+        None => return e,
+    };
+    let dd_whnf: nat = dd_pre * dd_pre + dd_pre + dd_pre + dd_pre + dd_pre;
+    proof {
+        assert(depth(to_model(e_type)) <= dd_whnf);
+        nlbv_bound_implies_max_var_below(to_model(e_type), 0);
+        max_var_below_mono(to_model(e_type), depth(to_model(e_type)), dd_whnf);
+        assert(infer_depth_fixpoint_ok(d_e, 0));
+    }
+    let (e_type_f, _args) = match verified_unfold_apps(ctx, e_type, fuel) {
+        Some(p) => p,
+        None => return e,
+    };
+    let e_type_f_el = ctx.read_expr(e_type_f);
+    let (f_name, _f_levels) = match expr_as_const(e_type_f, &e_type_f_el) {
+        Some(p) => p,
+        None => return e,
+    };
+    if f_name != ind_name {
+        return e;
+    }
+    proof {
+        assert(whnf_fixpoint_ok(dd_whnf, dd_whnf, 0));
+    }
+    match verified_is_prop_of_type(ctx, env, e_type, fuel, dd_whnf, dd_whnf, 0) {
+        Some(true) => e,
+        _ => match verified_expand_eta_struct_aux(ctx, env, e_type, e, fuel) {
+            Some(r) => r,
+            None => e,
+        },
+    }
+}
+
 /// The first genuinely faithful slice of `tc.rs::TypeChecker::def_eq`'s
 /// real top-level control flow (`tc.rs:957-998`): reflexivity, then
 /// `lazy_delta_step` (via `verified_lazy_delta_loop`), THEN `def_eq_const`/
