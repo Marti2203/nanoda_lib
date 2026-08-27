@@ -58,7 +58,7 @@ use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, 
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::string_len;
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -1236,6 +1236,90 @@ pub fn verified_infer_sort_of<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         Some(whnfd) => {
             let whnfd_el = ctx.read_expr(whnfd);
             expr_as_sort(&whnfd_el)
+        }
+        None => None,
+    }
+}
+
+/// BOUND-FREE sibling of `verified_infer_sort_of` above, needed to wire
+/// `Pi` into `verified_infer`'s dispatcher: `infer_pi` needs `infer_sort_
+/// of` on `infer`'s own result (`binder_type`'s and the fully-instantiated
+/// body's inferred TYPES), which -- being `infer`'s output -- carries no
+/// derivable `nlbv`/`max_var_below`/`depth` bound in general, the exact
+/// wall that forced `verified_infer_pi_single`'s `bt_ty`/`body_ty` to be
+/// externally-supplied parameters in the first place.
+///
+/// The key realization: `verified_whnf_step`'s own two-part composition
+/// (`verified_whnf_no_unfolding_fixpoint` for beta/zeta reduction, THEN
+/// `verified_unfold_def_step` for delta-unfolding) only needs a bound for
+/// the FIRST half -- `verified_unfold_def_step` itself has NO `nlbv`/
+/// `max_var_below`/`depth` requirement at all (const-unfolding substitutes
+/// universe LEVELS via `verified_subst_expr_levels`, a structurally
+/// different, bound-independent mechanism from de-Bruijn VALUE
+/// substitution). So chaining `verified_unfold_def_step` ALONE, repeatedly
+/// (`n` rounds, `pstep_star_env_weaken`/`pstep_star_trans` combining each
+/// round's singleton-env fact into the growing `to_model_of_env(*env)`
+/// chain -- literally the SAME composition `verified_whnf_step` already
+/// does for its own delta-unfolding half, mirrored here almost verbatim),
+/// needs no bound at all -- at the honest cost of NEVER doing beta/zeta
+/// reduction (if `ty` genuinely needs a Lambda-applied-to-args or Let step
+/// to expose `Sort`, this returns `None` rather than finding it -- sound,
+/// just incomplete, same convention as every other cut corner in this
+/// arc). In practice this covers the common case (`Sort` reached via
+/// unfolding an abbreviation/definition, or already being `Sort`
+/// directly) without needing beta/zeta's bound-dependent proof machinery
+/// at all.
+pub fn verified_infer_sort_of_unbounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, n: u32) -> (result: Option<LevelPtr<'t>>)
+    ensures match result {
+        Some(l) => exists |r: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && to_model(r) == ExprSpec::Sort(level_to_model(l)),
+        None => true,
+    }
+    decreases n
+{
+    let ty_el = ctx.read_expr(ty);
+    if let Some(l) = expr_as_sort(&ty_el) {
+        proof {
+            pstep_star_refl(to_model_of_env(*env), to_model(ty));
+        }
+        return Some(l);
+    }
+    if n == 0 {
+        return None;
+    }
+    match verified_unfold_def_step(ctx, env, ty, fuel) {
+        Some(unfolded) => {
+            proof {
+                let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
+                    &&& to_model_of_env(*env).contains_key(id)
+                    &&& to_model_of_env(*env)[id] == (ks, val)
+                    &&& pstep_star(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                            to_model(ty),
+                            to_model(unfolded),
+                        )
+                };
+                let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
+                assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
+                    to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
+                by {
+                    assert(k == id);
+                }
+                pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(ty), to_model(unfolded));
+            }
+            match verified_infer_sort_of_unbounded(ctx, env, unfolded, fuel, n - 1) {
+                Some(l) => {
+                    proof {
+                        let r = choose |r: ExprPtr<'t>|
+                            pstep_star(to_model_of_env(*env), to_model(unfolded), to_model(r))
+                            && to_model(r) == ExprSpec::Sort(level_to_model(l));
+                        pstep_star_trans(to_model_of_env(*env), to_model(ty), to_model(unfolded), to_model(r));
+                    }
+                    Some(l)
+                }
+                None => None,
+            }
         }
         None => None,
     }
