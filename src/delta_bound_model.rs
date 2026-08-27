@@ -44,6 +44,7 @@ use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
+    spine_app_depth_decompose,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
@@ -961,15 +962,19 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// telescoped` itself: `None` if the head isn't a bare `Const` application,
 /// or if the callee's type doesn't have at least as many Pi-layers as
 /// there are args (the real `ensure_pi`/WHNF fallback, not modeled).
-pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         d <= 60000,
+        depth(to_model(x)) <= dd,
     ensures match result {
-        Some(r) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
-            to_model(x) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun)
-            && to_model(r) == subst_full(body, args_model, 0),
+        Some(r) => {
+            &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
+                to_model(x) == spine_app(to_model(fun), args_model)
+                && is_const_shape(fun)
+                && to_model(r) == subst_full(body, args_model, 0)
+            &&& depth(to_model(r)) <= d + dd
+        },
         None => true,
     }
 {
@@ -977,6 +982,16 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         Some(p) => p,
         None => return None,
     };
+    proof {
+        let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        assert(to_model(x) == spine_app(to_model(fun), args_model));
+        spine_app_depth_decompose(to_model(fun), args_model);
+        assert forall |i: int| 0 <= i < args@.len() implies #[trigger] depth(to_model(args@[i])) <= dd by {
+            assert(args_model[i] == to_model(args@[i]));
+            assert(depth(args_model[i]) <= depth(spine_app(to_model(fun), args_model)));
+            assert(depth(spine_app(to_model(fun), args_model)) == depth(to_model(x)));
+        }
+    }
     let fun_el = ctx.read_expr(fun);
     let (c_name, c_uparams) = match expr_as_const(fun, &fun_el) {
         Some(p) => p,
@@ -987,7 +1002,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         None => return None,
     };
     assert(depth(to_model(fun_ty)) <= d);
-    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d)
+    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d, dd)
 }
 
 /// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in
@@ -1167,7 +1182,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         return verified_infer_const(ctx, env, c_name, c_uparams, fuel);
     }
     if expr_as_app(&el).is_some() {
-        return verified_infer_app_bounded_multi(ctx, env, e, fuel, d);
+        return verified_infer_app_bounded_multi(ctx, env, e, fuel, d, dd);
     }
     if expr_as_nat_lit(e, &el).is_some() {
         return ctx.nat_type();
