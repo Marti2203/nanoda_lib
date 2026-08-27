@@ -1407,6 +1407,75 @@ pub fn verified_infer_sort_of_unbounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     }
 }
 
+/// `verified_infer_sort_of_unbounded`'s sibling for `Pi` instead of
+/// `Sort`: chains bound-free `verified_unfold_def_step` to expose a `Pi`
+/// shape rather than a `Sort` one, same honest incompleteness (never
+/// beta/zeta-reduces). Needed for `infer_proj`'s dispatcher wiring: a
+/// constructor's telescope (`env.get_declar_val`'s value type, after
+/// level substitution) is always literally a chain of nested `Pi`s --
+/// peeling one layer never genuinely needs beta/zeta reduction, only
+/// occasionally delta-unfolding first if the type sits behind an
+/// abbreviation -- the exact same structural reason `infer_sort_of`'s
+/// own bound-free shortcut was sound for `infer_pi`.
+///
+/// Returns the WHNF'd, `Pi`-shaped `ExprPtr` itself (not its destructured
+/// `binder_type`/`body`, unlike `verified_infer_sort_of_unbounded`
+/// returning a bare `LevelPtr`) -- callers destructure it themselves via
+/// `expr_as_pi`, since (unlike a `Sort`'s single `LevelPtr` payload) a
+/// `Pi`'s two real-arena fields are what callers actually need.
+pub fn verified_whnf_expect_pi_unbounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, n: u32) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && exists |bt: ExprSpec, bd: ExprSpec| to_model(r) == ExprSpec::Bind(Box::new(bt), Box::new(bd)),
+        None => true,
+    }
+    decreases n
+{
+    let ty_el = ctx.read_expr(ty);
+    if let Some((_, _, bt, bd)) = expr_as_pi(&ty_el) {
+        assert(to_model(ty) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(bd))));
+        proof {
+            pstep_star_refl(to_model_of_env(*env), to_model(ty));
+        }
+        return Some(ty);
+    }
+    if n == 0 {
+        return None;
+    }
+    match verified_unfold_def_step(ctx, env, ty, fuel) {
+        Some(unfolded) => {
+            proof {
+                let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
+                    &&& to_model_of_env(*env).contains_key(id)
+                    &&& to_model_of_env(*env)[id] == (ks, val)
+                    &&& pstep_star(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                            to_model(ty),
+                            to_model(unfolded),
+                        )
+                };
+                let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
+                assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
+                    to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
+                by {
+                    assert(k == id);
+                }
+                pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(ty), to_model(unfolded));
+            }
+            match verified_whnf_expect_pi_unbounded(ctx, env, unfolded, fuel, n - 1) {
+                Some(r) => {
+                    proof {
+                        pstep_star_trans(to_model_of_env(*env), to_model(ty), to_model(unfolded), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// Real-arena counterpart to `tc.rs::TypeChecker::is_prop`/`may_be_prop`'s
 /// shared shape (`tc.rs:1311-1317`), given the ALREADY-INFERRED type `ty`
 /// directly (same "explicit externally-bounded parameter" reason `verified_
