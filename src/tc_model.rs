@@ -62,7 +62,7 @@ use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{bool_true_id, bool_false_id, nat_zero_id, nat_succ_id, nat_repr_is_zero, nat_repr_pred};
-use crate::util::{nat_sub, nat_div, nat_mod, nat_gcd, nat_shl, nat_shr};
+use crate::util::{nat_sub, nat_div, nat_mod, nat_gcd, nat_shl, nat_shr, nat_land, nat_lor, nat_xor};
 #[allow(unused_imports)]
 use num_traits::Pow;
 use num_bigint::BigUint;
@@ -1560,6 +1560,51 @@ pub assume_specification [crate::util::nat_shr] (x: BigUint, y: BigUint) -> (res
 pub assume_specification [crate::util::nat_gcd] (x: &BigUint, y: &BigUint) -> (result: BigUint)
     ensures to_nat(result) == nat_gcd_spec(to_nat(*x), to_nat(*y));
 
+/// Bitwise AND/OR/XOR, defined recursively by peeling one bit at a time
+/// (`a % 2`/`a / 2`) -- the fundamentally different mathematical
+/// structure (bit patterns, not quantities) is exactly why these three
+/// `do_nat_bin` ops were deliberately left out of the earlier `Gcd`/
+/// `Shl`/`Shr`/`Pow` pass (all four of THOSE stay in "quantity" land:
+/// repeated multiplication/division/subtraction). `nat_land_spec` can
+/// decrease on `a` alone (it stops the moment EITHER operand hits 0);
+/// `nat_lor_spec`/`nat_xor_spec` return the other operand unchanged as
+/// soon as one hits 0, so the recursive branch is only ever reached with
+/// `a > 0`, and `decreases a` covers all three uniformly.
+pub open spec fn nat_land_spec(a: nat, b: nat) -> nat
+    decreases a
+{
+    if a == 0 || b == 0 { 0 }
+    else { (if a % 2 == 1 && b % 2 == 1 { 1nat } else { 0nat }) + 2 * nat_land_spec((a / 2) as nat, (b / 2) as nat) }
+}
+
+pub open spec fn nat_lor_spec(a: nat, b: nat) -> nat
+    decreases a
+{
+    if a == 0 { b }
+    else if b == 0 { a }
+    else { (if a % 2 == 1 || b % 2 == 1 { 1nat } else { 0nat }) + 2 * nat_lor_spec((a / 2) as nat, (b / 2) as nat) }
+}
+
+pub open spec fn nat_xor_spec(a: nat, b: nat) -> nat
+    decreases a
+{
+    if a == 0 { b }
+    else if b == 0 { a }
+    else { (if (a % 2 == 1) != (b % 2 == 1) { 1nat } else { 0nat }) + 2 * nat_xor_spec((a / 2) as nat, (b / 2) as nat) }
+}
+
+/// `util.rs::nat_land`/`nat_lor`/`nat_xor` are one-line delegations to
+/// `BigUint`'s native `&`/`|`/`^` operators -- trusted directly, same
+/// "trust the delegation" convention `nat_gcd` above uses.
+pub assume_specification [crate::util::nat_land] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == nat_land_spec(to_nat(x), to_nat(y));
+
+pub assume_specification [crate::util::nat_lor] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == nat_lor_spec(to_nat(x), to_nat(y));
+
+pub assume_specification [crate::util::nat_xor] (x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures to_nat(result) == nat_xor_spec(to_nat(*x), to_nat(*y));
+
 /// `tc.rs::do_nat_bin`'s `Gcd` case (`tc.rs:381`): `crate::util::nat_gcd`
 /// is a one-line delegation to `BigUint::gcd` with no independent
 /// branching, same "trust the delegation" convention `Shl`/`Shr`/`Pow`
@@ -1769,6 +1814,163 @@ pub fn verified_do_nat_bin_pow_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     let powered = bx.pow(by);
     assert(to_nat(powered) == nat_pow(nat_lit_value(vx), nat_lit_value(vy)));
     ctx.mk_nat_lit_quick(powered)
+}
+
+/// `tc.rs::do_nat_bin`'s `LAnd` case (`tc.rs:382`), completing `do_nat_
+/// bin` to 14/14 ops. Same shape as `Gcd`/`Shl`/`Shr`/`Pow` above, against
+/// the new bit-level `nat_land_spec`.
+pub fn verified_do_nat_bin_land_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_land_spec(nat_lit_value(vx), nat_lit_value(vy)),
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let anded = nat_land(bx, by);
+    assert(to_nat(anded) == nat_land_spec(nat_lit_value(vx), nat_lit_value(vy)));
+    ctx.mk_nat_lit_quick(anded)
+}
+
+/// `tc.rs::do_nat_bin`'s `LOr` case (`tc.rs:383`), against `nat_lor_spec`.
+pub fn verified_do_nat_bin_lor_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_lor_spec(nat_lit_value(vx), nat_lit_value(vy)),
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let ored = nat_lor(bx, by);
+    assert(to_nat(ored) == nat_lor_spec(nat_lit_value(vx), nat_lit_value(vy)));
+    ctx.mk_nat_lit_quick(ored)
+}
+
+/// `tc.rs::do_nat_bin`'s `XOr` case (`tc.rs:384`), against `nat_xor_spec`.
+/// Unlike `LAnd`/`LOr`, real `nat_xor` takes its arguments by reference
+/// (`&BigUint`, matching `nat_gcd`'s own convention), not by value.
+pub fn verified_do_nat_bin_xor_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => exists |vx: ExprPtr<'t>, vy: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(vx))
+            && pstep_star(to_model_of_env(*env), to_model(y), to_model(vy))
+            && is_nat_lit_shape(vx) && is_nat_lit_shape(vy) && is_nat_lit_shape(r)
+            && nat_lit_value(r) == nat_xor_spec(nat_lit_value(vx), nat_lit_value(vy)),
+        None => true,
+    }
+{
+    let vx = match verified_whnf_step(ctx, env, x, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vy = match verified_whnf_step(ctx, env, y, fuel, bound, d, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    let vx_el = ctx.read_expr(vx);
+    let ptrx = match expr_as_nat_lit(vx, &vx_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let vy_el = ctx.read_expr(vy);
+    let ptry = match expr_as_nat_lit(vy, &vy_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let bx = match read_bignum_value(ctx, ptrx) {
+        Some(b) => b,
+        None => return None,
+    };
+    let by = match read_bignum_value(ctx, ptry) {
+        Some(b) => b,
+        None => return None,
+    };
+    let xored = nat_xor(&bx, &by);
+    assert(to_nat(xored) == nat_xor_spec(nat_lit_value(vx), nat_lit_value(vy)));
+    ctx.mk_nat_lit_quick(xored)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_sort`
