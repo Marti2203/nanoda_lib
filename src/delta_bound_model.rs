@@ -1055,42 +1055,68 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
 /// `NatLit`/`StringLit` (plain type-constant lookups), plus `Let`
 /// (`tc.rs:676-692`, `InferOnly` skips the `Check`-mode `assert_def_eq`
 /// well-formedness check same as everywhere else in this arc) and
-/// (newest) non-curried `Lambda`, both genuinely recursive: `Let` via
-/// `verified_inst` substituting `val` into `body` then recursing on the
-/// result; `Lambda` the same way, one binder peeled via `mk_dbj_level`/
-/// `verified_inst`/`abstr_levels_with_locals`/`mk_pi`. `Lambda`'s case is
-/// INLINED here rather than delegated to the already-existing `verified_
-/// infer_lambda_single` (which has the identical logic and an identical
-/// `exists`-shaped ensures) -- calling it from here would make it part
-/// of a mutually-recursive clique with `verified_infer`, and Verus's
-/// termination checker needs `fuel` to strictly decrease at EVERY edge
-/// of a clique, not just net-decrease around the whole cycle; `verified_
-/// infer_lambda_single`'s own single internal `verified_infer` call
-/// (fine on its own, no `decreases` needed for a non-recursive function)
-/// uses the SAME `fuel` it received, so folding it into the clique would
-/// need an extra fuel-burning edge that doesn't otherwise belong. Inlining
-/// keeps this ONE recursive function with ONE `decreases fuel`, exactly
-/// like `Let`'s own case already is. `dd` is a SEPARATE depth budget from
-/// `d` (the env cap `verified_infer_
-/// const`/`verified_infer_app_bounded_multi` need) -- `Let` and `Lambda`
-/// both consume it via `infer_depth_fixpoint_ok`'s doubling-per-level
-/// headroom, mirroring `delta_round_fixpoint_ok`/`whnf_fixpoint_ok`'s
-/// established shape exactly (`Lambda`'s `instd` never actually NEEDS
-/// the doubled headroom -- substituting a depth-0 local can't grow
-/// depth -- but reusing the same `dd + dd` growth `Let` already uses
-/// lets the `infer_depth_fixpoint_ok` requirement fall out of a direct
-/// unfolding, with no separate monotonicity lemma needed).
+/// `Lambda` (CURRIED chains included, not just one binder -- see below),
+/// both genuinely recursive: `Let` via `verified_inst` substituting `val`
+/// into `body` then recursing on the result; `Lambda` the same way, one
+/// binder peeled via `mk_dbj_level`/`verified_inst`/`abstr_levels_with_
+/// locals`/`mk_pi`. `Lambda`'s case is INLINED here rather than delegated
+/// to the already-existing `verified_infer_lambda_single` (which has the
+/// identical logic and an identical `exists`-shaped ensures) -- calling
+/// it from here would make it part of a mutually-recursive clique with
+/// `verified_infer`, and Verus's termination checker needs `fuel` to
+/// strictly decrease at EVERY edge of a clique, not just net-decrease
+/// around the whole cycle; `verified_infer_lambda_single`'s own single
+/// internal `verified_infer` call (fine on its own, no `decreases`
+/// needed for a non-recursive function) uses the SAME `fuel` it
+/// received, so folding it into the clique would need an extra fuel-
+/// burning edge that doesn't otherwise belong. Inlining keeps this ONE
+/// recursive function with ONE `decreases fuel`, exactly like `Let`'s
+/// own case already is. `dd` is a SEPARATE depth budget from `d` (the
+/// env cap `verified_infer_const`/`verified_infer_app_bounded_multi`
+/// need) -- `Let` and `Lambda` both consume it via `infer_depth_
+/// fixpoint_ok`'s doubling-per-level headroom, mirroring `delta_round_
+/// fixpoint_ok`/`whnf_fixpoint_ok`'s established shape exactly
+/// (`Lambda`'s `instd` never actually NEEDS the doubled headroom --
+/// substituting a depth-0 local can't grow depth -- but reusing the same
+/// `dd + dd` growth `Let` already uses lets the `infer_depth_fixpoint_
+/// ok` requirement fall out of a direct unfolding, with no separate
+/// monotonicity lemma needed).
 ///
-/// `Pi`/curried-`Lambda`/`Proj` still fall through to `None` for `infer`
-/// specifically -- `Pi` needs the harder per-binder `dom_univ` design
-/// (`verified_infer_pi_single`/`_telescoped` exist but aren't `infer_
-/// spec`-compatible, `ensures true` only); curried `Lambda` needs a new
-/// recursive "chain of `Bind`s over a `Seq`" relation generalizing this
-/// disjunct (`verified_infer_lambda_telescoped` exists, same `ensures
-/// true` gap); `Proj` is fully composed (`verified_infer_proj`) but
-/// likewise not yet `infer_spec`-compatible (its own `ensures true`, plus
-/// several externally-supplied bound parameters `infer_spec`'s uniform
-/// signature has no room for).
+/// **CURRIED `Lambda` is covered for free, not just the single-binder
+/// case**: the recursive `verified_infer(ctx, env, instd, fuel - 1, d,
+/// dd + dd)` call re-reads `instd` fresh at the top of `verified_infer`'s
+/// own body -- if `instd` is ITSELF `Lambda`-shaped (a curried source
+/// term), the SAME branch fires again, peeling the next binder, with
+/// only `fuel` bounding how many layers can be peeled. `infer_spec`'s new
+/// `Bind` disjunct composes across levels the same way: the OUTER
+/// `abstr_full(infd, seq![expr_id(local)], 0)` call abstracts the outer
+/// `local`'s free-variable references WHEREVER they appear inside `infd`
+/// -- including nested arbitrarily deep inside an inner `Bind` structure
+/// the recursive call already built -- since `abstr_full` passes already-
+/// placed `Var` nodes through untouched and only ever rewrites matching
+/// `Free` nodes, at the correctly incremented offset. No "chain of
+/// `Bind`s over a `Seq`" relation was needed after all -- that idea
+/// (recorded in earlier project notes) applies only to `verified_infer_
+/// lambda_telescoped`'s separate, `Vec`-loop-based implementation, not to
+/// this inlined, self-recursive dispatcher path.
+///
+/// `Pi`/`Proj` still fall through to `None` for `infer` specifically.
+/// `Proj` is fully composed (`verified_infer_proj`) but not `infer_spec`-
+/// compatible (`ensures true`, plus several externally-supplied bound
+/// parameters `infer_spec`'s uniform signature has no room for). `Pi` is
+/// harder than a fuel-threading fix: `infer_pi` needs `infer_sort_of`
+/// (`infer` the binder type, THEN `whnf` the result to confirm `Sort`)
+/// TWICE per binder, and every existing `whnf`-with-bound-tracking
+/// function in this arc (`verified_whnf_step` and everything under it)
+/// REQUIRES an `nlbv`/`max_var_below`/`depth` bound on its input to even
+/// be called -- a bound `infer`'s own result can't generally supply (the
+/// same wall `verified_infer_pi_single`'s externally-supplied `bt_ty`/
+/// `body_ty` parameters were built to route around). Wiring `Pi` into
+/// `infer_spec` for real would need a genuinely NEW bound-free `whnf`
+/// composition (fuel/`pstep_star`-driven only, no depth tracking) -- a
+/// substantial new proof effort, not a quick follow-up, since it can't
+/// reuse `verified_whnf_no_unfolding_fixpoint`'s existing internals
+/// (which rely on tracking bound growth to justify each round).
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
