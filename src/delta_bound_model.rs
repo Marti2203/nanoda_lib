@@ -2831,6 +2831,9 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
     bound3: nat,
     d3: nat,
     n2: u32,
+    d_i: nat,
+    d_xy_cap: nat,
+    max_str_len: usize,
 ) -> (result: Option<bool>)
     requires
         nlbv(to_model(x)) <= 0,
@@ -2845,6 +2848,16 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
         delta_loop_d_after(bound, d, cap, n as nat) <= d3,
         whnf_proj_fixpoint_ok_local(bound3, d3, n2 as nat),
         whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= 60000,
+        whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_xy_cap <= 60000,
+        d_i + d_i + d_xy_cap + d_xy_cap <= 60000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -2885,7 +2898,13 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
                             // claims a wrong answer either.
                             verified_def_eq(ctx, x_n2, y_n2, fuel)
                         } else {
-                            verified_def_eq_app(ctx, x_n, y_n, fuel)
+                            proof {
+                                max_var_below_mono(to_model(x_n2), whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat), d_xy_cap);
+                                max_var_below_mono(to_model(y_n2), whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat), d_xy_cap);
+                                assert(depth(to_model(x_n2)) <= d_xy_cap);
+                                assert(depth(to_model(y_n2)) <= d_xy_cap);
+                            }
+                            verified_def_eq_fallback_group_full(ctx, env, x_n2, y_n2, fuel, d_xy_cap, d_i, max_str_len)
                         }
                     }
                     None => None,
@@ -3011,6 +3030,9 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
     bound3: nat,
     d3: nat,
     n2: u32,
+    d_i: nat,
+    d_xy_cap: nat,
+    max_str_len: usize,
 ) -> (result: Option<bool>)
     requires
         nlbv(to_model(x)) <= 0,
@@ -3034,6 +3056,16 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         delta_loop_d_after(bound, d, cap, n as nat) <= d3,
         whnf_proj_fixpoint_ok_local(bound3, d3, n2 as nat),
         whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= 60000,
+        whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_xy_cap <= 60000,
+        d_i + d_i + d_xy_cap + d_xy_cap <= 60000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -3043,7 +3075,7 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         Some(true) => return Some(true),
         _ => {}
     }
-    verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n, bound3, d3, n2)
+    verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n, bound3, d3, n2, d_i, d_xy_cap, max_str_len)
 }
 
 /// Real-arena counterpart to `def_eq`'s FINAL fallback group
@@ -3131,6 +3163,124 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
         _ => {}
     }
     None
+}
+
+/// The payoff of this session's `verified_infer` depth/closedness work
+/// applied a SECOND time: `verified_def_eq_fallback_group` above took
+/// `x_type`/`y_type`/`x_ty_whnfd` as EXTERNAL parameters specifically
+/// because `x`/`y` here are `verified_def_eq_with_delta`'s own internally
+/// -produced `x_n2`/`y_n2` (whatever `lazy_delta_step`+the `whnf_no_
+/// unfolding` recheck left behind) -- no caller of `verified_def_eq_with_
+/// delta` has "the type of `x_n2`" available to hand in, since `x_n2`
+/// doesn't exist until partway through that SAME call. This was flagged
+/// as a genuine, likely-permanent structural boundary earlier this arc
+/// ("a fresh internal value needs an external bound, and there's no way
+/// to make it external here") -- written BEFORE `verified_infer` had any
+/// depth/nlbv bound on its own result at all. It does now (`infer_result_
+/// depth_bound`, `nlbv(to_model(r)) <= 0` on every wired branch, both
+/// this session): `verified_infer(ctx, env, x, 0, d_i, d_xy)` derives
+/// `x`'s type INTERNALLY, using ONLY facts already available about `x`
+/// itself (`nlbv(x) <= 0`, `depth(x) <= d_xy`) -- no external parameter
+/// needed at all. Same "explicit fuel=0" scoping choice as everywhere
+/// generous fuel would blow past this composition's own cubic ceiling:
+/// `verified_infer` at `fuel=0` still covers Local/Sort/Const/App/NatLit/
+/// StringLit (6/8 wired shapes) directly, no recursion needed -- only
+/// `Let`/`Lambda`/`Pi`-shaped `x_n2`/`y_n2` fall through to `None` here,
+/// same honest-incompleteness convention as everywhere else.
+///
+/// Composes THREE of `verified_def_eq_fallback_group`'s five disjuncts --
+/// `def_eq_app` (needs no type), `try_eta_struct` (needs `x`/`y`'s RAW
+/// inferred types, `tc.rs:316`), `def_eq_unit` (needs `x`'s type WHNF'd
+/// -- one round, no delta-unfolding, honestly less complete than the
+/// real `infer_then_whnf`'s full `whnf`, matching the "one round first"
+/// precedent -- and `y`'s type raw, `tc.rs:357-368`) -- plus `try_string_
+/// lit_expansion` (needs no type at all). Deliberately does NOT attempt
+/// `try_eta_expansion`: unlike the other three, it needs a Pi-SHAPE
+/// CHECK on each side's whnf'd type before it's even meaningful to call
+/// (`tc.rs:1346-1357`'s own `if let Pi { .. } = ... else { false }`) --
+/// calling `verified_try_eta_expansion_aux` with a binder type extracted
+/// from a NON-Pi-shaped whnf result wouldn't be unsound (this whole
+/// composition's `ensures true` makes no positive claim to violate), but
+/// it WOULD silently diverge from the real function's actual behavior on
+/// those inputs, which is worse than an honest gap here -- left for a
+/// follow-up that adds the shape-gated two-direction dance properly
+/// rather than risking a quiet behavioral mismatch.
+pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    d_xy: nat,
+    d_i: nat,
+    max_str_len: usize,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), d_xy),
+        depth(to_model(x)) <= d_xy,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), d_xy),
+        depth(to_model(y)) <= d_xy,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_i <= 60000,
+        d_xy <= 60000,
+        d_i + d_i + d_xy + d_xy <= 60000,
+        (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
+    ensures true
+{
+    match verified_def_eq_app(ctx, x, y, fuel) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    let dd_i: nat = d_i + d_i + d_xy + d_xy;
+    proof {
+        assert(infer_depth_fixpoint_ok(d_xy, 0));
+        assert(d_i + d_xy + 1 <= dd_i);
+    }
+    let xt_opt = verified_infer(ctx, env, x, 0, d_i, d_xy);
+    let yt_opt = verified_infer(ctx, env, y, 0, d_i, d_xy);
+    if let (Some(xt), Some(yt)) = (xt_opt, yt_opt) {
+        assert(depth(to_model(xt)) <= dd_i);
+        assert(depth(to_model(yt)) <= dd_i);
+        match verified_try_eta_struct(ctx, env, x, y, xt, yt, fuel, d_xy) {
+            Some(true) => return Some(true),
+            _ => {}
+        }
+        proof {
+            nlbv_bound_implies_max_var_below(to_model(xt), 0);
+            max_var_below_mono(to_model(xt), depth(to_model(xt)), dd_i);
+        }
+        match verified_whnf_no_unfolding_step(ctx, xt, fuel, dd_i, dd_i) {
+            Some(xt_whnfd) => {
+                assert(depth(to_model(xt_whnfd)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
+                assert(depth(to_model(xt_whnfd)) <= 60000);
+                if verified_try_string_lit_expansion(ctx, env, x, y, fuel, max_str_len) {
+                    return Some(true);
+                }
+                match verified_def_eq_unit(ctx, env, xt_whnfd, yt, fuel) {
+                    Some(true) => return Some(true),
+                    _ => {}
+                }
+                None
+            }
+            None => {
+                if verified_try_string_lit_expansion(ctx, env, x, y, fuel, max_str_len) {
+                    return Some(true);
+                }
+                None
+            }
+        }
+    } else {
+        if verified_try_string_lit_expansion(ctx, env, x, y, fuel, max_str_len) {
+            return Some(true);
+        }
+        None
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
