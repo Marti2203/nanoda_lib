@@ -402,6 +402,49 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
 /// fired -- consistent with this arc's established under-claiming style
 /// for composed dispatchers (e.g. `def_eq_local`'s ensures not restating
 /// its own recursive binder-type fact either).
+/// An operand left UNCHANGED by a round (bound at the original, tighter
+/// `(bound, d)` scale) still needs to be expressed at the uniform
+/// `(bound2, d2)`-scale formula every `Continue` case advertises, since
+/// `bound <= bound2` and `d <= d2` always hold (this function's own
+/// `requires`).
+proof fn weaken_unchanged_bound(v: ExprSpec, bound: nat, d: nat, bound2: nat, d2: nat)
+    requires
+        max_var_below(v, bound),
+        depth(v) <= d,
+        bound <= bound2,
+        d <= d2,
+    ensures
+        max_var_below(v, bound2 + d2 * d2 * d2 + d2 * d2),
+        depth(v) <= d2 * d2 + d2 + d2 + d2 + d2,
+{
+    max_var_below_mono(v, bound, bound2);
+    max_var_below_mono(v, bound2, bound2 + d2 * d2 * d2 + d2 * d2);
+    assert(d <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith)
+        requires d <= d2
+    {}
+}
+
+/// `verified_try_unfold_proj_app`'s own `(bound, d)`-scale output bound
+/// weakened up to the same uniform `(bound2, d2)`-scale formula.
+proof fn weaken_proj_result_bound(v: ExprSpec, bound: nat, d: nat, bound2: nat, d2: nat)
+    requires
+        max_var_below(v, bound + d * d * d + d * d),
+        depth(v) <= d * d + 4 * d,
+        bound <= bound2,
+        d <= d2,
+    ensures
+        max_var_below(v, bound2 + d2 * d2 * d2 + d2 * d2),
+        depth(v) <= d2 * d2 + d2 + d2 + d2 + d2,
+{
+    assert(bound + d * d * d + d * d <= bound2 + d2 * d2 * d2 + d2 * d2) by (nonlinear_arith)
+        requires bound <= bound2, d <= d2
+    {}
+    max_var_below_mono(v, bound + d * d * d + d * d, bound2 + d2 * d2 * d2 + d2 * d2);
+    assert(d * d + 4 * d <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith)
+        requires d <= d2
+    {}
+}
+
 pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -427,12 +470,23 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
         d2 <= 60000,
         bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures match result {
-        Some(DeltaRoundResult::Continue(x2, y2)) =>
-            (x2 == x || pstep_star(to_model_of_env(*env), to_model(x), to_model(x2)))
-            && (y2 == y || pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))),
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            &&& (x2 == x || pstep_star(to_model_of_env(*env), to_model(x), to_model(x2)))
+            &&& (y2 == y || pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)))
+            &&& nlbv(to_model(x2)) <= 0
+            &&& max_var_below(to_model(x2), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(x2)) <= d2 * d2 + d2 + d2 + d2 + d2
+            &&& nlbv(to_model(y2)) <= 0
+            &&& max_var_below(to_model(y2), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(y2)) <= d2 * d2 + d2 + d2 + d2 + d2
+        },
         _ => true,
     }
 {
+    proof {
+        assert(bound <= bound2);
+        assert(d <= d2);
+    }
     if let Some(b) = verified_def_eq_nat(ctx, x, y, fuel) {
         return Some(DeltaRoundResult::Found(b));
     }
@@ -449,11 +503,18 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                             && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
                         by {}
                         pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(y), to_model(yprime));
+                        weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        weaken_proj_result_bound(to_model(yprime), bound, d, bound2, d2);
                     }
                     Some(DeltaRoundResult::Continue(x, yprime))
                 }
                 None => match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
-                    Some(xprime) => Some(DeltaRoundResult::Continue(xprime, y)),
+                    Some(xprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(xprime, y))
+                    }
                     None => None,
                 },
             }
@@ -467,11 +528,18 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                             && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
                         by {}
                         pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(x), to_model(xprime));
+                        weaken_proj_result_bound(to_model(xprime), bound, d, bound2, d2);
+                        weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
                     }
                     Some(DeltaRoundResult::Continue(xprime, y))
                 }
                 None => match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
-                    Some(yprime) => Some(DeltaRoundResult::Continue(x, yprime)),
+                    Some(yprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(x, yprime))
+                    }
                     None => None,
                 },
             }
@@ -479,12 +547,22 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
         (Some((x_name, x_hint)), Some((y_name, y_hint))) => {
             if verified_is_lt(&x_hint, &y_hint) {
                 match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
-                    Some(yprime) => Some(DeltaRoundResult::Continue(x, yprime)),
+                    Some(yprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(x, yprime))
+                    }
                     None => None,
                 }
             } else if verified_is_lt(&y_hint, &x_hint) {
                 match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
-                    Some(xprime) => Some(DeltaRoundResult::Continue(xprime, y)),
+                    Some(xprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(xprime, y))
+                    }
                     None => None,
                 }
             } else {

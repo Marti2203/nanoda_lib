@@ -1977,7 +1977,13 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
         d <= 60000,
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)) && r != e,
+        Some(r) => {
+            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+            &&& r != e
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound + d * d * d + d * d)
+            &&& depth(to_model(r)) <= d * d + 4 * d
+        },
         None => true,
     }
 {
