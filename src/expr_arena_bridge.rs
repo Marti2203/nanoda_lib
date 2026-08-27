@@ -171,6 +171,17 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, p: crate::util:
     ctx.read_bignum(p).cloned()
 }
 
+/// `TcCtx`'s `eager_mode` field, read directly -- `TcCtx` is registered as
+/// `external_body` (`level_arena_bridge.rs`'s `ExTcCtx`), so a plain
+/// wrapper is needed the same way `read_bignum_value` wraps `read_bignum`.
+/// Needed by `def_eq`'s `c_bool_true` short-circuit (`tc.rs:965`), the one
+/// real control-flow branch this whole arc's `def_eq` bridging touches
+/// that reads real `TcCtx` STATE (not just calls a method on it).
+#[allow(dead_code)]
+pub(crate) fn get_eager_mode<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
+    ctx.eager_mode
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -353,6 +364,19 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCt
         Some(e) => is_const_shape(e) && const_id(e) == if b { bool_true_id() } else { bool_false_id() },
         None => true,
     };
+
+/// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
+/// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
+/// `c_bool_true`/`c_bool_false` construct the SAME `Bool.true`/`Bool.
+/// false` constant `bool_to_expr` does, just without needing a `bool` to
+/// select which one.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_bool_true] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == bool_true_id(),
+        None => true,
+    };
+
+pub assume_specification<'t, 'p> [get_eager_mode] (ctx: &TcCtx<'t, 'p>) -> (result: bool) where 'p: 't;
 
 /// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
 /// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`

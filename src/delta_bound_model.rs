@@ -47,7 +47,8 @@ use crate::beta_model::{
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
+use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
+use crate::expr_arena_bridge::get_eager_mode;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
@@ -1442,6 +1443,68 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
         _ => {}
     }
     None
+}
+
+/// Real-arena counterpart to `def_eq`'s `c_bool_true` short-circuit
+/// (`tc.rs:965-970`): `if (!has_fvars(x_n) || eager_mode) && y_n ==
+/// c_bool_true() { if whnf(x_n) == c_bool_true() { return true } }`.
+///
+/// Two real simplifications, both honest incompleteness (never unsound):
+/// `self.whnf(x_n)` in the real function is the FULL multi-round `whnf`;
+/// here it's ONE round of `verified_whnf_step` (this whole arc's standing
+/// "one round first" convention) -- if `x_n` genuinely needs MORE than one
+/// round of delta-unfolding to expose `Bool.true`, this honestly reports
+/// `None` rather than confirming or denying it. Checking "is this really
+/// `Bool.true`" is done by CONSTRUCTING `Bool.true` via the newly-bridged
+/// `TcCtx::c_bool_true` and comparing with real pointer equality
+/// (`expr_ptr_eq`, hash-consing-sound), the exact same technique the real
+/// function itself uses (`Some(y_n) == self.ctx.c_bool_true()`), rather
+/// than trying to check `const_id(y_n) == bool_true_id()` directly --
+/// `bool_true_id()` is an UNINTERPRETED ghost value with no real `NamePtr`
+/// to compare against at runtime, so construct-and-compare is not just
+/// convenient here, it's the only option.
+pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x_n: ExprPtr<'t>, y_n: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(x_n)) <= 0,
+        max_var_below(to_model(x_n), bound),
+        depth(to_model(x_n)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(true) => {
+            &&& is_const_shape(y_n) && const_id(y_n) == bool_true_id()
+            &&& exists |x_nn: ExprPtr<'t>|
+                    pstep_star(to_model_of_env(*env), to_model(x_n), to_model(x_nn))
+                    && is_const_shape(x_nn) && const_id(x_nn) == bool_true_id()
+        },
+        _ => true,
+    }
+{
+    let has_fv = ctx.has_fvars(x_n);
+    let eager = get_eager_mode(ctx);
+    if has_fv && !eager {
+        return None;
+    }
+    let bt1 = match ctx.c_bool_true() {
+        Some(b) => b,
+        None => return None,
+    };
+    if !expr_ptr_eq(y_n, bt1) {
+        return None;
+    }
+    match verified_whnf_step(ctx, env, x_n, fuel, bound, d, n) {
+        Some(x_nn) => {
+            let bt2 = match ctx.c_bool_true() {
+                Some(b) => b,
+                None => return None,
+            };
+            if expr_ptr_eq(x_nn, bt2) {
+                Some(true)
+            } else {
+                None
+            }
+        }
+        None => None,
+    }
 }
 
 }
