@@ -45,8 +45,10 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, verified_whnf_no_unfolding_step};
 use crate::tc_model::verified_infer_app_single;
+#[cfg(verus_only)]
+use crate::beta_model::pstep_star_trans;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec};
 use crate::level_arena_bridge::read_levels_vec;
@@ -267,6 +269,67 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     };
     assert(depth(to_model(fun_ty)) <= d);
     verified_infer_app_single(ctx, fun_ty, arg, fuel, d)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::delta`
+/// (`tc.rs:1146-1149`: `unfold_def(e).unwrap()` then `whnf_no_unfolding_
+/// cheap_proj`) -- the LAST of the three original motivations for the
+/// global-environment-depth-cap fix, and the one `lazy_delta_step`'s own
+/// outer loop needs. Composes `verified_unfold_def_step_bounded` (this
+/// file) with ONE application of `verified_whnf_no_unfolding_step`
+/// (`expr_arena_bridge.rs`) -- matching the real function's own single
+/// round exactly (no telescoping/fixpoint here, same "one round" scoping
+/// as everywhere else `verified_whnf_no_unfolding_step` is used alone).
+///
+/// `bound2`/`d2` are explicit caller-supplied parameters, NOT internally
+/// derived from `bound`/`d`/`env_global_cap(*env)` -- `env_global_cap`
+/// is a ghost quantity that can't flow into an exec call argument (same
+/// reason `verified_infer_app_bounded`'s `d` is explicit), and threading
+/// two independent "how much headroom did you actually reserve" values
+/// lets the caller pick a looser bound than the tightest possible one
+/// if that's more convenient, exactly like `verified_whnf_no_unfolding_
+/// step`'s own `bound`/`d` already work. `None` from the inner `whnf_no_
+/// unfolding_step` call (out of fuel) falls back to the UNFOLDED-but-not-
+/// yet-cheaply-reduced result, matching the "sound but incomplete"
+/// convention `verified_whnf_step` already established for the analogous
+/// situation.
+#[verifier::spinoff_prover]
+pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, bound2: nat, d2: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        bound + env_global_cap(*env) <= bound2,
+        env_global_cap(*env) + d + d <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => pstep_star(to_model_of_env(*env), to_model(e), to_model(r)),
+        None => true,
+    }
+{
+    match verified_unfold_def_step_bounded(ctx, env, e, fuel, bound, d) {
+        Some(unfolded) => {
+            proof {
+                max_var_below_mono(to_model(unfolded), bound + env_global_cap(*env), bound2);
+            }
+            match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, bound2, d2) {
+                Some(r) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            to_model_of_env(*env).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(unfolded), to_model(r));
+                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(unfolded), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => Some(unfolded),
+            }
+        }
+        None => None,
+    }
 }
 
 }
