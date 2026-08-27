@@ -134,6 +134,20 @@ pub(crate) fn expr_as_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(FVar
     match e { Expr::Local { id, binder_type, .. } => Some((*id, *binder_type)), _ => None }
 }
 
+/// `Local`'s `binder_name`/`binder_style`/`binder_type` fields, needed only
+/// to re-supply `mk_pi`'s exec-level parameter list when popping a
+/// telescoped binder back off (`infer_lambda`/`infer_pi`'s own reverse
+/// loop, `tc.rs:639-648`, re-reads exactly these three fields off the
+/// popped `local`). Unlike `expr_as_local`, the model never needs to
+/// reason about `binder_name`/`binder_style` (`ExprSpec::Bind` elides
+/// them entirely), so this carries only the one fact downstream proofs
+/// actually use -- the same `local_binder_type_of` link `expr_as_local`
+/// already states.
+#[allow(dead_code)]
+pub(crate) fn expr_as_local_named<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>)> {
+    match e { Expr::Local { binder_name, binder_style, binder_type, .. } => Some((*binder_name, *binder_style, *binder_type)), _ => None }
+}
+
 /// Verus can't relate an external type's real `==` to spec-level equality
 /// on the opaque ghost value without an explicit bridge -- same trick as
 /// `level_arena_bridge::name_ptr_eq`.
@@ -343,6 +357,12 @@ pub assume_specification [fvar_id_eq] (a: FVarId, b: FVarId) -> (result: bool)
 pub assume_specification<'t> [expr_as_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(FVarId, ExprPtr<'t>)>)
     ensures match result {
         Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(ptr) == t,
+        None => !is_local_shape(ptr),
+    };
+
+pub assume_specification<'t> [expr_as_local_named] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>)>)
+    ensures match result {
+        Some((_, _, t)) => is_local_shape(ptr) && local_binder_type_of(ptr) == t,
         None => !is_local_shape(ptr),
     };
 
