@@ -46,7 +46,8 @@ use crate::beta_model::{
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, verified_whnf_no_unfolding_step};
-use crate::tc_model::verified_infer_app_single;
+use crate::tc_model::{verified_infer_app_single, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::beta_model::pstep_star_trans;
 #[cfg(verus_only)]
@@ -61,6 +62,19 @@ use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_
 use crate::env_model::get_declar_info_ty;
 
 verus! {
+
+/// A single round of `tc.rs::TypeChecker::lazy_delta_step`'s own loop
+/// (`tc.rs:1270-1309`) -- mirrors the real function's `DeltaResult<'a>`
+/// (`FoundEqResult`/`Exhausted`), plus a THIRD case (`Continue`) this
+/// bridge needs that the real per-round logic doesn't: the real function
+/// just mutates its OWN `x`/`y` locals and loops, whereas a single-round
+/// bridge has to hand the updated pair back to its caller explicitly.
+#[allow(dead_code)]
+pub enum DeltaRoundResult<'t> {
+    Found(bool),
+    Exhausted(crate::util::ExprPtr<'t>, crate::util::ExprPtr<'t>),
+    Continue(crate::util::ExprPtr<'t>, crate::util::ExprPtr<'t>),
+}
 
 /// `verified_unfold_def_step` extended with a genuine, structurally-
 /// derived growth bound. See module doc comment for the full story.
@@ -329,6 +343,138 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             }
         }
         None => None,
+    }
+}
+
+/// Real-arena counterpart to ONE iteration of `tc.rs::TypeChecker::lazy_
+/// delta_step`'s own loop body (`tc.rs:1271-1304`, everything up to but
+/// NOT including the trailing `def_eq_quick_check` early-exit at
+/// `tc.rs:1305-1307` -- a pure optimization, safe to skip per this whole
+/// arc's established convention). Composes all four previously-separate
+/// `lazy_delta_step` sub-pieces (`verified_def_eq_nat`, `verified_get_
+/// applied_def`, `verified_try_unfold_proj_app`, `verified_try_eq_const_
+/// app`) plus `verified_delta_bounded` and `verified_is_lt` into the
+/// real function's exact five-way dispatch: both sides not applied defs
+/// (`Exhausted`), exactly one side is (unfold through a `Proj` first if
+/// possible, else `delta`), or both sides are (compare reducibility
+/// hints -- unfold whichever is "more reducible" first, or if tied, try
+/// the same-head-name congruence fast path before unfolding BOTH sides).
+///
+/// Deliberately does NOT loop -- this is one round, matching the "one
+/// round first" precedent throughout this arc (`verified_whnf_beta_step`
+/// before its own fixpoint chaining, `verified_def_eq_binder_step` before
+/// its telescoping). A genuine multi-round `lazy_delta_step` needs its
+/// own termination argument: each `delta` call grows the depth cap
+/// (`bound2`/`d2` here), so chaining rounds needs a `whnf_fixpoint_ok`-
+/// style recursive feasibility predicate tracking that growth across `n`
+/// rounds -- not yet attempted.
+///
+/// `Continue(x2, y2)`'s ensures states real progress: whichever side
+/// changed did so via a genuine `pstep_star` reduction (from `delta`/
+/// `try_unfold_proj_app`, both already-proven `pstep_star` facts), never
+/// a fabricated claim. `Found`/`Exhausted` don't yet restate what `def_
+/// eq_nat`/`try_eq_const_app` themselves already proved about WHY they
+/// fired -- consistent with this arc's established under-claiming style
+/// for composed dispatchers (e.g. `def_eq_local`'s ensures not restating
+/// its own recursive binder-type fact either).
+pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    bound2: nat,
+    d2: nat,
+) -> (result: Option<DeltaRoundResult<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
+        bound + env_global_cap(*env) <= bound2,
+        env_global_cap(*env) + d + d <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(DeltaRoundResult::Continue(x2, y2)) =>
+            (x2 == x || pstep_star(to_model_of_env(*env), to_model(x), to_model(x2)))
+            && (y2 == y || pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))),
+        _ => true,
+    }
+{
+    if let Some(b) = verified_def_eq_nat(ctx, x, y, fuel) {
+        return Some(DeltaRoundResult::Found(b));
+    }
+    let r1 = verified_get_applied_def(ctx, env, x, fuel);
+    let r2 = verified_get_applied_def(ctx, env, y, fuel);
+    match (r1, r2) {
+        (None, None) => Some(DeltaRoundResult::Exhausted(x, y)),
+        (Some(_), None) => {
+            match verified_try_unfold_proj_app(ctx, y, fuel, bound, d) {
+                Some(yprime) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            to_model_of_env(*env).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(y), to_model(yprime));
+                    }
+                    Some(DeltaRoundResult::Continue(x, yprime))
+                }
+                None => match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
+                    Some(xprime) => Some(DeltaRoundResult::Continue(xprime, y)),
+                    None => None,
+                },
+            }
+        }
+        (None, Some(_)) => {
+            match verified_try_unfold_proj_app(ctx, x, fuel, bound, d) {
+                Some(xprime) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            to_model_of_env(*env).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(x), to_model(xprime));
+                    }
+                    Some(DeltaRoundResult::Continue(xprime, y))
+                }
+                None => match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                    Some(yprime) => Some(DeltaRoundResult::Continue(x, yprime)),
+                    None => None,
+                },
+            }
+        }
+        (Some((x_name, x_hint)), Some((y_name, y_hint))) => {
+            if verified_is_lt(&x_hint, &y_hint) {
+                match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                    Some(yprime) => Some(DeltaRoundResult::Continue(x, yprime)),
+                    None => None,
+                }
+            } else if verified_is_lt(&y_hint, &x_hint) {
+                match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
+                    Some(xprime) => Some(DeltaRoundResult::Continue(xprime, y)),
+                    None => None,
+                }
+            } else {
+                match verified_try_eq_const_app(ctx, x, x_name, x_hint, y, y_name, y_hint, fuel) {
+                    Some(b) => Some(DeltaRoundResult::Found(b)),
+                    None => match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
+                        Some(xprime) => match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                            Some(yprime) => Some(DeltaRoundResult::Continue(xprime, yprime)),
+                            None => None,
+                        },
+                        None => None,
+                    },
+                }
+            }
+        }
     }
 }
 
