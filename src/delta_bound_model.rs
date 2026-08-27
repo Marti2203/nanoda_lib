@@ -1986,4 +1986,119 @@ pub fn verified_infer_pi_single<'t, 'p: 't, 'x>(
     Some(result)
 }
 
+/// Telescoped generalization of `verified_infer_pi_single`, for a
+/// CURRIED `Pi` chain (`(x : A) -> (y : B) -> ...`). Structurally simpler
+/// to bound than `verified_infer_lambda_telescoped`'s forward loop: since
+/// each binder's `bt_ty` must be supplied externally anyway (`infer`'s
+/// result has no derivable depth/nlbv bound, same wall `verified_infer_
+/// pi_single` hit), the CALLER already knows exactly how many binders it
+/// is asking to peel -- so the loop is driven by `bt_tys.len()` (a
+/// concrete slice length, `i < bt_tys.len()`) rather than by `cur_e`'s
+/// shrinking `depth`. If `expr_as_pi` fails before `bt_tys` is
+/// exhausted, that's an honest shape mismatch (fewer real binders than
+/// the caller claimed) and the function bails via `None`, matching every
+/// other "stop as soon as the arena disagrees with the caller's claim"
+/// convention in this arc.
+///
+/// The reverse fold mirrors `infer_pi`'s own `while let (Some(universe),
+/// Some(local)) = (universes.pop(), locals.pop())` loop (`tc.rs:667-670`)
+/// exactly: pop both stacks in lockstep, `imax` into the running `infd`,
+/// `replace_dbj_level` the local. Terminates on `locals@.len()` (both
+/// stacks always have equal length by construction, maintained without
+/// an explicit invariant since the forward loop only ever pushes to both
+/// together).
+pub fn verified_infer_pi_telescoped<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    bt_tys: &[ExprPtr<'t>],
+    body_ty: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    n: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        depth(to_model(e)) <= 60000,
+        forall |j: int| 0 <= j < bt_tys@.len() ==>
+            #[trigger] nlbv(to_model(bt_tys@[j])) <= 0
+            && max_var_below(to_model(bt_tys@[j]), bound)
+            && depth(to_model(bt_tys@[j])) <= d,
+        nlbv(to_model(body_ty)) <= 0,
+        max_var_below(to_model(body_ty), bound),
+        depth(to_model(body_ty)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures true
+{
+    let mut locals: Vec<ExprPtr<'t>> = Vec::new();
+    let mut univs: Vec<LevelPtr<'t>> = Vec::new();
+    let mut cur_e = e;
+    let mut i: usize = 0;
+
+    while i < bt_tys.len()
+        invariant
+            depth(to_model(cur_e)) <= 60000,
+            i <= bt_tys@.len(),
+            locals@.len() == i,
+            univs@.len() == i,
+            forall |j: int| 0 <= j < locals@.len() ==> #[trigger] depth(to_model(locals@[j])) == 0,
+            forall |j: int| 0 <= j < bt_tys@.len() ==>
+                #[trigger] nlbv(to_model(bt_tys@[j])) <= 0
+                && max_var_below(to_model(bt_tys@[j]), bound)
+                && depth(to_model(bt_tys@[j])) <= d,
+            whnf_fixpoint_ok(bound, d, n as nat),
+        decreases bt_tys@.len() - i
+    {
+        let ce_el = ctx.read_expr(cur_e);
+        let (n_, s_, nt, nb) = match expr_as_pi(&ce_el) {
+            Some(p) => p,
+            None => return None,
+        };
+        assert(to_model(cur_e) == ExprSpec::Bind(Box::new(to_model(nt)), Box::new(to_model(nb))));
+        assert(depth(to_model(nt)) < depth(to_model(cur_e)));
+        assert(depth(to_model(nb)) < depth(to_model(cur_e)));
+        let nti = match verified_inst(ctx, nt, locals.as_slice(), 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        let bt_ty_i = bt_tys[i];
+        assert(nlbv(to_model(bt_tys@[i as int])) <= 0
+            && max_var_below(to_model(bt_tys@[i as int]), bound)
+            && depth(to_model(bt_tys@[i as int])) <= d);
+        let dom_univ = match verified_infer_sort_of(ctx, env, bt_ty_i, fuel, bound, d, n) {
+            Some(l) => l,
+            None => return None,
+        };
+        let local = ctx.mk_dbj_level(n_, s_, nti);
+        assert(depth(to_model(local)) == 0);
+        locals.push(local);
+        univs.push(dom_univ);
+        cur_e = nb;
+        i = i + 1;
+    }
+
+    let instd = match verified_inst(ctx, cur_e, locals.as_slice(), 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let mut infd = match verified_infer_sort_of(ctx, env, body_ty, fuel, bound, d, n) {
+        Some(l) => l,
+        None => return None,
+    };
+    while true
+        decreases locals@.len()
+    {
+        let popped_u = univs.pop();
+        let popped_l = locals.pop();
+        let (u, l) = match (popped_u, popped_l) {
+            (Some(u), Some(l)) => (u, l),
+            _ => break,
+        };
+        infd = ctx.imax(u, infd);
+        ctx.replace_dbj_level(l);
+    }
+    let result = ctx.mk_sort(infd);
+    Some(result)
+}
+
 }
