@@ -7407,6 +7407,43 @@ pub proof fn spine_app_depth_decompose(base: ExprSpec, args: Seq<ExprSpec>)
     }
 }
 
+/// `spine_app_depth_decompose`'s `nlbv` sibling: unconditional, no
+/// requires at all, since `nlbv(App(f, a)) == max(nlbv(f), nlbv(a))`
+/// *exactly* (unlike `depth`'s "+1 per layer" growth, which needed
+/// `nonlinear_arith` to relate `args.len()` to the accumulated depth) --
+/// each operand's own `nlbv` is trivially `<=` the whole `App`'s, so this
+/// is a direct structural induction with no arithmetic lemma needed.
+/// Needed by the same future `Proj` composition `spine_app_depth_
+/// decompose` was built for: recovering each spine argument's own
+/// closedness (`nlbv == 0`) from the WHOLE applied type's, once that's
+/// established via `verified_infer`'s own dispatcher-wide closedness
+/// guarantee rather than taken as an external parameter.
+pub proof fn spine_app_nlbv_decompose(base: ExprSpec, args: Seq<ExprSpec>)
+    ensures
+        nlbv(base) <= nlbv(spine_app(base, args)),
+        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) <= nlbv(spine_app(base, args)),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let prefix = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, prefix)), Box::new(last)));
+        spine_app_nlbv_decompose(base, prefix);
+        assert(nlbv(spine_app(base, prefix)) <= nlbv(spine_app(base, args)));
+        assert(nlbv(last) <= nlbv(spine_app(base, args)));
+        assert forall |i: int| 0 <= i < args.len() implies nlbv(#[trigger] args[i]) <= nlbv(spine_app(base, args)) by {
+            if i < args.len() - 1 {
+                assert(args[i] == prefix[i]);
+                assert(nlbv(prefix[i]) <= nlbv(spine_app(base, prefix)));
+            } else {
+                assert(i == args.len() - 1);
+                assert(args[i] == last);
+            }
+        }
+    }
+}
+
 /// The REAL telescopic beta-reduction step (`tc.rs`'s `whnf_no_unfolding_aux`
 /// `Lambda` case), computed as a sequence of ORDINARY single-argument beta
 /// steps instead of one combined `subst_full` call: peel one `Bind` off

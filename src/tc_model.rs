@@ -88,7 +88,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -2748,6 +2748,7 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
                 && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
                 && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r))
             &&& depth(to_model(r)) <= env_global_cap(*env)
+            &&& nlbv(to_model(r)) == 0
         },
         None => true,
     }
@@ -2771,7 +2772,9 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
             proof {
                 env_global_wf_ty(*env);
                 assert(depth(val) <= env_global_cap(*env));
+                assert(nlbv(val) == 0);
                 subst_expr_levels_rel_depth(val, ks, to_model_of_levels(c_uparams), to_model(r));
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(c_uparams), to_model(r));
             }
             Some(r)
         }
@@ -2862,13 +2865,16 @@ pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty
     requires
         depth(to_model(fun_ty)) <= d,
         d <= 60000,
+        nlbv(to_model(fun_ty)) == 0,
         forall |i: int| 0 <= i < args@.len() ==> #[trigger] depth(to_model(args@[i])) <= args_d,
+        forall |i: int| 0 <= i < args@.len() ==> #[trigger] nlbv(to_model(args@[i])) <= 0,
     ensures match result {
         Some(r) => {
             &&& exists |body: ExprSpec|
                 spine_bind(to_model(fun_ty), args.len() as nat) == Some(body)
                 && to_model(r) == subst_full(body, Seq::new(args@.len(), |i: int| to_model(args@[i])), 0)
             &&& depth(to_model(r)) <= d + args_d
+            &&& nlbv(to_model(r)) <= 0
         },
         None => true,
     }
@@ -2880,14 +2886,17 @@ pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty
             }
             proof {
                 spine_bind_depth(to_model(fun_ty), n as nat, to_model(peeled));
+                spine_bind_nlbv(to_model(fun_ty), n as nat, to_model(peeled), 0);
             }
             let result = verified_inst(ctx, peeled, args, 0, fuel);
             proof {
                 if let Some(r) = result {
                     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                     subst_full_depth_bound_n(to_model(peeled), args_model, 0, args_d);
+                    subst_full_nlbv_bound_n(to_model(peeled), args_model, 0);
                     assert(depth(to_model(r)) <= depth(to_model(peeled)) + args_d);
                     assert(depth(to_model(r)) <= d + args_d);
+                    assert(nlbv(to_model(r)) <= 0);
                 }
             }
             result

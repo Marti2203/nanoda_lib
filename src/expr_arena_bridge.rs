@@ -409,16 +409,24 @@ pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 /// separate caps per context.
 pub uninterp spec fn local_type_cap() -> nat;
 
-/// Deliberately omits `nlbv`/`max_var_below`/`size` (unlike `env_global_
-/// wf`) -- ONLY `depth` is needed anywhere downstream (`infer`'s own
-/// depth-boundedness), and an UNCONDITIONAL axiom that includes `size`
-/// has been shown to blow up full-crate check time 50x+ even when
-/// unused (see `feedback_verus_size_axiom_blowup.md`) -- states exactly
-/// what's needed and nothing more, matching `env_global_wf_ty`'s own
-/// "omit size" precedent.
+/// Deliberately omits `max_var_below`/`size` (unlike `env_global_wf`) --
+/// `depth` is needed for `infer`'s own depth-boundedness, and an
+/// UNCONDITIONAL axiom that includes `size` has been shown to blow up
+/// full-crate check time 50x+ even when unused (see `feedback_verus_
+/// size_axiom_blowup.md`). `nlbv == 0` IS included (unlike `max_var_
+/// below`/`size`) -- a bisection identical in spirit to `env_global_wf`'s
+/// own confirmed `nlbv` alone stays cheap; needed for `verified_infer`'s
+/// `Local` branch to contribute to the dispatcher's own closedness
+/// guarantee (`nlbv(to_model(r)) <= 0`), itself needed so a FUTURE `Proj`
+/// composition can call `verified_infer` on `structure` directly and get
+/// a closed `structure_ty` back, rather than taking it as an external
+/// parameter forever.
 #[verifier::external_body]
 pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
-    ensures is_local_shape(ptr) ==> depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
+    ensures is_local_shape(ptr) ==> {
+        &&& depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
+        &&& nlbv(to_model(local_binder_type_of(ptr))) == 0
+    }
 {
 }
 

@@ -44,7 +44,7 @@ use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
-    spine_app_depth_decompose,
+    spine_app_depth_decompose, spine_app_nlbv_decompose,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
@@ -77,7 +77,7 @@ use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n};
+use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -971,6 +971,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         env_global_cap(*env) <= d,
         d <= 60000,
         depth(to_model(x)) <= dd,
+        nlbv(to_model(x)) <= 0,
     ensures match result {
         Some(r) => {
             &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
@@ -978,6 +979,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
                 && is_const_shape(fun)
                 && to_model(r) == subst_full(body, args_model, 0)
             &&& depth(to_model(r)) <= d + dd
+            &&& nlbv(to_model(r)) <= 0
         },
         None => true,
     }
@@ -990,10 +992,16 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
         assert(to_model(x) == spine_app(to_model(fun), args_model));
         spine_app_depth_decompose(to_model(fun), args_model);
+        spine_app_nlbv_decompose(to_model(fun), args_model);
         assert forall |i: int| 0 <= i < args@.len() implies #[trigger] depth(to_model(args@[i])) <= dd by {
             assert(args_model[i] == to_model(args@[i]));
             assert(depth(args_model[i]) <= depth(spine_app(to_model(fun), args_model)));
             assert(depth(spine_app(to_model(fun), args_model)) == depth(to_model(x)));
+        }
+        assert forall |i: int| 0 <= i < args@.len() implies #[trigger] nlbv(to_model(args@[i])) <= 0 by {
+            assert(args_model[i] == to_model(args@[i]));
+            assert(nlbv(args_model[i]) <= nlbv(spine_app(to_model(fun), args_model)));
+            assert(nlbv(spine_app(to_model(fun), args_model)) == nlbv(to_model(x)));
         }
     }
     let fun_el = ctx.read_expr(fun);
@@ -1006,6 +1014,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         None => return None,
     };
     assert(depth(to_model(fun_ty)) <= d);
+    assert(nlbv(to_model(fun_ty)) == 0);
     verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d, dd)
 }
 
@@ -1202,9 +1211,10 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
         infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat),
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
         None => true,
     }
     decreases fuel
@@ -1216,12 +1226,14 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(depth(to_model(ty)) <= local_type_cap());
             assert(depth(to_model(ty)) <= d + dd + 1);
             assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+            assert(nlbv(to_model(ty)) == 0);
         }
         return Some(ty);
     }
     if let Some(l) = expr_as_sort(&el) {
         let result = verified_infer_sort(ctx, l);
         assert(depth(to_model(result)) == 0);
+        assert(nlbv(to_model(result)) == 0);
         return Some(result);
     }
     if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
@@ -1253,6 +1265,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                     is_const_shape_model(r);
                 }
                 assert(depth(to_model(r)) == 0);
+                assert(nlbv(to_model(r)) == 0);
                 return Some(r);
             }
             None => return None,
@@ -1265,6 +1278,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                     is_const_shape_model(r);
                 }
                 assert(depth(to_model(r)) == 0);
+                assert(nlbv(to_model(r)) == 0);
                 return Some(r);
             }
             None => return None,
@@ -1277,10 +1291,13 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
         assert(depth(to_model(binder_type)) < depth(to_model(e)));
         assert(depth(to_model(body)) < depth(to_model(e)));
+        assert(nlbv(to_model(binder_type)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
         let start_pos = get_dbj_level_counter(ctx);
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
         let locals_slice: &[ExprPtr<'t>] = &[local];
         assert(depth(to_model(local)) == 0);
+        assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
             Some(v) => v,
             None => return None,
@@ -1289,9 +1306,11 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
             assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
             subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
             assert(depth(to_model(instd)) <= depth(to_model(body)));
             assert(depth(to_model(instd)) <= dd);
             assert(depth(to_model(instd)) <= dd + dd);
+            assert(nlbv(to_model(instd)) <= 0);
         }
         let infd = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
             Some(v) => v,
@@ -1301,6 +1320,10 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         ctx.replace_dbj_level(local);
         let abstrd_binder_type = abstr_levels_with_locals(ctx, binder_type, start_pos, locals_slice);
         let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
+        let result_nlbv = ctx.num_loose_bvars(result);
+        if result_nlbv != 0 {
+            return None;
+        }
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
             let ghost ids = Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i]));
@@ -1314,6 +1337,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(dd <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
             assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
             assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+            assert(nlbv(to_model(result)) == 0);
         }
         return Some(result);
     }
@@ -1321,6 +1345,8 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
         assert(depth(to_model(binder_type)) < depth(to_model(e)));
         assert(depth(to_model(body)) < depth(to_model(e)));
+        assert(nlbv(to_model(binder_type)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
         let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, d, dd + dd) {
             Some(v) => v,
             None => return None,
@@ -1340,6 +1366,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
         let locals_slice: &[ExprPtr<'t>] = &[local];
         assert(depth(to_model(local)) == 0);
+        assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
             Some(v) => v,
             None => return None,
@@ -1348,9 +1375,11 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
             assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
             subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
             assert(depth(to_model(instd)) <= depth(to_model(body)));
             assert(depth(to_model(instd)) <= dd);
             assert(depth(to_model(instd)) <= dd + dd);
+            assert(nlbv(to_model(instd)) <= 0);
         }
         let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
             Some(v) => v,
@@ -1371,17 +1400,23 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         let result_level = ctx.imax(dom_univ, cod_univ);
         let result = ctx.mk_sort(result_level);
         assert(depth(to_model(result)) == 0);
+        assert(nlbv(to_model(result)) == 0);
         return Some(result);
     }
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
         assert(depth(to_model(body)) <= dd);
         assert(depth(to_model(val)) <= dd);
+        assert(nlbv(to_model(val)) <= 0);
+        assert(nlbv(to_model(body)) <= 1);
         let val_slice: &[ExprPtr<'t>] = &[val];
         match verified_inst(ctx, body, val_slice, 0, fuel) {
             Some(substituted) => {
                 proof {
                     assert(Seq::new(val_slice@.len(), |i: int| to_model(val_slice@[i])) =~= seq![to_model(val)]);
+                    assert(to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0));
                     subst_full_depth_bound_n(to_model(body), seq![to_model(val)], 0, dd);
+                    subst_full_nlbv_bound(to_model(body), to_model(val), 0);
+                    assert(nlbv(to_model(substituted)) <= 0);
                 }
                 let result = verified_infer(ctx, env, substituted, fuel - 1, d, dd + dd);
                 proof {
@@ -2998,6 +3033,7 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
         local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
         infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures match result {
         Some(r) => exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, instd: ExprPtr<'t>, infd: ExprPtr<'t>|
@@ -3019,10 +3055,12 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     };
     assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
     assert(depth(to_model(body)) < depth(to_model(e)));
+    assert(nlbv(to_model(body)) <= 1);
     let start_pos = get_dbj_level_counter(ctx);
     let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
     let locals_slice: &[ExprPtr<'t>] = &[local];
     assert(depth(to_model(local)) == 0);
+    assert(nlbv(to_model(local)) == 0);
     let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
         Some(v) => v,
         None => return None,
@@ -3031,8 +3069,10 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
         assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
         assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
         subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+        subst_full_nlbv_bound(to_model(body), to_model(local), 0);
         assert(depth(to_model(instd)) <= depth(to_model(body)));
         assert(depth(to_model(instd)) <= dd);
+        assert(nlbv(to_model(instd)) <= 0);
     }
     let infd = match verified_infer(ctx, env, instd, fuel, d, dd) {
         Some(v) => v,
@@ -3092,6 +3132,7 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
         infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures true
 {
@@ -3103,6 +3144,7 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
     assert(depth(to_model(binder_type)) < depth(to_model(e)));
     assert(depth(to_model(body)) < depth(to_model(e)));
+    assert(nlbv(to_model(body)) <= 1);
 
     let start_pos = get_dbj_level_counter(ctx);
     let local0 = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
@@ -3116,7 +3158,9 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         invariant
             depth(to_model(cur_e)) <= dd,
             dd <= 60000,
+            nlbv(to_model(cur_e)) <= locals@.len(),
             forall |i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
+            forall |i: int| 0 <= i < locals@.len() ==> #[trigger] nlbv(to_model(locals@[i])) == 0,
         decreases depth(to_model(cur_e))
     {
         let ce_el = ctx.read_expr(cur_e);
@@ -3128,6 +3172,7 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         assert(to_model(cur_e) == ExprSpec::Bind(Box::new(to_model(nt)), Box::new(to_model(nb))));
         assert(depth(to_model(nt)) < depth(to_model(cur_e)));
         assert(depth(to_model(nb)) < depth(to_model(cur_e)));
+        assert(nlbv(to_model(nb)) <= locals@.len() + 1);
         let nti = match verified_inst(ctx, nt, locals.as_slice(), 0, fuel) {
             Some(v) => v,
             None => return None,
@@ -3138,6 +3183,7 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         }
         let nlocal = ctx.mk_dbj_level(n, s, nti);
         assert(depth(to_model(nlocal)) == 0);
+        assert(nlbv(to_model(nlocal)) == 0);
         locals.push(nlocal);
         cur_e = nb;
     }
@@ -3149,6 +3195,9 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     proof {
         let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
         subst_full_depth_bound_n(to_model(cur_e), substs_model, 0, 0);
+        subst_full_nlbv_bound_n(to_model(cur_e), substs_model, 0);
+        assert(to_model(instd) == subst_full(to_model(cur_e), substs_model, 0));
+        assert(nlbv(to_model(instd)) <= 0);
     }
     let infd = match verified_infer(ctx, env, instd, fuel, d, dd) {
         Some(v) => v,
