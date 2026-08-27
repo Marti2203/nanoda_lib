@@ -46,7 +46,7 @@ use crate::beta_model::{
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
 use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi};
@@ -86,9 +86,9 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty};
+use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params};
 use crate::env_model::get_declar_info_ty;
-use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params};
+use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor};
 
 verus! {
 
@@ -2580,6 +2580,83 @@ pub fn verified_try_eta_struct<'t, 'p: 't, 'x>(
         _ => {}
     }
     verified_try_eta_struct_aux(ctx, env, y, x, y_type, x_type, fuel, d)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::is_ctor_app`
+/// (`tc.rs:1040-1047`): unfold `e`'s applied spine, check the head is a
+/// `Const` naming a REAL constructor declaration. `&TcCtx` (not `&mut`),
+/// matching the real function's own `&self` -- no arena mutation needed,
+/// purely a read. `get_constructor_num_params` (already bridged, `env_
+/// model.rs`) doubles as the "is `name` a constructor" check: `Some(_)`
+/// iff `name` names a `Declar::Constructor`, exactly `Env::get_constructor
+/// (name).is_some()`'s own meaning.
+pub fn verified_is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<NamePtr<'t>>)
+    ensures match result {
+        Some(name) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+            to_model(e) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun) && const_name_of(fun) == name
+            && to_model_of_ctor_num_params(*env).contains_key(name_id(name)),
+        None => true,
+    }
+{
+    let (fun, _args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    match get_constructor_num_params(env, &name) {
+        Some(_) => Some(name),
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::mk_nullary_ctor`
+/// (`tc.rs:1006-1013`): given a (fully-applied) inductive-type
+/// application `e`, build the application of that inductive's FIRST
+/// constructor to just `e`'s first `num_params` arguments (dropping any
+/// indices/further arguments) -- what `to_ctor_when_k` uses to build the
+/// canonical nullary-constructor witness a `K`-reducible major premise
+/// must be `def_eq` to.
+///
+/// One deliberate divergence from the real function, same "avoid an
+/// unmodeled panic, return an honest `None` instead" choice `get_
+/// inductive_first_ctor`'s own doc comment already explains: the real
+/// `args.into_iter().take(num_params)` never panics even if `num_params
+/// > args.len()` (`Iterator::take` just yields fewer elements) -- mirrored
+/// here via `min(num_params, args.len())` rather than requiring the
+/// caller to already know they agree, so this NEVER returns `None` for
+/// that reason alone, exactly matching the real function's own
+/// leniency.
+pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, num_params: usize, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+            to_model(e) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun),
+        None => true,
+    }
+{
+    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ctor_name = match get_inductive_first_ctor(env, &name) {
+        Some(c) => c,
+        None => return None,
+    };
+    let new_const = ctx.mk_const(ctor_name, levels);
+    let take_n = if num_params < args.len() { num_params } else { args.len() };
+    let taken = verified_slice_to(args.as_slice(), take_n);
+    let result = verified_foldl_apps(ctx, new_const, taken);
+    Some(result)
 }
 
 /// The first genuinely faithful slice of `tc.rs::TypeChecker::def_eq`'s

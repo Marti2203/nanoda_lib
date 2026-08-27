@@ -119,6 +119,23 @@ pub(crate) fn get_structure_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a
     env.get_structure(n, rec_ok).map(|i| i.all_ctor_names[0])
 }
 
+/// `mk_nullary_ctor`'s (`tc.rs:1006-1013`) own lookup: `Env::get_inductive`
+/// (unlike `get_structure`, no single-constructor/no-indices/non-
+/// recursive gate) followed by `all_ctor_names[0]`. Real callers only
+/// ever reach this via `to_ctor_when_k`, itself gated on the recursor's
+/// own `is_k` flag -- which real Lean only ever sets for an inductive
+/// with EXACTLY one constructor, so the real `[0]` index never panics in
+/// practice -- but that gating isn't tracked here (same "plain per-call
+/// fact, no keyed map, no cross-call semantic content" convention as
+/// `get_structure_first_ctor` itself): the model doesn't need `is_k`'s
+/// real meaning, just an honest `None` whenever `all_ctor_names` happens
+/// to be empty, mirrored via a `.get(0)` rather than the real code's raw
+/// index.
+#[allow(dead_code)]
+pub(crate) fn get_inductive_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<NamePtr<'a>> {
+    env.get_inductive(n).and_then(|i| i.all_ctor_names.get(0).copied())
+}
+
 /// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
 /// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
 /// `get_constructor_num_params` above (same struct, different field).
@@ -355,6 +372,8 @@ pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, 
 pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>);
 
 pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
+
+pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
 /// returns a plain `bool`, no struct field extraction required), same
