@@ -1038,28 +1038,59 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
             to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body)))
             && to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0)
             && infer_spec(env, substituted, r, (fuel - 1) as nat))
+    ||| (fuel > 0 && exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, instd: ExprPtr<'t>, infd: ExprPtr<'t>|
+            to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            && to_model(local) == ExprSpec::Free(expr_id(local))
+            && to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0)
+            && infer_spec(env, instd, infd, (fuel - 1) as nat)
+            && to_model(r) == ExprSpec::Bind(
+                    Box::new(abstr_full(to_model(binder_type), seq![expr_id(local)], 0)),
+                    Box::new(abstr_full(to_model(infd), seq![expr_id(local)], 0)),
+                ))
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
-/// (`tc.rs:513-540`), `InferOnly` case, now covering FIVE of its eleven
-/// shapes: the four non-recursive leaves (`Local`/`Sort`/`Const`/`App`,
-/// same as before) plus `Let` (`tc.rs:676-692`, `InferOnly` skips the
-/// `Check`-mode `assert_def_eq` well-formedness check same as everywhere
-/// else in this arc) -- genuinely recursive now, via `verified_inst`
-/// substituting `val` into `body` then recursing on the result. `dd` is a
-/// SEPARATE depth budget from `d` (the env cap `verified_infer_const`/
-/// `verified_infer_app_bounded_multi` need) -- only the `Let` case
-/// consumes it, via `infer_depth_fixpoint_ok`'s doubling-per-level
+/// (`tc.rs:513-540`), `InferOnly` case, now covering SEVEN of its eleven
+/// shapes: the four non-recursive leaves (`Local`/`Sort`/`Const`/`App`),
+/// `NatLit`/`StringLit` (plain type-constant lookups), plus `Let`
+/// (`tc.rs:676-692`, `InferOnly` skips the `Check`-mode `assert_def_eq`
+/// well-formedness check same as everywhere else in this arc) and
+/// (newest) non-curried `Lambda`, both genuinely recursive: `Let` via
+/// `verified_inst` substituting `val` into `body` then recursing on the
+/// result; `Lambda` the same way, one binder peeled via `mk_dbj_level`/
+/// `verified_inst`/`abstr_levels_with_locals`/`mk_pi`. `Lambda`'s case is
+/// INLINED here rather than delegated to the already-existing `verified_
+/// infer_lambda_single` (which has the identical logic and an identical
+/// `exists`-shaped ensures) -- calling it from here would make it part
+/// of a mutually-recursive clique with `verified_infer`, and Verus's
+/// termination checker needs `fuel` to strictly decrease at EVERY edge
+/// of a clique, not just net-decrease around the whole cycle; `verified_
+/// infer_lambda_single`'s own single internal `verified_infer` call
+/// (fine on its own, no `decreases` needed for a non-recursive function)
+/// uses the SAME `fuel` it received, so folding it into the clique would
+/// need an extra fuel-burning edge that doesn't otherwise belong. Inlining
+/// keeps this ONE recursive function with ONE `decreases fuel`, exactly
+/// like `Let`'s own case already is. `dd` is a SEPARATE depth budget from
+/// `d` (the env cap `verified_infer_
+/// const`/`verified_infer_app_bounded_multi` need) -- `Let` and `Lambda`
+/// both consume it via `infer_depth_fixpoint_ok`'s doubling-per-level
 /// headroom, mirroring `delta_round_fixpoint_ok`/`whnf_fixpoint_ok`'s
-/// established shape exactly.
+/// established shape exactly (`Lambda`'s `instd` never actually NEEDS
+/// the doubled headroom -- substituting a depth-0 local can't grow
+/// depth -- but reusing the same `dd + dd` growth `Let` already uses
+/// lets the `infer_depth_fixpoint_ok` requirement fall out of a direct
+/// unfolding, with no separate monotonicity lemma needed).
 ///
-/// `Pi`/`Lambda`/`Proj`/`NatLit`/`StringLit` still fall through to `None`
-/// -- `Pi`/`Lambda` need fresh-local machinery analogous to `verified_def_
-/// eq_binder_step`'s (not yet adapted for `infer`'s own return-a-type
-/// shape); `Proj`/`NatLit`/`StringLit` are entirely unmodeled for `infer`
-/// specifically (their existing `reduce_proj`/`try_reduce_nat` bridges
-/// answer "what does this reduce to," a different question from "what is
-/// its type").
+/// `Pi`/curried-`Lambda`/`Proj` still fall through to `None` for `infer`
+/// specifically -- `Pi` needs the harder per-binder `dom_univ` design
+/// (`verified_infer_pi_single`/`_telescoped` exist but aren't `infer_
+/// spec`-compatible, `ensures true` only); curried `Lambda` needs a new
+/// recursive "chain of `Bind`s over a `Seq`" relation generalizing this
+/// disjunct (`verified_infer_lambda_telescoped` exists, same `ensures
+/// true` gap); `Proj` is fully composed (`verified_infer_proj`) but
+/// likewise not yet `infer_spec`-compatible (its own `ensures true`, plus
+/// several externally-supplied bound parameters `infer_spec`'s uniform
+/// signature has no room for).
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
@@ -1093,6 +1124,38 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     }
     if fuel == 0 {
         return None;
+    }
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(depth(to_model(body)) < depth(to_model(e)));
+        let start_pos = get_dbj_level_counter(ctx);
+        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        let locals_slice: &[ExprPtr<'t>] = &[local];
+        assert(depth(to_model(local)) == 0);
+        let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+            assert(depth(to_model(instd)) <= depth(to_model(body)));
+            assert(depth(to_model(instd)) <= dd);
+            assert(depth(to_model(instd)) <= dd + dd);
+        }
+        let infd = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
+            Some(v) => v,
+            None => return None,
+        };
+        let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
+        ctx.replace_dbj_level(local);
+        let abstrd_binder_type = abstr_levels_with_locals(ctx, binder_type, start_pos, locals_slice);
+        let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
+        }
+        return Some(result);
     }
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
         assert(depth(to_model(body)) <= dd);
@@ -2483,6 +2546,20 @@ pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p
 /// via the already-bridged `mk_pi`. `Check`-mode's `infer_sort_of` call on
 /// the binder type is skipped (`InferOnly`-only, consistent with this
 /// whole arc's convention).
+///
+/// Stays a STANDALONE composition, not called by `verified_infer`'s own
+/// dispatcher (see the dispatcher's own doc comment for why: wiring it
+/// in directly would make `verified_infer_lambda_single` part of a
+/// mutually-recursive clique with `verified_infer`, and Verus's
+/// termination checker needs `fuel` to strictly decrease at EVERY edge
+/// of such a clique, not just net-decrease around the whole cycle --
+/// this function's own single internal `verified_infer` call already
+/// uses the SAME `fuel` it received, which is fine on its own (no
+/// `decreases` clause needed for a non-recursive function), but would
+/// force an extra, unwanted fuel-burning edge if it were folded into the
+/// clique). The dispatcher instead inlines an equivalent `Lambda` case
+/// directly, mirroring how its `Let` case is inlined rather than
+/// factored out.
 pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
