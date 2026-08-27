@@ -89,7 +89,7 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params};
 use crate::env_model::get_declar_info_ty;
-use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor};
+use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
 verus! {
 
@@ -2632,11 +2632,18 @@ pub fn verified_is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, '
 /// caller to already know they agree, so this NEVER returns `None` for
 /// that reason alone, exactly matching the real function's own
 /// leniency.
-pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, num_params: usize, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, num_params: usize, fuel: u32, d_e: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        depth(to_model(e)) <= d_e,
     ensures match result {
-        Some(r) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-            to_model(e) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun),
+        Some(r) => {
+            &&& (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+                to_model(e) == spine_app(to_model(fun), args_model)
+                && is_const_shape(fun))
+            &&& nlbv(to_model(r)) <= 0
+            &&& depth(to_model(r)) <= d_e + (num_params as nat)
+        },
         None => true,
     }
 {
@@ -2656,7 +2663,34 @@ pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let new_const = ctx.mk_const(ctor_name, levels);
     let take_n = if num_params < args.len() { num_params } else { args.len() };
     let taken = verified_slice_to(args.as_slice(), take_n);
+    proof {
+        let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        assert(to_model(e) == spine_app(to_model(fun), args_model));
+        spine_app_depth_decompose(to_model(fun), args_model);
+        spine_app_nlbv_decompose(to_model(fun), args_model);
+        let ghost taken_model = Seq::new(taken@.len(), |i: int| to_model(taken@[i]));
+        assert(taken_model =~= args_model.subrange(0, take_n as int));
+        assert forall |i: int| 0 <= i < taken@.len() implies
+            nlbv(#[trigger] taken_model[i]) <= 0 && max_var_below(taken_model[i], d_e) && depth(taken_model[i]) <= d_e
+        by {
+            assert(taken_model[i] == args_model[i]);
+            nlbv_bound_implies_max_var_below(args_model[i], 0);
+            max_var_below_mono(args_model[i], depth(args_model[i]), d_e);
+        }
+        is_const_shape_model(new_const);
+        assert(depth(to_model(new_const)) == 0);
+        assert(max_var_below(to_model(new_const), d_e));
+    }
     let result = verified_foldl_apps(ctx, new_const, taken);
+    proof {
+        let ghost taken_model = Seq::new(taken@.len(), |i: int| to_model(taken@[i]));
+        spine_app_bounds(to_model(new_const), taken_model, d_e, 0, d_e);
+        spine_app_nlbv(to_model(new_const), taken_model);
+        assert(to_model(result) == spine_app(to_model(new_const), taken_model));
+        assert(depth(to_model(result)) <= 0 + d_e + taken_model.len());
+        assert(taken_model.len() <= num_params as nat);
+        assert(depth(to_model(result)) <= d_e + (num_params as nat));
+    }
     Some(result)
 }
 
@@ -2771,6 +2805,138 @@ pub fn verified_get_major_induct<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, rec_ty: ExprPt
     match expr_as_const(fun, &fun_el) {
         Some((name, _levels)) => Some(name),
         None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::to_ctor_when_k`
+/// (`tc.rs:1015-1038`) -- the SECOND payoff of this session's `verified_
+/// infer` depth/closedness work (after `verified_def_eq_fallback_group_
+/// full`), composing every prerequisite bridged this session (`is_k`,
+/// `get_major_induct`, `mk_nullary_ctor`, now depth/nlbv-strengthened)
+/// with `verified_infer` called TWICE internally (once for `major`'s own
+/// type, once for the freshly-built `new_ctor_app`'s type) -- neither
+/// needs an external parameter, the same unlock as `verified_def_eq_
+/// fallback_group_full`.
+///
+/// `rec_name` stands in for the real function's `rec: &RecursorData`
+/// (matching `verified_reduce_rec_step`'s own convention of taking a
+/// recursor by NAME and re-deriving its fields via `get_recursor_data`/
+/// `get_declar_info_ty`, rather than threading a `RecursorData` value
+/// through Verus). `max_num_params` is a caller-supplied CEILING on the
+/// real (only-discovered-at-runtime) `num_params` -- same "caller
+/// supplies a ceiling, real value checked against it" pattern `infer_
+/// proj`'s own `max_params` already established, needed because `mk_
+/// nullary_ctor`'s depth bound must be stated before `num_params` is
+/// even known. `infer` is called at `fuel=0` both times (covers Local/
+/// Sort/Const/App/NatLit/StringLit; `major`'s type and `new_ctor_app`'s
+/// type are both realistically App/Const-headed, so this isn't as
+/// narrow as it sounds), and the final `def_eq` reuses the already-
+/// established, honestly-partial `verified_def_eq` (sort/const/local/
+/// proj/app/binder-telescoping cluster, no delta-unfolding) -- same
+/// "already-built, simpler piece" choice `verified_def_eq_with_delta`'s
+/// own self-recursion approximation makes, not a new compromise.
+///
+/// One divergence from real `whnf_no_unfolding`'s `major_ty`: only ONE
+/// round of `verified_whnf_no_unfolding_step` (no delta-unfolding),
+/// honestly less complete than the real `infer_then_whnf`'s full `whnf`
+/// -- same "one round first" precedent as everywhere else in this arc.
+pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    rec_name: NamePtr<'t>,
+    major: ExprPtr<'t>,
+    fuel: u32,
+    d_i: nat,
+    d_major: nat,
+    max_num_params: u16,
+    dd_new: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(major)) <= 0,
+        depth(to_model(major)) <= d_major,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_i <= 60000,
+        d_major <= 60000,
+        (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) <= 60000,
+        ((d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major)) + (max_num_params as nat) <= dd_new,
+        dd_new <= 60000,
+        d_i + dd_new + d_i <= 60000,
+    ensures true
+{
+    let is_k = match get_recursor_is_k(env, &rec_name) {
+        Some(v) => v,
+        None => return None,
+    };
+    if !is_k {
+        return None;
+    }
+    let (num_params, _num_motives, _num_minors, major_idx, _uparams, _rec_rules) = match get_recursor_data(env, &rec_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    if num_params > max_num_params {
+        return None;
+    }
+    let (_rec_uparams, rec_ty) = match get_declar_info_ty(env, &rec_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let dd_pre: nat = d_i + d_i + d_major + d_major;
+    proof {
+        assert(infer_depth_fixpoint_ok(d_major, 0));
+    }
+    let major_ty_raw = match verified_infer(ctx, env, major, 0, d_i, d_major) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        assert(depth(to_model(major_ty_raw)) <= dd_pre);
+        nlbv_bound_implies_max_var_below(to_model(major_ty_raw), 0);
+        max_var_below_mono(to_model(major_ty_raw), depth(to_model(major_ty_raw)), dd_pre);
+    }
+    let major_ty = match verified_whnf_no_unfolding_step(ctx, major_ty_raw, fuel, dd_pre, dd_pre) {
+        Some(v) => v,
+        None => return None,
+    };
+    let dd_whnf: nat = dd_pre * dd_pre + dd_pre + dd_pre + dd_pre + dd_pre;
+    assert(depth(to_model(major_ty)) <= dd_whnf);
+    let (f, _f_args) = match verified_unfold_apps(ctx, major_ty, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let f_el = ctx.read_expr(f);
+    let (f_name, _f_levels) = match expr_as_const(f, &f_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let induct_name = match verified_get_major_induct(ctx, rec_ty, major_idx, fuel) {
+        Some(n) => n,
+        None => return None,
+    };
+    if f_name != induct_name {
+        return None;
+    }
+    let new_ctor_app = match verified_mk_nullary_ctor(ctx, env, major_ty, num_params as usize, fuel, dd_whnf) {
+        Some(v) => v,
+        None => return None,
+    };
+    assert(dd_whnf + (num_params as nat) <= dd_new);
+    proof {
+        assert(infer_depth_fixpoint_ok(dd_new, 0));
+    }
+    let new_type = match verified_infer(ctx, env, new_ctor_app, 0, d_i, dd_new) {
+        Some(v) => v,
+        None => return None,
+    };
+    assert(depth(to_model(major_ty)) <= 60000);
+    assert(depth(to_model(new_type)) <= d_i + dd_new + d_i);
+    assert(depth(to_model(new_type)) <= 60000);
+    match verified_def_eq(ctx, major_ty, new_type, fuel) {
+        Some(true) => Some(new_ctor_app),
+        _ => None,
     }
 }
 
