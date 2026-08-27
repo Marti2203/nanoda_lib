@@ -48,7 +48,7 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
-use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named};
+use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
@@ -1908,6 +1908,82 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         abstrd = ctx.mk_pi(bn, bs, t, abstrd);
     }
     Some(abstrd)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_pi` (`tc.rs:655-
+/// 672`), `InferOnly` case, for a NON-CURRIED `Pi` (same "one binder
+/// first" scoping `verified_infer_lambda_single` used before its own
+/// telescoping). Genuinely harder than `infer_lambda`'s analogous single-
+/// binder step, not just a symmetric sibling: `infer_pi` needs `infer_
+/// sort_of(binder_type)` = `infer(binder_type)` THEN `whnf` THEN expect-
+/// `Sort`, and `infer(binder_type)`/`infer(instd)` (an arbitrary,
+/// possibly `Local`-shaped expression) hits the same "no depth/nlbv/
+/// max_var_below bound derivable from `infer_spec` alone" wall this whole
+/// arc has repeatedly worked around -- so, mirroring `verified_infer_
+/// sort_of`'s OWN pre-existing scoping choice (it already takes the
+/// ALREADY-INFERRED `ty` as an external parameter rather than computing
+/// `infer(e)` itself), this function takes BOTH `bt_ty` (`binder_type`'s
+/// type) and `body_ty` (the instantiated body's type) as external
+/// parameters carrying only the BOUND facts `verified_infer_sort_of`
+/// actually needs -- one level further out than `verified_infer_sort_of`
+/// itself, not a new kind of trust boundary. `instd` is still computed
+/// for real via `verified_inst` (mirroring `infer_pi`'s own `self.ctx.
+/// inst(body, locals.as_slice())` call byte-for-byte), it's only ITS
+/// TYPE that's taken externally rather than derived.
+///
+/// Reconstructs the result via `imax(dom_univ, cod_univ)` then `mk_sort`
+/// (`tc.rs`'s own `self.ctx.imax(universe, infd)` fold, degenerate to one
+/// step for a single binder) -- unlike `infer_lambda`'s reverse loop, no
+/// `abstr_levels`/`mk_pi` reconstruction is needed here at all, since
+/// `infer_pi`'s result is a `Sort`, which never mentions the bound
+/// locals in the first place.
+pub fn verified_infer_pi_single<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    bt_ty: ExprPtr<'t>,
+    body_ty: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    n: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        depth(to_model(e)) <= 60000,
+        nlbv(to_model(bt_ty)) <= 0,
+        max_var_below(to_model(bt_ty), bound),
+        depth(to_model(bt_ty)) <= d,
+        nlbv(to_model(body_ty)) <= 0,
+        max_var_below(to_model(body_ty), bound),
+        depth(to_model(body_ty)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures true
+{
+    let e_el = ctx.read_expr(e);
+    let (binder_name, binder_style, binder_type, body) = match expr_as_pi(&e_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+    assert(depth(to_model(body)) < depth(to_model(e)));
+    let dom_univ = match verified_infer_sort_of(ctx, env, bt_ty, fuel, bound, d, n) {
+        Some(l) => l,
+        None => return None,
+    };
+    let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+    let locals_slice: &[ExprPtr<'t>] = &[local];
+    let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let cod_univ = match verified_infer_sort_of(ctx, env, body_ty, fuel, bound, d, n) {
+        Some(l) => l,
+        None => return None,
+    };
+    ctx.replace_dbj_level(local);
+    let result_level = ctx.imax(dom_univ, cod_univ);
+    let result = ctx.mk_sort(result_level);
+    Some(result)
 }
 
 }
