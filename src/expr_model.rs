@@ -520,6 +520,41 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
     }
 }
 
+/// `abstr_full` never grows or shrinks structural depth -- it's a purely
+/// STRUCTURAL traversal (matching `subst_expr_levels_model`'s own "depth
+/// preserved" fact for level substitution, for the exact same reason:
+/// `Free`/`Var` are both depth-0 leaves regardless of which one a given
+/// node ends up as, and `App`/`Bind`/`Let`/`Proj` all recurse into the
+/// SAME positions with the SAME shape, never adding or removing a layer).
+/// Needed to propagate a depth bound through `infer`'s `Lambda`/`Pi`
+/// disjuncts, which wrap `infer`'s own recursive result in `abstr_full`
+/// before returning it.
+pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
+    ensures depth(abstr_full(e, locals, offset)) == depth(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::Free(_) => {}
+        ExprSpec::App(f, a) => {
+            abstr_full_depth(*f, locals, offset);
+            abstr_full_depth(*a, locals, offset);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_full_depth(*t, locals, offset);
+            abstr_full_depth(*b, locals, (offset + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_full_depth(*t, locals, offset);
+            abstr_full_depth(*v, locals, offset);
+            abstr_full_depth(*b, locals, (offset + 1) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            abstr_full_depth(*s, locals, offset);
+        }
+    }
+}
+
 /// Exec-computable counterpart to `has_fv`, same purpose as `nlbv_exec`.
 pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
     ensures result == has_fv(*e)
