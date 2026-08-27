@@ -2227,4 +2227,67 @@ pub fn verified_try_eta_expansion_aux<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: Ex
     verified_def_eq(ctx, x, new_lambda, fuel)
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_eta_expansion`
+/// (`tc.rs:1342-1344`): `try_eta_expansion_aux(x, y) || try_eta_expansion_
+/// aux(y, x)` -- tries BOTH directions (`x` eta-expanding to match `y`'s
+/// type, then `y` eta-expanding to match `x`'s type), since the real
+/// function doesn't know a priori which side (if either) is the `Lambda`.
+/// Takes each direction's already-`infer_then_whnf`'d `Pi` components as
+/// separate explicit parameters (`y_binder_*` for the first attempt,
+/// `x_binder_*` for the second) -- same reason as `verified_try_eta_
+/// expansion_aux` itself.
+///
+/// The real `||` is a plain boolean short-circuit; since each side here
+/// can independently report `None` (ran out of fuel / `verified_def_eq`
+/// incomplete), this tries BOTH regardless of the first's outcome, unlike
+/// a real short-circuiting `||` -- a deliberate strengthening for
+/// completeness (never masks the second attempt's possible `Some(true)`
+/// behind the first's `None`), consistent with reporting `None` overall
+/// only when BOTH attempts are genuinely inconclusive.
+pub fn verified_try_eta_expansion<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    y_binder_name: NamePtr<'t>,
+    y_binder_style: BinderStyle,
+    y_binder_type: ExprPtr<'t>,
+    x_binder_name: NamePtr<'t>,
+    x_binder_style: BinderStyle,
+    x_binder_type: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(y)) <= 60000,
+        depth(to_model(y_binder_type)) + depth(to_model(y)) + 10 <= 60000,
+        depth(to_model(x_binder_type)) + depth(to_model(x)) + 10 <= 60000,
+    ensures match result {
+        Some(true) => {
+            ||| (exists |new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(y_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0)))),
+                    ))
+            ||| (exists |new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(x_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0)))),
+                    ))
+        },
+        _ => true,
+    }
+{
+    let r1 = verified_try_eta_expansion_aux(ctx, x, y, y_binder_name, y_binder_style, y_binder_type, fuel);
+    if let Some(true) = r1 {
+        return Some(true);
+    }
+    let r2 = verified_try_eta_expansion_aux(ctx, y, x, x_binder_name, x_binder_style, x_binder_type, fuel);
+    match (r1, r2) {
+        (_, Some(true)) => Some(true),
+        (None, _) => None,
+        (_, None) => None,
+        _ => Some(false),
+    }
+}
+
 }
