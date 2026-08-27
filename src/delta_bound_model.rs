@@ -33,21 +33,27 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{TcCtx, NamePtr, LevelsPtr, ExprPtr};
+use crate::util::{TcCtx, NamePtr, LevelsPtr, ExprPtr, LevelPtr};
 use crate::env::Env;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth, subst_full};
+use crate::expr_model::{nlbv, depth, subst_full, subst_expr_levels_rel};
 #[cfg(verus_only)]
 use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, verified_whnf_no_unfolding_step};
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, verified_whnf_no_unfolding_step};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 use crate::env_model::verified_is_lt;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep_star_trans, pstep_star_refl};
 #[cfg(verus_only)]
@@ -321,6 +327,65 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     };
     assert(depth(to_model(fun_ty)) <= d);
     verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
+/// (`tc.rs:513-540`), `InferOnly` case, covering the four shapes that
+/// don't need `infer` to recurse any further: `Local` (`verified_infer_
+/// local`), `Sort` (`verified_infer_sort`), `Const` (`verified_infer_
+/// const`), and `App` (`verified_infer_app_bounded_multi`) -- all four are
+/// LEAVES of `infer`'s own recursion in this modeled subset (none of them
+/// call back into `infer` themselves), so this dispatcher needs no fuel-
+/// based termination argument of its own, unlike `verified_def_eq_core`'s
+/// `Local`/`Proj` cases. `Pi`/`Lambda`/`Let`/`Proj`/`NatLit`/`StringLit`
+/// all fall through to `None` -- `Pi`/`Lambda` need fresh-local machinery
+/// analogous to `verified_def_eq_binder_step`'s (not yet adapted for
+/// `infer`'s own return-a-type shape), `Let` needs a genuine recursive
+/// call into `infer` itself (a real, separately-scoped depth-growth
+/// question -- substituting `val` into `body` can nearly double `depth`
+/// per nesting level, the SAME compounding character `delta_round_
+/// fixpoint_ok`/`whnf_fixpoint_ok` already had to solve elsewhere in this
+/// arc, not yet attempted here), and `Proj`/`NatLit`/`StringLit` are
+/// entirely unmodeled for `infer` specifically (distinct from their
+/// existing `reduce_proj`/`try_reduce_nat` reduction-rule bridges, which
+/// answer a different question).
+pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        d <= 60000,
+    ensures match result {
+        Some(r) => {
+            ||| (is_local_shape(e) && local_binder_type_of(e) == r)
+            ||| (exists |l: LevelPtr<'t>|
+                    to_model(e) == ExprSpec::Sort(level_to_model(l))
+                    && to_model(r) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))))
+            ||| (exists |c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+                    is_const_shape(e) && const_name_of(e) == c_name && const_levels_of(e) == c_uparams
+                    && to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+                    && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+                    && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)))
+            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
+                    to_model(e) == spine_app(to_model(fun), args_model)
+                    && is_const_shape(fun)
+                    && to_model(r) == subst_full(body, args_model, 0))
+        },
+        None => true,
+    }
+{
+    let el = ctx.read_expr(e);
+    if let Some((_, ty)) = expr_as_local(e, &el) {
+        return Some(ty);
+    }
+    if let Some(l) = expr_as_sort(&el) {
+        return Some(verified_infer_sort(ctx, l));
+    }
+    if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
+        return verified_infer_const(ctx, env, c_name, c_uparams, fuel);
+    }
+    if expr_as_app(&el).is_some() {
+        return verified_infer_app_bounded_multi(ctx, env, e, fuel, d);
+    }
+    None
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::delta`
