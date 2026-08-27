@@ -53,7 +53,11 @@ use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_leve
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
+#[cfg(verus_only)]
 use crate::expr_model::abstr_full;
+#[cfg(verus_only)]
+use crate::expr_model::abstr_full_depth;
 use crate::expr_arena_bridge::get_eager_mode;
 use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, get_string_extension_flag, read_string_len};
 #[cfg(verus_only)]
@@ -1159,42 +1163,119 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
 /// (`ensures true`, plus several externally-supplied bound parameters
 /// `infer_spec`'s uniform signature has no room for) -- a separate,
 /// not-yet-attempted follow-up.
+///
+/// **`verified_infer`'s own result now ALSO carries a genuine depth
+/// bound** (`infer_result_depth_bound(dd, d, fuel)` below), closing the
+/// "`infer`'s own result has no derivable bound" wall this whole arc
+/// repeatedly worked around (`verified_infer_sort_of`'s `ty`, `verified_
+/// infer_pi_single`'s `bt_ty`/`body_ty`, `verified_infer_proj`'s `structure_
+/// ty`, all taken as EXTERNAL parameters specifically because of this gap)
+/// -- the missing piece for genuinely wiring `Proj`'s dispatcher case in a
+/// future pass, since `Proj` needs a depth bound on `infer(structure)` to
+/// call `verified_inst` on the constructor telescope. Established
+/// per-branch: `Local` via the NEW `local_type_cap`/`local_type_wf` axiom
+/// (mirroring `env_global_cap`/`env_global_wf_ty` for locals instead of
+/// declarations -- see its own doc comment for why touching every `mk_dbj_
+/// level` call site to derive this properly wasn't attempted instead);
+/// `Const`/`App` via `verified_infer_const`/`verified_infer_app_bounded_
+/// multi`'s own now-strengthened ensures; `Sort`/`NatLit`/`StringLit`/`Pi`
+/// trivially (`Sort`'s payload is a `LevelPtr`, not an `ExprSpec`, so
+/// `depth(Sort(_)) == 0` always); `Let` inductively (same recursive
+/// call); `Lambda` inductively PLUS `abstr_full_depth` (its result wraps
+/// the recursive call's own output in `abstr_full`, which preserves
+/// depth exactly).
+pub open spec fn infer_result_depth_bound(dd: nat, d: nat, fuel: nat) -> nat
+    decreases fuel
+{
+    let base = d + dd + 1;
+    if fuel == 0 {
+        base
+    } else {
+        let rec = infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat);
+        let wrapped = 1 + rec;
+        if base >= wrapped { base } else { wrapped }
+    }
+}
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
+        local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
         infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat),
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat),
         None => true,
     }
     decreases fuel
 {
     let el = ctx.read_expr(e);
     if let Some((_, ty)) = expr_as_local(e, &el) {
+        proof {
+            local_type_wf(e);
+            assert(depth(to_model(ty)) <= local_type_cap());
+            assert(depth(to_model(ty)) <= d + dd + 1);
+            assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+        }
         return Some(ty);
     }
     if let Some(l) = expr_as_sort(&el) {
-        return Some(verified_infer_sort(ctx, l));
+        let result = verified_infer_sort(ctx, l);
+        assert(depth(to_model(result)) == 0);
+        return Some(result);
     }
     if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
-        return verified_infer_const(ctx, env, c_name, c_uparams, fuel);
+        match verified_infer_const(ctx, env, c_name, c_uparams, fuel) {
+            Some(r) => {
+                assert(depth(to_model(r)) <= env_global_cap(*env));
+                assert(depth(to_model(r)) <= d + dd + 1);
+                assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+                return Some(r);
+            }
+            None => return None,
+        }
     }
     if expr_as_app(&el).is_some() {
-        return verified_infer_app_bounded_multi(ctx, env, e, fuel, d, dd);
+        match verified_infer_app_bounded_multi(ctx, env, e, fuel, d, dd) {
+            Some(r) => {
+                assert(depth(to_model(r)) <= d + dd);
+                assert(depth(to_model(r)) <= d + dd + 1);
+                assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+                return Some(r);
+            }
+            None => return None,
+        }
     }
     if expr_as_nat_lit(e, &el).is_some() {
-        return ctx.nat_type();
+        match ctx.nat_type() {
+            Some(r) => {
+                proof {
+                    is_const_shape_model(r);
+                }
+                assert(depth(to_model(r)) == 0);
+                return Some(r);
+            }
+            None => return None,
+        }
     }
     if expr_as_string_lit(e, &el) {
-        return ctx.string_type();
+        match ctx.string_type() {
+            Some(r) => {
+                proof {
+                    is_const_shape_model(r);
+                }
+                assert(depth(to_model(r)) == 0);
+                return Some(r);
+            }
+            None => return None,
+        }
     }
     if fuel == 0 {
         return None;
     }
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(depth(to_model(binder_type)) < depth(to_model(e)));
         assert(depth(to_model(body)) < depth(to_model(e)));
         let start_pos = get_dbj_level_counter(ctx);
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
@@ -1222,6 +1303,17 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
+            let ghost ids = Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i]));
+            abstr_full_depth(to_model(binder_type), ids, 0);
+            abstr_full_depth(to_model(infd), ids, 0);
+            assert(depth(to_model(abstrd_binder_type)) == depth(to_model(binder_type)));
+            assert(depth(to_model(abstrd_infd)) == depth(to_model(infd)));
+            assert(to_model(result) == ExprSpec::Bind(Box::new(to_model(abstrd_binder_type)), Box::new(to_model(abstrd_infd))));
+            assert(depth(to_model(binder_type)) <= dd);
+            assert(depth(to_model(infd)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+            assert(dd <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+            assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+            assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
         }
         return Some(result);
     }
@@ -1278,6 +1370,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         ctx.replace_dbj_level(local);
         let result_level = ctx.imax(dom_univ, cod_univ);
         let result = ctx.mk_sort(result_level);
+        assert(depth(to_model(result)) == 0);
         return Some(result);
     }
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
@@ -1290,7 +1383,14 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                     assert(Seq::new(val_slice@.len(), |i: int| to_model(val_slice@[i])) =~= seq![to_model(val)]);
                     subst_full_depth_bound_n(to_model(body), seq![to_model(val)], 0, dd);
                 }
-                verified_infer(ctx, env, substituted, fuel - 1, d, dd + dd)
+                let result = verified_infer(ctx, env, substituted, fuel - 1, d, dd + dd);
+                proof {
+                    if let Some(r) = result {
+                        assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+                        assert(infer_result_depth_bound(dd, d, fuel as nat) >= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+                    }
+                }
+                result
             }
             None => None,
         }
@@ -2895,6 +2995,7 @@ pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p
 pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
+        local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
         infer_depth_fixpoint_ok(dd, fuel as nat),
@@ -2988,6 +3089,7 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
+        local_type_cap() <= d,
         d <= 60000,
         depth(to_model(e)) <= dd,
         infer_depth_fixpoint_ok(dd, fuel as nat),
