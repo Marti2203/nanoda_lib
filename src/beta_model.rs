@@ -7888,4 +7888,59 @@ pub open spec fn pstep_star_proj(
         && result == ctor_args[(num_params as nat + idx) as int]
 }
 
+/// "`e` reduces to `r` via ONE round of `whnf_no_unfolding` extended with
+/// `Proj` coverage" -- exactly `tc_model.rs::verified_whnf_no_unfolding_
+/// step_with_proj`'s own disjunctive ensures, factored out as a standalone
+/// relation so `whnf_no_unfolding_with_proj_reaches` below can refer to it
+/// directly at each recursive step, the same way `verified_infer`'s `Let`
+/// case refers to `infer_spec` recursively rather than inlining its own
+/// postcondition.
+pub open spec fn one_whnf_no_unfolding_with_proj_step(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    ctor_env: Map<u64, u16>,
+    e: ExprSpec,
+    r: ExprSpec,
+) -> bool {
+    ||| pstep_star(env, e, r)
+    ||| (exists |structure: ExprSpec, idx: nat, reduced: ExprSpec, args: Seq<ExprSpec>|
+            e == spine_app(ExprSpec::Proj(Box::new(structure)), args)
+            && pstep_star_proj(env, ctor_env, structure, idx, reduced)
+            && r == spine_app(reduced, args))
+}
+
+/// "`e` reaches `r` via `n` chained rounds of `one_whnf_no_unfolding_with_
+/// proj_step`" -- the genuine fix for the "mixed-kind chain" problem
+/// `verified_whnf_no_unfolding_step_with_proj`'s own doc comment flags:
+/// `pstep_star` composes with itself for free (it's defined as an
+/// existential CHAIN of individual `pstep` steps, so concatenating two
+/// chains trivially gives one longer chain, `pstep_star_trans`'s whole
+/// proof), but `pstep_star_proj` is a single ad-hoc witness fact tied to
+/// one specific `Proj`-headed shape, with no chain structure of its own
+/// to concatenate and no analogous transitivity lemma -- so chaining `n`
+/// rounds where EACH round could independently be either kind can't be
+/// expressed as "some `pstep_star` fact" or "some `pstep_star_proj` fact"
+/// alone. This relation sidesteps needing a NEW transitivity LEMMA at
+/// all: it's defined directly by recursion on `n`, so composing two
+/// reaches-facts is just unfolding the definition one level at a time
+/// (exactly how `infer_spec`'s own `Let` case chains, and how `verified_
+/// lazy_delta_loop` chains `pstep_star` facts via explicit `pstep_star_
+/// trans` calls -- except here NO explicit trans call is even needed,
+/// since the relation's OWN recursive structure already IS the
+/// composition).
+pub open spec fn whnf_no_unfolding_with_proj_reaches(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    ctor_env: Map<u64, u16>,
+    e: ExprSpec,
+    r: ExprSpec,
+    n: nat,
+) -> bool
+    decreases n
+{
+    (n == 0 && e == r)
+        || (n > 0 && exists |mid: ExprSpec|
+                #![trigger one_whnf_no_unfolding_with_proj_step(env, ctor_env, e, mid)]
+                one_whnf_no_unfolding_with_proj_step(env, ctor_env, e, mid)
+                && whnf_no_unfolding_with_proj_reaches(env, ctor_env, mid, r, (n - 1) as nat))
+}
+
 }

@@ -86,7 +86,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -512,6 +512,80 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
         }
     } else {
         verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d)
+    }
+}
+
+/// `verified_whnf_no_unfolding_step_with_proj`'s own growth formula, one
+/// round's worth -- mirrors `whnf_step_next_bound`/`whnf_step_next_d`
+/// (`expr_arena_bridge.rs`) exactly, just with the `+6*d` (not `+4*d`)
+/// depth term the `Proj` branch's `spine_app_bounds`/refolding composition
+/// needs.
+pub open spec fn whnf_proj_step_next_d(d: nat) -> nat { d * d + d + d + d + d + d + d }
+pub open spec fn whnf_proj_step_next_bound(bound: nat, d: nat) -> nat { bound + d * d * d + d * d }
+
+/// "`bound`/`d` have enough headroom for `n` MORE chained rounds of
+/// `verified_whnf_no_unfolding_step_with_proj`" -- same shape as `whnf_
+/// fixpoint_ok`/`delta_round_fixpoint_ok`/`infer_depth_fixpoint_ok`
+/// (this arc's fourth instance of this exact recursive-feasibility
+/// pattern): check this round's own headroom precondition, then recurse
+/// on what the NEXT round would see for the remaining `n - 1` rounds.
+pub open spec fn whnf_proj_fixpoint_ok(bound: nat, d: nat, n: nat) -> bool
+    decreases n
+{
+    d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && (n == 0 || whnf_proj_fixpoint_ok(whnf_proj_step_next_bound(bound, d), whnf_proj_step_next_d(d), (n - 1) as nat))
+}
+
+/// Chains `verified_whnf_no_unfolding_step_with_proj` up to `n` times --
+/// the genuine multi-round fixpoint the "mixed-kind chain" problem
+/// blocked, now resolved via `whnf_no_unfolding_with_proj_reaches`
+/// (`beta_model.rs`): since that relation is defined DIRECTLY by
+/// recursion on `n` (not as a derived fact from some other transitivity
+/// lemma), composing this function's own recursive calls needs NO
+/// explicit "trans" step at all -- unlike `verified_lazy_delta_loop`'s
+/// `pstep_star_trans` calls, the recursive relation's own unfolding
+/// (`n > 0 && exists mid, one_step(e, mid) && reaches(mid, r, n - 1)`) IS
+/// the composition, matching this call's own `decreases n` one level at a
+/// time.
+///
+/// `n == 0` returns `e` unchanged (matches `whnf_no_unfolding_with_proj_
+/// reaches`'s own `n == 0` base case, `e == r`, trivially) -- same
+/// "identity fixpoint, not `None`" precedent as `verified_whnf_no_
+/// unfolding_fixpoint`/`verified_lazy_delta_loop`'s own `n == 0` cases.
+pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_proj_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => whnf_no_unfolding_with_proj_reaches(
+            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+            to_model_of_ctor_num_params(*env),
+            to_model(e),
+            to_model(r),
+            n as nat,
+        ),
+        None => true,
+    }
+    decreases n
+{
+    if n == 0 {
+        return Some(e);
+    }
+    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, bound, d) {
+        Some(r) => {
+            proof {
+                assert(one_whnf_no_unfolding_with_proj_step(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(e),
+                    to_model(r),
+                ));
+            }
+            verified_whnf_no_unfolding_fixpoint_with_proj(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1)
+        }
+        None => None,
     }
 }
 
