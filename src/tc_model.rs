@@ -83,7 +83,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_reduce, spine_reduce_eq_subst_full, spine_bind_nlbv, spine_bind_depth};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -2141,23 +2141,26 @@ pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: Ex
 /// incompleteness, not unsoundness.
 ///
 /// Reuses `verified_peel_pis` (`expr_arena_bridge.rs`'s real-arena Pi
-/// analogue of `verified_peel_lambdas`) plus `spine_reduce_eq_subst_full`
-/// -- the SAME telescopic-substitution machinery `verified_whnf_beta_step`
-/// already established for Lambda-peeling, since `spine_bind`/`spine_
-/// reduce` don't distinguish `Pi` from `Lambda` at the model level at all
-/// (both are just `ExprSpec::Bind`).
-pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+/// analogue of `verified_peel_lambdas`) and `spine_bind_depth` (peeling
+/// binders never increases `depth`, needed to re-establish `verified_
+/// inst`'s own depth precondition on the peeled body). Deliberately
+/// states its ensures directly via `subst_full` -- exactly `verified_
+/// infer_app_single`'s own shape, generalized from a one-element `seq!`
+/// to `args`' whole `Seq` -- rather than routing through `spine_reduce`/
+/// `spine_reduce_eq_subst_full` (which `verified_whnf_beta_step` needs):
+/// `verified_inst` already proves the `subst_full` equation unconditionally,
+/// with NO closedness/`max_var_below` requirement on `args` at all, so
+/// adding one here would only narrow this function's callers for no
+/// benefit -- the same reason `verified_infer_app_single` never needed one
+/// either.
+pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
     requires
-        nlbv(to_model(fun_ty)) <= 0,
-        forall |i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
         depth(to_model(fun_ty)) <= d,
         d <= 60000,
-        bound + 10 <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => {
-            &&& spine_bind(to_model(fun_ty), args.len() as nat) is Some
-            &&& to_model(r) == spine_reduce(to_model(fun_ty), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-        },
+        Some(r) => exists |body: ExprSpec|
+            spine_bind(to_model(fun_ty), args.len() as nat) == Some(body)
+            && to_model(r) == subst_full(body, Seq::new(args@.len(), |i: int| to_model(args@[i])), 0),
         None => true,
     }
 {
@@ -2167,19 +2170,9 @@ pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty
                 return None;
             }
             proof {
-                spine_bind_nlbv(to_model(fun_ty), n as nat, to_model(peeled), 0);
                 spine_bind_depth(to_model(fun_ty), n as nat, to_model(peeled));
             }
-            match verified_inst(ctx, peeled, args, 0, fuel) {
-                Some(result) => {
-                    proof {
-                        let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-                        spine_reduce_eq_subst_full(to_model(fun_ty), args_model, to_model(peeled), bound);
-                    }
-                    Some(result)
-                }
-                None => None,
-            }
+            verified_inst(ctx, peeled, args, 0, fuel)
         }
         None => None,
     }
