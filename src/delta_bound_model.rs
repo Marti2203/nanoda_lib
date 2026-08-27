@@ -935,6 +935,47 @@ pub open spec fn delta_round_fixpoint_ok(bound: nat, d: nat, cap: nat, n: nat) -
         && (n == 0 || delta_round_fixpoint_ok(delta_round_next_bound(bound, d, cap), delta_round_next_d(d, cap), cap, (n - 1) as nat))
 }
 
+/// The `(bound, d)` a caller should assume `verified_lazy_delta_loop`'s
+/// result satisfies "as if `n` full rounds had elapsed" -- defined
+/// RECURSIVELY, matching `delta_round_next_bound`/`_d`'s own unfolding
+/// exactly, so a caller's own recursive call composes with `verified_lazy_
+/// delta_loop`'s ensures for FREE by definitional unfolding (no separate
+/// transitivity lemma), the same trick `whnf_no_unfolding_with_proj_
+/// reaches`'s recursive definition already used.
+pub open spec fn delta_loop_bound_after(bound: nat, d: nat, cap: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { bound } else { delta_loop_bound_after(delta_round_next_bound(bound, d, cap), delta_round_next_d(d, cap), cap, (n - 1) as nat) }
+}
+pub open spec fn delta_loop_d_after(bound: nat, d: nat, cap: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { d } else { delta_loop_d_after(delta_round_next_bound(bound, d, cap), delta_round_next_d(d, cap), cap, (n - 1) as nat) }
+}
+
+/// `delta_loop_bound_after`/`_d_after` never SHRINK below the caller's own
+/// starting `(bound, d)` -- needed because `verified_lazy_delta_round` can
+/// return `Exhausted` on its VERY FIRST round (before any growth has
+/// happened), yet `verified_lazy_delta_loop`'s advertised bound is always
+/// stated "as if `n` full rounds had elapsed." Each round's growth formula
+/// (`delta_round_next_bound`/`_d`) only ADDS non-negative terms, so this
+/// is a straightforward induction on `n`.
+pub proof fn delta_loop_bound_after_ge(bound: nat, d: nat, cap: nat, n: nat)
+    ensures
+        delta_loop_bound_after(bound, d, cap, n) >= bound,
+        delta_loop_d_after(bound, d, cap, n) >= d,
+    decreases n
+{
+    if n == 0 {
+    } else {
+        let bound2 = delta_round_next_bound(bound, d, cap);
+        let d2 = delta_round_next_d(d, cap);
+        assert(bound2 >= bound);
+        assert(d2 >= d);
+        delta_loop_bound_after_ge(bound2, d2, cap, (n - 1) as nat);
+    }
+}
+
 /// Chains `verified_lazy_delta_round` up to `n` times -- the genuine
 /// multi-round `lazy_delta_step` this whole arc has been building toward,
 /// mirroring `tc.rs::TypeChecker::lazy_delta_step`'s own unbounded `loop`
@@ -977,12 +1018,26 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
         env_global_cap(*env) <= cap,
         delta_round_fixpoint_ok(bound, d, cap, n as nat),
     ensures match result {
-        Some(DeltaRoundResult::Exhausted(x2, y2)) =>
-            pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
-            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)),
-        Some(DeltaRoundResult::Continue(x2, y2)) =>
-            pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
-            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)),
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => {
+            &&& pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+            &&& pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))
+            &&& nlbv(to_model(x2)) <= 0
+            &&& max_var_below(to_model(x2), delta_loop_bound_after(bound, d, cap, n as nat))
+            &&& depth(to_model(x2)) <= delta_loop_d_after(bound, d, cap, n as nat)
+            &&& nlbv(to_model(y2)) <= 0
+            &&& max_var_below(to_model(y2), delta_loop_bound_after(bound, d, cap, n as nat))
+            &&& depth(to_model(y2)) <= delta_loop_d_after(bound, d, cap, n as nat)
+        },
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            &&& pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+            &&& pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))
+            &&& nlbv(to_model(x2)) <= 0
+            &&& max_var_below(to_model(x2), delta_loop_bound_after(bound, d, cap, n as nat))
+            &&& depth(to_model(x2)) <= delta_loop_d_after(bound, d, cap, n as nat)
+            &&& nlbv(to_model(y2)) <= 0
+            &&& max_var_below(to_model(y2), delta_loop_bound_after(bound, d, cap, n as nat))
+            &&& depth(to_model(y2)) <= delta_loop_d_after(bound, d, cap, n as nat)
+        },
         _ => true,
     }
     decreases n
@@ -1002,6 +1057,13 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
             proof {
                 pstep_star_refl(to_model_of_env(*env), to_model(x));
                 pstep_star_refl(to_model_of_env(*env), to_model(y));
+                delta_loop_bound_after_ge(bound, d, cap, n as nat);
+                assert(x2 == x);
+                assert(y2 == y);
+                max_var_below_mono(to_model(x2), bound, delta_loop_bound_after(bound, d, cap, n as nat));
+                max_var_below_mono(to_model(y2), bound, delta_loop_bound_after(bound, d, cap, n as nat));
+                assert(depth(to_model(x2)) <= delta_loop_d_after(bound, d, cap, n as nat));
+                assert(depth(to_model(y2)) <= delta_loop_d_after(bound, d, cap, n as nat));
             }
             Some(DeltaRoundResult::Exhausted(x2, y2))
         }
