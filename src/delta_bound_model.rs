@@ -54,6 +54,10 @@ use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 use crate::expr_arena_bridge::get_eager_mode;
+use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, get_string_extension_flag, read_string_len};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::string_len;
+use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
@@ -2217,12 +2221,15 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
 /// try_eta_struct(x, y) || try_string_lit_expansion(x, y) || matches!
 /// (def_eq_unit(x, y), Some(true))`.
 ///
-/// `try_string_lit_expansion` is skipped entirely -- genuinely unmodeled
-/// (needs a new string-value trust boundary, see the project notes) -- so
-/// this returns `None` (not `Some(false)`) when every modeled disjunct
-/// fails, honestly leaving open that the real function might still find
-/// `true` via that one unmodeled path, same "`None` conflates ran-out-of-
-/// budget with needs-an-unmodeled-piece" convention as everywhere else.
+/// All FIVE disjuncts are now covered (`try_string_lit_expansion` landed
+/// as `verified_try_string_lit_expansion`, gated by a caller-supplied
+/// `max_str_len` ceiling on the string's real length -- see its own doc
+/// comment). This still returns `None` (not `Some(false)`) rather than
+/// `Some(false)` when every disjunct fails, since a `false` result would
+/// need each sub-piece's OWN honest incompletenesses (one-round `whnf`s,
+/// etc.) to be jointly exhaustive, which none of them individually claim
+/// -- same "`None` conflates ran-out-of-budget with an unmodeled path"
+/// convention as everywhere else in this arc.
 ///
 /// Takes EVERY externally-supplied value each sub-piece independently
 /// needs, since they're genuinely different shapes: `x_type`/`y_type` are
@@ -2249,6 +2256,7 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
     x_ty_whnfd: ExprPtr<'t>,
     fuel: u32,
     d: nat,
+    max_str_len: usize,
 ) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
@@ -2265,6 +2273,7 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
         depth(to_model(y_type)) <= 60000,
         depth(to_model(x_ty_whnfd)) <= 60000,
         d + 1 <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
     ensures true
 {
     match verified_def_eq_app(ctx, x, y, fuel) {
@@ -2279,11 +2288,113 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
         Some(true) => return Some(true),
         _ => {}
     }
+    if verified_try_string_lit_expansion(ctx, env, x, y, fuel, max_str_len) {
+        return Some(true);
+    }
     match verified_def_eq_unit(ctx, env, x_ty_whnfd, y_type, fuel) {
         Some(true) => return Some(true),
         _ => {}
     }
     None
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
+/// expansion_aux` (`tc.rs:335-346`): if `x` is a `StringLit` and `y` is
+/// an application of `Const(string_of_list, [])`, expands the literal
+/// via `str_lit_to_constructor` and checks `def_eq` against `y`.
+///
+/// `max_str_len` is a caller-supplied CEILING on the string's real
+/// character count, checked at runtime via `read_string_len` (`string_
+/// len` itself, `pub uninterp spec fn`, can never be evaluated in exec
+/// code, not even to check a ceiling -- same restriction `env_global_cap`
+/// hits, see `verified_infer_proj`'s doc comment) -- this is the
+/// "caller-supplied sufficient bound" pattern applied to a genuinely
+/// UNBOUNDED quantity (a real Lean string literal has no size limit),
+/// consistent with the standing "no arbitrary caps when a real bound is
+/// derivable" rule: the cap here is tied to the ACTUAL string's length,
+/// not a blanket truncation, and `def_eq`'s `depth <= 60000` numeric
+/// ceiling is itself just this whole arc's usual proof-engineering
+/// constant (see the earlier note on `d <= 60000`), not a claim about
+/// what real Lean programs contain.
+pub fn verified_try_string_lit_expansion_aux<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    max_str_len: usize,
+) -> (result: Option<bool>)
+    requires
+        depth(to_model(y)) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
+    ensures true
+{
+    let x_el = ctx.read_expr(x);
+    let s = match expr_as_string_lit_ptr(x, &x_el) {
+        Some(v) => v,
+        None => return None,
+    };
+    let y_el = ctx.read_expr(y);
+    let (fun, _arg) = match expr_as_app(&y_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let sol_name = match get_string_of_list_name(ctx) {
+        Some(v) => v,
+        None => return None,
+    };
+    if !name_ptr_eq(name, sol_name) {
+        return None;
+    }
+    let real_len = read_string_len(ctx, s);
+    if real_len > max_str_len {
+        return None;
+    }
+    let lhs = match ctx.str_lit_to_constructor(s) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        assert(string_len(s) <= max_str_len as nat);
+        assert(depth(to_model(lhs)) <= string_len(s) + 3);
+        assert(depth(to_model(lhs)) <= 60000);
+    }
+    verified_def_eq(ctx, lhs, y, fuel)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
+/// expansion` (`tc.rs:348-354`): the `string_extension` config gate,
+/// then both directions of `_aux` (`x`/`y` and `y`/`x`).
+pub fn verified_try_string_lit_expansion<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    max_str_len: usize,
+) -> (result: bool)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(y)) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
+    ensures true
+{
+    if !get_string_extension_flag(ctx) {
+        return false;
+    }
+    match verified_try_string_lit_expansion_aux(ctx, env, x, y, fuel, max_str_len) {
+        Some(true) => return true,
+        _ => {}
+    }
+    match verified_try_string_lit_expansion_aux(ctx, env, y, x, fuel, max_str_len) {
+        Some(true) => true,
+        _ => false,
+    }
 }
 
 /// Real-arena counterpart to `def_eq`'s `c_bool_true` short-circuit

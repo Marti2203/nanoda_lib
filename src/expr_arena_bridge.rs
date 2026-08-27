@@ -31,7 +31,7 @@
 use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::util::TcCtx;
-use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr};
+use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
 use crate::expr::{Expr, BinderStyle, FVarId};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -171,6 +171,16 @@ pub(crate) fn expr_as_string_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::StringLit { .. })
 }
 
+/// `StringLit`'s `ptr: StringPtr` payload -- needed only by `try_string_
+/// lit_expansion_aux` (`tc.rs:335-346`), which reads `StringLit { ptr,
+/// .. }` off the arena directly to feed `str_lit_to_constructor`.
+/// `expr_as_string_lit` above stays payload-free (nothing else in this
+/// arc needs the string's identity, only its shape).
+#[allow(dead_code)]
+pub(crate) fn expr_as_string_lit_ptr<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<StringPtr<'t>> {
+    match e { Expr::StringLit { ptr, .. } => Some(*ptr), _ => None }
+}
+
 #[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
     a == b
@@ -205,6 +215,34 @@ pub(crate) fn get_eager_mode<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
 #[allow(dead_code)]
 pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> u16 {
     ctx.dbj_level_counter
+}
+
+/// `export_file.name_cache.string_of_list`, read directly -- same
+/// "plain field-read wrapper, `TcCtx` is `external_body`" convention as
+/// `get_eager_mode`/`get_dbj_level_counter` above.
+#[allow(dead_code)]
+pub(crate) fn get_string_of_list_name<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> Option<NamePtr<'t>> {
+    ctx.export_file.name_cache.string_of_list
+}
+
+/// `export_file.config.string_extension`, read directly -- same
+/// convention as `get_string_of_list_name` above.
+#[allow(dead_code)]
+pub(crate) fn get_string_extension_flag<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
+    ctx.export_file.config.string_extension
+}
+
+/// The real character count behind `string_len`'s uninterpreted spec
+/// value -- needed because `string_len` itself, having NO body, can
+/// never be called from exec code (not even to check a ceiling at
+/// runtime, unlike an `open spec fn`). This gives callers a REAL,
+/// checkable `usize` tied to `string_len(s)` by the assume_specification
+/// below, the same "read the real value, bridge it to the spec
+/// quantity" pattern `read_bignum_value`/`nat_lit_value` already use for
+/// `NatLit`'s payload.
+#[allow(dead_code)]
+pub(crate) fn read_string_len<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, s: StringPtr<'t>) -> usize {
+    ctx.read_string(s).chars().count()
 }
 
 /// `expr.rs::TcCtx::abstr_levels`, wrapped with an EXPLICIT `locals_hint`
@@ -546,6 +584,55 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     ensures to_model(ptr) == ExprSpec::Closed
 {
 }
+
+pub assume_specification<'t> [expr_as_string_lit_ptr] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<StringPtr<'t>>)
+    ensures match result {
+        Some(_) => is_string_lit_shape(ptr),
+        None => !is_string_lit_shape(ptr),
+    };
+
+/// A string's character count -- an uninterpreted quantity (this arc
+/// never models string CONTENT, only, here, its LENGTH) needed to state
+/// `str_lit_to_constructor`'s real depth growth honestly: the real
+/// function (`expr.rs:550-584`) builds one `List.cons (Char.ofNat _)`
+/// `App` layer PER CHARACTER, so the result's depth genuinely scales
+/// with the string's length -- a FIXED numeric cap here would be
+/// unsound for a long enough string, not just imprecise (the standing
+/// "no arbitrary caps when a real bound is derivable" rule applies
+/// directly). Callers instead take `string_len(s)` bounded by an
+/// explicit parameter, the same "caller-supplied sufficient bound"
+/// pattern used throughout this whole arc.
+pub uninterp spec fn string_len<'a>(s: StringPtr<'a>) -> nat;
+
+/// `expr.rs::str_lit_to_constructor`'s real construction, counted by
+/// hand: `List.nil`'s own wrapper is depth 1; each character adds
+/// `App(App(List.cons, App(Char.ofNat, NatLit)), rest)` -- `NatLit`
+/// collapses to `ExprSpec::Closed` (depth 0, `is_nat_lit_shape_model`),
+/// so `App(Char.ofNat, NatLit)` is depth 1, `App(List.cons_partial, ..)`
+/// is depth 2, and wrapping the PREVIOUS `rest` costs exactly one more
+/// level once `rest`'s own depth reaches 2 (true from the first
+/// character on) -- so after `string_len(s)` characters the depth is
+/// `string_len(s) + 2`, plus one final `App` for the `String.ofList`
+/// wrapper: `string_len(s) + 3`. Every subterm is `Const`/`Closed`/`App`
+/// of those -- no `Var`/`Free` anywhere -- so `nlbv`/`max_var_below`
+/// hold unconditionally (bound `0` suffices for `max_var_below`,
+/// weakened to whatever the caller needs via `max_var_below_mono`).
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx: &mut TcCtx<'t, 'p>, s: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), 0)
+            &&& depth(to_model(r)) <= string_len(s) + 3
+        },
+        None => true,
+    };
+
+pub assume_specification<'t, 'p> [get_string_of_list_name] (ctx: &TcCtx<'t, 'p>) -> (result: Option<NamePtr<'t>>) where 'p: 't;
+
+pub assume_specification<'t, 'p> [get_string_extension_flag] (ctx: &TcCtx<'t, 'p>) -> (result: bool) where 'p: 't;
+
+pub assume_specification<'t, 'p> [read_string_len] (ctx: &TcCtx<'t, 'p>, s: StringPtr<'t>) -> (result: usize) where 'p: 't
+    ensures result as nat == string_len(s);
 
 pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
     ensures match result {
