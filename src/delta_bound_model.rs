@@ -401,6 +401,74 @@ pub open spec fn infer_proj_params_fixpoint_ok(bound: nat, d: nat, cap: nat, k: 
         && (k == 0 || infer_proj_params_fixpoint_ok(infer_proj_params_step_next_bound(bound, d, cap), infer_proj_params_step_next_d(d, cap), cap, (k - 1) as nat))
 }
 
+/// "After `k` rounds" closed recursive formulas, mirroring `whnf_proj_
+/// loop_bound_after`/`_d_after` (`tc_model.rs`) exactly: no monotonicity
+/// lemma needed (unlike `delta_loop_bound_after`), since every successful
+/// round of `verified_infer_proj_params_loop` grows the bound uniformly
+/// -- there's no "unchanged" outcome the way `lazy_delta_round`'s
+/// `Exhausted` has.
+pub open spec fn infer_proj_params_bound_after(bound: nat, d: nat, cap: nat, k: nat) -> nat
+    decreases k
+{
+    if k == 0 { bound } else { infer_proj_params_bound_after(infer_proj_params_step_next_bound(bound, d, cap), infer_proj_params_step_next_d(d, cap), cap, (k - 1) as nat) }
+}
+
+pub open spec fn infer_proj_params_d_after(bound: nat, d: nat, cap: nat, k: nat) -> nat
+    decreases k
+{
+    if k == 0 { d } else { infer_proj_params_d_after(infer_proj_params_step_next_bound(bound, d, cap), infer_proj_params_step_next_d(d, cap), cap, (k - 1) as nat) }
+}
+
+/// Single-step growth is non-decreasing (`next_bound >= bound`, `next_d
+/// >= d` -- both formulas only ADD non-negative terms), so "after `k`
+/// rounds" is non-decreasing in the STARTING bound/d too; chaining that
+/// `k` times gives "the final bound is at least the starting one",
+/// mirroring `delta_loop_bound_after_ge`'s exact proof shape.
+pub proof fn infer_proj_params_bound_after_ge(bound: nat, d: nat, cap: nat, k: nat)
+    ensures
+        infer_proj_params_bound_after(bound, d, cap, k) >= bound,
+        infer_proj_params_d_after(bound, d, cap, k) >= d,
+    decreases k
+{
+    if k == 0 {
+    } else {
+        let bound2 = infer_proj_params_step_next_bound(bound, d, cap);
+        let d2 = infer_proj_params_step_next_d(d, cap);
+        assert(bound2 >= bound);
+        assert(d2 >= d);
+        infer_proj_params_bound_after_ge(bound2, d2, cap, (k - 1) as nat);
+    }
+}
+
+/// The monotonicity `verified_infer_proj` (the full composition) needs:
+/// a caller who only knows a CEILING `big_k` on the real round count `k`
+/// (`num_params`, discovered only after looking up the constructor) can
+/// still derive facts about the REAL `k` rounds from what they proved
+/// about `big_k` rounds. Proved by peeling matching rounds off BOTH
+/// sides at once (the `k > 0` case) until either they coincide (`k ==
+/// big_k`) or `k` bottoms out at `0` (finished by `_bound_after_ge`
+/// above: zero rounds' bound is trivially `<=` however many rounds
+/// `big_k` describes, since growth never decreases).
+pub proof fn infer_proj_params_mono(bound: nat, d: nat, cap: nat, k: nat, big_k: nat)
+    requires
+        k <= big_k,
+        infer_proj_params_fixpoint_ok(bound, d, cap, big_k),
+    ensures
+        infer_proj_params_fixpoint_ok(bound, d, cap, k),
+        infer_proj_params_bound_after(bound, d, cap, k) <= infer_proj_params_bound_after(bound, d, cap, big_k),
+        infer_proj_params_d_after(bound, d, cap, k) <= infer_proj_params_d_after(bound, d, cap, big_k),
+    decreases big_k
+{
+    if k == big_k {
+    } else if k == 0 {
+        infer_proj_params_bound_after_ge(bound, d, cap, big_k);
+    } else {
+        let bound2 = infer_proj_params_step_next_bound(bound, d, cap);
+        let d2 = infer_proj_params_step_next_d(d, cap);
+        infer_proj_params_mono(bound2, d2, cap, (k - 1) as nat, (big_k - 1) as nat);
+    }
+}
+
 /// Real-arena counterpart to the MIDDLE THIRD of `tc.rs::TypeChecker::
 /// infer_proj` (`tc.rs:475-483`, the `num_params` loop -- `tc.rs:484-500`'s
 /// `idx` loop is a separate, follow-up piece): peels `remaining` `Pi`
@@ -436,7 +504,14 @@ pub fn verified_infer_proj_params_loop<'t, 'p: 't>(
             && depth(to_model(struct_ty_args@[i])) <= cap,
         remaining as nat <= struct_ty_args@.len(),
         infer_proj_params_fixpoint_ok(bound, d, cap, remaining as nat),
-    ensures true
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), infer_proj_params_bound_after(bound, d, cap, remaining as nat))
+            &&& depth(to_model(r)) <= infer_proj_params_d_after(bound, d, cap, remaining as nat)
+        },
+        None => true,
+    }
     decreases remaining
 {
     if remaining == 0 {
@@ -520,6 +595,67 @@ pub open spec fn infer_proj_idx_fixpoint_ok(bound: nat, d: nat, bound_s: nat, d_
         && (k == 0 || infer_proj_idx_fixpoint_ok(infer_proj_idx_step_next_bound(bound, d, bound_s), infer_proj_idx_step_next_d(d, d_s), bound_s, d_s, (k - 1) as nat))
 }
 
+/// "After `k` rounds" closed recursive formulas for `verified_infer_proj_
+/// idx_loop`, same shape and same "no monotonicity lemma needed" reason
+/// as `infer_proj_params_bound_after`/`_d_after` above.
+pub open spec fn infer_proj_idx_bound_after(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat) -> nat
+    decreases k
+{
+    if k == 0 { bound } else { infer_proj_idx_bound_after(infer_proj_idx_step_next_bound(bound, d, bound_s), infer_proj_idx_step_next_d(d, d_s), bound_s, d_s, (k - 1) as nat) }
+}
+
+pub open spec fn infer_proj_idx_d_after(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat) -> nat
+    decreases k
+{
+    if k == 0 { d } else { infer_proj_idx_d_after(infer_proj_idx_step_next_bound(bound, d, bound_s), infer_proj_idx_step_next_d(d, d_s), bound_s, d_s, (k - 1) as nat) }
+}
+
+/// `infer_proj_params_bound_after_ge`'s sibling for the `idx` family --
+/// same reason, same proof shape.
+pub proof fn infer_proj_idx_bound_after_ge(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat)
+    ensures
+        infer_proj_idx_bound_after(bound, d, bound_s, d_s, k) >= bound,
+        infer_proj_idx_d_after(bound, d, bound_s, d_s, k) >= d,
+    decreases k
+{
+    if k == 0 {
+    } else {
+        let bound2 = infer_proj_idx_step_next_bound(bound, d, bound_s);
+        let d2 = infer_proj_idx_step_next_d(d, d_s);
+        assert(bound2 >= bound);
+        assert(d2 >= d);
+        infer_proj_idx_bound_after_ge(bound2, d2, bound_s, d_s, (k - 1) as nat);
+    }
+}
+
+/// `infer_proj_params_mono`'s sibling for the `idx` family -- needed by
+/// `verified_infer_proj` for exactly the same reason `infer_proj_params_
+/// mono` was: it establishes `infer_proj_idx_fixpoint_ok(..., idx)` from
+/// the caller's own `infer_proj_idx_fixpoint_ok(..., idx + 1)` (the extra
+/// round covering the FINAL standalone `whnf` after the loop) -- `k + 1`
+/// unfolds to a fact about the NEXT `(bound, d)` pair, not the same one,
+/// so this genuine monotonicity lemma is needed even for a difference of
+/// exactly one round.
+pub proof fn infer_proj_idx_mono(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat, big_k: nat)
+    requires
+        k <= big_k,
+        infer_proj_idx_fixpoint_ok(bound, d, bound_s, d_s, big_k),
+    ensures
+        infer_proj_idx_fixpoint_ok(bound, d, bound_s, d_s, k),
+        infer_proj_idx_bound_after(bound, d, bound_s, d_s, k) <= infer_proj_idx_bound_after(bound, d, bound_s, d_s, big_k),
+        infer_proj_idx_d_after(bound, d, bound_s, d_s, k) <= infer_proj_idx_d_after(bound, d, bound_s, d_s, big_k),
+    decreases big_k
+{
+    if k == big_k {
+    } else if k == 0 {
+        infer_proj_idx_bound_after_ge(bound, d, bound_s, d_s, big_k);
+    } else {
+        let bound2 = infer_proj_idx_step_next_bound(bound, d, bound_s);
+        let d2 = infer_proj_idx_step_next_d(d, d_s);
+        infer_proj_idx_mono(bound2, d2, bound_s, d_s, (k - 1) as nat, (big_k - 1) as nat);
+    }
+}
+
 /// Real-arena counterpart to the LAST THIRD of `tc.rs::TypeChecker::
 /// infer_proj` (`tc.rs:484-500`, the `idx` loop): peels `remaining` more
 /// `Pi` layers off `ctor_ty` via repeated `whnf` (no-unfolding, one
@@ -565,7 +701,14 @@ pub fn verified_infer_proj_idx_loop<'t, 'p: 't>(
         depth(to_model(structure)) < d_s,
         infer_proj_idx_fixpoint_ok(bound, d, bound_s, d_s, remaining as nat),
         idx_so_far as nat + remaining as nat <= 60000,
-    ensures true
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), infer_proj_idx_bound_after(bound, d, bound_s, d_s, remaining as nat))
+            &&& depth(to_model(r)) <= infer_proj_idx_d_after(bound, d, bound_s, d_s, remaining as nat)
+        },
+        None => true,
+    }
     decreases remaining
 {
     if remaining == 0 {
@@ -623,6 +766,148 @@ pub fn verified_infer_proj_idx_loop<'t, 'p: 't>(
         assert(max_var_below(to_model(pi_body), next_bound));
         assert(depth(to_model(pi_body)) <= next_d);
         verified_infer_proj_idx_loop(ctx, pi_body, inductive_name, structure, fuel, next_bound, next_d, bound_s, d_s, idx_so_far + 1, remaining - 1)
+    }
+}
+
+/// Real-arena counterpart to the FULL `tc.rs::TypeChecker::infer_proj`
+/// (`tc.rs:465-510`), composing all three already-bridged pieces (`ctor_
+/// ty`, the `num_params` loop, the `idx` loop) plus one final standalone
+/// `whnf` + expect-`Pi` step (`tc.rs:501-510`) that extracts the
+/// projected field's TYPE (`binder_type`, not `body` -- the one place
+/// this differs from every round inside the `idx` loop). The `structure_
+/// ty_may_be_prop`/`is_prop` panic-avoidance check is skipped throughout
+/// (see `verified_infer_proj_idx_loop`'s own doc comment).
+///
+/// `cap` is an EXPLICIT parameter equal to `env_global_cap(*env)` --
+/// `env_global_cap` is `pub uninterp spec fn` (no body at all), so unlike
+/// an `open spec fn` it can never be "evaluated" even in ghost code; it
+/// only ever appears symbolically inside spec expressions. Every OTHER
+/// composing function in this arc that needs its value already follows
+/// this same convention (`verified_infer_pi_single`'s `d`, etc.):
+/// take an explicit `nat` parameter tied to it by an EQUALITY/inequality
+/// requires, never try to compute it.
+///
+/// `max_params` (a caller-supplied CEILING on `num_params`, checked at
+/// runtime) is this function's own version of the "caller can't know the
+/// exact round count in advance" pattern `verified_infer_proj_params_
+/// loop` already established -- bridged to the REAL, smaller `num_params`
+/// via the new `infer_proj_params_mono` lemma. `idx` itself needs no such
+/// ceiling -- it's a real parameter to `infer_proj` from ITS OWN caller,
+/// so it's already known before this function is ever called.
+///
+/// `bound1`/`d1` and `bound2`/`d2` are the caller's own chosen "enough
+/// headroom after the params loop" / "enough headroom after the idx
+/// loop" values -- same `verified_def_eq_with_delta`-style pattern as
+/// `bound3`/`d3` there: a NAMED recursive spec fn's numeric result can't
+/// flow into a subsequent exec call as a computed value (same Verus
+/// restriction that forced `infer_proj_params_step_next_bound` to be
+/// inlined rather than called, one level up), so the caller picks
+/// whatever `nat` values they like and PROVES (a pure spec-level
+/// inequality, no exec computation needed) that the closed-form formulas
+/// fit underneath them.
+pub fn verified_infer_proj<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    idx: usize,
+    structure: ExprPtr<'t>,
+    structure_ty: ExprPtr<'t>,
+    fuel: u32,
+    cap: nat,
+    max_params: u16,
+    bound_s: nat,
+    d_s: nat,
+    bound1: nat,
+    d1: nat,
+    bound2: nat,
+    d2: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        cap == env_global_cap(*env),
+        nlbv(to_model(structure_ty)) <= 0,
+        max_var_below(to_model(structure_ty), cap),
+        depth(to_model(structure_ty)) <= cap,
+        nlbv(to_model(structure)) <= 0,
+        max_var_below(to_model(structure), bound_s),
+        depth(to_model(structure)) < d_s,
+        idx as nat <= 60000,
+        infer_proj_params_fixpoint_ok(cap, cap, cap, max_params as nat),
+        infer_proj_params_bound_after(cap, cap, cap, max_params as nat) <= bound1,
+        infer_proj_params_d_after(cap, cap, cap, max_params as nat) <= d1,
+        infer_proj_idx_fixpoint_ok(bound1, d1, bound_s, d_s, (idx as nat) + 1),
+        infer_proj_idx_bound_after(bound1, d1, bound_s, d_s, idx as nat) <= bound2,
+        infer_proj_idx_d_after(bound1, d1, bound_s, d_s, idx as nat) <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures true
+{
+    let ctor_ty0 = match verified_infer_proj_ctor_ty(ctx, env, structure_ty, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    let (f, struct_ty_name, struct_ty_levels, struct_ty_args) = match verified_unfold_const_apps(ctx, structure_ty, fuel) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        let ghost args_model = Seq::new(struct_ty_args@.len(), |i: int| to_model(struct_ty_args@[i]));
+        assert(to_model(structure_ty) == spine_app(to_model(f), args_model));
+        spine_app_decompose(to_model(f), args_model, cap);
+        assert forall |i: int| 0 <= i < struct_ty_args@.len() implies
+            nlbv(#[trigger] to_model(struct_ty_args@[i])) <= 0
+            && max_var_below(to_model(struct_ty_args@[i]), cap)
+            && depth(to_model(struct_ty_args@[i])) <= cap
+        by {
+            assert(args_model[i] == to_model(struct_ty_args@[i]));
+        }
+    }
+    let ctor_name = match get_structure_first_ctor(env, &struct_ty_name, true) {
+        Some(v) => v,
+        None => return None,
+    };
+    let num_params = match get_constructor_num_params(env, &ctor_name) {
+        Some(v) => v,
+        None => return None,
+    };
+    let inductive_name = match get_constructor_inductive_name(env, &ctor_name) {
+        Some(v) => v,
+        None => return None,
+    };
+    if num_params > max_params {
+        return None;
+    }
+    if num_params as usize > struct_ty_args.len() {
+        return None;
+    }
+    proof {
+        infer_proj_params_mono(cap, cap, cap, num_params as nat, max_params as nat);
+    }
+    let ctor_ty1 = match verified_infer_proj_params_loop(
+        ctx, ctor_ty0, struct_ty_args.as_slice(), fuel, cap, cap, cap, num_params,
+    ) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        max_var_below_mono(to_model(ctor_ty1), infer_proj_params_bound_after(cap, cap, cap, num_params as nat), bound1);
+        infer_proj_idx_mono(bound1, d1, bound_s, d_s, idx as nat, (idx as nat) + 1);
+    }
+    let ctor_ty2 = match verified_infer_proj_idx_loop(
+        ctx, ctor_ty1, inductive_name, structure, fuel, bound1, d1, bound_s, d_s, 0, idx as u16,
+    ) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        max_var_below_mono(to_model(ctor_ty2), infer_proj_idx_bound_after(bound1, d1, bound_s, d_s, idx as nat), bound2);
+    }
+    let reduced = match verified_whnf_no_unfolding_step(ctx, ctor_ty2, fuel, bound2, d2) {
+        Some(v) => v,
+        None => return None,
+    };
+    let reduced_el = ctx.read_expr(reduced);
+    match expr_as_pi(&reduced_el) {
+        Some((_, _, binder_type, _)) => Some(binder_type),
+        None => None,
     }
 }
 
