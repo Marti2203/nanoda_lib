@@ -485,6 +485,147 @@ pub fn verified_infer_proj_params_loop<'t, 'p: 't>(
     verified_infer_proj_params_loop(ctx, instd, struct_ty_args, fuel, next_bound, next_d, cap, remaining - 1)
 }
 
+/// `infer_proj_params_step_next_bound`/`_fixpoint_ok`'s siblings for the
+/// LAST third of `infer_proj` (`tc.rs:484-500`, the `idx` loop, this
+/// arc's SEVENTH `_fixpoint_ok` instance): the constant argument bounding
+/// EVERY round here is `structure`'s own bound (`bound_s`/`d_s`), not
+/// `cap` -- `mk_proj(inductive_name, i, structure)`'s result is `Proj(
+/// structure)`, whose `nlbv`/`max_var_below` pass through unchanged from
+/// `structure` and whose `depth` is `structure`'s depth plus one (the
+/// `Proj` wrapper itself) -- accounted for by requiring `depth(structure)
+/// < d_s` (not `<=`) rather than a `+ 1` in the arithmetic itself, since
+/// a bare integer literal in a `nat`-typed expression is only legal in
+/// ghost/proof/spec positions, not a plain exec `let`.
+pub open spec fn infer_proj_idx_step_next_bound(bound: nat, d: nat, bound_s: nat) -> nat {
+    if whnf_step_next_bound(bound, d) >= bound_s { whnf_step_next_bound(bound, d) } else { bound_s }
+}
+
+/// `d_s` is defined to already carry the `Proj` wrapper's own `+ 1`
+/// depth headroom (the function's own `requires` asks for `depth(
+/// structure) < d_s`, not `<=`) -- this keeps every `nat` arithmetic
+/// expression built purely from existing `nat` VALUES (no bare integer
+/// literal), sidestepping a Verus restriction: a bare integer literal in
+/// a `nat`-typed expression is only allowed in ghost/proof/spec
+/// positions, not in a plain `let` inside exec code.
+pub open spec fn infer_proj_idx_step_next_d(d: nat, d_s: nat) -> nat {
+    whnf_step_next_d(d) + d_s
+}
+
+pub open spec fn infer_proj_idx_fixpoint_ok(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat) -> bool
+    decreases k
+{
+    d <= 60000
+        && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && whnf_step_next_d(d) <= 60000
+        && (k == 0 || infer_proj_idx_fixpoint_ok(infer_proj_idx_step_next_bound(bound, d, bound_s), infer_proj_idx_step_next_d(d, d_s), bound_s, d_s, (k - 1) as nat))
+}
+
+/// Real-arena counterpart to the LAST THIRD of `tc.rs::TypeChecker::
+/// infer_proj` (`tc.rs:484-500`, the `idx` loop): peels `remaining` more
+/// `Pi` layers off `ctor_ty` via repeated `whnf` (no-unfolding, one
+/// round), then EITHER `inst`s the body against a freshly-built `Proj`
+/// projection (when the body still has a loose bound variable referring
+/// to this binder, `num_loose_bvars(body) != 0` -- the dependent case) OR
+/// just takes the body as-is unchanged (the non-dependent case) --
+/// mirroring `tc.rs`'s own `if`/`else` exactly. The `structure_ty_may_
+/// be_prop`/`is_prop` panic-avoidance check (`tc.rs:489-491`) is skipped
+/// entirely (same "honest incompleteness, `ensures true` doesn't need
+/// it" convention as the `c_bool_true`/one-round-`whnf` cuts elsewhere in
+/// this arc): this function always takes the dependent branch whenever
+/// `num_loose_bvars(body) != 0`, regardless of what the real panic check
+/// would have decided.
+///
+/// Both branches converge to the SAME `(next_bound, next_d)` pair before
+/// recursing -- the non-dependent branch's actual bound is a proper
+/// SUBSET of what the dependent branch would need (no substitution can
+/// only leave things smaller), so it's simply weakened UP to the uniform
+/// bound via `max_var_below_mono`/plain arithmetic, letting one shared
+/// `_fixpoint_ok` predicate cover both possible per-round outcomes
+/// without needing to know at verification time which branch will
+/// actually run on any given call.
+pub fn verified_infer_proj_idx_loop<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    ctor_ty: ExprPtr<'t>,
+    inductive_name: NamePtr<'t>,
+    structure: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    bound_s: nat,
+    d_s: nat,
+    idx_so_far: usize,
+    remaining: u16,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(ctor_ty)) <= 0,
+        max_var_below(to_model(ctor_ty), bound),
+        depth(to_model(ctor_ty)) <= d,
+        nlbv(to_model(structure)) <= 0,
+        max_var_below(to_model(structure), bound_s),
+        depth(to_model(structure)) < d_s,
+        infer_proj_idx_fixpoint_ok(bound, d, bound_s, d_s, remaining as nat),
+        idx_so_far as nat + remaining as nat <= 60000,
+    ensures true
+    decreases remaining
+{
+    if remaining == 0 {
+        return Some(ctor_ty);
+    }
+    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, bound, d) {
+        Some(v) => v,
+        None => return None,
+    };
+    let el = ctx.read_expr(ctor_ty_whnfd);
+    let (_, _, pi_bt, pi_body) = match expr_as_pi(&el) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(ctor_ty_whnfd) == ExprSpec::Bind(Box::new(to_model(pi_bt)), Box::new(to_model(pi_body))));
+    assert(depth(to_model(pi_body)) < depth(to_model(ctor_ty_whnfd)));
+    assert(nlbv(to_model(pi_body)) <= 1);
+    let next_bound: nat = if bound + d * d * d + d * d >= bound_s { bound + d * d * d + d * d } else { bound_s };
+    let next_d: nat = d * d + d + d + d + d + d_s;
+    assert(next_bound == infer_proj_idx_step_next_bound(bound, d, bound_s));
+    assert(next_d == infer_proj_idx_step_next_d(d, d_s));
+
+    let nlbv_body = ctx.num_loose_bvars(pi_body);
+    if nlbv_body != 0 {
+        let proj_arg = ctx.mk_proj(inductive_name, idx_so_far, structure);
+        assert(to_model(proj_arg) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(nlbv(to_model(proj_arg)) <= 0);
+        assert(depth(to_model(proj_arg)) <= d_s);
+        proof {
+            max_var_below_mono(to_model(structure), bound_s, next_bound);
+            max_var_below_mono(to_model(pi_body), whnf_step_next_bound(bound, d), next_bound);
+        }
+        assert(max_var_below(to_model(proj_arg), next_bound));
+        let arg_slice: &[ExprPtr<'t>] = &[proj_arg];
+        let instd = match verified_inst(ctx, pi_body, arg_slice, 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            assert(Seq::new(arg_slice@.len(), |i: int| to_model(arg_slice@[i])) =~= seq![to_model(proj_arg)]);
+            subst_full_nlbv_bound_n(to_model(pi_body), seq![to_model(proj_arg)], 0);
+            subst_full_max_var_below_bound_n(to_model(pi_body), seq![to_model(proj_arg)], 0, next_bound);
+            subst_full_depth_bound_n(to_model(pi_body), seq![to_model(proj_arg)], 0, d_s);
+            assert(nlbv(to_model(instd)) <= 0);
+            assert(max_var_below(to_model(instd), next_bound));
+            assert(depth(to_model(instd)) <= depth(to_model(pi_body)) + d_s);
+            assert(depth(to_model(instd)) <= next_d);
+        }
+        verified_infer_proj_idx_loop(ctx, instd, inductive_name, structure, fuel, next_bound, next_d, bound_s, d_s, idx_so_far + 1, remaining - 1)
+    } else {
+        assert(nlbv(to_model(pi_body)) == 0);
+        proof {
+            max_var_below_mono(to_model(pi_body), whnf_step_next_bound(bound, d), next_bound);
+        }
+        assert(max_var_below(to_model(pi_body), next_bound));
+        assert(depth(to_model(pi_body)) <= next_d);
+        verified_infer_proj_idx_loop(ctx, pi_body, inductive_name, structure, fuel, next_bound, next_d, bound_s, d_s, idx_so_far + 1, remaining - 1)
+    }
+}
+
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_app`'s single-
 /// argument case, FULLY composed: `verified_infer_app_single` (`tc_
 /// model.rs`) needed `fun_ty` and a depth cap `d` as explicit parameters
