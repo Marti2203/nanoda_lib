@@ -7363,6 +7363,50 @@ pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat
     }
 }
 
+/// `spine_app_decompose`'s DEPTH-ONLY conjuncts, UNCONDITIONALLY (no
+/// `nlbv`/`max_var_below` requires at all) -- `depth` is purely
+/// structural nesting, entirely independent of variable-binding
+/// properties, so this holds regardless of whether `spine_app(base,
+/// args)` is closed. Needed to bound `App`'s substituted arguments'
+/// depth by the ORIGINAL expression's own depth (already available from
+/// `verified_infer`'s own input, `dd`) without also needing `nlbv`/
+/// `max_var_below` facts on that input, which `verified_infer`'s
+/// signature doesn't currently carry.
+pub proof fn spine_app_depth_decompose(base: ExprSpec, args: Seq<ExprSpec>)
+    ensures
+        depth(base) <= depth(spine_app(base, args)),
+        args.len() <= depth(spine_app(base, args)),
+        forall |i: int| 0 <= i < args.len() ==> depth(#[trigger] args[i]) <= depth(spine_app(base, args)),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let prefix = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, prefix)), Box::new(last)));
+        spine_app_depth_decompose(base, prefix);
+        assert(depth(spine_app(base, prefix)) <= depth(spine_app(base, args)));
+        assert(depth(last) <= depth(spine_app(base, args)));
+        assert(prefix.len() <= depth(spine_app(base, prefix)));
+        assert(depth(spine_app(base, args)) >= 1 + depth(spine_app(base, prefix)));
+        assert(args.len() <= depth(spine_app(base, args))) by (nonlinear_arith)
+            requires
+                prefix.len() <= depth(spine_app(base, prefix)),
+                depth(spine_app(base, args)) >= 1 + depth(spine_app(base, prefix)),
+                args.len() == prefix.len() + 1,
+        {}
+        assert forall |i: int| 0 <= i < args.len() implies depth(#[trigger] args[i]) <= depth(spine_app(base, args)) by {
+            if i < args.len() - 1 {
+                assert(args[i] == prefix[i]);
+                assert(depth(prefix[i]) <= depth(spine_app(base, prefix)));
+            } else {
+                assert(i == args.len() - 1);
+                assert(args[i] == last);
+            }
+        }
+    }
+}
+
 /// The REAL telescopic beta-reduction step (`tc.rs`'s `whnf_no_unfolding_aux`
 /// `Lambda` case), computed as a sequence of ORDINARY single-argument beta
 /// steps instead of one combined `subst_full` call: peel one `Bind` off
