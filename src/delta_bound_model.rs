@@ -1462,6 +1462,42 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
 /// infer_proj`: a named recursive spec fn's result can't flow into a
 /// subsequent exec call as a computed value, so the caller states it as
 /// a hypothesis and Verus checks the equality/inequality holds.
+///
+/// **DELIBERATELY NOT wired as a `verified_infer` dispatch branch --
+/// investigated precisely, concluded infeasible without regressing every
+/// OTHER branch, not merely unattempted.** Making `Proj` participate in
+/// `verified_infer`'s own recursion (so a `Proj` nested inside a larger
+/// term gets handled automatically) would need `infer_proj_params_
+/// fixpoint_ok`/`infer_proj_idx_fixpoint_ok`'s own base check --
+/// `bound + d*d*d + d*d + d + 10 <= 0xFFFF_0000` -- to hold for
+/// `verified_infer`'s `d`, and this is a HARD wall: solving the cubic
+/// alone forces `d <= ~1626`, full stop, before any params/idx rounds
+/// are even considered. `verified_infer`'s own signature currently
+/// promises `d <= 60000` uniformly across ALL 8 wired branches (Local/
+/// Sort/Const/App/NatLit/StringLit/Let/Lambda/Pi) -- shrinking that
+/// ceiling to fit `Proj` would regress every one of them, not just add a
+/// new capability, and `d` can't be chosen SMALLER just for the `Proj`
+/// branch: it's tied by `env_global_cap(*env) <= d`, a fact about the
+/// REAL environment being checked (specifically, the depth of the single
+/// DEEPEST declaration anywhere in the whole loaded environment, not
+/// just the term currently being inferred), not a free per-branch
+/// choice. Whether real environments' `env_global_cap` plausibly stays
+/// under `~1626` in practice is genuinely open -- individual hand-
+/// written proof terms are almost always far shallower, but `env_
+/// global_cap` is a worst-case max over the WHOLE environment (Mathlib-
+/// scale, if this is ever pointed at a real corpus), and this repo has
+/// no sample `.export` files to measure against. This is the SAME
+/// category of hard, disclosed restriction as `pstep_diamond`'s `env ==
+/// Map::empty()` choice or `beta_size_headroom`'s exponential-domain cap
+/// (`size(e) <= 9`) -- a real mathematical consequence of the chosen
+/// growth formula (`whnf_step_next_bound`'s `d*d*d` term, shared with
+/// `verified_infer_app_bounded_multi`'s own App-handling and `whnf_
+/// fixpoint_ok`), not a threading/plumbing gap to engineer around.
+/// `verified_infer_proj_full` therefore stays exactly what it is: a
+/// standalone, TOP-LEVEL entry point (structure_ty derived internally,
+/// no external parameter needed for it) for checking a `Proj` expression
+/// directly, callable whenever the caller's own `d`/`cap_s` happen to be
+/// small enough -- not a participant in the general recursive dispatch.
 pub fn verified_infer_proj_full<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
