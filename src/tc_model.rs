@@ -2178,4 +2178,53 @@ pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty
     }
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_eta_expansion_aux`
+/// (`tc.rs:1346-1357`), given the `Pi`-shaped, ALREADY `infer_then_whnf`'d
+/// components of `y`'s type (`binder_name`/`binder_style`/`binder_type`)
+/// as EXPLICIT parameters -- same "hard-to-derive value as an explicit
+/// externally-bounded parameter" pattern `verified_infer_sort_of`/
+/// `verified_is_prop_of_type` (`delta_bound_model.rs`) already established
+/// for this exact reason: composing with a general `infer`+`whnf` call
+/// internally would need a depth bound on the extracted `binder_type`,
+/// which `verified_whnf_step`'s own (`pstep_star`-only) postcondition
+/// doesn't expose.
+///
+/// Checks `x` is `Lambda`-shaped (the real function's own guard -- returns
+/// `Some(false)` immediately if not, matching its literal `false` return,
+/// though this doesn't carry a SOUND "definitely not eta-equal" claim any
+/// more than `verified_def_eq`'s own `Some(false)` does, since the two
+/// `Some(false)` sources aren't distinguished in the result type), then
+/// builds `new_lambda := Lambda(binder_type, App(y, Var(0)))` via the
+/// already-bridged `mk_var`/`mk_app`/`mk_lambda` and defers to `verified_
+/// def_eq(x, new_lambda, fuel)`. Doesn't restate `verified_def_eq`'s own
+/// big disjunction (same "don't re-derive what a composed call already
+/// proved" convention as `verified_proof_irrel_eq_of_types`) -- just
+/// confirms what `new_lambda` actually IS, so the fact isn't vacuous.
+pub fn verified_try_eta_expansion_aux<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(binder_type)) + depth(to_model(y)) + 10 <= 60000,
+    ensures match result {
+        Some(true) => exists |new_lambda: ExprPtr<'t>|
+            to_model(new_lambda) == ExprSpec::Bind(
+                Box::new(to_model(binder_type)),
+                Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0)))),
+            ),
+        _ => true,
+    }
+{
+    let el = ctx.read_expr(x);
+    if expr_as_lambda(&el).is_none() {
+        return Some(false);
+    }
+    let v0 = ctx.mk_var(0);
+    let new_body = ctx.mk_app(y, v0);
+    let new_lambda = ctx.mk_lambda(binder_name, binder_style, binder_type, new_body);
+    assert(depth(to_model(new_body)) == 1 + if depth(to_model(y)) >= depth(to_model(v0)) { depth(to_model(y)) } else { depth(to_model(v0)) });
+    assert(depth(to_model(v0)) == 0);
+    assert(depth(to_model(new_lambda)) == 1 + if depth(to_model(binder_type)) >= depth(to_model(new_body)) { depth(to_model(binder_type)) } else { depth(to_model(new_body)) });
+    assert(depth(to_model(new_lambda)) <= 60000);
+    verified_def_eq(ctx, x, new_lambda, fuel)
+}
+
 }
