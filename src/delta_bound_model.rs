@@ -44,7 +44,7 @@ use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
-    spine_app_depth_decompose, spine_app_nlbv_decompose,
+    spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
@@ -309,11 +309,11 @@ pub fn verified_infer_const_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// `whnf_proj_fixpoint_ok`). Flagged for the next pass, not attempted
 /// here -- this piece stands alone as a real, useful, honestly-scoped
 /// prefix.
-pub fn verified_infer_proj_ctor_ty<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure_ty: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_proj_ctor_ty<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure_ty: ExprPtr<'t>, fuel: u32, cap_s: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(structure_ty)) <= 0,
-        max_var_below(to_model(structure_ty), env_global_cap(*env)),
-        depth(to_model(structure_ty)) <= env_global_cap(*env),
+        max_var_below(to_model(structure_ty), cap_s),
+        depth(to_model(structure_ty)) <= cap_s,
     ensures match result {
         Some(r) => {
             &&& nlbv(to_model(r)) <= 0
@@ -821,7 +821,8 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
     structure: ExprPtr<'t>,
     structure_ty: ExprPtr<'t>,
     fuel: u32,
-    cap: nat,
+    cap_c: nat,
+    cap_s: nat,
     max_params: u16,
     bound_s: nat,
     d_s: nat,
@@ -831,17 +832,17 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
     d2: nat,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
-        cap == env_global_cap(*env),
+        env_global_cap(*env) <= cap_c,
         nlbv(to_model(structure_ty)) <= 0,
-        max_var_below(to_model(structure_ty), cap),
-        depth(to_model(structure_ty)) <= cap,
+        max_var_below(to_model(structure_ty), cap_s),
+        depth(to_model(structure_ty)) <= cap_s,
         nlbv(to_model(structure)) <= 0,
         max_var_below(to_model(structure), bound_s),
         depth(to_model(structure)) < d_s,
         idx as nat <= 60000,
-        infer_proj_params_fixpoint_ok(cap, cap, cap, max_params as nat),
-        infer_proj_params_bound_after(cap, cap, cap, max_params as nat) <= bound1,
-        infer_proj_params_d_after(cap, cap, cap, max_params as nat) <= d1,
+        infer_proj_params_fixpoint_ok(cap_c, cap_c, cap_s, max_params as nat),
+        infer_proj_params_bound_after(cap_c, cap_c, cap_s, max_params as nat) <= bound1,
+        infer_proj_params_d_after(cap_c, cap_c, cap_s, max_params as nat) <= d1,
         infer_proj_idx_fixpoint_ok(bound1, d1, bound_s, d_s, (idx as nat) + 1),
         infer_proj_idx_bound_after(bound1, d1, bound_s, d_s, idx as nat) <= bound2,
         infer_proj_idx_d_after(bound1, d1, bound_s, d_s, idx as nat) <= d2,
@@ -849,10 +850,16 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
         bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures true
 {
-    let ctor_ty0 = match verified_infer_proj_ctor_ty(ctx, env, structure_ty, fuel) {
+    let ctor_ty0 = match verified_infer_proj_ctor_ty(ctx, env, structure_ty, fuel, cap_s) {
         Some(v) => v,
         None => return None,
     };
+    assert(depth(to_model(ctor_ty0)) <= env_global_cap(*env));
+    assert(max_var_below(to_model(ctor_ty0), env_global_cap(*env)));
+    proof {
+        max_var_below_mono(to_model(ctor_ty0), env_global_cap(*env), cap_c);
+    }
+    assert(depth(to_model(ctor_ty0)) <= cap_c);
     let (f, struct_ty_name, struct_ty_levels, struct_ty_args) = match verified_unfold_const_apps(ctx, structure_ty, fuel) {
         Some(v) => v,
         None => return None,
@@ -860,11 +867,11 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
     proof {
         let ghost args_model = Seq::new(struct_ty_args@.len(), |i: int| to_model(struct_ty_args@[i]));
         assert(to_model(structure_ty) == spine_app(to_model(f), args_model));
-        spine_app_decompose(to_model(f), args_model, cap);
+        spine_app_decompose(to_model(f), args_model, cap_s);
         assert forall |i: int| 0 <= i < struct_ty_args@.len() implies
             nlbv(#[trigger] to_model(struct_ty_args@[i])) <= 0
-            && max_var_below(to_model(struct_ty_args@[i]), cap)
-            && depth(to_model(struct_ty_args@[i])) <= cap
+            && max_var_below(to_model(struct_ty_args@[i]), cap_s)
+            && depth(to_model(struct_ty_args@[i])) <= cap_s
         by {
             assert(args_model[i] == to_model(struct_ty_args@[i]));
         }
@@ -888,16 +895,16 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
         return None;
     }
     proof {
-        infer_proj_params_mono(cap, cap, cap, num_params as nat, max_params as nat);
+        infer_proj_params_mono(cap_c, cap_c, cap_s, num_params as nat, max_params as nat);
     }
     let ctor_ty1 = match verified_infer_proj_params_loop(
-        ctx, ctor_ty0, struct_ty_args.as_slice(), fuel, cap, cap, cap, num_params,
+        ctx, ctor_ty0, struct_ty_args.as_slice(), fuel, cap_c, cap_c, cap_s, num_params,
     ) {
         Some(v) => v,
         None => return None,
     };
     proof {
-        max_var_below_mono(to_model(ctor_ty1), infer_proj_params_bound_after(cap, cap, cap, num_params as nat), bound1);
+        max_var_below_mono(to_model(ctor_ty1), infer_proj_params_bound_after(cap_c, cap_c, cap_s, num_params as nat), bound1);
         infer_proj_idx_mono(bound1, d1, bound_s, d_s, idx as nat, (idx as nat) + 1);
     }
     let ctor_ty2 = match verified_infer_proj_idx_loop(
@@ -1432,6 +1439,76 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     } else {
         None
     }
+}
+
+/// The payoff of this whole well-formedness detour: `verified_infer_proj`
+/// (above) took `structure_ty` as an EXTERNAL parameter specifically
+/// because `infer`'s own result used to have no derivable depth/nlbv
+/// bound -- exactly the gap `verified_infer`'s own `infer_result_depth_
+/// bound` ensures conjunct and dispatcher-wide `nlbv(to_model(r)) <= 0`
+/// closedness guarantee (both just proven) close. This wrapper calls
+/// `verified_infer` on `structure` directly, derives `max_var_below`
+/// from the closedness fact via `nlbv_bound_implies_max_var_below` (`k =
+/// 0`, since `structure_ty` is fully closed) widened to whatever cap
+/// `verified_infer_proj` needs via `max_var_below_mono`, and feeds the
+/// result straight into `verified_infer_proj` unchanged -- no new
+/// reasoning about the params/idx telescoping loops themselves, just
+/// removing the external parameter they used to require.
+///
+/// `cap_s` is `infer_result_depth_bound(dd_s, d, fuel as nat)` -- the
+/// same closed-form bound `verified_infer`'s own ensures already
+/// produces, restated here as an explicit `nat` parameter for the same
+/// reason `bound1`/`d1`/`bound2`/`d2` already are throughout `verified_
+/// infer_proj`: a named recursive spec fn's result can't flow into a
+/// subsequent exec call as a computed value, so the caller states it as
+/// a hypothesis and Verus checks the equality/inequality holds.
+pub fn verified_infer_proj_full<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    idx: usize,
+    structure: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+    dd_s: nat,
+    cap_s: nat,
+    max_params: u16,
+    bound_s: nat,
+    d_s: nat,
+    bound1: nat,
+    d1: nat,
+    bound2: nat,
+    d2: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(structure)) <= dd_s,
+        nlbv(to_model(structure)) <= 0,
+        infer_depth_fixpoint_ok(dd_s, fuel as nat),
+        infer_result_depth_bound(dd_s, d, fuel as nat) <= cap_s,
+        max_var_below(to_model(structure), bound_s),
+        depth(to_model(structure)) < d_s,
+        idx as nat <= 60000,
+        infer_proj_params_fixpoint_ok(d, d, cap_s, max_params as nat),
+        infer_proj_params_bound_after(d, d, cap_s, max_params as nat) <= bound1,
+        infer_proj_params_d_after(d, d, cap_s, max_params as nat) <= d1,
+        infer_proj_idx_fixpoint_ok(bound1, d1, bound_s, d_s, (idx as nat) + 1),
+        infer_proj_idx_bound_after(bound1, d1, bound_s, d_s, idx as nat) <= bound2,
+        infer_proj_idx_d_after(bound1, d1, bound_s, d_s, idx as nat) <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures true
+{
+    let structure_ty = match verified_infer(ctx, env, structure, fuel, d, dd_s) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        nlbv_bound_implies_max_var_below(to_model(structure_ty), 0);
+        max_var_below_mono(to_model(structure_ty), depth(to_model(structure_ty)), cap_s);
+    }
+    verified_infer_proj(ctx, env, idx, structure, structure_ty, fuel, d, cap_s, max_params, bound_s, d_s, bound1, d1, bound2, d2)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_sort_of`
