@@ -45,9 +45,9 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, verified_whnf_no_unfolding_step, verified_inst};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of};
+use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
@@ -371,6 +371,8 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
             to_model(e) == spine_app(to_model(fun), args_model)
             && is_const_shape(fun)
             && to_model(r) == subst_full(body, args_model, 0))
+    ||| (is_nat_lit_shape(e) && is_const_shape(r) && const_id(r) == nat_type_id())
+    ||| (is_string_lit_shape(e) && is_const_shape(r) && const_id(r) == string_type_id())
     ||| (fuel > 0 && exists |ty: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, substituted: ExprPtr<'t>|
             to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body)))
             && to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0)
@@ -421,6 +423,12 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     }
     if expr_as_app(&el).is_some() {
         return verified_infer_app_bounded_multi(ctx, env, e, fuel, d);
+    }
+    if expr_as_nat_lit(e, &el).is_some() {
+        return ctx.nat_type();
+    }
+    if expr_as_string_lit(e, &el) {
+        return ctx.string_type();
     }
     if fuel == 0 {
         return None;

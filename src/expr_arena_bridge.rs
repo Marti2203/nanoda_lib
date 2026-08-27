@@ -147,6 +147,16 @@ pub(crate) fn expr_as_nat_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<cra
     match e { Expr::NatLit { ptr, .. } => Some(*ptr), _ => None }
 }
 
+/// `StringLit`'s shape only -- unlike `NatLit`'s `bignum_ptr_value`, a
+/// `StringLit`'s actual string content is irrelevant to anything this arc
+/// models (`infer`'s type-computation purposes just need "is this shape a
+/// `StringLit`," not what string it denotes), so there is no payload
+/// accessor, only the shape flag.
+#[allow(dead_code)]
+pub(crate) fn expr_as_string_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
+    matches!(e, Expr::StringLit { .. })
+}
+
 #[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
     a == b
@@ -380,6 +390,32 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
         None => true,
     };
 
+/// `expr.rs::nat_type`/`string_type`'s result identity: `Const(nat_type_id,
+/// [])`/`Const(string_type_id, [])` -- same "uninterpreted name id"
+/// convention as `bool_true_id`/`nat_zero_id` above, standing in for
+/// `export_file.name_cache.nat`/`string`'s real per-export-file `NamePtr`s.
+/// `None` covers the real function's only failure mode (the name isn't
+/// present in this export file's cache). Deliberately does NOT model the
+/// real callers' `assert!(config.nat_extension)`/`assert!(config.string_
+/// extension)` guards -- a real, correctly-loaded kernel environment has
+/// these set consistently with which literal shapes it actually contains,
+/// same "don't model environment-level config" convention as everywhere
+/// else in this arc.
+pub uninterp spec fn nat_type_id() -> u64;
+pub uninterp spec fn string_type_id() -> u64;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_type] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == nat_type_id(),
+        None => true,
+    };
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::string_type] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == string_type_id(),
+        None => true,
+    };
+
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
 /// shaped pointer (bound-variable-inert, collapses to `ExprSpec::Closed`
@@ -407,6 +443,21 @@ pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) 
         Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
         None => !is_nat_lit_shape(ptr),
     };
+
+/// `StringLit`'s shape flag -- same "bound-variable-inert, collapses to
+/// `ExprSpec::Closed`" role `is_nat_lit_shape` plays for `NatLit`, minus a
+/// value accessor (see `expr_as_string_lit`'s own doc comment).
+pub uninterp spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+
+pub assume_specification<'t> [expr_as_string_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
+    ensures result == is_string_lit_shape(ptr);
+
+#[verifier::external_body]
+pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
+    requires is_string_lit_shape(ptr)
+    ensures to_model(ptr) == ExprSpec::Closed
+{
+}
 
 pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
     ensures match result {
