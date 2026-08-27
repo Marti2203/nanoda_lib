@@ -307,6 +307,19 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// yet-cheaply-reduced result, matching the "sound but incomplete"
 /// convention `verified_whnf_step` already established for the analogous
 /// situation.
+/// The `Some(r)` ensures ALSO carries forward `nlbv`/`max_var_below`/
+/// `depth` bounds on `r` (not just `pstep_star`), needed so a caller can
+/// chain MULTIPLE `delta` rounds back-to-back (`verified_lazy_delta_
+/// round`'s own `Continue` case, and eventually a genuine multi-round
+/// `lazy_delta_step` loop) -- exactly the same role `verified_whnf_no_
+/// unfolding_step`'s own output bounds already play for `verified_whnf_
+/// no_unfolding_fixpoint`'s chaining. The advertised bound is `verified_
+/// whnf_no_unfolding_step`'s own OUTPUT formula at `(bound2, d2)`
+/// (`bound2 + d2^3 + d2^2` / `d2^2 + 4*d2`) for BOTH branches -- even the
+/// `None`-from-whnf-step fallback (which returns `unfolded` itself,
+/// already satisfying a TIGHTER bound) gets weakened up to match via
+/// `max_var_below_mono`, so callers get ONE uniform formula regardless of
+/// which internal branch fired.
 #[verifier::spinoff_prover]
 pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, bound2: nat, d2: nat) -> (result: Option<ExprPtr<'t>>)
     requires
@@ -318,7 +331,12 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         d2 <= 60000,
         bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => pstep_star(to_model_of_env(*env), to_model(e), to_model(r)),
+        Some(r) => {
+            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(r)) <= d2 * d2 + d2 + d2 + d2 + d2
+        },
         None => true,
     }
 {
@@ -339,7 +357,14 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
                     }
                     Some(r)
                 }
-                None => Some(unfolded),
+                None => {
+                    proof {
+                        max_var_below_mono(to_model(unfolded), bound2, bound2 + d2 * d2 * d2 + d2 * d2);
+                        assert(depth(to_model(unfolded)) <= d2);
+                        assert(d2 <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith) {}
+                    }
+                    Some(unfolded)
+                }
             }
         }
         None => None,
