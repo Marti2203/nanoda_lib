@@ -2659,6 +2659,76 @@ pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     Some(result)
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::expand_eta_struct_aux`
+/// (`tc.rs:247-271`): given a structure-typed value `e` of type `e_type`,
+/// build the eta-expanded constructor application `Ctor.mk params...
+/// (e.0) (e.1) ... (e.n)` -- the params come straight from `e_type`'s own
+/// unfolded argument spine, the fields are freshly-built `Proj`s of `e`
+/// itself. Purely structural (no `infer`/`whnf`/`def_eq` needed at all,
+/// unlike `iota_try_eta_struct`'s OUTER dispatch, which decides WHETHER
+/// to call this) -- same "extract only what's needed, compose already-
+/// bridged pieces" shape as `verified_mk_nullary_ctor` right above, using
+/// the exact `unfold_const_apps`/`get_structure_first_ctor`/`get_
+/// constructor_num_params`/`_num_fields`/`mk_const`/`mk_app`/`mk_proj`
+/// toolkit `verified_def_eq_unit`/`verified_try_eta_struct_aux` already
+/// established for this whole structure-eta sub-arc.
+///
+/// One divergence from the real function, same "no unmodeled panic"
+/// discipline as `verified_mk_nullary_ctor`: the real `args[i]` loop
+/// (`0..num_params`) would panic if `num_params > args.len()` (an
+/// invariant the real code never checks explicitly, relying on the
+/// export file's own well-formedness) -- bridged here as an honest
+/// `None` guard instead.
+pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e_type: ExprPtr<'t>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(_) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+            to_model(e_type) == spine_app(to_model(fun), args_model)
+            && is_const_shape(fun),
+        None => true,
+    }
+{
+    let (_f, c_name, c_levels, args) = match verified_unfold_const_apps(ctx, e_type, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ctor_name0 = match get_structure_first_ctor(env, &c_name, false) {
+        Some(c) => c,
+        None => return None,
+    };
+    let num_params = match get_constructor_num_params(env, &ctor_name0) {
+        Some(n) => n,
+        None => return None,
+    };
+    let num_fields = match get_constructor_num_fields(env, &ctor_name0) {
+        Some(n) => n,
+        None => return None,
+    };
+    if num_params as usize > args.len() {
+        return None;
+    }
+    let mut out = ctx.mk_const(ctor_name0, c_levels);
+    let mut i: usize = 0;
+    while i < num_params as usize
+        invariant
+            i <= num_params as usize,
+            num_params as usize <= args.len(),
+        decreases num_params as usize - i
+    {
+        out = ctx.mk_app(out, args[i]);
+        i += 1;
+    }
+    let mut j: usize = 0;
+    while j < num_fields as usize
+        invariant j <= num_fields as usize,
+        decreases num_fields as usize - j
+    {
+        let proj = ctx.mk_proj(c_name, j, e);
+        out = ctx.mk_app(out, proj);
+        j += 1;
+    }
+    Some(out)
+}
+
 /// The first genuinely faithful slice of `tc.rs::TypeChecker::def_eq`'s
 /// real top-level control flow (`tc.rs:957-998`): reflexivity, then
 /// `lazy_delta_step` (via `verified_lazy_delta_loop`), THEN `def_eq_const`/
