@@ -1177,4 +1177,49 @@ pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
     Some(true)
 }
 
+/// Real-arena counterpart to `tc.rs::TypeChecker::try_eta_struct`
+/// (`tc.rs:308-310`): `try_eta_struct_aux(x, y) || try_eta_struct_aux(y,
+/// x)` -- tries both directions, same shape as `verified_try_eta_
+/// expansion`'s own composition of `verified_try_eta_expansion_aux`.
+/// Since `verified_try_eta_struct_aux`'s roles are asymmetric (the SECOND
+/// positional argument is the one required to be the applied constructor,
+/// via `verified_unfold_const_apps`), the reversed attempt swaps every
+/// `x`/`y`-keyed argument, including the type parameters.
+pub fn verified_try_eta_struct<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    x_type: ExprPtr<'t>,
+    y_type: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), d),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), d),
+        depth(to_model(y)) <= d,
+        depth(to_model(x_type)) <= 60000,
+        depth(to_model(y_type)) <= 60000,
+        d + 1 <= 60000,
+    ensures match result {
+        Some(true) => {
+            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+                    to_model(y) == spine_app(to_model(fun), args_model) && is_const_shape(fun))
+            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+                    to_model(x) == spine_app(to_model(fun), args_model) && is_const_shape(fun))
+        },
+        _ => true,
+    }
+{
+    match verified_try_eta_struct_aux(ctx, env, x, y, x_type, y_type, fuel, d) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    verified_try_eta_struct_aux(ctx, env, y, x, y_type, x_type, fuel, d)
+}
+
 }
