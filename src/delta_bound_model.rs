@@ -48,12 +48,15 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::whnf_fixpoint_ok;
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
+use crate::level_arena_bridge::verified_leq;
+#[cfg(verus_only)]
+use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
@@ -491,6 +494,102 @@ pub fn verified_infer_sort_of<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::is_prop`/`may_be_prop`'s
+/// shared shape (`tc.rs:1311-1317`), given the ALREADY-INFERRED type `ty`
+/// directly (same "explicit externally-bounded parameter" reason `verified_
+/// infer_sort_of` itself takes `ty` rather than computing it via `verified_
+/// infer`): `infer_sort_of(ty)` then `TcCtx::is_zero` (`level.rs:264`,
+/// itself `leq(level, zero)` -- not separately bridged since it's a two-
+/// line composition of already-bridged `zero`/`verified_leq`).
+///
+/// `verified_leq`'s own soundness is ONE-DIRECTIONAL (`result ==> real
+/// leq`, a sound but possibly incomplete decision procedure) -- so only
+/// `Some(true)` carries a real claim here, matching `verified_leq`'s own
+/// convention exactly; `Some(false)`/`None` both honestly mean "couldn't
+/// confirm," not "confirmed not a `Prop`."
+pub fn verified_is_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ty)) <= 0,
+        max_var_below(to_model(ty), bound),
+        depth(to_model(ty)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(true) => exists |r: ExprPtr<'t>, l: LevelPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && to_model(r) == ExprSpec::Sort(level_to_model(l))
+            && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(l), rho) <= 0),
+        _ => true,
+    }
+{
+    match verified_infer_sort_of(ctx, env, ty, fuel, bound, d, n) {
+        Some(level) => {
+            let zero = ctx.zero();
+            if verified_leq(ctx, level, zero, fuel) {
+                assert forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(level), rho) <= interp(level_to_model(zero), rho) implies
+                    interp(level_to_model(level), rho) <= 0
+                by {
+                    assert(interp(level_to_model(zero), rho) == 0);
+                }
+                Some(true)
+            } else {
+                Some(false)
+            }
+        }
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::proof_irrel_eq`
+/// (`tc.rs:1332-1340`), given `x`/`y`'s ALREADY-INFERRED types `l_type`/
+/// `r_type` directly (same reason as `verified_infer_sort_of`/`verified_
+/// is_prop_of_type`'s own explicit-parameter choice -- composing with
+/// `verified_infer` on `x`/`y` themselves would need a depth bound on
+/// EVERY one of its branches, including `Local`, not available in
+/// general). Skips `is_proof`'s own `infer` call (`tc.rs:1327-1330`
+/// infers `x`/`y`'s types) since that's exactly what the caller supplies
+/// as `l_type`/`r_type` here.
+///
+/// Only `Some(true)` carries a real claim (both sides verifiably `Prop`),
+/// matching `verified_is_prop_of_type`'s own convention -- does NOT
+/// restate `verified_def_eq`'s own fact about `l_type`/`r_type` (already
+/// fully covered by calling it directly), same "don't re-derive what a
+/// composed call already proved" convention as elsewhere in this arc.
+pub fn verified_proof_irrel_eq_of_types<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, l_type: ExprPtr<'t>, r_type: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(l_type)) <= 0,
+        max_var_below(to_model(l_type), bound),
+        depth(to_model(l_type)) <= d,
+        nlbv(to_model(r_type)) <= 0,
+        max_var_below(to_model(r_type), bound),
+        depth(to_model(r_type)) <= d,
+        depth(to_model(l_type)) <= 60000,
+        depth(to_model(r_type)) <= 60000,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(true) => {
+            &&& exists |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
+                    pstep_star(to_model_of_env(*env), to_model(l_type), to_model(lr))
+                    && to_model(lr) == ExprSpec::Sort(level_to_model(ll))
+                    && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0)
+            &&& exists |rr: ExprPtr<'t>, rl: LevelPtr<'t>|
+                    pstep_star(to_model_of_env(*env), to_model(r_type), to_model(rr))
+                    && to_model(rr) == ExprSpec::Sort(level_to_model(rl))
+                    && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0)
+        },
+        _ => true,
+    }
+{
+    match verified_is_prop_of_type(ctx, env, l_type, fuel, bound, d, n) {
+        Some(true) => {}
+        _ => return Some(false),
+    }
+    match verified_is_prop_of_type(ctx, env, r_type, fuel, bound, d, n) {
+        Some(true) => {}
+        _ => return Some(false),
+    }
+    verified_def_eq(ctx, l_type, r_type, fuel)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::delta`
