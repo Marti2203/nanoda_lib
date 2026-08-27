@@ -333,13 +333,18 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
         idx <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => pstep_star_proj(
-            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-            to_model_of_ctor_num_params(*env),
-            to_model(structure),
-            idx as nat,
-            to_model(r),
-        ),
+        Some(r) => {
+            &&& pstep_star_proj(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(structure),
+                    idx as nat,
+                    to_model(r),
+                )
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound + d * d * d + d * d)
+            &&& depth(to_model(r)) <= d * d + 4 * d
+        },
         None => true,
     }
 {
@@ -382,6 +387,13 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                     to_model(r),
                 )) by {
                     assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
+                }
+                proof {
+                    spine_app_decompose(to_model(fun), args_model, bound + d * d * d + d * d);
+                    assert(nlbv(args_model[i as int]) <= 0);
+                    assert(max_var_below(args_model[i as int], bound + d * d * d + d * d));
+                    assert(depth(args_model[i as int]) <= depth(to_model(whnfd)));
+                    assert(depth(to_model(r)) <= d * d + 4 * d);
                 }
                 Some(r)
             } else {
