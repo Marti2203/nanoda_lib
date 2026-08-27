@@ -43,7 +43,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_peel_pis};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
@@ -83,7 +83,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_reduce, spine_reduce_eq_subst_full, spine_bind_nlbv, spine_bind_depth};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -2125,6 +2125,64 @@ pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: Ex
         assert(Seq::new(arg_slice@.len(), |i: int| to_model(arg_slice@[i])) =~= seq![to_model(arg)]);
     }
     result
+}
+
+/// Telescopes `verified_infer_app_single` from ONE argument to arbitrarily
+/// many, matching `infer_app`'s own peeling loop (`tc.rs:560-597`) for the
+/// "happy path" where `fun_ty`'s Pi-telescope has AT LEAST as many layers
+/// as there are args -- i.e. `read_expr(fun)` stays literally `Pi`-shaped
+/// at every step, never falling into the `ensure_pi`/WHNF-forcing
+/// fallback branch (`tc.rs:584-595`, itself not modeled: it would need a
+/// full `infer`+`whnf` composition this arc's `infer` dispatcher doesn't
+/// cover yet). Also skips `Check`-mode's `assert_def_eq` well-formedness
+/// checking of each argument against its binder type (`InferOnly`-only,
+/// consistent with this whole arc's convention). `None` conflates "ran
+/// out of fuel" with "would need the `ensure_pi` fallback" -- both honest
+/// incompleteness, not unsoundness.
+///
+/// Reuses `verified_peel_pis` (`expr_arena_bridge.rs`'s real-arena Pi
+/// analogue of `verified_peel_lambdas`) plus `spine_reduce_eq_subst_full`
+/// -- the SAME telescopic-substitution machinery `verified_whnf_beta_step`
+/// already established for Lambda-peeling, since `spine_bind`/`spine_
+/// reduce` don't distinguish `Pi` from `Lambda` at the model level at all
+/// (both are just `ExprSpec::Bind`).
+pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(fun_ty)) <= 0,
+        forall |i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        depth(to_model(fun_ty)) <= d,
+        d <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            &&& spine_bind(to_model(fun_ty), args.len() as nat) is Some
+            &&& to_model(r) == spine_reduce(to_model(fun_ty), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+        },
+        None => true,
+    }
+{
+    match verified_peel_pis(ctx, fun_ty, args.len(), fuel) {
+        Some((peeled, n)) => {
+            if n != args.len() {
+                return None;
+            }
+            proof {
+                spine_bind_nlbv(to_model(fun_ty), n as nat, to_model(peeled), 0);
+                spine_bind_depth(to_model(fun_ty), n as nat, to_model(peeled));
+            }
+            match verified_inst(ctx, peeled, args, 0, fuel) {
+                Some(result) => {
+                    proof {
+                        let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                        spine_reduce_eq_subst_full(to_model(fun_ty), args_model, to_model(peeled), bound);
+                    }
+                    Some(result)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }
 
 }

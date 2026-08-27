@@ -1015,6 +1015,43 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, ar
     }
 }
 
+/// `verified_peel_lambdas`'s exact structural twin for `Pi` binders --
+/// `spine_bind`/`spine_reduce` don't distinguish `Pi` from `Lambda` at all
+/// (both are the same `ExprSpec::Bind` shape at the model level, the real
+/// arena's `BinderStyle` tag is the only place they differ), so this is a
+/// verbatim copy with `expr_as_pi` in place of `expr_as_lambda`. Mirrors
+/// `infer_app`'s own peeling loop (`tc.rs:560-597`) the same way `verified_
+/// peel_lambdas` mirrors `whnf_no_unfolding_aux`'s.
+pub fn verified_peel_pis<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_len: usize, fuel: u32) -> (result: Option<(ExprPtr<'t>, usize)>)
+    ensures match result {
+        Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(to_model(body)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    if args_len == 0 {
+        assert(spine_bind(to_model(e), 0) == Some(to_model(e)));
+        return Some((e, 0));
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(e);
+    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))));
+        match verified_peel_pis(ctx, body, args_len - 1, fuel1) {
+            Some((b2, n2)) => {
+                assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(to_model(body), n2 as nat));
+                Some((b2, n2 + 1))
+            }
+            None => None,
+        }
+    } else {
+        Some((e, 0))
+    }
+}
+
 /// The capstone: bridges `tc.rs`'s `whnf_no_unfolding_aux`'s
 /// `Lambda { .. } if !args.is_empty()` branch -- the real kernel's
 /// actual beta-reduction step (peel as many binders as there are
