@@ -48,7 +48,8 @@ use crate::beta_model::{
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id};
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app};
+use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::whnf_fixpoint_ok;
@@ -1362,6 +1363,85 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         _ => {}
     }
     verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n)
+}
+
+/// Real-arena counterpart to `def_eq`'s FINAL fallback group
+/// (`tc.rs:990-994`, only reached once `lazy_delta_step` is `Exhausted`,
+/// `def_eq_const`/`_local`/`_proj` all fail, AND the `whnf_no_unfolding`
+/// recheck confirms neither side reduces further -- this function itself
+/// does NOT check that last condition, so it's honestly usable only once
+/// a caller has confirmed it, same simplification as `verified_def_eq_
+/// with_delta`'s own): `def_eq_app(x, y) || try_eta_expansion(x, y) ||
+/// try_eta_struct(x, y) || try_string_lit_expansion(x, y) || matches!
+/// (def_eq_unit(x, y), Some(true))`.
+///
+/// `try_string_lit_expansion` is skipped entirely -- genuinely unmodeled
+/// (needs a new string-value trust boundary, see the project notes) -- so
+/// this returns `None` (not `Some(false)`) when every modeled disjunct
+/// fails, honestly leaving open that the real function might still find
+/// `true` via that one unmodeled path, same "`None` conflates ran-out-of-
+/// budget with needs-an-unmodeled-piece" convention as everywhere else.
+///
+/// Takes EVERY externally-supplied value each sub-piece independently
+/// needs, since they're genuinely different shapes: `x_type`/`y_type` are
+/// `x`/`y`'s PLAIN inferred types (for `try_eta_struct`); `x_ty_whnfd` is
+/// `x`'s inferred type ALREADY `whnf`'d (for `def_eq_unit`, which needs
+/// `infer_then_whnf`, not bare `infer`); `y_binder_*`/`x_binder_*` are the
+/// `Pi`-shaped, ALREADY `infer_then_whnf`'d components of `y`/`x`'s own
+/// types (for `try_eta_expansion`, one direction each). No single
+/// "already-inferred type" value serves more than one of these -- a real
+/// caller building all four differs in exactly HOW it whnfs each type.
+pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    y_binder_name: NamePtr<'t>,
+    y_binder_style: BinderStyle,
+    y_binder_type: ExprPtr<'t>,
+    x_binder_name: NamePtr<'t>,
+    x_binder_style: BinderStyle,
+    x_binder_type: ExprPtr<'t>,
+    x_type: ExprPtr<'t>,
+    y_type: ExprPtr<'t>,
+    x_ty_whnfd: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+) -> (result: Option<bool>)
+    requires
+        depth(to_model(x)) <= 60000,
+        depth(to_model(y)) <= 60000,
+        depth(to_model(y_binder_type)) + depth(to_model(y)) + 10 <= 60000,
+        depth(to_model(x_binder_type)) + depth(to_model(x)) + 10 <= 60000,
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), d),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), d),
+        depth(to_model(y)) <= d,
+        depth(to_model(x_type)) <= 60000,
+        depth(to_model(y_type)) <= 60000,
+        depth(to_model(x_ty_whnfd)) <= 60000,
+        d + 1 <= 60000,
+    ensures true
+{
+    match verified_def_eq_app(ctx, x, y, fuel) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    match verified_try_eta_expansion(ctx, x, y, y_binder_name, y_binder_style, y_binder_type, x_binder_name, x_binder_style, x_binder_type, fuel) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    match verified_try_eta_struct(ctx, env, x, y, x_type, y_type, fuel, d) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    match verified_def_eq_unit(ctx, env, x_ty_whnfd, y_type, fuel) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    None
 }
 
 }
