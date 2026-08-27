@@ -389,6 +389,39 @@ pub uninterp spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool;
 pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
 pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 
+/// `env_global_cap`'s counterpart for LOCALS instead of declarations:
+/// "there's a real maximum depth some Local's stored `binder_type` can
+/// reach, even though this model doesn't compute it" -- same "name the
+/// max, don't claim a number" pattern `env_global_cap` uses (a caller
+/// who needs a CONCRETE bound states `local_type_cap() <= some_value` as
+/// their own hypothesis, same as `env_global_cap(*env) <= d` elsewhere).
+/// `mk_dbj_level`'s own bridge (below) never tracked a bound on `binder_
+/// type` at all -- capturing "how deep can a caller-supplied binder_type
+/// ever be" by touching every existing `mk_dbj_level` call site across
+/// this whole project would be enormously invasive; this sidesteps that
+/// by asserting a single, UNCONDITIONAL global maximum exists instead,
+/// closing the "Local branch genuinely has no derivable bound" gap
+/// `verified_infer`'s dispatcher has carried since `Local` was first
+/// bridged. Deliberately UNPARAMETERIZED by `Env`/`TcCtx` (unlike `env_
+/// global_cap`) -- locals are per-execution-context, not per-`Env`, and
+/// this whole arc's convention is already "one flat numeric constant
+/// bound, established via a hypothesis" (`60000`) rather than tracking
+/// separate caps per context.
+pub uninterp spec fn local_type_cap() -> nat;
+
+/// Deliberately omits `nlbv`/`max_var_below`/`size` (unlike `env_global_
+/// wf`) -- ONLY `depth` is needed anywhere downstream (`infer`'s own
+/// depth-boundedness), and an UNCONDITIONAL axiom that includes `size`
+/// has been shown to blow up full-crate check time 50x+ even when
+/// unused (see `feedback_verus_size_axiom_blowup.md`) -- states exactly
+/// what's needed and nothing more, matching `env_global_wf_ty`'s own
+/// "omit size" precedent.
+#[verifier::external_body]
+pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
+    ensures is_local_shape(ptr) ==> depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
+{
+}
+
 pub assume_specification [fvar_id_eq] (a: FVarId, b: FVarId) -> (result: bool)
     ensures result == (a == b);
 

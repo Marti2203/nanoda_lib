@@ -1476,6 +1476,62 @@ pub fn verified_whnf_expect_pi_unbounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
     }
 }
 
+/// SPEC-level meaning of `infer_proj`'s `num_params` loop (`tc.rs:475-
+///483`), BOUND-FREE: "`ctor_ty`, peeled `k` more `Pi` layers -- each
+/// round `whnf`'s (bound-free, via `pstep_star`, matching `verified_whnf_
+/// expect_pi_unbounded`'s own honest incompleteness: never beta/zeta-
+/// reduces) to expose a `Pi`, then `subst_full`s the body against ONE
+/// entry of `args` -- reaches `result`". `args[args.len() - k]` selects
+/// the SAME entry the real loop consumes on ITS `k`-th-from-last round
+/// (`struct_ty_args[i]` for `i = args.len() - k`, front-to-back,
+/// unchanged `args` throughout the recursion -- exactly mirroring
+/// `verified_infer_proj_params_loop`'s own `idx_here = struct_ty_args.
+/// len() - remaining as usize` convention, just at the spec level).
+pub open spec fn proj_params_peel_spec(env: Env, ctor_ty: ExprSpec, args: Seq<ExprSpec>, k: nat, result: ExprSpec) -> bool
+    decreases k
+{
+    if k == 0 {
+        ctor_ty == result
+    } else {
+        exists |whnfd: ExprSpec, instd: ExprSpec|
+            #[trigger] pstep_star(to_model_of_env(env), ctor_ty, whnfd)
+            && (match whnfd {
+                    ExprSpec::Bind(_, bd) => instd == subst_full(*bd, seq![args[args.len() - k]], 0),
+                    _ => false,
+                })
+            && #[trigger] proj_params_peel_spec(env, instd, args, (k - 1) as nat, result)
+    }
+}
+
+/// SPEC-level meaning of `infer_proj`'s `idx` loop (`tc.rs:484-500`),
+/// BOUND-FREE: same `whnf`-then-peel-one-`Pi`-layer shape as `proj_
+/// params_peel_spec`, but EACH round conditionally substitutes a fresh
+/// `Proj(structure)` value (the dependent case, `nlbv(bd) != 0`) or
+/// takes the body UNCHANGED (the non-dependent case) -- mirroring `tc.rs`'s
+/// own `if`/`else` exactly, and `verified_infer_proj_idx_loop`'s own
+/// two-branch structure. `Proj`'s MODEL erases `idx`/`ty_name` entirely
+/// (`mk_proj`'s own bridge: `to_model(result) == ExprSpec::Proj(Box::new
+/// (to_model(structure)))`, regardless of which field index), so this
+/// relation needs no `idx`/`inductive_name` parameter at all -- every
+/// round's substituted value is model-identically `Proj(structure)`.
+pub open spec fn proj_idx_peel_spec(env: Env, ctor_ty: ExprSpec, structure: ExprSpec, k: nat, result: ExprSpec) -> bool
+    decreases k
+{
+    if k == 0 {
+        ctor_ty == result
+    } else {
+        exists |whnfd: ExprSpec, next: ExprSpec|
+            #[trigger] pstep_star(to_model_of_env(env), ctor_ty, whnfd)
+            && (match whnfd {
+                    ExprSpec::Bind(_, bd) =>
+                        (nlbv(*bd) == 0 && next == *bd)
+                        || (nlbv(*bd) != 0 && next == subst_full(*bd, seq![ExprSpec::Proj(Box::new(structure))], 0)),
+                    _ => false,
+                })
+            && #[trigger] proj_idx_peel_spec(env, next, structure, (k - 1) as nat, result)
+    }
+}
+
 /// Real-arena counterpart to `tc.rs::TypeChecker::is_prop`/`may_be_prop`'s
 /// shared shape (`tc.rs:1311-1317`), given the ALREADY-INFERRED type `ty`
 /// directly (same "explicit externally-bounded parameter" reason `verified_
