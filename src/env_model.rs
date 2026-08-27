@@ -367,6 +367,24 @@ pub proof fn env_global_wf<'x, 'a>(env: Env<'x, 'a>)
 {
 }
 
+/// `env_global_wf`'s counterpart for `to_model_of_declar_ty` (declaration
+/// TYPES, needed by `infer_const`'s own depth-boundedness -- a completely
+/// separate lookup table from `to_model_of_env`, since `get_declar_info_
+/// ty` covers every declaration kind, not just `Definition`/`Theorem`).
+/// Reuses the SAME `env_global_cap` (one real environment has one real
+/// maximum declaration size, whether measuring types or values) --
+/// deliberately omits `size` again, for the exact same reason `env_
+/// global_wf` above does (see its doc comment / [[feedback_verus_size_axiom_blowup]]).
+#[verifier::external_body]
+pub proof fn env_global_wf_ty<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id) ==> {
+        &&& nlbv(to_model_of_declar_ty(env)[id].1) == 0
+        &&& max_var_below(to_model_of_declar_ty(env)[id].1, env_global_cap(env))
+        &&& depth(to_model_of_declar_ty(env)[id].1) <= env_global_cap(env)
+    }
+{
+}
+
 /// A real declaration's fetched value, alone in an otherwise-empty `env`,
 /// is `env_wf` -- exactly what `pstep`'s delta rule needs to fire on it.
 /// `cap := size(val)` works: `size(val) <= cap` trivially, `depth(val) <=

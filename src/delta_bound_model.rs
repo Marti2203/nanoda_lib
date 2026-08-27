@@ -33,7 +33,7 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::TcCtx;
+use crate::util::{TcCtx, NamePtr, LevelsPtr, ExprPtr};
 use crate::env::Env;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -45,7 +45,8 @@ use crate::beta_model::{
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
     subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app};
+use crate::tc_model::verified_infer_app_single;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec};
 use crate::level_arena_bridge::read_levels_vec;
@@ -54,7 +55,8 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf};
+use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty};
+use crate::env_model::get_declar_info_ty;
 
 verus! {
 
@@ -173,6 +175,98 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         }
         None => None,
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_const`
+/// (`tc.rs:221-231`, `InferOnly` case) with a genuine depth bound --
+/// `verified_infer_const` (`tc_model.rs`) already does the same
+/// composition (`get_declar_info_ty` + `verified_subst_expr_levels`),
+/// this version additionally derives `depth(result) <= env_global_cap(
+/// *env)` via `env_global_wf_ty` (`env_model.rs`, this file's sibling
+/// axiom for declaration TYPES) plus the same `subst_expr_levels_rel_
+/// {nlbv,max_var_below,depth}` preservation lemmas `verified_unfold_def_
+/// step_bounded` above already uses. Simpler than that function: `infer_
+/// const` never re-folds any argument spine, so there's no `spine_app_
+/// bounds`/`+ 2*d` term here -- level substitution alone, so the bound is
+/// exactly the environment's own cap, no caller-supplied depth needed at
+/// all.
+#[verifier::spinoff_prover]
+pub fn verified_infer_const_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), env_global_cap(*env))
+            &&& depth(to_model(r)) <= env_global_cap(*env)
+        },
+        None => true,
+    }
+{
+    let (uparams, ty) = match get_declar_info_ty(env, &c_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let uparams_vec = read_levels_vec(ctx, uparams);
+    let c_uparams_vec = read_levels_vec(ctx, c_uparams);
+    if uparams_vec.len() != c_uparams_vec.len() {
+        return None;
+    }
+    match verified_subst_expr_levels(ctx, ty, uparams, c_uparams, fuel) {
+        Some(r) => {
+            let ghost id = name_id(c_name);
+            let ghost ks = level_names(to_model_of_levels(uparams));
+            let ghost val = to_model(ty);
+            assert(to_model_of_declar_ty(*env).contains_key(id));
+            assert(to_model_of_declar_ty(*env)[id] == (ks, val));
+            proof {
+                env_global_wf_ty(*env);
+                assert(nlbv(val) == 0);
+                assert(max_var_below(val, env_global_cap(*env)));
+                assert(depth(val) <= env_global_cap(*env));
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(c_uparams), to_model(r));
+                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(c_uparams), to_model(r), env_global_cap(*env));
+                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(c_uparams), to_model(r));
+            }
+            Some(r)
+        }
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::infer_app`'s single-
+/// argument case, FULLY composed: `verified_infer_app_single` (`tc_
+/// model.rs`) needed `fun_ty` and a depth cap `d` as explicit parameters
+/// because computing `fun_ty` internally had no depth bound available --
+/// exactly the gap `verified_infer_const_bounded` above closes. `d` is
+/// still an explicit parameter here (not internally derived) since
+/// `env_global_cap(*env)` is a ghost quantity that can't flow directly
+/// into an exec call argument -- the caller supplies any `d` they've
+/// already established as an upper bound for this specific environment.
+pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        d <= 60000,
+    ensures match result {
+        Some(r) => exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, fun_ty: ExprPtr<'t>|
+            to_model(fun_ty) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))),
+        None => true,
+    }
+{
+    let x_el = ctx.read_expr(x);
+    let (fun, arg) = match expr_as_app(&x_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_el = ctx.read_expr(fun);
+    let (c_name, c_uparams) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let fun_ty = match verified_infer_const_bounded(ctx, env, c_name, c_uparams, fuel) {
+        Some(t) => t,
+        None => return None,
+    };
+    assert(depth(to_model(fun_ty)) <= d);
+    verified_infer_app_single(ctx, fun_ty, arg, fuel, d)
 }
 
 }
