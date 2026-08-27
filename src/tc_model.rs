@@ -86,7 +86,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, spine_bind, spine_bind_depth, spine_app_decompose};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -389,6 +389,93 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             }
         }
         None => None,
+    }
+}
+
+/// Extends `verified_whnf_no_unfolding_step`'s ONE-ROUND coverage with the
+/// `Proj` case (`whnf_no_unfolding_aux`'s own `Proj { idx, structure, .. }`
+/// arm, `tc.rs:794-800`) -- honestly NOT modeled by `verified_whnf_no_
+/// unfolding_step` itself (its own doc comment says so), and genuinely
+/// NOT a simple in-place extension: `Proj`'s reduction is `pstep_star_proj`
+/// (`beta_model.rs`), a narrower, ONE-SHOT relation about a `Proj`'s inner
+/// `structure` reducing and a field being extracted -- it does NOT
+/// characterize "the whole term reduces" the way `pstep_star` does, and
+/// has no established composition/transitivity with `pstep_star` itself
+/// (deliberately kept separate, to avoid re-deriving `pstep_diamond`'s
+/// confluence proof for a rule nothing needs confluence for). So this is
+/// a SEPARATE function with a DISJUNCTIVE ensures (one disjunct per
+/// possible internal branch), not a strengthening of the existing one.
+///
+/// Composes `verified_reduce_proj_step` (this file, the cheap-path `Proj`
+/// reduction) with `verified_foldl_apps` (reapply the args carried above
+/// the `Proj` head) for the `Proj`-headed case, delegating to `verified_
+/// whnf_no_unfolding_step` unchanged for every other shape. Still only
+/// ONE round -- the real function's own recursive re-entry after a
+/// successful `Proj` reduction (`tc.rs:798`, `self.whnf_no_unfolding_aux
+/// (e, cheap_proj)` again) is NOT modeled, same "one round first"
+/// discipline as everywhere else in this arc. Chaining multiple rounds
+/// (needed for the full top-level `def_eq` composition) is real, separate,
+/// harder future work: the two disjuncts' facts don't compose with each
+/// other via any existing lemma, so a genuine multi-round version would
+/// need its own new "mixed-kind chain" bookkeeping, not just `pstep_star_
+/// trans`.
+pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            ||| pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+            ||| (exists |structure: ExprPtr<'t>, idx: usize, reduced: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
+                    to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args))
+                    && pstep_star_proj(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        to_model_of_ctor_num_params(*env),
+                        to_model(structure),
+                        idx as nat,
+                        to_model(reduced),
+                    )
+                    && to_model(r) == spine_app(to_model(reduced), args_model_of(args)))
+        },
+        None => true,
+    }
+{
+    let (e_fun, args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let e_fun_el = ctx.read_expr(e_fun);
+    if let Some((_, idx, structure)) = expr_as_proj(&e_fun_el) {
+        if idx > 0xFFFF_0000 {
+            return None;
+        }
+        assert(to_model(e_fun) == ExprSpec::Proj(Box::new(to_model(structure))));
+        proof {
+            let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+            spine_app_decompose(to_model(e_fun), args_model, bound);
+            assert(nlbv(to_model(structure)) <= 0);
+            assert(max_var_below(to_model(structure), bound));
+            assert(depth(to_model(structure)) <= depth(to_model(e_fun)));
+            assert(depth(to_model(structure)) <= d);
+        }
+        match verified_reduce_proj_step(ctx, env, structure, idx, fuel, bound, d) {
+            Some(reduced) => {
+                let r = verified_foldl_apps(ctx, reduced, args.as_slice());
+                proof {
+                    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                    assert(args_model =~= args_model_of(args@));
+                    assert(to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args@)));
+                    assert(to_model(r) == spine_app(to_model(reduced), args_model_of(args@)));
+                }
+                Some(r)
+            }
+            None => None,
+        }
+    } else {
+        verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d)
     }
 }
 
