@@ -1047,19 +1047,33 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
                     Box::new(abstr_full(to_model(binder_type), seq![expr_id(local)], 0)),
                     Box::new(abstr_full(to_model(infd), seq![expr_id(local)], 0)),
                 ))
+    ||| (fuel > 0 && exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, bt_ty: ExprPtr<'t>, dom_sort: ExprPtr<'t>, dom_level: LevelPtr<'t>, instd: ExprPtr<'t>, instd_ty: ExprPtr<'t>, cod_sort: ExprPtr<'t>, cod_level: LevelPtr<'t>|
+            to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            && to_model(local) == ExprSpec::Free(expr_id(local))
+            && infer_spec(env, binder_type, bt_ty, (fuel - 1) as nat)
+            && pstep_star(to_model_of_env(env), to_model(bt_ty), to_model(dom_sort))
+            && to_model(dom_sort) == ExprSpec::Sort(level_to_model(dom_level))
+            && to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0)
+            && infer_spec(env, instd, instd_ty, (fuel - 1) as nat)
+            && pstep_star(to_model_of_env(env), to_model(instd_ty), to_model(cod_sort))
+            && to_model(cod_sort) == ExprSpec::Sort(level_to_model(cod_level))
+            && to_model(r) == ExprSpec::Sort(LevelSpec::IMax(Box::new(level_to_model(dom_level)), Box::new(level_to_model(cod_level)))))
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
-/// (`tc.rs:513-540`), `InferOnly` case, now covering SEVEN of its eleven
+/// (`tc.rs:513-540`), `InferOnly` case, now covering EIGHT of its eleven
 /// shapes: the four non-recursive leaves (`Local`/`Sort`/`Const`/`App`),
 /// `NatLit`/`StringLit` (plain type-constant lookups), plus `Let`
 /// (`tc.rs:676-692`, `InferOnly` skips the `Check`-mode `assert_def_eq`
-/// well-formedness check same as everywhere else in this arc) and
-/// `Lambda` (CURRIED chains included, not just one binder -- see below),
-/// both genuinely recursive: `Let` via `verified_inst` substituting `val`
-/// into `body` then recursing on the result; `Lambda` the same way, one
-/// binder peeled via `mk_dbj_level`/`verified_inst`/`abstr_levels_with_
-/// locals`/`mk_pi`. `Lambda`'s case is INLINED here rather than delegated
+/// well-formedness check same as everywhere else in this arc), `Lambda`
+/// (CURRIED chains included, not just one binder -- see below), and `Pi`
+/// (see further below). All three of `Let`/`Lambda`/`Pi` are genuinely
+/// recursive: `Let` via `verified_inst` substituting `val` into `body`
+/// then recursing on the result; `Lambda` the same way, one binder peeled
+/// via `mk_dbj_level`/`verified_inst`/`abstr_levels_with_locals`/`mk_pi`;
+/// `Pi` similarly plus two `infer_sort_of`-style compositions (see its
+/// own paragraph below). `Lambda`'s case is INLINED here rather than
+/// delegated
 /// to the already-existing `verified_infer_lambda_single` (which has the
 /// identical logic and an identical `exists`-shaped ensures) -- calling
 /// it from here would make it part of a mutually-recursive clique with
@@ -1100,23 +1114,36 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
 /// lambda_telescoped`'s separate, `Vec`-loop-based implementation, not to
 /// this inlined, self-recursive dispatcher path.
 ///
-/// `Pi`/`Proj` still fall through to `None` for `infer` specifically.
-/// `Proj` is fully composed (`verified_infer_proj`) but not `infer_spec`-
-/// compatible (`ensures true`, plus several externally-supplied bound
-/// parameters `infer_spec`'s uniform signature has no room for). `Pi` is
-/// harder than a fuel-threading fix: `infer_pi` needs `infer_sort_of`
+/// `Pi` is now ALSO covered (`infer` covers 8/11 real shapes): non-curried
+/// `Pi` (curried, per the SAME self-recursive argument `Lambda`'s own doc
+/// comment above makes, should generalize just as freely, though not
+/// independently re-verified here). `infer_pi` needs `infer_sort_of`
 /// (`infer` the binder type, THEN `whnf` the result to confirm `Sort`)
-/// TWICE per binder, and every existing `whnf`-with-bound-tracking
+/// TWICE per binder -- and every EXISTING `whnf`-with-bound-tracking
 /// function in this arc (`verified_whnf_step` and everything under it)
-/// REQUIRES an `nlbv`/`max_var_below`/`depth` bound on its input to even
-/// be called -- a bound `infer`'s own result can't generally supply (the
+/// REQUIRES an `nlbv`/`max_var_below`/`depth` bound on its input just to
+/// be called, a bound `infer`'s own result can't generally supply (the
 /// same wall `verified_infer_pi_single`'s externally-supplied `bt_ty`/
-/// `body_ty` parameters were built to route around). Wiring `Pi` into
-/// `infer_spec` for real would need a genuinely NEW bound-free `whnf`
-/// composition (fuel/`pstep_star`-driven only, no depth tracking) -- a
-/// substantial new proof effort, not a quick follow-up, since it can't
-/// reuse `verified_whnf_no_unfolding_fixpoint`'s existing internals
-/// (which rely on tracking bound growth to justify each round).
+/// `body_ty` parameters were originally built to route around). The fix
+/// was `verified_infer_sort_of_unbounded` (see its own doc comment): the
+/// bound-dependence lives ENTIRELY in beta/zeta reduction's substitution-
+/// equivalence proof, NOT in delta-unfolding (`verified_unfold_def_step`
+/// has no bound requirement at all, since substituting universe LEVELS is
+/// structurally unlike substituting expression VALUES for de-Bruijn
+/// indices) -- so chaining delta-unfolding ALONE, bound-free, covers the
+/// common case (already `Sort`, or reached by unfolding a definition)
+/// honestly incompletely (never beta/zeta-reduces) but soundly. `infer_
+/// spec`'s new `Pi` disjunct inlines this composition directly (twice,
+/// once per binder side) rather than factoring out a shared "infer_sort_
+/// of_spec" helper -- that helper would ALSO need to call `infer_spec`
+/// recursively, making IT part of the clique too, with the same "every
+/// edge must decrease" problem `Lambda`'s own wiring already hit once.
+///
+/// `Proj` still falls through to `None` for `infer` specifically: it's
+/// fully composed (`verified_infer_proj`) but not `infer_spec`-compatible
+/// (`ensures true`, plus several externally-supplied bound parameters
+/// `infer_spec`'s uniform signature has no room for) -- a separate,
+/// not-yet-attempted follow-up.
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
@@ -1181,6 +1208,61 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
         }
+        return Some(result);
+    }
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(depth(to_model(binder_type)) < depth(to_model(e)));
+        assert(depth(to_model(body)) < depth(to_model(e)));
+        let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, d, dd + dd) {
+            Some(v) => v,
+            None => return None,
+        };
+        let dom_univ = match verified_infer_sort_of_unbounded(ctx, env, bt_ty, fuel, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            let dom_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(dom_univ));
+            assert(pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(dom_sort)));
+            assert(to_model(dom_sort) == ExprSpec::Sort(level_to_model(dom_univ)));
+        }
+        let start_pos = get_dbj_level_counter(ctx);
+        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        let locals_slice: &[ExprPtr<'t>] = &[local];
+        assert(depth(to_model(local)) == 0);
+        let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
+            assert(depth(to_model(instd)) <= depth(to_model(body)));
+            assert(depth(to_model(instd)) <= dd);
+            assert(depth(to_model(instd)) <= dd + dd);
+        }
+        let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
+            Some(v) => v,
+            None => return None,
+        };
+        let cod_univ = match verified_infer_sort_of_unbounded(ctx, env, instd_ty, fuel, fuel) {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            let cod_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(cod_univ));
+            assert(pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(cod_sort)));
+            assert(to_model(cod_sort) == ExprSpec::Sort(level_to_model(cod_univ)));
+        }
+        ctx.replace_dbj_level(local);
+        let result_level = ctx.imax(dom_univ, cod_univ);
+        let result = ctx.mk_sort(result_level);
         return Some(result);
     }
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
