@@ -47,7 +47,7 @@ use crate::beta_model::{
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
 use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi, verified_peel_pis};
@@ -3691,6 +3691,108 @@ pub fn verified_str_lit_to_ctor_reducing<'t, 'p: 't>(
         max_var_below_mono(to_model(lit), 0, d_lit);
     }
     verified_whnf_no_unfolding_step(ctx, lit, fuel, d_lit, d_lit)
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::reduce_rec`'s own
+/// major-premise normalization sequence (`tc.rs:1078-1086`): `to_ctor_
+/// when_k` (K-reduction), then ONE round of `whnf` (`verified_whnf_no_
+/// unfolding_step` -- bound-preserving, no delta-unfolding, honestly
+/// less complete than the real function's full fixpoint `self.whnf`,
+/// same "one round first" precedent as everywhere else in this arc
+/// rather than `verified_whnf_step`, which doesn't expose ANY bound on
+/// its result at all and so can't feed the dispatch below), then a
+/// three-way dispatch on the result's shape (`NatLit`/`StringLit`/
+/// default) mirroring the real `match` exactly.
+///
+/// The genuinely new piece this composition needed, beyond the four
+/// already-bridged building blocks: unifying FIVE differently-shaped
+/// outcomes (`to_ctor_when_k` unchanged/changed, `NatLit`, `StringLit`,
+/// `iota_try_eta_struct`'s own already-unified three sub-outcomes) into
+/// ONE closed-form bound. `final_bound` is a caller-supplied value
+/// proven `>=` every one of them (each an independent `requires`
+/// inequality) -- same "explicit sufficient bound, caller's choice"
+/// pattern as everywhere else in this arc, just needing FIVE inequalities
+/// instead of one this time, not a new kind of reasoning.
+pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    rec_name: NamePtr<'t>,
+    ind_name: NamePtr<'t>,
+    major: ExprPtr<'t>,
+    fuel: u32,
+    d_i: nat,
+    d_major: nat,
+    max_num_params: u16,
+    dd_new: nat,
+    max_str_len: usize,
+    d_lit: nat,
+    max_num_fields: u16,
+    final_bound: nat,
+) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(major)) <= 0,
+        depth(to_model(major)) <= d_major,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_i <= 60000,
+        d_major <= 60000,
+        (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) <= 60000,
+        ((d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major)) + (max_num_params as nat) <= dd_new,
+        dd_new <= 60000,
+        d_i + dd_new + d_i <= 60000,
+        d_major <= dd_new,
+        dd_new + dd_new * dd_new * dd_new + dd_new * dd_new + dd_new + 10 <= 0xFFFF_0000,
+        dd_new <= final_bound,
+        { let dd2 = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new; dd2 <= final_bound },
+        1 <= final_bound,
+        (max_str_len as nat) + 3 <= d_lit,
+        d_lit <= 60000,
+        d_lit + d_lit * d_lit * d_lit + d_lit * d_lit + d_lit + 10 <= 0xFFFF_0000,
+        { let dl2 = d_lit * d_lit + d_lit + d_lit + d_lit + d_lit; dl2 <= final_bound },
+        {
+            let dd2 = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new;
+            dd2 <= 60000
+            && (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) + 10 <= 0xFFFF_0000
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 <= 60000 }
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + w2 * w2 * w2 + w2 * w2 + w2 + 10 <= 0xFFFF_0000 }
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + (max_num_params as nat) + dd2 + 1 + (max_num_fields as nat) <= final_bound }
+        },
+    ensures
+        nlbv(to_model(result)) <= 0 && depth(to_model(result)) <= final_bound
+{
+    let major1 = match verified_to_ctor_when_k(ctx, env, rec_name, major, fuel, d_i, d_major, max_num_params, dd_new) {
+        Some(v) => v,
+        None => major,
+    };
+    assert(nlbv(to_model(major1)) <= 0);
+    assert(depth(to_model(major1)) <= dd_new);
+    proof {
+        nlbv_bound_implies_max_var_below(to_model(major1), 0);
+        max_var_below_mono(to_model(major1), depth(to_model(major1)), dd_new);
+    }
+    let major2 = match verified_whnf_no_unfolding_step(ctx, major1, fuel, dd_new, dd_new) {
+        Some(v) => v,
+        None => major1,
+    };
+    let dd2: nat = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new;
+    assert(nlbv(to_model(major2)) <= 0);
+    assert(depth(to_model(major2)) <= dd2);
+    let major2_el = ctx.read_expr(major2);
+    if let Some(bignum_ptr) = expr_as_nat_lit(major2, &major2_el) {
+        match verified_nat_lit_to_constructor(ctx, bignum_ptr) {
+            Some(v) => v,
+            None => major2,
+        }
+    } else if let Some(str_ptr) = expr_as_string_lit_ptr(major2, &major2_el) {
+        match verified_str_lit_to_ctor_reducing(ctx, str_ptr, fuel, max_str_len, d_lit) {
+            Some(v) => v,
+            None => major2,
+        }
+    } else {
+        verified_iota_try_eta_struct(ctx, env, ind_name, major2, fuel, d_i, dd2, max_num_params, max_num_fields)
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
