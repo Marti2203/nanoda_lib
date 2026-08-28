@@ -40,7 +40,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::name_model::NameSpec;
 #[cfg(verus_only)]
-use crate::name_model::replace_pfx_full;
+use crate::name_model::{replace_pfx_full, root_of};
 use crate::level_arena_bridge::name_ptr_eq;
 
 // These accessors' only "caller" is the `assume_specification` attributes
@@ -182,6 +182,60 @@ pub fn verified_replace_pfx<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>,
                 return Some(r);
             }
             None => return None,
+        }
+    }
+    None
+}
+
+/// Real-arena mirror of `TcCtx::get_pfx` (`name.rs:30-44`), proven against
+/// `name_model.rs`'s already-verified `root_of`. Same "reuse an idle,
+/// already-proven model" story as `verified_replace_pfx` above -- the real
+/// function's `loop` becomes an explicit-`fuel` recursion, same convention.
+pub fn verified_get_pfx<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, n: NamePtr<'t>, fuel: u32) -> (result: Option<NamePtr<'t>>)
+    ensures match result {
+        Some(r) => to_model_name(r) == root_of(to_model_name(n)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let anon = ctx.anonymous();
+    let nl = ctx.read_name(n);
+    if name_is_anon(&nl) {
+        assert(to_model_of_name(nl) == NameSpec::Anon);
+        assert(to_model_name(n) == NameSpec::Anon);
+        assert(root_of(to_model_name(n)) == NameSpec::Anon) by { reveal_with_fuel(root_of, 1); }
+        return Some(n);
+    }
+    if let Some((pfx, _sfx)) = name_as_str(&nl) {
+        assert(to_model_name(n) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(_sfx)));
+        if name_ptr_eq(pfx, anon) {
+            proof { to_model_name_injective(pfx, anon); }
+            assert(to_model_name(pfx) == NameSpec::Anon);
+            assert(root_of(to_model_name(n)) == to_model_name(n)) by { reveal_with_fuel(root_of, 2); }
+            return Some(n);
+        } else {
+            proof { to_model_name_injective(pfx, anon); }
+            assert(to_model_name(pfx) != NameSpec::Anon);
+            assert(root_of(to_model_name(n)) == root_of(to_model_name(pfx))) by { reveal_with_fuel(root_of, 2); }
+            return verified_get_pfx(ctx, pfx, fuel1);
+        }
+    }
+    if let Some((pfx, sfx)) = name_as_num(&nl) {
+        assert(to_model_name(n) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx));
+        if name_ptr_eq(pfx, anon) {
+            proof { to_model_name_injective(pfx, anon); }
+            assert(to_model_name(pfx) == NameSpec::Anon);
+            assert(root_of(to_model_name(n)) == to_model_name(n)) by { reveal_with_fuel(root_of, 2); }
+            return Some(n);
+        } else {
+            proof { to_model_name_injective(pfx, anon); }
+            assert(to_model_name(pfx) != NameSpec::Anon);
+            assert(root_of(to_model_name(n)) == root_of(to_model_name(pfx))) by { reveal_with_fuel(root_of, 2); }
+            return verified_get_pfx(ctx, pfx, fuel1);
         }
     }
     None
