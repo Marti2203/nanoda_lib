@@ -33,7 +33,7 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{TcCtx, NamePtr, LevelsPtr, ExprPtr, LevelPtr};
+use crate::util::{TcCtx, NamePtr, LevelsPtr, ExprPtr, LevelPtr, StringPtr};
 use crate::env::Env;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -3551,6 +3551,66 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
         }
         None
     }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::str_lit_to_ctor_
+/// reducing` (`tc.rs:331-333`): `str_lit_to_constructor(s)` (ALREADY
+/// fully trusted via its own `assume_specification`, see `expr_arena_
+/// bridge.rs` -- `nlbv <= 0`, `max_var_below(_, 0)`, `depth <= string_
+/// len(s) + 3`) then ONE round of `whnf`. Genuinely small: the hard part
+/// (soundly bounding a construction whose depth scales with the actual
+/// string length, not a fixed cap) was already done when `try_string_
+/// lit_expansion_aux` was built -- this is just composing that trust
+/// boundary with a `whnf` step for the first time.
+///
+/// `d_lit` is a caller-supplied `nat` PARAMETER (not computed inline)
+/// tied to `max_str_len` by a `requires` inequality, same "cast a real
+/// `usize` to `nat` only works in spec-mode" fix `verified_to_ctor_
+/// when_k`'s `dd_new` needed earlier this session -- `(max_str_len as
+/// nat) + 3` can't be built as a plain exec `let` since `max_str_len` is
+/// a genuine runtime `usize`, so the caller states the sufficient value
+/// directly instead. One round of `verified_whnf_no_unfolding_step`
+/// (bound-preserving, no delta-unfolding) rather than the real function's
+/// full `self.whnf(x)` -- same "one round first" precedent as
+/// everywhere else in this arc; `str_lit_to_constructor`'s own result is
+/// already a saturated `App` spine of `Const`s and `NatLit`s with no
+/// `Const` needing unfolding to make progress, so this is a reasonable
+/// place to stop rather than an arbitrary cut.
+pub fn verified_str_lit_to_ctor_reducing<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    s: StringPtr<'t>,
+    fuel: u32,
+    max_str_len: usize,
+    d_lit: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        (max_str_len as nat) + 3 <= d_lit,
+        d_lit <= 60000,
+        d_lit + d_lit * d_lit * d_lit + d_lit * d_lit + d_lit + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), d_lit + d_lit * d_lit * d_lit + d_lit * d_lit)
+            &&& depth(to_model(r)) <= d_lit * d_lit + d_lit + d_lit + d_lit + d_lit
+        },
+        None => true,
+    }
+{
+    let real_len = read_string_len(ctx, s);
+    if real_len > max_str_len {
+        return None;
+    }
+    let lit = match ctx.str_lit_to_constructor(s) {
+        Some(v) => v,
+        None => return None,
+    };
+    proof {
+        assert(string_len(s) <= max_str_len as nat);
+        assert(depth(to_model(lit)) <= (max_str_len as nat) + 3);
+        assert(depth(to_model(lit)) <= d_lit);
+        max_var_below_mono(to_model(lit), 0, d_lit);
+    }
+    verified_whnf_no_unfolding_step(ctx, lit, fuel, d_lit, d_lit)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
