@@ -40,7 +40,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::name_model::NameSpec;
 #[cfg(verus_only)]
-use crate::name_model::{replace_pfx_full, root_of};
+use crate::name_model::{replace_pfx_full, root_of, concat_full};
 use crate::level_arena_bridge::name_ptr_eq;
 
 // These accessors' only "caller" is the `assume_specification` attributes
@@ -236,6 +236,62 @@ pub fn verified_get_pfx<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, n: NamePtr<'t>, fuel: u
             assert(to_model_name(pfx) != NameSpec::Anon);
             assert(root_of(to_model_name(n)) == root_of(to_model_name(pfx))) by { reveal_with_fuel(root_of, 2); }
             return verified_get_pfx(ctx, pfx, fuel1);
+        }
+    }
+    None
+}
+
+/// Real-arena mirror of `TcCtx::concat_name` (`name.rs:46-58`), proven
+/// against `name_model.rs`'s already-verified `concat_full` -- the third
+/// and last of `name_model.rs`'s idle proven models, same story as
+/// `verified_replace_pfx`/`verified_get_pfx` above. Simpler than either:
+/// no pointer-equality branch at all, just a direct match on `n2`.
+pub fn verified_concat_name<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n1: NamePtr<'t>, n2: NamePtr<'t>, fuel: u32) -> (result: Option<NamePtr<'t>>)
+    ensures match result {
+        Some(r) => to_model_name(r) == concat_full(to_model_name(n1), to_model_name(n2)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let n2l = ctx.read_name(n2);
+    if name_is_anon(&n2l) {
+        assert(to_model_of_name(n2l) == NameSpec::Anon);
+        assert(to_model_name(n2) == NameSpec::Anon);
+        assert(concat_full(to_model_name(n1), to_model_name(n2)) == to_model_name(n1)) by { reveal_with_fuel(concat_full, 1); }
+        return Some(n1);
+    }
+    if let Some((pfx, sfx)) = name_as_str(&n2l) {
+        assert(to_model_name(n2) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)));
+        match verified_concat_name(ctx, n1, pfx, fuel1) {
+            Some(new_pfx) => {
+                assert(to_model_name(new_pfx) == concat_full(to_model_name(n1), to_model_name(pfx)));
+                let r = ctx.str(new_pfx, sfx);
+                assert(to_model_name(r) == NameSpec::Str(Box::new(to_model_name(new_pfx)), string_id(sfx)));
+                assert(concat_full(to_model_name(n1), to_model_name(n2))
+                    == NameSpec::Str(Box::new(concat_full(to_model_name(n1), to_model_name(pfx))), string_id(sfx)))
+                    by { reveal_with_fuel(concat_full, 2); }
+                return Some(r);
+            }
+            None => return None,
+        }
+    }
+    if let Some((pfx, sfx)) = name_as_num(&n2l) {
+        assert(to_model_name(n2) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx));
+        match verified_concat_name(ctx, n1, pfx, fuel1) {
+            Some(new_pfx) => {
+                assert(to_model_name(new_pfx) == concat_full(to_model_name(n1), to_model_name(pfx)));
+                let r = ctx.num(new_pfx, sfx);
+                assert(to_model_name(r) == NameSpec::Num(Box::new(to_model_name(new_pfx)), sfx));
+                assert(concat_full(to_model_name(n1), to_model_name(n2))
+                    == NameSpec::Num(Box::new(concat_full(to_model_name(n1), to_model_name(pfx))), sfx))
+                    by { reveal_with_fuel(concat_full, 2); }
+                return Some(r);
+            }
+            None => return None,
         }
     }
     None
