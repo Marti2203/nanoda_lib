@@ -48,6 +48,7 @@ use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
 use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans};
+use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -556,6 +557,84 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
         Some(r) => nat_repr_pred(e, r),
         None => true,
     };
+
+/// `expr.rs::TcCtx::c_nat_zero`/`c_nat_succ`'s result identity, same
+/// "`Const(name_cache.nat_zero/nat_succ, [])`" shape as `c_bool_true`
+/// above -- the CONSTRUCTION-side counterpart to `nat_zero_id`/`nat_
+/// succ_id` (already used above on the READ side, via `nat_repr_is_
+/// zero`/`nat_repr_pred`), needed by `nat_lit_to_constructor`'s own
+/// composition (`expr.rs:523-533`).
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_zero] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id(),
+        None => true,
+    };
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures match result {
+        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id(),
+        None => true,
+    };
+
+/// Real-arena counterpart to `expr.rs::TcCtx::nat_lit_to_constructor`
+/// (`expr.rs:523-533`): turn a bignum into the constructor it denotes --
+/// `Nat.zero` when it's `0`, `Nat.succ (bignum - 1)` otherwise. Every
+/// piece composed here was already trusted for a DIFFERENT reason:
+/// `biguint_is_zero`/`biguint_pred` (already used by `pred_of_nat_succ`'s
+/// own `NatLit` case), `mk_nat_lit_quick` (already used by every `do_nat_
+/// bin` bridge to construct ITS OWN result), `c_nat_zero`/`c_nat_succ`
+/// (new above, mirroring `c_bool_true`'s exact pattern) -- this is the
+/// first time all four compose together. `depth <= 1` follows from
+/// `Nat.succ`'s own `Const`-shape (depth 0) applied to a freshly-built
+/// `NatLit` (`is_nat_lit_shape_model`: collapses to `ExprSpec::Closed`,
+/// depth 0) -- `App(Const, Closed)` is depth exactly 1, matching every
+/// other "small, closed, shallow" construction in this arc.
+pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r)) <= 1,
+        None => true,
+    }
+{
+    let val = match read_bignum_value(ctx, n) {
+        Some(v) => v,
+        None => return None,
+    };
+    if biguint_is_zero(&val) {
+        let result = match ctx.c_nat_zero() {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            is_const_shape_model(result);
+        }
+        Some(result)
+    } else {
+        let pred_val = biguint_pred(val);
+        let pred = match ctx.mk_nat_lit_quick(pred_val) {
+            Some(v) => v,
+            None => return None,
+        };
+        let succ_c = match ctx.c_nat_succ() {
+            Some(v) => v,
+            None => return None,
+        };
+        proof {
+            is_const_shape_model(succ_c);
+            is_nat_lit_shape_model(pred);
+        }
+        let result = ctx.mk_app(succ_c, pred);
+        proof {
+            assert(to_model(result) == ExprSpec::App(Box::new(to_model(succ_c)), Box::new(to_model(pred))));
+            assert(depth(to_model(succ_c)) == 0);
+            assert(depth(to_model(pred)) == 0);
+            assert(nlbv(to_model(succ_c)) == 0);
+            assert(nlbv(to_model(pred)) == 0);
+            assert(max_var_below(to_model(succ_c), 0));
+            assert(max_var_below(to_model(pred), 0));
+        }
+        Some(result)
+    }
+}
 
 /// `expr.rs::nat_type`/`string_type`'s result identity: `Const(nat_type_id,
 /// [])`/`Const(string_type_id, [])` -- same "uninterpreted name id"
