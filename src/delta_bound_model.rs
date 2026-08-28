@@ -49,7 +49,11 @@ use crate::beta_model::{
 };
 use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id};
+use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id, is_nat_lit_shape_model, nat_lit_value, bignum_ptr_value};
+#[cfg(verus_only)]
+use crate::expr_model::{NatLitPayload, StringLitPayload};
+#[cfg(verus_only)]
+use crate::beta_model::string_lit_expand_model;
 use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi, verified_peel_pis};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
@@ -62,9 +66,11 @@ use crate::expr_model::abstr_full_depth;
 use crate::expr_arena_bridge::get_eager_mode;
 use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, get_string_extension_flag, read_string_len};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::string_len;
+use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit_ptr_of};
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
+#[cfg(verus_only)]
+use crate::tc_model::args_model_of;
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -3672,6 +3678,11 @@ pub fn verified_str_lit_to_ctor_reducing<'t, 'p: 't>(
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), d_lit + d_lit * d_lit * d_lit + d_lit * d_lit)
             &&& depth(to_model(r)) <= d_lit * d_lit + d_lit + d_lit + d_lit + d_lit
+            &&& pstep_star(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                ExprSpec::StringLit(StringLitPayload(Ghost(string_len(s)))),
+                to_model(r),
+            )
         },
         None => true,
     }
@@ -3689,8 +3700,32 @@ pub fn verified_str_lit_to_ctor_reducing<'t, 'p: 't>(
         assert(depth(to_model(lit)) <= (max_str_len as nat) + 3);
         assert(depth(to_model(lit)) <= d_lit);
         max_var_below_mono(to_model(lit), 0, d_lit);
+        assert(to_model(lit) == string_lit_expand_model(string_len(s)));
+        assert(pstep(
+            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+            ExprSpec::StringLit(StringLitPayload(Ghost(string_len(s)))),
+            to_model(lit),
+        ));
     }
-    verified_whnf_no_unfolding_step(ctx, lit, fuel, d_lit, d_lit)
+    match verified_whnf_no_unfolding_step(ctx, lit, fuel, d_lit, d_lit) {
+        Some(r) => {
+            proof {
+                pstep_star_one(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    ExprSpec::StringLit(StringLitPayload(Ghost(string_len(s)))),
+                    to_model(lit),
+                );
+                pstep_star_trans(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    ExprSpec::StringLit(StringLitPayload(Ghost(string_len(s)))),
+                    to_model(lit),
+                    to_model(r),
+                );
+            }
+            Some(r)
+        }
+        None => None,
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::reduce_rec`'s own
@@ -3728,7 +3763,7 @@ pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
     d_lit: nat,
     max_num_fields: u16,
     final_bound: nat,
-) -> (result: ExprPtr<'t>)
+) -> (result: (ExprPtr<'t>, Ghost<bool>))
     requires
         nlbv(to_model(major)) <= 0,
         depth(to_model(major)) <= d_major,
@@ -3760,38 +3795,91 @@ pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
             && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + (max_num_params as nat) + dd2 + 1 + (max_num_fields as nat) <= final_bound }
         },
     ensures
-        nlbv(to_model(result)) <= 0 && depth(to_model(result)) <= final_bound
+        nlbv(to_model(result.0)) <= 0 && depth(to_model(result.0)) <= final_bound
+        && (result.1@ ==> pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major), to_model(result.0)))
 {
-    let major1 = match verified_to_ctor_when_k(ctx, env, rec_name, major, fuel, d_i, d_major, max_num_params, dd_new) {
-        Some(v) => v,
-        None => major,
+    // `k_inactive@`: was `to_ctor_when_k` a no-op (`major1 == major`)? Only
+    // then does the composition below have any chance of a real `pstep_
+    // star` fact back to `major` -- `to_ctor_when_k`'s `Some` case has NO
+    // such fact (K-reduction is def_eq/proof-irrelevance-anchored, not a
+    // local `pstep` rewrite, see `pstep`'s own doc comment in
+    // `beta_model.rs`), so once it fires this function can only report
+    // `Ghost(false)` from here on, honestly, rather than overclaim.
+    let (major1, k_inactive) = match verified_to_ctor_when_k(ctx, env, rec_name, major, fuel, d_i, d_major, max_num_params, dd_new) {
+        Some(v) => (v, Ghost(false)),
+        None => (major, Ghost(true)),
     };
     assert(nlbv(to_model(major1)) <= 0);
     assert(depth(to_model(major1)) <= dd_new);
     proof {
         nlbv_bound_implies_max_var_below(to_model(major1), 0);
         max_var_below_mono(to_model(major1), depth(to_model(major1)), dd_new);
+        if k_inactive@ {
+            assert(major1 == major);
+        }
     }
     let major2 = match verified_whnf_no_unfolding_step(ctx, major1, fuel, dd_new, dd_new) {
-        Some(v) => v,
-        None => major1,
+        Some(v) => {
+            proof { assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major1), to_model(v))); }
+            v
+        }
+        None => {
+            proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major1)); }
+            major1
+        }
     };
+    // Available regardless of `k_inactive@` -- `major1 -> major2` never
+    // depends on whether `to_ctor_when_k` fired, only on which branch
+    // `verified_whnf_no_unfolding_step` itself took, established above.
+    assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major1), to_model(major2)));
     let dd2: nat = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new;
     assert(nlbv(to_model(major2)) <= 0);
     assert(depth(to_model(major2)) <= dd2);
     let major2_el = ctx.read_expr(major2);
     if let Some(bignum_ptr) = expr_as_nat_lit(major2, &major2_el) {
         match verified_nat_lit_to_constructor(ctx, bignum_ptr) {
-            Some(v) => v,
-            None => major2,
+            Some(v) => {
+                proof {
+                    is_nat_lit_shape_model(major2);
+                    assert(nat_lit_value(major2) == bignum_ptr_value(bignum_ptr));
+                    assert(to_model(major2) == ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(bignum_ptr)))));
+                    assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major2), to_model(v)));
+                    pstep_star_one(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major2), to_model(v));
+                    if k_inactive@ {
+                        pstep_star_trans(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            to_model(major), to_model(major2), to_model(v),
+                        );
+                    }
+                }
+                (v, k_inactive)
+            }
+            None => (major2, k_inactive),
         }
     } else if let Some(str_ptr) = expr_as_string_lit_ptr(major2, &major2_el) {
         match verified_str_lit_to_ctor_reducing(ctx, str_ptr, fuel, max_str_len, d_lit) {
-            Some(v) => v,
-            None => major2,
+            Some(v) => {
+                proof {
+                    is_string_lit_shape_model(major2);
+                    assert(to_model(major2) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(str_ptr)))));
+                    assert(pstep_star(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        to_model(major2),
+                        to_model(v),
+                    ));
+                    if k_inactive@ {
+                        pstep_star_trans(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            to_model(major), to_model(major2), to_model(v),
+                        );
+                    }
+                }
+                (v, k_inactive)
+            }
+            None => (major2, k_inactive),
         }
     } else {
-        verified_iota_try_eta_struct(ctx, env, ind_name, major2, fuel, d_i, dd2, max_num_params, max_num_fields)
+        (verified_iota_try_eta_struct(ctx, env, ind_name, major2, fuel, d_i, dd2, max_num_params, max_num_fields), Ghost(false))
     }
 }
 
@@ -3807,23 +3895,33 @@ pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
 /// (`tc.rs:1078-1086`, now `verified_normalize_major_premise` above)
 /// does. This function is the two composed TOGETHER.
 ///
-/// Deliberately `ensures true`, NOT `verified_reduce_rec_step`'s own
-/// precise `pstep_star`-tied existential: `verified_normalize_major_
-/// premise` (and everything it calls) carries no reduction-reachability
-/// claim at all, only a depth/closedness bound -- `to_ctor_when_k`'s
-/// `Some` case in particular has no `pstep_star` fact connecting its
-/// result back to the real major premise the way `verified_whnf_step`'s
-/// own result does. Composing a NO-reachability-claim step with `unfold_
-/// apps`/`reduce_rec_core` can only ever produce a `to_model(r) == ...`
-/// EQUATION anchored to the NORMALIZED major, not one anchored back to
-/// the ORIGINAL `args[major_idx]` the way `verified_reduce_rec_step`'s
-/// ensures is -- restating that weaker equation would need its own new
-/// existential shape for no benefit nothing downstream needs yet, so
-/// this stays a "thin composition, control-flow fidelity only" function,
-/// same precedent as `verified_def_eq_with_delta`. `verified_reduce_rec_
-/// step` itself is UNCHANGED, still available for callers that don't
-/// need the broader (K-reduction/`NatLit`/`StringLit`/structure-eta)
-/// coverage and want its stronger claim instead.
+/// Returns `(ExprPtr, Ghost<bool>)`, same flag-exposure shape as
+/// `verified_normalize_major_premise` (whose own flag this one inherits
+/// unchanged) -- NOT `verified_reduce_rec_step`'s own unconditional
+/// `pstep_star`-tied existential, since the flag can genuinely be `false`
+/// (`to_ctor_when_k` fired -- K-reduction is def_eq/proof-irrelevance-
+/// anchored, not `pstep`-shaped -- or the structure-eta/`iota_try_eta_
+/// struct` branch was taken, which has no `pstep` connection at all).
+/// `StringLit`, like `NatLit`, now genuinely contributes to `reached@`
+/// too (both have real `pstep`/`pstep_star` facts, see `beta_model.rs`'s
+/// `string_lit_expand_model`/`pstep_preserves_string_lits_ok`) -- only
+/// K-reduction and structure-eta remain permanently unable to, being
+/// def_eq/proof-irrelevance-anchored rather than local `pstep` rewrites.
+/// When `reached@` IS `true` (K-reduction inactive AND, if a literal-
+/// unfolding branch fired, it was `NatLit`'s or `StringLit`'s), the
+/// `ensures` gives the SAME shape of existential `verified_reduce_rec_
+/// step` always has (`ctor_id`/`levels`/`ctor_args`/`rec_rule_val`/`ks`/
+/// `subst_val`/`num_extra`/`prefix_len`), just scoped to `Map::empty()`
+/// (no delta) instead of the real env -- assembled by chaining `verified_
+/// normalize_major_premise`'s own `pstep_star(to_model(major_arg),
+/// to_model(major))` fact (exactly equal to `to_model(major)`, via
+/// `verified_unfold_apps`, no `pstep_star_trans` needed) with `verified_
+/// reduce_rec_core`'s already-unconditional substitution equation -- same
+/// assembly `verified_reduce_rec_step` itself already does, just gated by
+/// `reached@`. `verified_reduce_rec_step` itself is UNCHANGED, still
+/// available for callers that don't need the broader (K-reduction/
+/// `NatLit`/`StringLit`/structure-eta) coverage and want an UNCONDITIONAL
+/// claim instead.
 pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -3839,7 +3937,7 @@ pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
     d_lit: nat,
     max_num_fields: u16,
     final_bound: nat,
-) -> (result: Option<ExprPtr<'t>>)
+) -> (result: Option<(ExprPtr<'t>, Ghost<bool>)>)
     requires
         forall |i: int| 0 <= i < args@.len() ==>
             nlbv(to_model(#[trigger] args@[i])) <= 0 && depth(to_model(args@[i])) <= d_major,
@@ -3869,7 +3967,25 @@ pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
             && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + w2 * w2 * w2 + w2 * w2 + w2 + 10 <= 0xFFFF_0000 }
             && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + (max_num_params as nat) + dd2 + 1 + (max_num_fields as nat) <= final_bound }
         },
-    ensures true
+    ensures match result {
+        Some((r, reached)) => reached@ ==>
+            exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Vec<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
+                #![trigger pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(args@[major_idx as int]), reduced_major), spine_app(ExprSpec::Const(ctor_id, levels), ctor_args), subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val), ctor_args.subrange(num_extra as int, ctor_args.len() as int), args_model_of(args@).subrange(0, prefix_len as int)]
+                major_idx < args@.len()
+                && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(args@[major_idx as int]), reduced_major)
+                && reduced_major == spine_app(ExprSpec::Const(ctor_id, levels), ctor_args)
+                && num_extra <= ctor_args.len()
+                && prefix_len <= args_model_of(args@).len()
+                && subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val)
+                && to_model(r) == spine_app(
+                    spine_app(
+                        spine_app(subst_val, args_model_of(args@).subrange(0, prefix_len as int)),
+                        ctor_args.subrange(num_extra as int, ctor_args.len() as int),
+                    ),
+                    args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int),
+                ),
+        None => true,
+    }
 {
     let (num_params, num_motives, num_minors, major_idx, uparams, rec_rules) = match get_recursor_data(env, &const_name) {
         Some(p) => p,
@@ -3888,7 +4004,7 @@ pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
         Some(n) => n,
         None => return None,
     };
-    let major = verified_normalize_major_premise(
+    let (major, reached) = verified_normalize_major_premise(
         ctx, env, const_name, ind_name, major_arg, fuel, d_i, d_major, max_num_params, dd_new, max_str_len, d_lit, max_num_fields, final_bound,
     );
     let (major_ctor, major_ctor_args) = match verified_unfold_apps(ctx, major, fuel) {
@@ -3923,7 +4039,59 @@ pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
         return None;
     }
     assert(to_model_of_levels(uparams).len() == to_model_of_levels(const_levels).len());
-    verified_reduce_rec_core(ctx, rule_val, uparams, const_levels, prefix_args, major_ctor_args_wo_params, post_args, fuel)
+    match verified_reduce_rec_core(ctx, rule_val, uparams, const_levels, prefix_args, major_ctor_args_wo_params, post_args, fuel) {
+        Some(r) => {
+            proof {
+                if reached@ {
+                    is_const_shape_model(major_ctor);
+                    const_levels_vec_model(major_ctor);
+                    let ghost ctor_args_model = args_model_of(major_ctor_args@);
+                    assert(to_model(major) == spine_app(ExprSpec::Const(const_id(major_ctor), const_levels_vec(major_ctor)), ctor_args_model));
+                    assert(major_arg == args@[major_idx as int]);
+                    assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major_arg), to_model(major)));
+                    assert(major_ctor_args_wo_params@ =~= major_ctor_args@.subrange(num_extra_params_to_major as int, major_ctor_args@.len() as int));
+                    assert(prefix_args@ =~= args@.subrange(0, num_prefix as int));
+                    assert(post_args@ =~= args@.subrange((major_idx + 1) as int, args@.len() as int));
+                    let ghost subst_val = choose |sv: ExprSpec|
+                        subst_expr_levels_rel(
+                            to_model(rule_val),
+                            level_names(to_model_of_levels(uparams)),
+                            to_model_of_levels(const_levels),
+                            sv,
+                        )
+                        && to_model(r) == spine_app(
+                            spine_app(
+                                spine_app(sv, args_model_of(prefix_args@)),
+                                args_model_of(major_ctor_args_wo_params@),
+                            ),
+                            args_model_of(post_args@),
+                        );
+                    assert(args_model_of(prefix_args@) =~= args_model_of(args@).subrange(0, num_prefix as int));
+                    assert(args_model_of(post_args@) =~= args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int));
+                    assert(args_model_of(major_ctor_args_wo_params@)
+                        =~= ctor_args_model.subrange(num_extra_params_to_major as int, ctor_args_model.len() as int));
+                    assert((major_idx as nat) < args@.len());
+                    assert((num_extra_params_to_major as nat) <= ctor_args_model.len());
+                    assert((num_prefix as nat) <= args_model_of(args@).len());
+                    assert(pstep_star(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        to_model(args@[major_idx as int]),
+                        spine_app(ExprSpec::Const(const_id(major_ctor), const_levels_vec(major_ctor)), ctor_args_model),
+                    ));
+                    assert(subst_expr_levels_rel(to_model(rule_val), level_names(to_model_of_levels(uparams)), to_model_of_levels(const_levels), subst_val));
+                    assert(to_model(r) == spine_app(
+                        spine_app(
+                            spine_app(subst_val, args_model_of(args@).subrange(0, num_prefix as int)),
+                            ctor_args_model.subrange(num_extra_params_to_major as int, ctor_args_model.len() as int),
+                        ),
+                        args_model_of(args@).subrange((major_idx + 1) as int, args@.len() as int),
+                    ));
+                }
+            }
+            Some((r, reached))
+        }
+        None => None,
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_

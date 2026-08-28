@@ -32,16 +32,150 @@ use crate::level_model::LevelSpec;
 
 verus! {
 
+/// Trivial-equality wrapper around `Ghost<nat>`, letting `ExprSpec` keep a
+/// plain `#[derive(PartialEq)]` (matching the recursive-`Box` pattern
+/// already used successfully by `LevelSpec`) instead of a hand-written
+/// recursive `impl PartialEq for ExprSpec`. The hand-written version was
+/// tried first and rejected by Verus's termination checker ("found a
+/// cyclic self-reference in a definition") -- a derive-generated recursive
+/// impl gets an exemption a hand-rolled one doesn't. `Ghost<T>` itself has
+/// no `PartialEq` (by design) and the orphan rules block writing one for it
+/// directly (neither `Ghost` nor `nat` is local to this crate), hence this
+/// newtype. `eq` is unconditionally `true`: the only sound thing an EXEC
+/// `eq` can say about two ghost-only payloads with no runtime content.
+#[derive(Clone, Copy)]
+pub struct NatLitPayload(pub Ghost<nat>);
+
+impl PartialEq for NatLitPayload {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+/// `Ghost<nat>` has no runtime bits to print, so this can't show the
+/// actual value (that data doesn't exist at exec time) -- just enough for
+/// `#[derive(Debug)]` on `ExprSpec` (needed by this file's own `#[test]`s'
+/// `assert_eq!`, which requires BOTH `PartialEq` and `Debug`) to compile.
+/// `#[verifier::external]`: `core::fmt::Formatter`/`write!` aren't
+/// Verus-modeled types at all (unlike `external_body`, which still needs
+/// Verus to type-check the signature), so this whole impl must stay
+/// completely outside Verus's view -- pure, unverified Rust, exactly
+/// appropriate for formatting code with zero proof-relevant content.
+#[verifier::external]
+impl core::fmt::Debug for NatLitPayload {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "NatLitPayload(<ghost>)")
+    }
+}
+
+/// Tells Verus not to hold `NatLitPayload::eq` above to a structural-
+/// equality postcondition (the default derived for `PartialEq` impls,
+/// which `Ghost<nat>` -- having no runtime bits -- can't possibly satisfy
+/// with an unconditional `true`): see `rust_verify_test/tests/eq_cmp.rs`
+/// for the same `PartialEqSpecImpl`/`obeys_eq_spec() == false` pattern.
+/// `vstd::std_specs` only exists when compiling under Verus's own `--cfg
+/// verus_keep_ghost` (it's a proof-obligation-only module, absent from a
+/// plain `cargo build`) -- gated here so plain builds (used throughout this
+/// project as a fast exhaustiveness-check pass) don't fail to resolve it.
+#[cfg(verus_keep_ghost)]
+impl vstd::std_specs::cmp::PartialEqSpecImpl for NatLitPayload {
+    closed spec fn obeys_eq_spec() -> bool {
+        false
+    }
+
+    closed spec fn eq_spec(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+/// Same wrapper as `NatLitPayload`, for `StringLit`'s own `Ghost<nat>`
+/// payload -- kept as a DISTINCT type rather than reusing `NatLitPayload`
+/// so `ExprSpec::NatLit`/`ExprSpec::StringLit` stay independently typed
+/// (a `NatLit` and a `StringLit` should never be constructible from the
+/// same payload value by accident). See `NatLitPayload`'s own doc comment
+/// for why this indirection exists at all.
+#[derive(Clone, Copy)]
+pub struct StringLitPayload(pub Ghost<nat>);
+
+impl PartialEq for StringLitPayload {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+/// Same reasoning as `NatLitPayload`'s own `Debug` impl (`#[verifier::
+/// external]` included).
+#[verifier::external]
+impl core::fmt::Debug for StringLitPayload {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "StringLitPayload(<ghost>)")
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+impl vstd::std_specs::cmp::PartialEqSpecImpl for StringLitPayload {
+    closed spec fn obeys_eq_spec() -> bool {
+        false
+    }
+
+    closed spec fn eq_spec(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ExprSpec {
     Var(u32),
     Free(u32),
-    /// Stands in for `StringLit`/`NatLit` only now -- `Sort` and `Const`
-    /// used to collapse into this too (their payload was irrelevant to
-    /// pure de-Bruijn substitution), but both now carry real level data
-    /// (see `Sort`/`Const` below) so `subst_expr_levels_model` can be
-    /// genuinely modeled, not just trusted at the real-code bridge.
+    /// No longer stands in for anything -- `Sort`/`Const`/`NatLit`/
+    /// `StringLit` used to all collapse into this (their payload was
+    /// irrelevant to pure de-Bruijn substitution), but each now carries
+    /// real content (see below) exactly when something downstream needs
+    /// to relate two DIFFERENT occurrences by VALUE, not just by shape --
+    /// `subst_expr_levels_model` for `Sort`/`Const`'s levels, `pstep`'s
+    /// `NatLit`-unfolding rule for `NatLit`'s value. `StringLit`'s
+    /// content is STILL not modeled (this whole arc's established
+    /// convention, see `expr_arena_bridge.rs::string_len`'s own doc
+    /// comment: "never models string CONTENT, only its LENGTH") -- its
+    /// variant below carries just that length, not the characters.
     Closed,
+    /// A `NatLit`'s actual value (`Expr::NatLit`'s cached `BigUint`,
+    /// mirrored here as an unbounded `nat` -- the model has no reason to
+    /// track a bit-width). Needed so `pstep` can state a genuine
+    /// unfolding rule (`NatLit(n)` for `n > 0` reduces to `Nat.succ
+    /// (NatLit(n - 1))`; `NatLit(0)` reduces to `Nat.zero`) instead of
+    /// only trusting `nat_lit_to_constructor`'s construction as an
+    /// external, unrelated-to-reduction fact the way `verified_nat_lit_
+    /// to_constructor` (`expr_arena_bridge.rs`) currently does. Bound-
+    /// variable-inert in every other respect, identically to `Closed`/
+    /// `Sort`/`Const`, in every function below -- a numeral is never
+    /// itself a loose bound variable or a `Local`. Wrapped in `Ghost<_>`
+    /// (zero runtime cost, erased entirely) rather than a bare `nat`
+    /// because `ExprSpec` itself is a REAL, exec-constructible type (see
+    /// `dup`/`inst_model` below, both genuine `pub fn`s exercised by this
+    /// file's own `#[test]`s) -- a bare `nat` field has no runtime
+    /// representation at all and can't appear in an exec-constructed
+    /// value; `Ghost<nat>` is Verus's standard way to carry spec-only
+    /// data inside an otherwise-real type.
+    NatLit(NatLitPayload),
+    /// A `StringLit`'s character COUNT only (`string_len`'s own value,
+    /// mirrored here) -- unlike `NatLit`, this does NOT carry the
+    /// string's actual content, matching `expr_arena_bridge.rs::
+    /// string_len`'s own established convention ("this arc never models
+    /// string CONTENT, only its LENGTH": the real construction builds one
+    /// `List.cons (Char.ofNat _)` layer PER CHARACTER, so a full-content
+    /// model would need a `Seq<nat>` of character codes, not just a
+    /// count -- deferred, not yet needed by anything). Carrying even just
+    /// the length lets something downstream relate two `StringLit`s by
+    /// (partial) value -- e.g. a depth-style bound keyed to length,
+    /// mirroring `str_lit_to_constructor`'s own `depth <= string_len(s) +
+    /// 3` fact -- without needing full content. Bound-variable-inert in
+    /// every other respect, identically to `Closed`/`Sort`/`Const`/
+    /// `NatLit`, in every function below. Wrapped in `Ghost<_>` for the
+    /// same reason `NatLit`'s payload is -- `ExprSpec` is a REAL, exec-
+    /// constructible type, so a bare `nat` field (no runtime
+    /// representation) can't appear in it.
+    StringLit(StringLitPayload),
     /// `Expr::Sort`'s universe level. Bound-variable-inert exactly like
     /// `Closed` in every function below -- substitution never touches a
     /// `Sort`'s level, only `subst_expr_levels_model` does.
@@ -78,7 +212,7 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
 {
     match e {
         ExprSpec::Var(i) => i as nat + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => if nlbv(*f) >= nlbv(*a) { nlbv(*f) } else { nlbv(*a) },
         ExprSpec::Bind(t, b) => {
             let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
@@ -98,7 +232,7 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
@@ -118,7 +252,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) { depth(*f) } else { depth(*a) },
         ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) { depth(*t) } else { depth(*b) },
         ExprSpec::Let(t, v, b) => {
@@ -149,7 +283,7 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
                 e
             }
         }
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(
             Box::new(subst_full(*f, substs, offset)),
             Box::new(subst_full(*a, substs, offset)),
@@ -179,7 +313,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
 {
     match e {
         ExprSpec::Var(_) => {}
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
         ExprSpec::App(f, a) => {
             subst_full_noop(*f, substs, offset);
             subst_full_noop(*a, substs, offset);
@@ -236,6 +370,8 @@ pub open spec fn expr_spec_eq(a: ExprSpec, b: ExprSpec) -> bool
         (ExprSpec::Var(i), ExprSpec::Var(j)) => i == j,
         (ExprSpec::Free(i), ExprSpec::Free(j)) => i == j,
         (ExprSpec::Closed, ExprSpec::Closed) => true,
+        (ExprSpec::NatLit(n1), ExprSpec::NatLit(n2)) => n1.0@ == n2.0@,
+        (ExprSpec::StringLit(n1), ExprSpec::StringLit(n2)) => n1.0@ == n2.0@,
         (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => l1 == l2,
         (ExprSpec::Const(i1, ls1), ExprSpec::Const(i2, ls2)) => i1 == i2 && ls1@ =~= ls2@,
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
@@ -254,7 +390,7 @@ pub proof fn expr_spec_eq_refl(e: ExprSpec)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_)
         | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
         ExprSpec::App(f, a) => {
             expr_spec_eq_refl(*f);
@@ -287,6 +423,8 @@ pub fn dup(e: &ExprSpec) -> (result: ExprSpec)
         ExprSpec::Var(i) => ExprSpec::Var(*i),
         ExprSpec::Free(i) => ExprSpec::Free(*i),
         ExprSpec::Closed => ExprSpec::Closed,
+        ExprSpec::NatLit(n) => ExprSpec::NatLit(*n),
+        ExprSpec::StringLit(n) => ExprSpec::StringLit(*n),
         ExprSpec::Sort(l) => {
             let l2 = crate::level_model::dup(l);
             assert(l2 == *l);
@@ -353,7 +491,7 @@ pub fn nlbv_exec(e: &ExprSpec) -> (result: u32)
 {
     match e {
         ExprSpec::Var(i) => *i + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
         ExprSpec::App(f, a) => {
             let nf = nlbv_exec(f);
             let na = nlbv_exec(a);
@@ -406,7 +544,7 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
                     e
                 }
             }
-            ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+            ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
             ExprSpec::App(f, a) => {
                 let sf = inst_model(*f, substs, offset);
                 let sa = inst_model(*a, substs, offset);
@@ -466,7 +604,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
         ExprSpec::Free(id) => match find_from_end(locals, id) {
             Some(p) => ExprSpec::Var((offset + p) as u32),
             None => e,
@@ -499,7 +637,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
         ExprSpec::Free(_) => {}
         ExprSpec::App(f, a) => {
             abstr_full_noop(*f, locals, offset);
@@ -534,7 +672,7 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
         ExprSpec::Free(_) => {}
         ExprSpec::App(f, a) => {
             abstr_full_depth(*f, locals, offset);
@@ -561,7 +699,7 @@ pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
     decreases e
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => {
             let rf = has_fv_exec(f);
@@ -601,7 +739,7 @@ pub fn abstr_model(e: ExprSpec, locals: &[u32], offset: u32) -> (result: ExprSpe
         e
     } else {
         match e {
-            ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+            ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
             ExprSpec::Free(id) => {
                 match find_pos_from_end(locals, id) {
                     Some(p) => ExprSpec::Var(offset + p),
@@ -684,6 +822,8 @@ pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
         (ExprSpec::Var(i), ExprSpec::Var(j)) => i == j,
         (ExprSpec::Free(i), ExprSpec::Free(j)) => i == j,
         (ExprSpec::Closed, ExprSpec::Closed) => true,
+        (ExprSpec::NatLit(n1), ExprSpec::NatLit(n2)) => n1.0@ == n2.0@,
+        (ExprSpec::StringLit(n1), ExprSpec::StringLit(n2)) => n1.0@ == n2.0@,
         (ExprSpec::Sort(l), ExprSpec::Sort(l2)) =>
             forall |rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, rho)
                 == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vs)),
@@ -733,6 +873,8 @@ pub fn subst_expr_levels_model(e: ExprSpec, ks: &[u64], vs: &[LevelSpec]) -> (re
         ExprSpec::Var(i) => ExprSpec::Var(i),
         ExprSpec::Free(i) => ExprSpec::Free(i),
         ExprSpec::Closed => ExprSpec::Closed,
+        ExprSpec::NatLit(n) => ExprSpec::NatLit(n),
+        ExprSpec::StringLit(n) => ExprSpec::StringLit(n),
         ExprSpec::Sort(l) => {
             let l2 = crate::level_model::subst_levels(l, ks, vs);
             ExprSpec::Sort(l2)

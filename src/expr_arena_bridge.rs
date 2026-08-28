@@ -35,6 +35,8 @@ use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
 use crate::expr::{Expr, BinderStyle, FVarId};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::NatLitPayload;
+use crate::expr_model::StringLitPayload;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
@@ -47,7 +49,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 
 // These accessors' only "caller" is the `assume_specification` attributes
@@ -566,13 +568,13 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
 /// composition (`expr.rs:523-533`).
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_zero] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id(),
+        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id() && const_levels_vec(e)@.len() == 0,
         None => true,
     };
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id(),
+        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id() && const_levels_vec(e)@.len() == 0,
         None => true,
     };
 
@@ -583,15 +585,30 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<
 /// `biguint_is_zero`/`biguint_pred` (already used by `pred_of_nat_succ`'s
 /// own `NatLit` case), `mk_nat_lit_quick` (already used by every `do_nat_
 /// bin` bridge to construct ITS OWN result), `c_nat_zero`/`c_nat_succ`
-/// (new above, mirroring `c_bool_true`'s exact pattern) -- this is the
-/// first time all four compose together. `depth <= 1` follows from
-/// `Nat.succ`'s own `Const`-shape (depth 0) applied to a freshly-built
-/// `NatLit` (`is_nat_lit_shape_model`: collapses to `ExprSpec::Closed`,
-/// depth 0) -- `App(Const, Closed)` is depth exactly 1, matching every
-/// other "small, closed, shallow" construction in this arc.
+/// (mirroring `c_bool_true`'s exact pattern, now also pinning `const_
+/// levels_vec(e)@.len() == 0` -- needed below, true of the real
+/// monomorphic constants regardless) -- this is the first time all four
+/// compose together. `depth <= 1` follows from `Nat.succ`'s own `Const`-
+/// shape (depth 0) applied to a freshly-built `NatLit` (depth 0, same as
+/// every other bound-variable-inert leaf) -- `App(Const, NatLit)` is depth
+/// exactly 1, matching every other "small, closed, shallow" construction
+/// in this arc.
+///
+/// The `pstep` conjunct is the genuinely NEW part (previous version only
+/// stated structural bounds, saying nothing about what this constructs
+/// relative to the bignum it started from): the result is EXACTLY what
+/// `beta_model::pstep`'s `NatLit`-unfolding rule says `NatLit(bignum_ptr_
+/// value(n))` reduces to, bridged from the opaque `const_expr_no_levels`
+/// stand-in (see its own doc comment) to the REAL `Const` this function
+/// actually builds via `const_expr_no_levels_canonical`.
 pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     ensures match result {
-        Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r)) <= 1,
+        Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r)) <= 1
+            && pstep(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
+                to_model(r),
+            ),
         None => true,
     }
 {
@@ -606,6 +623,13 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
         };
         proof {
             is_const_shape_model(result);
+            assert(bignum_ptr_value(n) == 0);
+            const_expr_no_levels_canonical(to_model(result), nat_zero_id());
+            assert(pstep(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
+                to_model(result),
+            ));
         }
         Some(result)
     } else {
@@ -621,6 +645,9 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
         proof {
             is_const_shape_model(succ_c);
             is_nat_lit_shape_model(pred);
+            assert(bignum_ptr_value(n) > 0);
+            assert(nat_lit_value(pred) == (bignum_ptr_value(n) - 1) as nat);
+            const_expr_no_levels_canonical(to_model(succ_c), nat_succ_id());
         }
         let result = ctx.mk_app(succ_c, pred);
         proof {
@@ -631,6 +658,11 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
             assert(nlbv(to_model(pred)) == 0);
             assert(max_var_below(to_model(succ_c), 0));
             assert(max_var_below(to_model(pred), 0));
+            assert(pstep(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
+                to_model(result),
+            ));
         }
         Some(result)
     }
@@ -681,7 +713,7 @@ pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
 #[verifier::external_body]
 pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     requires is_nat_lit_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::Closed
+    ensures to_model(ptr) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(ptr))))
 {}
 
 pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<crate::util::BigUintPtr<'t>>)
@@ -690,10 +722,17 @@ pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) 
         None => !is_nat_lit_shape(ptr),
     };
 
-/// `StringLit`'s shape flag -- same "bound-variable-inert, collapses to
-/// `ExprSpec::Closed`" role `is_nat_lit_shape` plays for `NatLit`, minus a
-/// value accessor (see `expr_as_string_lit`'s own doc comment).
+/// `StringLit`'s shape flag, now WITH a value accessor (`string_lit_ptr_
+/// of`, mirroring `NatLit`'s `nat_lit_ptr_of` exactly): `is_string_lit_
+/// shape` marks a `StringLit`-shaped pointer (bound-variable-inert), and
+/// `string_lit_ptr_of` is the `StringPtr` it wraps -- same "pointer
+/// identity, not structural content" pattern `nat_lit_ptr_of`/`name_id`/
+/// `expr_id` already use. `expr_as_string_lit`'s own doc comment
+/// previously noted this accessor didn't exist yet; it's needed now that
+/// `ExprSpec::StringLit` carries real content (its length) instead of
+/// collapsing into `Closed`.
 pub uninterp spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
 
 pub assume_specification<'t> [expr_as_string_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
     ensures result == is_string_lit_shape(ptr);
@@ -701,13 +740,13 @@ pub assume_specification<'t> [expr_as_string_lit] (ptr: ExprPtr<'t>, e: &Expr<'t
 #[verifier::external_body]
 pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     requires is_string_lit_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::Closed
+    ensures to_model(ptr) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(ptr)))))
 {
 }
 
 pub assume_specification<'t> [expr_as_string_lit_ptr] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<StringPtr<'t>>)
     ensures match result {
-        Some(_) => is_string_lit_shape(ptr),
+        Some(p) => is_string_lit_shape(ptr) && string_lit_ptr_of(ptr) == p,
         None => !is_string_lit_shape(ptr),
     };
 
@@ -743,6 +782,7 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx:
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), 0)
             &&& depth(to_model(r)) <= string_len(s) + 3
+            &&& to_model(r) == string_lit_expand_model(string_len(s))
         },
         None => true,
     };
