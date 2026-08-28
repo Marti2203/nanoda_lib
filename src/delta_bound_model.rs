@@ -68,7 +68,7 @@ use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, 
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit_ptr_of};
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
 #[cfg(verus_only)]
 use crate::tc_model::args_model_of;
 use crate::expr::BinderStyle;
@@ -3214,6 +3214,10 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
         (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + 10 <= 0xFFFF_0000,
         (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) <= 60000,
         (max_str_len as nat) + 3 <= 60000,
+        {
+            let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
+            dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
+        },
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -3422,6 +3426,10 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + 10 <= 0xFFFF_0000,
         (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) <= 60000,
         (max_str_len as nat) + 3 <= 60000,
+        {
+            let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
+            dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
+        },
     ensures true
 {
     if expr_ptr_eq(x, y) {
@@ -3544,23 +3552,27 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
 /// `Let`/`Lambda`/`Pi`-shaped `x_n2`/`y_n2` fall through to `None` here,
 /// same honest-incompleteness convention as everywhere else.
 ///
-/// Composes THREE of `verified_def_eq_fallback_group`'s five disjuncts --
+/// Composes ALL FIVE of `verified_def_eq_fallback_group`'s disjuncts --
 /// `def_eq_app` (needs no type), `try_eta_struct` (needs `x`/`y`'s RAW
-/// inferred types, `tc.rs:316`), `def_eq_unit` (needs `x`'s type WHNF'd
-/// -- one round, no delta-unfolding, honestly less complete than the
-/// real `infer_then_whnf`'s full `whnf`, matching the "one round first"
-/// precedent -- and `y`'s type raw, `tc.rs:357-368`) -- plus `try_string_
-/// lit_expansion` (needs no type at all). Deliberately does NOT attempt
-/// `try_eta_expansion`: unlike the other three, it needs a Pi-SHAPE
-/// CHECK on each side's whnf'd type before it's even meaningful to call
-/// (`tc.rs:1346-1357`'s own `if let Pi { .. } = ... else { false }`) --
-/// calling `verified_try_eta_expansion_aux` with a binder type extracted
-/// from a NON-Pi-shaped whnf result wouldn't be unsound (this whole
-/// composition's `ensures true` makes no positive claim to violate), but
-/// it WOULD silently diverge from the real function's actual behavior on
-/// those inputs, which is worse than an honest gap here -- left for a
-/// follow-up that adds the shape-gated two-direction dance properly
-/// rather than risking a quiet behavioral mismatch.
+/// inferred types, `tc.rs:316`), `try_eta_expansion` (needs a Pi-SHAPE
+/// CHECK on each side's `infer_then_whnf`'d type, `tc.rs:1346-1357`'s own
+/// `if let Pi { .. } = ... else { false }` -- both directions attempted
+/// independently, each SKIPPED (not forced) when that side's whnf'd type
+/// isn't Pi-shaped, matching the real function's own graceful bail rather
+/// than risking a behavioral mismatch by calling `verified_try_eta_
+/// expansion_aux` on a non-Pi extraction), `def_eq_unit` (needs `x`'s
+/// type WHNF'd -- one round, no delta-unfolding, honestly less complete
+/// than the real `infer_then_whnf`'s full `whnf`, matching the "one round
+/// first" precedent -- and `y`'s type raw, `tc.rs:357-368`) -- plus `try_
+/// string_lit_expansion` (needs no type at all). `try_eta_expansion`'s
+/// own depth headroom needed one NEW `requires` conjunct beyond what
+/// `def_eq_unit`'s existing `xt_whnfd` bound already provided (a Pi's
+/// binder TYPE is one level shallower than the whnf'd type itself, but
+/// `verified_try_eta_expansion_aux` ALSO needs headroom for the OTHER
+/// side's own depth on top of that) -- propagated up through both of this
+/// function's own callers (`verified_def_eq_with_delta`, `verified_def_
+/// eq_with_delta_and_proof_irrel`), same "caller supplies a sufficient
+/// ceiling" pattern as everywhere else in this arc.
 pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -3587,6 +3599,15 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
         (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + 10 <= 0xFFFF_0000,
         (d_i + d_i + d_xy + d_xy) * (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) + (d_i + d_i + d_xy + d_xy) <= 60000,
         (max_str_len as nat) + 3 <= 60000,
+        // Extra headroom `try_eta_expansion` needs beyond what `def_eq_
+        // unit`'s own `xt_whnfd` bound already provides: a Pi's BINDER
+        // TYPE (one level shallower than the whnf'd type itself) plus the
+        // OTHER side's own depth, both feeding `verified_try_eta_
+        // expansion_aux`'s `requires`.
+        {
+            let dd_i = d_i + d_i + d_xy + d_xy;
+            dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy + 10 <= 60000
+        },
     ensures true
 {
     match verified_def_eq_app(ctx, x, y, fuel) {
@@ -3610,6 +3631,38 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
         proof {
             nlbv_bound_implies_max_var_below(to_model(xt), 0);
             max_var_below_mono(to_model(xt), depth(to_model(xt)), dd_i);
+            nlbv_bound_implies_max_var_below(to_model(yt), 0);
+            max_var_below_mono(to_model(yt), depth(to_model(yt)), dd_i);
+        }
+        let yt_whnfd_opt = verified_whnf_no_unfolding_step(ctx, yt, fuel, dd_i, dd_i);
+        if let Some(yt_whnfd) = yt_whnfd_opt {
+            assert(depth(to_model(yt_whnfd)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
+            let yt_whnfd_el = ctx.read_expr(yt_whnfd);
+            if let Some((y_binder_name, y_binder_style, y_binder_type, y_binder_body)) = expr_as_pi(&yt_whnfd_el) {
+                assert(to_model(yt_whnfd) == ExprSpec::Bind(Box::new(to_model(y_binder_type)), Box::new(to_model(y_binder_body))));
+                assert(depth(to_model(yt_whnfd)) == 1 + if depth(to_model(y_binder_type)) >= depth(to_model(y_binder_body)) { depth(to_model(y_binder_type)) } else { depth(to_model(y_binder_body)) });
+                assert(depth(to_model(y_binder_type)) < depth(to_model(yt_whnfd)));
+                assert(depth(to_model(y_binder_type)) + depth(to_model(y)) + 10 <= 60000);
+                match verified_try_eta_expansion_aux(ctx, x, y, y_binder_name, y_binder_style, y_binder_type, fuel) {
+                    Some(true) => return Some(true),
+                    _ => {}
+                }
+            }
+        }
+        let xt_whnfd_for_eta_opt = verified_whnf_no_unfolding_step(ctx, xt, fuel, dd_i, dd_i);
+        if let Some(xt_whnfd_for_eta) = xt_whnfd_for_eta_opt {
+            assert(depth(to_model(xt_whnfd_for_eta)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
+            let xt_whnfd_for_eta_el = ctx.read_expr(xt_whnfd_for_eta);
+            if let Some((x_binder_name, x_binder_style, x_binder_type, x_binder_body)) = expr_as_pi(&xt_whnfd_for_eta_el) {
+                assert(to_model(xt_whnfd_for_eta) == ExprSpec::Bind(Box::new(to_model(x_binder_type)), Box::new(to_model(x_binder_body))));
+                assert(depth(to_model(xt_whnfd_for_eta)) == 1 + if depth(to_model(x_binder_type)) >= depth(to_model(x_binder_body)) { depth(to_model(x_binder_type)) } else { depth(to_model(x_binder_body)) });
+                assert(depth(to_model(x_binder_type)) < depth(to_model(xt_whnfd_for_eta)));
+                assert(depth(to_model(x_binder_type)) + depth(to_model(x)) + 10 <= 60000);
+                match verified_try_eta_expansion_aux(ctx, y, x, x_binder_name, x_binder_style, x_binder_type, fuel) {
+                    Some(true) => return Some(true),
+                    _ => {}
+                }
+            }
         }
         match verified_whnf_no_unfolding_step(ctx, xt, fuel, dd_i, dd_i) {
             Some(xt_whnfd) => {
