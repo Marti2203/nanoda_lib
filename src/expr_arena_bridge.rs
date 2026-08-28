@@ -77,13 +77,14 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 /// `num_loose_bvars() == 0` and `has_fvars() == false` (see
 /// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
 /// bound-variable-inert for `inst`/`abstr`'s purposes regardless of
-/// payload -- `StringLit`/`NatLit` collapse to `ExprSpec::Closed`; `Sort`
-/// and `Const` each get their own distinct variant (`ExprSpec::Sort`/
-/// `ExprSpec::Const`, see `ExprSpec`'s doc comment in `expr_model.rs`), so
-/// this function's *contract* gives `matches!(..., Closed) ||
-/// is_const_shape(ptr) || matches!(..., Sort(_))`, not `Closed` alone --
-/// the real boolean result is unchanged, still true for all four variants;
-/// only the trust boundary's own precision improved.
+/// payload. `Sort`/`Const`/`StringLit`/`NatLit` each get their own distinct
+/// `ExprSpec` variant now (see `ExprSpec`'s doc comment in
+/// `expr_model.rs`) -- only genuinely payload-free leaves collapse to
+/// `ExprSpec::Closed` -- so this function's *contract* gives `matches!(...,
+/// Closed | Sort(_) | NatLit(_) | StringLit(_)) || is_const_shape(ptr)`,
+/// not `Closed` alone. The real boolean result is unchanged, still true
+/// for all four variants; only the trust boundary's own precision keeps
+/// catching up as `ExprSpec` gains new variants.
 #[allow(dead_code)]
 pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
@@ -327,7 +328,7 @@ pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
         !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
 
 pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
-    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr));
+    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr) || is_nat_lit_shape(ptr) || is_string_lit_shape(ptr));
 
 pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
@@ -965,6 +966,12 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
             if is_const_shape(e) {
                 is_const_shape_model(e);
                 assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+            } else if is_nat_lit_shape(e) {
+                is_nat_lit_shape_model(e);
+                assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
+            } else if is_string_lit_shape(e) {
+                is_string_lit_shape_model(e);
+                assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
             } else {
                 assert(to_model(e) == ExprSpec::Closed);
             }
@@ -1076,6 +1083,12 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
             if is_const_shape(e) {
                 is_const_shape_model(e);
                 assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+            } else if is_nat_lit_shape(e) {
+                is_nat_lit_shape_model(e);
+                assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
+            } else if is_string_lit_shape(e) {
+                is_string_lit_shape_model(e);
+                assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
             } else {
                 assert(to_model(e) == ExprSpec::Closed);
             }
@@ -1218,6 +1231,18 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             }
             None => None,
         };
+    }
+    if let Some(_p) = expr_as_nat_lit(e, &el) {
+        assert(is_nat_lit_shape(e));
+        proof { is_nat_lit_shape_model(e); }
+        assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
+        return Some(e);
+    }
+    if expr_as_string_lit(e, &el) {
+        assert(is_string_lit_shape(e));
+        proof { is_string_lit_shape_model(e); }
+        assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
+        return Some(e);
     }
     if expr_is_closed_leaf(e, &el) {
         assert(to_model(e) == ExprSpec::Closed);
