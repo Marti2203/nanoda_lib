@@ -2714,11 +2714,20 @@ pub fn verified_mk_nullary_ctor<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 /// invariant the real code never checks explicitly, relying on the
 /// export file's own well-formedness) -- bridged here as an honest
 /// `None` guard instead.
-pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e_type: ExprPtr<'t>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e_type: ExprPtr<'t>, e: ExprPtr<'t>, fuel: u32, d_type: nat, d_e: nat, max_num_params: u16, max_num_fields: u16) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e_type)) <= 0,
+        depth(to_model(e_type)) <= d_type,
+        nlbv(to_model(e)) <= 0,
+        depth(to_model(e)) <= d_e,
     ensures match result {
-        Some(_) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-            to_model(e_type) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun),
+        Some(r) => {
+            &&& (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+                to_model(e_type) == spine_app(to_model(fun), args_model)
+                && is_const_shape(fun))
+            &&& nlbv(to_model(r)) <= 0
+            &&& depth(to_model(r)) <= d_type + (max_num_params as nat) + d_e + 1 + (max_num_fields as nat)
+        },
         None => true,
     }
 {
@@ -2741,27 +2750,85 @@ pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     if num_params as usize > args.len() {
         return None;
     }
-    let mut out = ctx.mk_const(ctor_name0, c_levels);
-    let mut i: usize = 0;
-    while i < num_params as usize
-        invariant
-            i <= num_params as usize,
-            num_params as usize <= args.len(),
-        decreases num_params as usize - i
-    {
-        out = ctx.mk_app(out, args[i]);
-        i += 1;
+    if num_params > max_num_params || num_fields > max_num_fields {
+        return None;
     }
+    let new_const = ctx.mk_const(ctor_name0, c_levels);
+    let take_n = num_params as usize;
+    let taken = verified_slice_to(args.as_slice(), take_n);
+    proof {
+        let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        assert(to_model(e_type) == spine_app(to_model(_f), args_model));
+        spine_app_depth_decompose(to_model(_f), args_model);
+        spine_app_nlbv_decompose(to_model(_f), args_model);
+        let ghost taken_model = Seq::new(taken@.len(), |i: int| to_model(taken@[i]));
+        assert(taken_model =~= args_model.subrange(0, take_n as int));
+        assert forall |k: int| 0 <= k < taken@.len() implies
+            nlbv(#[trigger] taken_model[k]) <= 0 && max_var_below(taken_model[k], d_type) && depth(taken_model[k]) <= d_type
+        by {
+            assert(taken_model[k] == args_model[k]);
+            nlbv_bound_implies_max_var_below(args_model[k], 0);
+            max_var_below_mono(args_model[k], depth(args_model[k]), d_type);
+        }
+        is_const_shape_model(new_const);
+        assert(depth(to_model(new_const)) == 0);
+        assert(max_var_below(to_model(new_const), d_type));
+    }
+    let out = verified_foldl_apps(ctx, new_const, taken);
+    proof {
+        let ghost taken_model = Seq::new(taken@.len(), |i: int| to_model(taken@[i]));
+        spine_app_bounds(to_model(new_const), taken_model, d_type, 0, d_type);
+        spine_app_nlbv(to_model(new_const), taken_model);
+        assert(to_model(out) == spine_app(to_model(new_const), taken_model));
+        assert(depth(to_model(out)) <= d_type + (num_params as nat));
+        assert(depth(to_model(out)) <= d_type + (max_num_params as nat));
+    }
+    let mut projs: Vec<ExprPtr<'t>> = Vec::new();
     let mut j: usize = 0;
     while j < num_fields as usize
-        invariant j <= num_fields as usize,
+        invariant
+            j <= num_fields as usize,
+            projs@.len() == j,
+            forall |k: int| 0 <= k < projs@.len() ==> to_model(#[trigger] projs@[k]) == ExprSpec::Proj(Box::new(to_model(e))),
         decreases num_fields as usize - j
     {
         let proj = ctx.mk_proj(c_name, j, e);
-        out = ctx.mk_app(out, proj);
+        assert(to_model(proj) == ExprSpec::Proj(Box::new(to_model(e))));
+        projs.push(proj);
         j += 1;
     }
-    Some(out)
+    proof {
+        let ghost projs_model = Seq::new(projs@.len(), |i: int| to_model(projs@[i]));
+        assert forall |k: int| 0 <= k < projs_model.len() implies
+            nlbv(#[trigger] projs_model[k]) <= 0 && max_var_below(projs_model[k], d_e) && depth(projs_model[k]) <= d_e + 1
+        by {
+            assert(projs_model[k] == ExprSpec::Proj(Box::new(to_model(e))));
+            nlbv_bound_implies_max_var_below(to_model(e), 0);
+            max_var_below_mono(to_model(e), depth(to_model(e)), d_e);
+        }
+    }
+    let result = verified_foldl_apps(ctx, out, projs.as_slice());
+    proof {
+        let ghost projs_model = Seq::new(projs@.len(), |i: int| to_model(projs@[i]));
+        let ghost out_bound: nat = d_type + (max_num_params as nat) + (d_e + 1);
+        nlbv_bound_implies_max_var_below(to_model(out), 0);
+        max_var_below_mono(to_model(out), depth(to_model(out)), out_bound);
+        assert forall |k: int| 0 <= k < projs_model.len() implies
+            max_var_below(#[trigger] projs_model[k], out_bound)
+        by {
+            assert(projs_model[k] == ExprSpec::Proj(Box::new(to_model(e))));
+            nlbv_bound_implies_max_var_below(to_model(e), 0);
+            max_var_below_mono(to_model(e), depth(to_model(e)), out_bound);
+        }
+        spine_app_bounds(to_model(out), projs_model, out_bound, d_type + (max_num_params as nat), d_e + 1);
+        spine_app_nlbv(to_model(out), projs_model);
+        assert(to_model(result) == spine_app(to_model(out), projs_model));
+        assert(depth(to_model(result)) <= (d_type + (max_num_params as nat)) + (d_e + 1) + projs_model.len());
+        assert(projs_model.len() == num_fields as nat);
+        assert(num_fields as nat <= max_num_fields as nat);
+        assert(depth(to_model(result)) <= d_type + (max_num_params as nat) + d_e + 1 + (max_num_fields as nat));
+    }
+    Some(result)
 }
 
 /// Real-arena counterpart to `Expr::get_major_induct`/`get_nth_pi_binder`
@@ -2980,6 +3047,8 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
     fuel: u32,
     d_i: nat,
     d_e: nat,
+    max_num_params: u16,
+    max_num_fields: u16,
 ) -> (result: ExprPtr<'t>)
     requires
         nlbv(to_model(e)) <= 0,
@@ -2992,7 +3061,13 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
         (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) * (d_i + d_i + d_e + d_e) + (d_i + d_i + d_e + d_e) + 10 <= 0xFFFF_0000,
         { let dp = d_i + d_i + d_e + d_e; let w = dp * dp + dp + dp + dp + dp; w <= 60000 },
         { let dp = d_i + d_i + d_e + d_e; let w = dp * dp + dp + dp + dp + dp; w + w * w * w + w * w + w + 10 <= 0xFFFF_0000 },
-    ensures true
+    ensures
+        {
+            let dp = d_i + d_i + d_e + d_e;
+            let w = dp * dp + dp + dp + dp + dp;
+            nlbv(to_model(result)) <= 0
+            && depth(to_model(result)) <= w + (max_num_params as nat) + d_e + 1 + (max_num_fields as nat)
+        },
 {
     if !env.can_be_struct(&ind_name) {
         return e;
@@ -3042,7 +3117,7 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
     }
     match verified_is_prop_of_type(ctx, env, e_type, fuel, dd_whnf, dd_whnf, 0) {
         Some(true) => e,
-        _ => match verified_expand_eta_struct_aux(ctx, env, e_type, e, fuel) {
+        _ => match verified_expand_eta_struct_aux(ctx, env, e_type, e, fuel, dd_whnf, d_e, max_num_params, max_num_fields) {
             Some(r) => r,
             None => e,
         },
