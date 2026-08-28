@@ -2864,7 +2864,10 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
         ((d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major)) + (max_num_params as nat) <= dd_new,
         dd_new <= 60000,
         d_i + dd_new + d_i <= 60000,
-    ensures true
+    ensures match result {
+        Some(r) => nlbv(to_model(r)) <= 0 && depth(to_model(r)) <= dd_new,
+        None => true,
+    }
 {
     let is_k = match get_recursor_is_k(env, &rec_name) {
         Some(v) => v,
@@ -2934,6 +2937,8 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
     assert(depth(to_model(major_ty)) <= 60000);
     assert(depth(to_model(new_type)) <= d_i + dd_new + d_i);
     assert(depth(to_model(new_type)) <= 60000);
+    assert(nlbv(to_model(new_ctor_app)) <= 0);
+    assert(depth(to_model(new_ctor_app)) <= dd_new);
     match verified_def_eq(ctx, major_ty, new_type, fuel) {
         Some(true) => Some(new_ctor_app),
         _ => None,
