@@ -73,6 +73,31 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Local { .. })
 }
 
+/// `Pi`/`Lambda` both collapse to the SAME `ExprSpec::Bind` (see `ExprSpec`'s
+/// doc comment) -- `expr_as_pi`/`expr_as_lambda`'s own `None`-case ensures
+/// are each just `true` (neither can individually rule out `Bind`, since the
+/// OTHER one might be what actually matched), so a caller needing "this is
+/// definitely NOT Bind-shaped" after both return `None` needs this separate,
+/// combined check instead.
+#[allow(dead_code)]
+pub(crate) fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> bool {
+    matches!(e, Expr::Pi { .. } | Expr::Lambda { .. })
+}
+
+/// A direct, BICONDITIONAL check that `e` is `Const`-shaped -- unlike
+/// `is_const_shape`/`expr_as_const`'s `None`-case (`!is_const_shape(ptr)`,
+/// a fact about the opaque FLAG, not directly about `to_model`'s pattern:
+/// see [[feedback_verus_shape_flag_vs_pattern]]), this one's contract is
+/// phrased directly against `to_model_of_expr`'s own `Const(_, _)` pattern,
+/// so a caller who has excluded every OTHER shape via elimination can
+/// conclude "must be `Closed`/one of the leaf shapes" without needing a
+/// converse axiom for the `is_const_shape` flag (which doesn't exist, by
+/// design -- flags are intentionally forward-only).
+#[allow(dead_code)]
+pub(crate) fn expr_is_const_shape<'t>(e: &Expr<'t>) -> bool {
+    matches!(e, Expr::Const { .. })
+}
+
 /// `Sort`/`Const`/`StringLit`/`NatLit`: all four always have
 /// `num_loose_bvars() == 0` and `has_fvars() == false` (see
 /// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
@@ -326,6 +351,12 @@ pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
     ensures
         result ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
         !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
+
+pub assume_specification<'t> [expr_is_bind_shape] (e: &Expr<'t>) -> (result: bool)
+    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _));
+
+pub assume_specification<'t> [expr_is_const_shape] (e: &Expr<'t>) -> (result: bool)
+    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Const(_, _));
 
 pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
     ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr) || is_nat_lit_shape(ptr) || is_string_lit_shape(ptr));
