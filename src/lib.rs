@@ -18,6 +18,7 @@ pub mod expr;
 pub mod expr_arena_bridge;
 pub mod expr_model;
 pub mod inductive;
+pub mod inductive_model;
 pub mod level;
 pub mod level_arena_bridge;
 pub mod level_model;
