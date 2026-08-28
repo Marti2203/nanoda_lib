@@ -64,7 +64,7 @@ use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, 
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::string_len;
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -3793,6 +3793,137 @@ pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
     } else {
         verified_iota_try_eta_struct(ctx, env, ind_name, major2, fuel, d_i, dd2, max_num_params, max_num_fields)
     }
+}
+
+/// Real-arena counterpart to the FULL `tc.rs::TypeChecker::reduce_rec`
+/// (`tc.rs:1070-1102`) -- `verified_reduce_rec_step` (above) ALREADY
+/// composes everything AFTER the major premise is determined (`unfold_
+/// apps` + `find_rec_rule` + the prefix/ctor-args/post-args split +
+/// `verified_reduce_rec_core`'s substitution), but derives the major
+/// premise via a bare `verified_whnf_step` call on `args[major_idx]`
+/// DIRECTLY -- never running it through `to_ctor_when_k`/`nat_lit_to_
+/// constructor`/`str_lit_to_ctor_reducing`/`iota_try_eta_struct` first,
+/// the way the real function's own major-premise normalization sequence
+/// (`tc.rs:1078-1086`, now `verified_normalize_major_premise` above)
+/// does. This function is the two composed TOGETHER.
+///
+/// Deliberately `ensures true`, NOT `verified_reduce_rec_step`'s own
+/// precise `pstep_star`-tied existential: `verified_normalize_major_
+/// premise` (and everything it calls) carries no reduction-reachability
+/// claim at all, only a depth/closedness bound -- `to_ctor_when_k`'s
+/// `Some` case in particular has no `pstep_star` fact connecting its
+/// result back to the real major premise the way `verified_whnf_step`'s
+/// own result does. Composing a NO-reachability-claim step with `unfold_
+/// apps`/`reduce_rec_core` can only ever produce a `to_model(r) == ...`
+/// EQUATION anchored to the NORMALIZED major, not one anchored back to
+/// the ORIGINAL `args[major_idx]` the way `verified_reduce_rec_step`'s
+/// ensures is -- restating that weaker equation would need its own new
+/// existential shape for no benefit nothing downstream needs yet, so
+/// this stays a "thin composition, control-flow fidelity only" function,
+/// same precedent as `verified_def_eq_with_delta`. `verified_reduce_rec_
+/// step` itself is UNCHANGED, still available for callers that don't
+/// need the broader (K-reduction/`NatLit`/`StringLit`/structure-eta)
+/// coverage and want its stronger claim instead.
+pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    const_name: NamePtr<'t>,
+    const_levels: LevelsPtr<'t>,
+    args: &[ExprPtr<'t>],
+    fuel: u32,
+    d_i: nat,
+    d_major: nat,
+    max_num_params: u16,
+    dd_new: nat,
+    max_str_len: usize,
+    d_lit: nat,
+    max_num_fields: u16,
+    final_bound: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < args@.len() ==>
+            nlbv(to_model(#[trigger] args@[i])) <= 0 && depth(to_model(args@[i])) <= d_major,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_i <= 60000,
+        d_major <= 60000,
+        (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) <= 60000,
+        ((d_i + d_i + d_major + d_major) * (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major) + (d_i + d_i + d_major + d_major)) + (max_num_params as nat) <= dd_new,
+        dd_new <= 60000,
+        d_i + dd_new + d_i <= 60000,
+        dd_new + dd_new * dd_new * dd_new + dd_new * dd_new + dd_new + 10 <= 0xFFFF_0000,
+        dd_new <= final_bound,
+        { let dd2 = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new; dd2 <= final_bound },
+        1 <= final_bound,
+        (max_str_len as nat) + 3 <= d_lit,
+        d_lit <= 60000,
+        d_lit + d_lit * d_lit * d_lit + d_lit * d_lit + d_lit + 10 <= 0xFFFF_0000,
+        { let dl2 = d_lit * d_lit + d_lit + d_lit + d_lit + d_lit; dl2 <= final_bound },
+        {
+            let dd2 = dd_new * dd_new + dd_new + dd_new + dd_new + dd_new;
+            dd2 <= 60000
+            && (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) * (d_i + d_i + dd2 + dd2) + (d_i + d_i + dd2 + dd2) + 10 <= 0xFFFF_0000
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 <= 60000 }
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + w2 * w2 * w2 + w2 * w2 + w2 + 10 <= 0xFFFF_0000 }
+            && { let dp2 = d_i + d_i + dd2 + dd2; let w2 = dp2 * dp2 + dp2 + dp2 + dp2 + dp2; w2 + (max_num_params as nat) + dd2 + 1 + (max_num_fields as nat) <= final_bound }
+        },
+    ensures true
+{
+    let (num_params, num_motives, num_minors, major_idx, uparams, rec_rules) = match get_recursor_data(env, &const_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    if major_idx >= args.len() {
+        return None;
+    }
+    let major_arg = args[major_idx];
+    assert(nlbv(to_model(major_arg)) <= 0 && depth(to_model(major_arg)) <= d_major);
+    let (_rec_uparams, rec_ty) = match get_declar_info_ty(env, &const_name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ind_name = match verified_get_major_induct(ctx, rec_ty, major_idx, fuel) {
+        Some(n) => n,
+        None => return None,
+    };
+    let major = verified_normalize_major_premise(
+        ctx, env, const_name, ind_name, major_arg, fuel, d_i, d_major, max_num_params, dd_new, max_str_len, d_lit, max_num_fields, final_bound,
+    );
+    let (major_ctor, major_ctor_args) = match verified_unfold_apps(ctx, major, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    let major_ctor_el = ctx.read_expr(major_ctor);
+    let (major_ctor_name, _levels) = match expr_as_const(major_ctor, &major_ctor_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let rec_rule = match verified_find_rec_rule(&rec_rules, major_ctor_name) {
+        Some(rr) => rr,
+        None => return None,
+    };
+    let telescope_size = rec_rule_ctor_telescope_size_wo_params(&rec_rule);
+    let num_extra_params_to_major = match major_ctor_args.len().checked_sub(telescope_size as usize) {
+        Some(k) => k,
+        None => return None,
+    };
+    let major_ctor_args_wo_params = &major_ctor_args[num_extra_params_to_major..major_ctor_args.len()];
+    let num_prefix = (num_params as usize) + (num_motives as usize) + (num_minors as usize);
+    if num_prefix > args.len() {
+        return None;
+    }
+    let prefix_args = &args[0..num_prefix];
+    let post_args = &args[(major_idx + 1)..args.len()];
+    let rule_val = rec_rule_val(&rec_rule);
+    let uparams_vec = read_levels_vec(ctx, uparams);
+    let const_levels_vec_local = read_levels_vec(ctx, const_levels);
+    if uparams_vec.len() != const_levels_vec_local.len() {
+        return None;
+    }
+    assert(to_model_of_levels(uparams).len() == to_model_of_levels(const_levels).len());
+    verified_reduce_rec_core(ctx, rule_val, uparams, const_levels, prefix_args, major_ctor_args_wo_params, post_args, fuel)
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
