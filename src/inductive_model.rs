@@ -79,7 +79,7 @@ use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_para
 #[cfg(verus_only)]
 use crate::beta_model::spine_app_bounds;
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty};
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
@@ -415,6 +415,48 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
     assert(i == num_params as usize);
     assert(tracked_ids =~= name_ids_of(tracked_names@));
     Some((f, name, num_params, levels, args))
+}
+
+/// The soundness bridge `env_nested_reachable_closure`'s closure property
+/// (`env_model.rs`) is otherwise INERT for: `env_nested_children` has no
+/// axiom connecting it to what `verified_is_nested_ind_app` actually
+/// discovers in real code. This lemma supplies exactly that connection,
+/// shaped to match `verified_is_nested_ind_app`'s own `ensures` verbatim
+/// (same existential-over-`contains_const_named` condition, same
+/// `ind_num_params` fact) so it applies directly to a `Some(...)` result
+/// with no reformulation needed: if `tracked_ids` (standing in for
+/// `st.all_inductives_incl_specialized`'s current names) is entirely
+/// within `env_nested_reachable(env, seed)`, then WHATEVER name `verified_
+/// is_nested_ind_app` discovers via `tracked_ids` is ALSO in that
+/// reachable set.
+///
+/// Trusted, not derived -- same category as `env_global_cap`'s own
+/// unelaborated existence, now asserting the SPECIFIC discovery
+/// mechanism `is_nested_ind_app` implements (an application whose
+/// leading `num_params` arguments mention an already-tracked name) is
+/// exactly the "one step of nested-children discovery"
+/// `env_nested_reachable_closure` already assumes some relation
+/// realizes. This is the FIRST place this project connects the abstract
+/// `env_nested_children`/`env_nested_reachable` model to any concrete,
+/// real-code discovery mechanism -- everything before this used the
+/// model only in the abstract (the `nested_specialization_bound` measure
+/// itself, never actually invoked against a real discovery event).
+#[verifier::external_body]
+pub proof fn is_nested_ind_app_result_reachable<'x, 't>(
+    env: &Env<'x, 't>,
+    seed: Set<u64>,
+    tracked_ids: Seq<u64>,
+    discovered_name: NamePtr<'t>,
+    discovered_num_params: u16,
+    discovered_args: Seq<ExprPtr<'t>>,
+)
+    requires
+        forall |k: int| 0 <= k < tracked_ids.len() ==> env_nested_reachable(*env, seed).contains(#[trigger] tracked_ids[k]),
+        ind_num_params(*env, name_id(discovered_name)) == discovered_num_params,
+        exists |i: int| 0 <= i < discovered_num_params as int
+            && #[trigger] contains_const_named(to_model(discovered_args[i]), tracked_ids),
+    ensures env_nested_reachable(*env, seed).contains(name_id(discovered_name))
+{
 }
 
 /// Real-arena mirror of `replace_if_nested`'s (`inductive.rs:609-699`)
