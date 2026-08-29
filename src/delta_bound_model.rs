@@ -2605,9 +2605,13 @@ pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
         depth(to_model(y_type)) <= 60000,
         d + 1 <= 60000,
     ensures match result {
-        Some(true) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-            to_model(y) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun),
+        Some(true) => exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+            #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len()]
+            to_model(y) == spine_app(to_model(fun), args_model_of(args))
+            && is_const_shape(fun)
+            && def_eq_witness(x_type, y_type)
+            && projs.len() <= args.len()
+            && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])),
         _ => true,
     }
 {
@@ -2644,6 +2648,7 @@ pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
         }
     }
     let mut i: usize = num_params as usize;
+    let mut projs: Vec<ExprPtr<'t>> = Vec::new();
     while i < args.len()
         invariant
             num_params as usize <= i,
@@ -2651,6 +2656,8 @@ pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
             depth(to_model(x)) <= d,
             d + 1 <= 60000,
             forall |k: int| 0 <= k < args@.len() ==> depth(to_model(args@[k])) <= d,
+            projs@.len() == i - num_params as usize,
+            forall |k: int| 0 <= k < projs@.len() ==> #[trigger] def_eq_witness(projs@[k], args@[num_params as int + k]),
         decreases args.len() - i
     {
         let proj = ctx.mk_proj(inductive_name, i - num_params as usize, x);
@@ -2659,8 +2666,16 @@ pub fn verified_try_eta_struct_aux<'t, 'p: 't, 'x>(
             Some(true) => {}
             _ => return None,
         }
+        projs.push(proj);
         i += 1;
     }
+    assert(projs@.len() == args@.len() - num_params as usize);
+    assert((args@.len() - projs@.len()) as int == num_params as int);
+    assert(forall |k: int| 0 <= k < projs@.len() ==> #[trigger] def_eq_witness(projs@[k], args@[(args@.len() - projs@.len()) as int + k]));
+    assert(to_model(y) == spine_app(to_model(fun_ptr), args_model_of(args@)));
+    assert(is_const_shape(fun_ptr));
+    assert(def_eq_witness(x_type, y_type));
+    assert(projs@.len() <= args@.len());
     Some(true)
 }
 
@@ -2694,10 +2709,20 @@ pub fn verified_try_eta_struct<'t, 'p: 't, 'x>(
         d + 1 <= 60000,
     ensures match result {
         Some(true) => {
-            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-                    to_model(y) == spine_app(to_model(fun), args_model) && is_const_shape(fun))
-            ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-                    to_model(x) == spine_app(to_model(fun), args_model) && is_const_shape(fun))
+            ||| (exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len()]
+                    to_model(y) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(x_type, y_type)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+            ||| (exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len()]
+                    to_model(x) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(y_type, x_type)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
         },
         _ => true,
     }
@@ -3727,7 +3752,41 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
         depth(to_model(x_ty_whnfd)) <= 60000,
         d + 1 <= 60000,
         (max_str_len as nat) + 3 <= 60000,
-    ensures true
+    ensures match result {
+        Some(true) => {
+            ||| (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+                    to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+                    && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+                    && argsx.len() == argsy.len() && argsx.len() > 0)
+            ||| (exists |new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(y_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0))))))
+            ||| (exists |new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(x_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0))))))
+            ||| (exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len()]
+                    to_model(y) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(x_type, y_type)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+            ||| (exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len()]
+                    to_model(x) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(y_type, x_type)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+            ||| (exists |lhs: ExprPtr<'t>|
+                    (pstep_star(to_model_of_env(*env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
+                    || (pstep_star(to_model_of_env(*env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x)))
+            ||| def_eq_witness(x_ty_whnfd, y_type)
+        },
+        _ => true,
+    }
 {
     match verified_def_eq_app(ctx, x, y, fuel) {
         Some(true) => return Some(true),
