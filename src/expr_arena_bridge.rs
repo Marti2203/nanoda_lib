@@ -44,7 +44,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, find_from_end, subst_expr_levels_rel};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, abstr_full_depth, find_from_end, subst_expr_levels_rel};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
@@ -1706,6 +1706,45 @@ pub fn verified_inst_forall_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprP
                 }
             }
             result
+        }
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `expr.rs::TcCtx::replace_params`
+/// (`expr.rs:214-223`): `abstr(e, outgoing)` then `inst(_, ingoing)`, a
+/// plain two-step composition of `verified_abstr`/`verified_inst` with
+/// no new recursion of its own. Needed by `replace_if_nested`
+/// (`inductive.rs:627, 667`), which uses this to canonicalize a
+/// discovered nested-container application back onto the enclosing
+/// block's own fixed parameters -- see `env_model.rs`'s `nested_occ_cap`
+/// doc comment and this session's own soundness trace for why that
+/// canonicalization is exactly what makes the termination measure's
+/// cache-key space bounded in the first place.
+///
+/// `abstr_full_depth` (exact depth-preservation, not just a bound) lets
+/// the SAME `d` bound the input to `verified_inst` after abstraction,
+/// with no separate "depth after abstr" parameter needed.
+pub fn verified_replace_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, ingoing: &[ExprPtr<'t>], outgoing: &[ExprPtr<'t>], fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        depth(to_model(e)) <= d,
+        d as nat + outgoing@.len() as nat <= 60000,
+    ensures match result {
+        Some(r) => to_model(r) == subst_full(
+            abstr_full(to_model(e), Seq::new(outgoing@.len(), |i: int| expr_id(outgoing@[i])), 0),
+            Seq::new(ingoing@.len(), |i: int| to_model(ingoing@[i])),
+            0,
+        ),
+        None => true,
+    }
+{
+    match verified_abstr(ctx, e, outgoing, 0, fuel) {
+        Some(e2) => {
+            proof {
+                abstr_full_depth(to_model(e), Seq::new(outgoing@.len(), |i: int| expr_id(outgoing@[i])), 0);
+                assert(depth(to_model(e2)) == depth(to_model(e)));
+            }
+            verified_inst(ctx, e2, ingoing, 0, fuel)
         }
         None => None,
     }
