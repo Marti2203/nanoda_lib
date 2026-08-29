@@ -600,6 +600,27 @@ pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
     (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e) == nat_zero_id())
 }
 
+/// `Nat.zero`'s own declared universe-parameter arity is unconditionally
+/// ZERO -- a basic, permanent fact about the real Lean prelude (`Nat.zero`
+/// is not universe-polymorphic), not something that varies by export file
+/// the way an ordinary declaration's arity would. Needed so `nat_repr_is_
+/// zero`'s Const-shape disjunct (which only pins down `e`'s NAME via
+/// `const_id`, not its levels) can be connected to `pstep`'s own `NatLit`
+/// rule, which unfolds to EXACTLY `const_expr_no_levels(nat_zero_id())`
+/// (empty levels) -- without this, a real `Const(nat_zero_id(), ls)` with
+/// some non-empty `ls` would satisfy `nat_repr_is_zero` per its spec
+/// definition without actually being `pstep`-reachable to/from the
+/// canonical empty-levels form. Same disclosed-trust character as
+/// `const_levels_match_declared_arity` (a real `Const`'s levels always
+/// match its own declared arity), just anchored to this ONE specific,
+/// always-zero-arity declaration rather than stated generically.
+#[verifier::external_body]
+pub proof fn nat_zero_arity_is_zero<'a>(e: ExprPtr<'a>)
+    requires is_const_shape(e), const_id(e) == nat_zero_id()
+    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+{
+}
+
 /// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
 pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
     (exists |fun: ExprPtr<'a>|

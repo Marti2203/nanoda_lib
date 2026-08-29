@@ -48,6 +48,7 @@ use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::NatLitPayload;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
@@ -88,7 +89,9 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::nat_zero_arity_is_zero;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -2686,6 +2689,83 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
 }
 
+/// The FULL notion of "these two terms are definitionally equal" this
+/// codebase currently knows how to STATE (not yet how to fully PROVE for
+/// every real `def_eq` code path -- see `feedback_defeq_witness_vs_
+/// pstep_star`): either they're joinable via ordinary reduction (`defeq`,
+/// `beta_model.rs`), or they're related by `def_eq_witness`'s own leaf-
+/// level structural disjunction (Sort-interp-equality, Const-id-equality,
+/// etc., none of which are reduction facts and so aren't `defeq`-
+/// expressible). Neither alone is universal: `defeq` can't see universe-
+/// level-equivalence-without-syntactic-equality (`def_eq_const`'s own
+/// case), and `def_eq_witness` can't see delta/NatLit/iota unfolding.
+/// This is genuinely just their union, NOT a congruence closure -- it
+/// does NOT (yet) know that `full_def_eq` on two sub-terms implies
+/// `full_def_eq` on the terms built from them (e.g. two `App`s sharing a
+/// function but with `full_def_eq`-related arguments); building that
+/// closure is real, substantial future work (a proper inductive
+/// definitional-equality relation, not a flat disjunction).
+pub open spec fn full_def_eq<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    defeq(env, to_model(x), to_model(y)) || def_eq_witness(x, y)
+}
+
+pub proof fn full_def_eq_refl<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>)
+    ensures full_def_eq(env, x, x)
+{
+    defeq_refl(env, to_model(x));
+}
+
+/// A `pstep_star` fact between two REAL terms is automatically a `full_
+/// def_eq` fact (via `defeq`'s own `pstep_star`-implies-joinable lemma).
+pub proof fn full_def_eq_of_pstep_star<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires pstep_star(env, to_model(x), to_model(y))
+    ensures full_def_eq(env, x, y)
+{
+    defeq_of_pstep_star(env, to_model(x), to_model(y));
+}
+
+/// A `def_eq_witness` fact is automatically a `full_def_eq` fact (the
+/// disjunction's other half) -- purely notational, `open` unfolds free.
+pub proof fn full_def_eq_of_def_eq_witness<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires def_eq_witness(x, y)
+    ensures full_def_eq(env, x, y)
+{
+}
+
+/// `nat_repr_is_zero(e)` (EITHER a `NatLit` valued 0, or a `Const` named
+/// `Nat.zero`) always `pstep_star`-reaches the ONE canonical empty-levels
+/// form `pstep`'s own `NatLit` rule targets, for ANY `env` (this fact
+/// needs no delta lookup). The `NatLit` case is one real `pstep` step
+/// (matching `pstep`'s own rule literally); the `Const`-shape case is
+/// ZERO steps (`pstep_star_refl`) once `nat_zero_arity_is_zero` pins its
+/// levels down to empty, letting `const_expr_no_levels_canonical`
+/// identify it with the canonical value directly. This is the connecting
+/// lemma `verified_def_eq_nat`'s "both sides are some zero
+/// representation" disjunct needs to lift to a real `full_def_eq(x, y)`
+/// claim (see `feedback_defeq_witness_vs_pstep_star` for why this
+/// couldn't just reuse `def_eq_witness`).
+pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprPtr<'t>)
+    requires nat_repr_is_zero(e)
+    ensures pstep_star(env, to_model(e), const_expr_no_levels(nat_zero_id()))
+{
+    if is_nat_lit_shape(e) && nat_lit_value(e) == 0 {
+        is_nat_lit_shape_model(e);
+        assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
+        assert(pstep(env, to_model(e), const_expr_no_levels(nat_zero_id())));
+        pstep_star_one(env, to_model(e), const_expr_no_levels(nat_zero_id()));
+    } else {
+        assert(is_const_shape(e));
+        assert(const_id(e) == nat_zero_id());
+        is_const_shape_model(e);
+        const_levels_vec_model(e);
+        nat_zero_arity_is_zero(e);
+        assert(const_levels_vec(e)@.len() == 0);
+        assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+        const_expr_no_levels_canonical(to_model(e), nat_zero_id());
+        pstep_star_refl(env, to_model(e));
+    }
+}
+
 pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
@@ -2924,7 +3004,8 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         depth(to_model(y)) <= 60000,
     ensures match result {
         Some(true) =>
-            (nat_repr_is_zero(x) && nat_repr_is_zero(y))
+            (nat_repr_is_zero(x) && nat_repr_is_zero(y)
+                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y)))
             || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y))
             || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)),
         _ => true,
@@ -2932,6 +3013,13 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
     decreases fuel
 {
     if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
+        proof {
+            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y) by {
+                nat_repr_is_zero_reaches_canonical(env, x);
+                nat_repr_is_zero_reaches_canonical(env, y);
+                assert(defeq(env, to_model(x), to_model(y)));
+            }
+        }
         return Some(true);
     }
     let x_el = ctx.read_expr(x);
