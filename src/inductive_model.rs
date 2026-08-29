@@ -23,7 +23,7 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
+use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
 use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps};
 use crate::level_arena_bridge::verified_eq_antisymm_many;
 #[allow(unused_imports)]
@@ -48,7 +48,13 @@ use crate::expr_arena_bridge::verified_inst;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
-use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_full_max_var_below_bound_n};
+use crate::expr_arena_bridge::local_type_cap;
+#[cfg(verus_only)]
+use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, nlbv_bound_implies_max_var_below, max_var_below_mono};
+use crate::level_arena_bridge::verified_leq;
+use crate::delta_bound_model::verified_ensure_infers_as_sort;
+#[cfg(verus_only)]
+use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound};
 
 verus! {
 
@@ -1010,6 +1016,295 @@ pub fn verified_check_positivity1<'t, 'p: 't, 'x>(
         }
         None => None,
     }
+}
+
+/// Real-arena mirror of `check_ctor`'s (`inductive.rs:881-916`) SECOND
+/// loop, the non-param constructor-argument telescope: for each `Pi`,
+/// `ensure_infers_as_sort(binder_type)`, a `leq`/`is_zero` universe check,
+/// `check_positivity1(binder_type)`, then peel via `mk_unique`+`inst` --
+/// exactly `check_positivity1`'s OWN loop shape, MINUS the `whnf` call at
+/// the top (this loop peels SYNTACTIC `Pi`s directly, no reduction first).
+/// That absence is what makes this composition materially SIMPLER than
+/// `check_positivity1`'s: with no `whnf`-driven growth, `bound`/`d`/`cap`
+/// and the `ensure_infers_as_sort`/`check_positivity_ok` ceiling
+/// parameters all stay EXACTLY the same across every recursive call --
+/// `depth` strictly decreases (peeling a `Bind` drops it by at least 1)
+/// and `max_var_below`'s bound never needs to grow (same-bound property
+/// of `Bind`'s own `max_var_below` clause). Ends at a non-`Pi` cursor by
+/// calling `verified_is_valid_ind_app`, matching the real function's own
+/// final `assert!(self.is_valid_ind_app(...))`.
+pub fn verified_check_ctor_telescope<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    parent_ind_name: NamePtr<'t>,
+    ctor_type_cursor: ExprPtr<'t>,
+    is_zero: bool,
+    block_codom: Option<LevelPtr<'t>>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    pos_tel_fuel: u32,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ctor_type_cursor)) <= 0,
+        max_var_below(to_model(ctor_type_cursor), bound),
+        depth(to_model(ctor_type_cursor)) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+    ensures true
+    decreases tel_fuel
+{
+    if tel_fuel == 0 {
+        return None;
+    }
+    let tel_fuel1 = tel_fuel - 1;
+    let el = ctx.read_expr(ctor_type_cursor);
+    if expr_is_bind_shape(&el) {
+        assert(matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
+        if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+            assert(to_model(ctor_type_cursor) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            assert(nlbv(to_model(binder_type)) == 0) by {
+                assert(nlbv(to_model(ctor_type_cursor)) == 0);
+            }
+            assert(max_var_below(to_model(binder_type), bound)) by {
+                assert(max_var_below(to_model(ctor_type_cursor), bound));
+            }
+            assert(depth(to_model(binder_type)) <= d) by {
+                assert(depth(to_model(ctor_type_cursor)) <= d);
+            }
+            match verified_ensure_infers_as_sort(ctx, env, binder_type, fuel, infer_env_cap, d, cap, infd_bound) {
+                Some(s) => {
+                    let leq_ok = if is_zero {
+                        true
+                    } else {
+                        match block_codom {
+                            Some(bc) => verified_leq(ctx, s, bc, fuel),
+                            None => return None,
+                        }
+                    };
+                    if !leq_ok {
+                        return Some(false);
+                    }
+                    match verified_check_positivity1(ctx, env, ind_consts, local_indices_lens, local_params, binder_type, fuel, pos_tel_fuel, cap, bound, d) {
+                        Some(true) => {}
+                        Some(false) => return Some(false),
+                        None => return None,
+                    }
+                    let local = ctx.mk_unique(binder_name, binder_style, binder_type);
+                    let locals: [ExprPtr<'t>; 1] = [local];
+                    match verified_inst(ctx, body, &locals, 0, fuel) {
+                        Some(next_cursor) => {
+                            let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+                            assert(substs_model.len() == 1);
+                            assert(substs_model[0] == to_model(local));
+                            assert(to_model(next_cursor) == subst_full(to_model(body), substs_model, 0));
+                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
+                                assert(i == 0);
+                            }
+                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
+                                assert(i == 0);
+                            }
+                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound) by {
+                                assert(i == 0);
+                            }
+                            proof {
+                                subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
+                                subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                                subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound);
+                            }
+                            assert(nlbv(to_model(next_cursor)) <= 0);
+                            assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
+                            assert(max_var_below(to_model(next_cursor), bound));
+                            verified_check_ctor_telescope(ctx, env, ind_consts, local_indices_lens, local_params, parent_ind_name, next_cursor, is_zero, block_codom, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound, pos_tel_fuel)
+                        }
+                        None => None,
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        assert(!matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
+        verified_is_valid_ind_app(ctx, parent_ind_name, ctor_type_cursor, ind_consts, local_indices_lens, local_params, fuel)
+    }
+}
+
+/// Real-arena mirror of `check_ctor`'s (`inductive.rs:881-916`) FIRST
+/// loop, over the inductive block's own `local_params`: for each one,
+/// `assert_def_eq(binder_type, local_param's type)` then peel via `inst`
+/// (no `mk_unique` here -- the real function reuses the ALREADY-EXISTING
+/// `local_param`, not a fresh local). `assert_def_eq`'s real panic-on-
+/// `false` (`tc.rs:955`) is represented as `Some(false)`, same convention
+/// as `check_positivity1`'s non-positive-occurrence panic. Uses the
+/// weaker, ENV-FREE `verified_def_eq` (depth-only precondition, no
+/// delta-unfolding) for the SAME disclosed reason `verified_assert_
+/// nonnested_tys_def_eq` already chose it. `local_param_tys` is `local_
+/// params`' own binder types, taken as an EXTERNAL parallel array rather
+/// than derived via `local_binder_type_of`/`expr_as_local`: `mk_unique`'s
+/// own axiom (unlike `mk_dbj_level`'s) does NOT establish `is_local_
+/// shape`, so there is no available link from an `mk_unique`-created
+/// pointer to `local_binder_type_of` -- an already-known, disclosed gap
+/// (see the module doc comment's discussion of the two independently-
+/// added Local notions), not a new one introduced here. Once `param_idx`
+/// reaches `local_params.len()`, control passes to `verified_check_ctor_
+/// telescope` for the second loop, exactly mirroring the real function's
+/// single `for` loop immediately followed by its `while let Pi` loop.
+pub fn verified_check_ctor_params<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    local_param_tys: &[ExprPtr<'t>],
+    parent_ind_name: NamePtr<'t>,
+    ctor_type_cursor: ExprPtr<'t>,
+    param_idx: usize,
+    is_zero: bool,
+    block_codom: Option<LevelPtr<'t>>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    pos_tel_fuel: u32,
+) -> (result: Option<bool>)
+    requires
+        local_params.len() == local_param_tys.len(),
+        param_idx <= local_params.len(),
+        forall |i: int| param_idx <= i < local_params.len() ==> nlbv(to_model(#[trigger] local_params[i])) <= 0,
+        forall |i: int| param_idx <= i < local_params.len() ==> depth(to_model(#[trigger] local_params[i])) <= 0,
+        forall |i: int| param_idx <= i < local_param_tys.len() ==> depth(to_model(#[trigger] local_param_tys[i])) <= 60000,
+        nlbv(to_model(ctor_type_cursor)) <= 0,
+        max_var_below(to_model(ctor_type_cursor), bound),
+        depth(to_model(ctor_type_cursor)) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+    ensures true
+    decreases local_params.len() - param_idx
+{
+    if param_idx == local_params.len() {
+        return verified_check_ctor_telescope(ctx, env, ind_consts, local_indices_lens, local_params, parent_ind_name, ctor_type_cursor, is_zero, block_codom, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound, pos_tel_fuel);
+    }
+    let el = ctx.read_expr(ctor_type_cursor);
+    if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_pi(&el) {
+        assert(to_model(ctor_type_cursor) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(depth(to_model(binder_type)) <= d) by {
+            assert(depth(to_model(ctor_type_cursor)) <= d);
+        }
+        assert(depth(to_model(local_param_tys[param_idx as int])) <= 60000);
+        match verified_def_eq(ctx, binder_type, local_param_tys[param_idx], fuel) {
+            Some(true) => {}
+            Some(false) => return Some(false),
+            None => return None,
+        }
+        let local_param = local_params[param_idx];
+        let locals: [ExprPtr<'t>; 1] = [local_param];
+        match verified_inst(ctx, body, &locals, 0, fuel) {
+            Some(next_cursor) => {
+                let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+                assert(substs_model.len() == 1);
+                assert(substs_model[0] == to_model(local_param));
+                assert(to_model(next_cursor) == subst_full(to_model(body), substs_model, 0));
+                assert(nlbv(to_model(local_param)) <= 0);
+                assert(depth(to_model(local_param)) <= 0);
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
+                    assert(i == 0);
+                }
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
+                    assert(i == 0);
+                }
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound) by {
+                    assert(i == 0);
+                    nlbv_bound_implies_max_var_below(to_model(local_param), 0);
+                    max_var_below_mono(to_model(local_param), depth(to_model(local_param)), bound);
+                }
+                proof {
+                    subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
+                    subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                    subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound);
+                }
+                assert(nlbv(to_model(next_cursor)) <= 0);
+                assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
+                assert(max_var_below(to_model(next_cursor), bound));
+                verified_check_ctor_params(ctx, env, ind_consts, local_indices_lens, local_params, local_param_tys, parent_ind_name, next_cursor, param_idx + 1, is_zero, block_codom, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound, pos_tel_fuel)
+            }
+            None => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// Real-arena mirror of `check_ctor` (`inductive.rs:881-916`) itself:
+/// thin entry point starting the params loop at index `0`.
+pub fn verified_check_ctor<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    local_param_tys: &[ExprPtr<'t>],
+    parent_ind_name: NamePtr<'t>,
+    ctor_type_cursor: ExprPtr<'t>,
+    is_zero: bool,
+    block_codom: Option<LevelPtr<'t>>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    pos_tel_fuel: u32,
+) -> (result: Option<bool>)
+    requires
+        local_params.len() == local_param_tys.len(),
+        forall |i: int| 0 <= i < local_params.len() ==> nlbv(to_model(#[trigger] local_params[i])) <= 0,
+        forall |i: int| 0 <= i < local_params.len() ==> depth(to_model(#[trigger] local_params[i])) <= 0,
+        forall |i: int| 0 <= i < local_param_tys.len() ==> depth(to_model(#[trigger] local_param_tys[i])) <= 60000,
+        nlbv(to_model(ctor_type_cursor)) <= 0,
+        max_var_below(to_model(ctor_type_cursor), bound),
+        depth(to_model(ctor_type_cursor)) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+    ensures true
+{
+    verified_check_ctor_params(ctx, env, ind_consts, local_indices_lens, local_params, local_param_tys, parent_ind_name, ctor_type_cursor, 0, is_zero, block_codom, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound, pos_tel_fuel)
 }
 
 }
