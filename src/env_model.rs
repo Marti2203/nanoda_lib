@@ -674,29 +674,44 @@ pub proof fn env_nested_reachable_closure<'x, 'a>(env: Env<'x, 'a>, seed: Set<u6
 {
 }
 
-/// A SINGLE, uniform bound on how many `IndTyHeader`-push events any one
-/// declaration's own constructor scan can trigger, across the WHOLE
-/// environment -- same "one number for the whole environment, don't
-/// compute it per-declaration" convention `env_global_cap` already
-/// established (a per-declaration bound would ALSO be honest, but this
-/// project's own precedent is a single global one; splitting it out
-/// per-declaration only helps if some OTHER proof specifically needs a
-/// tighter bound for one declaration, which nothing here does).
+/// A SINGLE, uniform bound on how many `IndTyHeader`-push events can EVER
+/// be attributed, across ONE ENTIRE `specialize_nested_aux` run, to
+/// discoveries of any ONE given real declaration name -- same "one
+/// number for the whole environment, don't compute it per-declaration"
+/// convention `env_global_cap` already established.
 ///
-/// Deliberately phrased as PUSH EVENTS, not nested-container-argument
-/// SUBTERM POSITIONS (an earlier, narrower phrasing this comment used to
-/// carry) -- `replace_if_nested`'s real logic (`inductive.rs:641-696`,
-/// verified counterpart not yet built) pushes ONE `IndTyHeader` PER NAME
-/// in `nested_container_ty.all_ind_names`, i.e. a SINGLE discovered
-/// occurrence (one subterm position) can push MANY headers at once when
-/// the discovered container is itself part of a mutual block (e.g.
-/// finding `Array Foo` where `Array`/`List` are mutually defined pushes
-/// BOTH `_nested.Array_k` and `_nested.List_k` from that one match).
-/// Bounding subterm positions alone would UNDERCOUNT once this fan-out is
-/// included; since this is an uninterpreted "name the max" axiom with no
-/// computed value to match against, restating its meaning costs nothing,
-/// but a proof consuming this constant must read it as "pushes per scan,
-/// fan-out included," not "occurrence positions per scan."
+/// Critically PER-NAME-ACROSS-THE-WHOLE-RUN, NOT per-scan -- an earlier
+/// version of this comment described it as "per one declaration's own
+/// constructor scan," which turns out to be the WRONG granularity and
+/// would make `nested_specialization_bound` below UNSOUND: each real
+/// name can itself be discovered as a nested occurrence MULTIPLE times
+/// across DIFFERENT scans (different specialized copies of some OTHER
+/// container each independently re-discovering it), and bounding only
+/// "pushes per scan" leaves TOTAL pushes governed by a SELF-REFERENTIAL
+/// inequality (total <= (original_len + total) * per-scan-cap), which
+/// does not actually bound anything for any per-scan-cap >= 1. The
+/// FIXED reference frame that makes a bound possible at all is the REAL
+/// declaration NAME, not the scan: `replace_if_nested`'s cache
+/// (`nested_to_unspecialized_ty_wfvars`, keyed by `i_params` canonicalized
+/// onto the enclosing block's FIXED `local_params` -- see `73f1c8e`'s own
+/// commit message for the by-hand trace confirming this canonicalization)
+/// dedupes repeat discoveries of "the same real name at the same
+/// argument pattern" regardless of which scan found them, so the number
+/// of GENUINELY NEW discoveries attributable to one real name, over the
+/// WHOLE run, is itself a real, finite, per-declaration static fact
+/// (bounded by how many distinct argument patterns are expressible using
+/// the block's own fixed parameters) -- still trusted, not derived, but
+/// now a fact about a FIXED reference frame rather than a growing count.
+///
+/// Also folds in `replace_if_nested`'s fan-out (`inductive.rs:641-696`):
+/// EACH genuinely-new discovery of a name pushes ONE `IndTyHeader` PER
+/// NAME in the discovered container's OWN mutual block (`all_ind_names`),
+/// not just one -- e.g. finding `Array Foo` where `Array`/`List` are
+/// mutually defined pushes BOTH `_nested.Array_k` AND `_nested.List_k`
+/// from that single discovery. `nested_occ_cap` bounds the TOTAL,
+/// fan-out included, attributable to one name -- not the count of
+/// distinct argument patterns alone (which would undercount) and not a
+/// per-scan count (which, per above, doesn't actually bound the total).
 pub uninterp spec fn nested_occ_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
 /// The measure `specialize_nested_aux`'s own outer loop needs: an upper
@@ -711,6 +726,51 @@ pub uninterp spec fn nested_occ_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// all a termination MEASURE needs (an upper bound, not a tight count).
 pub open spec fn nested_specialization_bound<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>) -> nat {
     env_nested_reachable(env, seed).len() * nested_occ_cap(env)
+}
+
+/// How many times `v` occurs in `s` -- factored out purely so `nested_
+/// specialization_pigeonhole` below can state its per-name occurrence-cap
+/// hypothesis precisely; `vstd::seq.rs` has no built-in `filter`/`count`
+/// in this fork.
+pub open spec fn count_eq(s: Seq<u64>, v: u64) -> nat
+    decreases s.len()
+{
+    if s.len() == 0 {
+        0
+    } else if s[s.len() - 1] == v {
+        1 + count_eq(s.subrange(0, s.len() - 1), v)
+    } else {
+        count_eq(s.subrange(0, s.len() - 1), v)
+    }
+}
+
+/// The elementary counting step `nested_specialization_bound` needs to
+/// actually bound a real push SEQUENCE: if every pushed name is drawn
+/// from a fixed, finite `env_nested_reachable(env, seed)` (size R), and
+/// no single name occurs more than `nested_occ_cap(env)` (C) times in
+/// the sequence, the sequence has length at most R*C. This is PURE,
+/// environment-independent combinatorics (a sequence valued in a set of
+/// size R with every value capped at C occurrences has length <= R*C) --
+/// categorically different from this file's other trust boundaries
+/// (`env_nested_reachable_closure`, `nested_occ_cap` themselves, both
+/// empirical claims about real Lean environments): this one is provable
+/// from first principles, e.g. by exhibiting an injection from sequence
+/// positions into `reachable x [0, C)` via each position's own rank
+/// among same-value predecessors (same "injection into a known-size
+/// finite Set, pigeonhole via `lemma_map_size`" technique `gen_elim_
+/// level_collision_bound`/`mk_unique_name_collision_bound` already used
+/// in `name_arena_bridge.rs`). Trusted here (`#[verifier::external_body]`)
+/// rather than actually carried out, purely for scope -- constructing the
+/// rank function and its injectivity proof is real additional work, not
+/// a shortcut around any REMAINING uncertainty about whether the fact is
+/// true.
+#[verifier::external_body]
+pub proof fn nested_specialization_pigeonhole<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, pushed_names: Seq<u64>)
+    requires
+        forall |i: int| 0 <= i < pushed_names.len() ==> env_nested_reachable(env, seed).contains(#[trigger] pushed_names[i]),
+        forall |m: u64| #[trigger] env_nested_reachable(env, seed).contains(m) ==> count_eq(pushed_names, m) <= nested_occ_cap(env),
+    ensures pushed_names.len() <= nested_specialization_bound(env, seed)
+{
 }
 
 }
