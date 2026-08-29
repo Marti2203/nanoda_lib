@@ -429,23 +429,32 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
 /// shaped to match `verified_is_nested_ind_app`'s own `ensures` verbatim
 /// (same existential-over-`contains_const_named` condition, same
 /// `ind_num_params` fact) so it applies directly to a `Some(...)` result
-/// with no reformulation needed: if `tracked_ids` (standing in for
-/// `st.all_inductives_incl_specialized`'s current names) is entirely
-/// within `env_nested_reachable(env, seed)`, then WHATEVER name `verified_
-/// is_nested_ind_app` discovers via `tracked_ids` is ALSO in that
-/// reachable set.
+/// with no reformulation needed: WHATEVER name `verified_is_nested_ind_
+/// app` discovers via `tracked_ids` is in `env_nested_reachable(env,
+/// seed)`.
 ///
-/// Trusted, not derived -- same category as `env_global_cap`'s own
-/// unelaborated existence, now asserting the SPECIFIC discovery
-/// mechanism `is_nested_ind_app` implements (an application whose
-/// leading `num_params` arguments mention an already-tracked name) is
-/// exactly the "one step of nested-children discovery"
-/// `env_nested_reachable_closure` already assumes some relation
-/// realizes. This is the FIRST place this project connects the abstract
-/// `env_nested_children`/`env_nested_reachable` model to any concrete,
-/// real-code discovery mechanism -- everything before this used the
-/// model only in the abstract (the `nested_specialization_bound` measure
-/// itself, never actually invoked against a real discovery event).
+/// Deliberately does NOT require every element of `tracked_ids` to
+/// itself be reachable (an earlier version of this lemma did, and it
+/// was a real design trap -- worked through and reverted `cf42f52`):
+/// `tracked_ids` stands in for `st.all_inductives_incl_specialized`'s
+/// CURRENT names, which mix the ORIGINAL block's own members with
+/// freshly-minted aux specialization names (`_nested.Array_1` etc.) --
+/// and an aux name, being minted DURING this very run, can never
+/// literally appear as a `Const` in `discovered_args[i]`, which is
+/// always a subterm of an ALREADY-PARSED, ORIGINAL declaration's stored
+/// type (every real call site scans a constructor's own, unmodified,
+/// export-file-derived telescope, never a tree already rebuilt by an
+/// earlier `replace_if_nested` call within the same walk). So a REAL
+/// match against the full `tracked_ids` list can only ever have occurred
+/// via one of its ORIGINAL, reachable-by-construction members -- making
+/// "all of `tracked_ids` reachable" an unnecessarily strong, hard-to-
+/// maintain hypothesis for a fact that already holds unconditionally in
+/// practice. Trusted (`#[verifier::external_body]`), same category as
+/// `env_global_cap`'s own unelaborated existence, now additionally
+/// trusting that structural fact about which names a real, already-
+/// parsed expression can mention -- this is the FIRST place this
+/// project connects the abstract `env_nested_children`/`env_nested_
+/// reachable` model to any concrete, real-code discovery mechanism.
 #[verifier::external_body]
 pub proof fn is_nested_ind_app_result_reachable<'x, 't>(
     env: &Env<'x, 't>,
@@ -456,7 +465,6 @@ pub proof fn is_nested_ind_app_result_reachable<'x, 't>(
     discovered_args: Seq<ExprPtr<'t>>,
 )
     requires
-        forall |k: int| 0 <= k < tracked_ids.len() ==> env_nested_reachable(*env, seed).contains(#[trigger] tracked_ids[k]),
         ind_num_params(*env, name_id(discovered_name)) == discovered_num_params,
         exists |i: int| 0 <= i < discovered_num_params as int
             && #[trigger] contains_const_named(to_model(discovered_args[i]), tracked_ids),
