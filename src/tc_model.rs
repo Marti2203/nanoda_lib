@@ -88,7 +88,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -493,6 +493,84 @@ pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
                     assert(d2 <= env_global_cap(*env) + d2 + d2);
                     Some(whnfd)
                 }
+            }
+        }
+        None => None,
+    }
+}
+
+/// "`cap`/`bound`/`d` have enough headroom for `outer_n` MORE chained
+/// calls to `verified_whnf_step_bounded`" -- same recursive-feasibility
+/// shape as `whnf_fixpoint_ok`, one level up: each round is ONE `verified_
+/// whnf_no_unfolding_step` (fixed `n=1`, not a whole inner fixpoint --
+/// deliberately the simplest granularity, matching real `whnf`'s own
+/// "one no-unfolding pass, one delta attempt, repeat" loop shape) plus
+/// one delta attempt via `verified_unfold_def_step_bounded`. `cap`
+/// (`env_global_cap` of the real environment) stays FIXED across every
+/// round -- only `bound`/`d` grow -- matching `verified_whnf_step_
+/// bounded`'s own output shape exactly: `max_var_below` only grows to
+/// `bound + d^3 + d^2` (the beta/zeta phase's own contribution), while
+/// `depth` grows via `cap + d2 + d2` (the delta phase's contribution,
+/// `cap`-anchored since delta pulls in an environment-stored value).
+pub open spec fn whnf_multi_round_ok(cap: nat, bound: nat, d: nat, outer_n: nat) -> bool
+    decreases outer_n
+{
+    whnf_fixpoint_ok(bound, d, 1) && cap <= bound
+        && (outer_n == 0 || {
+            let bound2 = bound + d * d * d + d * d;
+            let d2 = d * d + 4 * d;
+            let next_d = cap + d2 + d2;
+            whnf_multi_round_ok(cap, bound2, next_d, (outer_n - 1) as nat)
+        })
+}
+
+/// The real payoff of this whole arc: chains `verified_whnf_step_bounded`
+/// up to `outer_n` times -- a genuine multi-round `whnf` (beta/zeta THEN
+/// delta, repeated), matching real `TypeChecker::whnf`'s (`tc.rs:764-783`)
+/// own convergence-loop SHAPE, though capped at a caller-chosen `outer_n`
+/// rather than running to literal fixpoint (same "explicit round count,
+/// not unbounded convergence" convention as `verified_whnf_no_unfolding_
+/// fixpoint` already established for the beta/zeta-only case). This is
+/// the piece the "multi-round whnf" gap has been about since early this
+/// project -- `check_positivity1`/`ensure_sort`'s own `self.whnf(...)`
+/// calls (`inductive.rs:760`, `tc.rs:282`) can now be approximated by
+/// this with an explicit round budget, unblocking that arc.
+pub fn verified_whnf_multi_round<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, cap: nat, bound: nat, d: nat, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        env_global_cap(*env) <= cap,
+        whnf_multi_round_ok(cap, bound, d, outer_n as nat),
+    ensures match result {
+        Some(r) => pstep_star(to_model_of_env(*env), to_model(e), to_model(r)),
+        None => true,
+    }
+    decreases outer_n
+{
+    if outer_n == 0 {
+        proof {
+            pstep_star_refl(to_model_of_env(*env), to_model(e));
+        }
+        return Some(e);
+    }
+    proof {
+        reveal_with_fuel(whnf_fixpoint_final_bound, 2);
+        reveal_with_fuel(whnf_fixpoint_final_d, 2);
+        assert(whnf_fixpoint_final_bound(bound, d, 1) == bound + d * d * d + d * d);
+        assert(whnf_fixpoint_final_d(d, 1) == d * d + (d + d + d + d));
+    }
+    match verified_whnf_step_bounded(ctx, env, e, fuel, bound, d, 1, bound + d * d * d + d * d, d * d + (d + d + d + d)) {
+        Some(r) => {
+            assert(env_global_cap(*env) + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
+            match verified_whnf_multi_round(ctx, env, r, fuel, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)), outer_n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
             }
         }
         None => None,
