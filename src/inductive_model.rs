@@ -23,8 +23,9 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{ExprPtr, NamePtr, TcCtx};
-use crate::expr_arena_bridge::expr_ptr_eq;
+use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps};
+use crate::level_arena_bridge::verified_eq_antisymm_many;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 use crate::level_arena_bridge::name_ptr_eq;
@@ -446,6 +447,144 @@ pub fn verified_has_ind_occ<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, hay
         }
         None => None,
     }
+}
+
+/// Finds the position of `ind_consts`'s own entry whose `Const` name equals
+/// `target_name` -- mirrors `is_valid_ind_app`'s (`inductive.rs:795-803`)
+/// `.position(...)` scan. Same loop shape as `name_in_slice`, just reading
+/// each `ind_consts` element's own `Const`-shaped name first rather than
+/// comparing `NamePtr`s directly.
+pub fn verified_find_ind_const_pos<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ind_consts: &[ExprPtr<'t>], target_name: NamePtr<'t>) -> (result: Option<usize>)
+    ensures match result {
+        Some(pos) => pos < ind_consts@.len() && is_const_shape(ind_consts@[pos as int]) && const_name_of(ind_consts@[pos as int]) == target_name,
+        None => true,
+    }
+{
+    let mut i: usize = 0;
+    while i < ind_consts.len()
+        invariant i <= ind_consts.len(),
+        decreases ind_consts.len() - i
+    {
+        let el = ctx.read_expr(ind_consts[i]);
+        if let Some((name, _levels)) = expr_as_const(ind_consts[i], &el) {
+            if name_ptr_eq(name, target_name) {
+                assert(is_const_shape(ind_consts@[i as int]) && const_name_of(ind_consts@[i as int]) == name);
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Real-arena mirror of `is_valid_ind_app` (`inductive.rs:783-831`): does
+/// `ind_ty_app` apply `parent_ind_name` to exactly the block's own
+/// parameters, plus indices free of any self-referencing occurrence, with
+/// level arguments matching that inductive's own declared levels?
+///
+/// Deliberately `ensures true` (a thin, control-flow-faithful composition,
+/// not yet a genuine semantic certificate) -- same choice this whole
+/// project has made repeatedly for a first landing (`verified_reduce_rec_
+/// step_normalized`, early `verified_def_eq_fallback_group_full`), later
+/// strengthened only once a concrete downstream need for a stronger claim
+/// showed up. Every non-trivial step here reuses an ALREADY-verified
+/// primitive (`verified_unfold_apps`, `verified_eq_antisymm_many`,
+/// `verified_has_ind_occ`, `verified_ctor_app_params_ok`) -- the real,
+/// checkable content already exists in each of those; what's new here is
+/// just the control-flow gluing them together the way the real function
+/// does. Takes `ind_consts`/`local_params` as direct slices and `local_
+/// indices_lens` as a parallel array (one length per `ind_consts` entry)
+/// rather than the whole (private) `InductiveCheckState` -- same "caller
+/// supplies what's needed" convention as everywhere else in this arc.
+pub fn verified_is_valid_ind_app<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    parent_ind_name: NamePtr<'t>,
+    ind_ty_app: ExprPtr<'t>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    fuel: u32,
+) -> (result: Option<bool>)
+    ensures true
+{
+    let (base_const, ctor_apps) = match verified_unfold_apps(ctx, ind_ty_app, fuel) {
+        Some(pair) => pair,
+        None => return None,
+    };
+    let base_el = ctx.read_expr(base_const);
+    let (ind_name, appd_levels) = match expr_as_const(base_const, &base_el) {
+        Some((name, levels)) if name_ptr_eq(name, parent_ind_name) => (name, levels),
+        _ => return Some(false),
+    };
+    let ind_name_pos = match verified_find_ind_const_pos(ctx, ind_consts, ind_name) {
+        Some(pos) => pos,
+        None => return Some(false),
+    };
+    if ind_name_pos >= local_indices_lens.len() {
+        return None;
+    }
+    let pos_el = ctx.read_expr(ind_consts[ind_name_pos]);
+    let own_levels = match expr_as_const(ind_consts[ind_name_pos], &pos_el) {
+        Some((_own_name, levels)) => levels,
+        None => return Some(false),
+    };
+    if !verified_eq_antisymm_many(ctx, appd_levels, own_levels, fuel) {
+        return Some(false);
+    }
+    let ind_name_num_indices = local_indices_lens[ind_name_pos];
+    let expected_len = match local_params.len().checked_add(ind_name_num_indices) {
+        Some(n) => n,
+        None => return None,
+    };
+    if ctor_apps.len() != expected_len {
+        return Some(false);
+    }
+    let mut i: usize = local_params.len();
+    while i < ctor_apps.len()
+        invariant local_params.len() <= i <= ctor_apps.len(),
+        decreases ctor_apps.len() - i
+    {
+        match verified_has_ind_occ(ctx, ctor_apps[i], ind_consts, fuel) {
+            Some(true) => return Some(false),
+            Some(false) => {}
+            None => return None,
+        }
+        i += 1;
+    }
+    Some(verified_ctor_app_params_ok(ctor_apps.as_slice(), local_params))
+}
+
+/// Real-arena mirror of `which_valid_ind_app` (`inductive.rs:867-879`):
+/// linear search over `ind_consts` for the first one `ind_ty_app` is a
+/// valid application of, same loop shape as `verified_ctor_names_have_
+/// self_ref`. Also `ensures true`, same reason as `verified_is_valid_ind_
+/// app` above (it composes directly on top of it).
+pub fn verified_which_valid_ind_app<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    u_i_ty: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<Option<usize>>)
+    ensures true
+{
+    let mut i: usize = 0;
+    while i < ind_consts.len()
+        invariant i <= ind_consts.len(),
+        decreases ind_consts.len() - i
+    {
+        let el = ctx.read_expr(ind_consts[i]);
+        if let Some((ind_name, _levels)) = expr_as_const(ind_consts[i], &el) {
+            match verified_is_valid_ind_app(ctx, ind_name, u_i_ty, ind_consts, local_indices_lens, local_params, fuel) {
+                Some(true) => return Some(Some(i)),
+                Some(false) => {}
+                None => return None,
+            }
+        }
+        i += 1;
+    }
+    Some(None)
 }
 
 }
