@@ -179,6 +179,15 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mu
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
 
+/// Real-arena mirror of `TcCtx::contains_param` (`level.rs:249-254`): does
+/// `uparams` contain a `Param` level naming `candidate`? States the real
+/// function's `n == candidate` real-pointer check at the `name_id` level
+/// (matching `LevelSpec::Param`'s own stored payload, `name_id` of
+/// whichever `NamePtr` a `Param` level was built from -- see `verified_
+/// simplify`'s `Param` case a few lines above for the same convention).
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::contains_param] (ctx: &TcCtx<'t, 'p>, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result: bool) where 'p: 't
+    ensures result == (exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(candidate)));
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::succ] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Succ(Box::new(to_model(l)));
 

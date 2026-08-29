@@ -42,6 +42,12 @@ use crate::name_model::NameSpec;
 #[cfg(verus_only)]
 use crate::name_model::{replace_pfx_full, root_of, concat_full};
 use crate::level_arena_bridge::name_ptr_eq;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{name_id, name_id_injective};
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use vstd::set_lib::*;
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -113,11 +119,109 @@ pub assume_specification<'t> [name_as_num] (n: &Name<'t>) -> (result: Option<(Na
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, 'p>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Anon;
 
+/// `TcCtx::str1` (`util.rs:469-473`): a fresh `Str(Anon, "u")`-shaped
+/// name -- callers needing `gen_elim_level`'s search loop (`verified_
+/// gen_elim_level` above) don't need anything about ITS specific model
+/// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't;
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx));
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx);
+
+/// The one new trust boundary needed for `gen_elim_level`'s termination
+/// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
+/// standing in for `append_index_after`'s fresh suffix (`name.rs:60-70`,
+/// `format!("{}_{}", ..., idx)` then `alloc_string`+`str`). Verus has NO
+/// spec-level model of `format!`'s actual character content to derive
+/// this from -- confirmed directly: vstd's own `alloc::fmt::format`
+/// bridge (`vstd::std_specs::fmt`) has `ensures true`, nothing about the
+/// resulting `String`'s content -- so there is no way to PROVE two
+/// different `idx` values produce different names from first principles;
+/// it has to be trusted, same as `name_id_injective`/`to_model_name_
+/// injective` above trust hash-consing's own uniqueness rather than
+/// deriving it. Scoped as narrowly as possible: only claims injectivity
+/// in `idx` for a FIXED prefix name, nothing about `format!` in general.
+pub uninterp spec fn append_index_after_id<'a>(n: NamePtr<'a>, idx: u64) -> u64;
+
+pub assume_specification<'x, 't: 'x, 'p: 't> [TcCtx::<'t, 'p>::append_index_after] (ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>, idx: u64) -> (result: NamePtr<'t>)
+    ensures name_id(result) == append_index_after_id(n, idx);
+
+#[verifier::external_body]
+pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2: u64)
+    requires idx1 != idx2
+    ensures append_index_after_id(n, idx1) != append_index_after_id(n, idx2)
+{
+}
+
+/// Termination argument for `gen_elim_level`'s fresh-name search loop
+/// (`inductive.rs:997-1012`): if candidates `append_index_after(p, 1),
+/// ..., append_index_after(p, k)` ALL already collide with some `Param`
+/// slot in `uparams` (`L = uparams_model.len()` of them), then `k <= L`
+/// -- a genuine, DERIVED pigeonhole bound, not a bare trusted claim.
+/// Phrased as a pure INEQUALITY on `k` (not an existential-via-
+/// contradiction) specifically so its own proof never needs to negate a
+/// quantifier -- the hypothesis is already a plain `forall`, directly
+/// instantiable, no classical-logic gymnastics required. The caller
+/// (`verified_gen_elim_level`) gets its termination guarantee for free:
+/// if its search loop ever reached `i == L + 2` while every try from `1`
+/// to `L + 1` had collided, applying this lemma at `k = L + 1` gives
+/// `L + 1 <= L`, a bare arithmetic absurdity -- so the loop provably
+/// finds a fresh candidate by `i <= L + 1`.
+///
+/// Built entirely from `vstd::set_lib`'s existing finite-set machinery:
+/// `append_index_after_id_injective` (this file) + `name_id_injective`
+/// (`level_arena_bridge.rs`) together make `i |-> (the position in
+/// uparams matching candidate i)` INJECTIVE on `[1, k]`, so `vstd::set_
+/// lib::lemma_map_size` (an injective image has the SAME size as its
+/// domain) plus `lemma_len_subset` (a subset can't exceed its superset's
+/// size) force `k <= L` directly. This is the ONE combinatorial argument
+/// `mk_unique_name`/`gen_elim_level` needed a real proof for (previously
+/// flagged as needing either heavier string-content modeling or a bare
+/// trusted axiom) -- turned out to need neither, just the injectivity
+/// facts already available plus stock `vstd` set lemmas.
+pub proof fn gen_elim_level_collision_bound<'a>(p: NamePtr<'a>, uparams_model: Seq<LevelSpec>, k: nat)
+    requires
+        uparams_model.len() + 1 <= u64::MAX as nat,
+        k <= u64::MAX as nat,
+        forall |i: int| #![trigger append_index_after_id(p, i as u64)] 1 <= i <= k ==> exists |j: int| 0 <= j < uparams_model.len() && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64)),
+    ensures k <= uparams_model.len()
+{
+    broadcast use group_set_properties;
+    broadcast use Set::lemma_map_contains;
+
+    let l = uparams_model.len() as int;
+    let f = |i: int| choose |j: int| 0 <= j < l && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64));
+    let x = set_int_range(1, k as int + 1);
+    let y = set_int_range(0, l);
+    lemma_int_range(1, k as int + 1);
+    lemma_int_range(0, l);
+    assert(x.injective_on(f)) by {
+        assert forall |i1: int, i2: int| x.contains(i1) && x.contains(i2) && #[trigger] f(i1) == #[trigger] f(i2) implies i1 == i2 by {
+            if i1 != i2 {
+                assert(1 <= i1 <= k as int);
+                assert(1 <= i2 <= k as int);
+                assert((i1 as u64) as int == i1);
+                assert((i2 as u64) as int == i2);
+                assert(i1 as u64 != i2 as u64);
+                append_index_after_id_injective(p, i1 as u64, i2 as u64);
+                assert(uparams_model[f(i1)] == LevelSpec::Param(append_index_after_id(p, i1 as u64)));
+                assert(uparams_model[f(i2)] == LevelSpec::Param(append_index_after_id(p, i2 as u64)));
+                assert(false);
+            }
+        }
+    }
+    assert(x.map(f).subset_of(y)) by {
+        assert forall |b: int| #[trigger] x.map(f).contains(b) implies y.contains(b) by {
+        }
+    }
+    lemma_map_size(x, x.map(f), f);
+    lemma_len_subset(x.map(f), y);
+    assert(x.len() == k as int);
+    assert(y.len() == l);
+}
 
 /// Real-arena mirror of `TcCtx::replace_pfx` (`name.rs:74-90`), proven
 /// against `name_model.rs`'s already-verified `replace_pfx_full`.

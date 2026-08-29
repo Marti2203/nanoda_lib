@@ -55,6 +55,12 @@ use crate::level_arena_bridge::verified_leq;
 use crate::delta_bound_model::verified_ensure_infers_as_sort;
 #[cfg(verus_only)]
 use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound};
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model_of_levels;
+#[cfg(verus_only)]
+use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound};
 
 verus! {
 
@@ -1534,6 +1540,56 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
         Some(ty) => verified_large_elim_test_aux(ctx, env, ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound),
         None => None,
     }
+}
+
+/// Real-arena mirror of `gen_elim_level`'s (`inductive.rs:997-1012`)
+/// search loop: tries `append_index_after(p, i)` for `i = 1, 2, ...`
+/// until one isn't already a `Param` name in `uparams`. Genuinely,
+/// PROVABLY terminates -- not fuel-capped, no `None`/incompleteness case
+/// at all. `gen_elim_level_collision_bound` (`name_arena_bridge.rs`)
+/// gives `k <= L` (`L = uparams`'s own count of `Param` slots) whenever
+/// the first `k` tries all collided; each loop iteration extends the
+/// "collided so far" invariant by one and immediately re-applies that
+/// lemma, so if the search ever reached `i == L + 2` while EVERY try
+/// from `1` to `L + 1` had collided, the lemma at `k = L + 1` would give
+/// `L + 1 <= L` -- an outright arithmetic absurdity. The loop therefore
+/// cannot run past `i = L + 1`, which is exactly the caller-visible
+/// `decreases` measure below.
+pub fn verified_gen_elim_level_search<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, p: NamePtr<'t>, uparams: LevelsPtr<'t>, i: u64) -> (result: NamePtr<'t>)
+    requires
+        1 <= i,
+        i as nat <= to_model_of_levels(uparams).len() + 1,
+        to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
+        forall |i2: int| #![trigger append_index_after_id(p, i2 as u64)] 1 <= i2 < i ==> exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j] == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
+    ensures true
+    decreases (to_model_of_levels(uparams).len() + 1 - i as nat)
+{
+    let candidate = ctx.append_index_after(p, i);
+    if ctx.contains_param(uparams, candidate) {
+        assert(name_id(candidate) == append_index_after_id(p, i));
+        assert forall |i2: int| #![trigger append_index_after_id(p, i2 as u64)] 1 <= i2 <= i as int implies exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j] == LevelSpec::Param(append_index_after_id(p, i2 as u64)) by {
+        }
+        proof {
+            gen_elim_level_collision_bound(p, to_model_of_levels(uparams), i as nat);
+        }
+        verified_gen_elim_level_search(ctx, p, uparams, i + 1)
+    } else {
+        candidate
+    }
+}
+
+/// Real-arena mirror of `gen_elim_level` (`inductive.rs:997-1012`)
+/// itself: the `"u"`-not-taken fast path, else the provably-terminating
+/// search above.
+pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: LevelsPtr<'t>) -> (result: NamePtr<'t>)
+    requires to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat
+    ensures true
+{
+    let p = ctx.str1("u");
+    if !ctx.contains_param(uparams, p) {
+        return p;
+    }
+    verified_gen_elim_level_search(ctx, p, uparams, 1)
 }
 
 }
