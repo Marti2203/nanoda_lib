@@ -744,6 +744,27 @@ pub proof fn env_nested_reachable_closure<'x, 'a>(env: Env<'x, 'a>, seed: Set<u6
 {
 }
 
+/// A discovered nested container's MUTUAL SIBLINGS are reachable
+/// whenever the container itself is -- `replace_if_nested`'s own fan-out
+/// (`inductive.rs:641-696`) specializes an ENTIRE mutual block as one
+/// unit the instant ANY member is discovered nested (one `IndTyHeader`
+/// push per name in `all_ind_names`, not just the one that triggered the
+/// match), so "is this name interesting enough to specialize" is
+/// genuinely a property of the WHOLE block, not of one member alone.
+/// Trusted (empirical claim about how mutual blocks are structured and
+/// specialized, same category as `env_nested_reachable_closure` itself),
+/// needed because `env_nested_children`'s own closure property was
+/// stated per bare NAME, with no separate provision for "and everything
+/// mutually bundled with it."
+#[verifier::external_body]
+pub proof fn mutual_siblings_reachable<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, block_repr: NamePtr<'a>, sibling_id: u64)
+    requires
+        env_nested_reachable(env, seed).contains(name_id(block_repr)),
+        ind_all_ind_names(env, block_repr).contains(sibling_id),
+    ensures env_nested_reachable(env, seed).contains(sibling_id)
+{
+}
+
 /// A SINGLE, uniform bound on how many `IndTyHeader`-push events can EVER
 /// be attributed, across ONE ENTIRE `specialize_nested_aux` run, to
 /// discoveries of any ONE given real declaration name -- same "one
@@ -840,6 +861,27 @@ pub proof fn nested_specialization_pigeonhole<'x, 'a>(env: Env<'x, 'a>, seed: Se
         forall |i: int| 0 <= i < pushed_names.len() ==> env_nested_reachable(env, seed).contains(#[trigger] pushed_names[i]),
         forall |m: u64| #[trigger] env_nested_reachable(env, seed).contains(m) ==> count_eq(pushed_names, m) <= nested_occ_cap(env),
     ensures pushed_names.len() <= nested_specialization_bound(env, seed)
+{
+}
+
+/// The remaining link `nested_specialization_pigeonhole` needs before it
+/// can be applied to a REAL run's own growing push history: restates
+/// `nested_occ_cap`'s OWN documented meaning ("bounds push events
+/// attributable to ONE name, across the WHOLE run" -- see that constant's
+/// doc comment above) directly as a fact about any reachable-valued
+/// sequence, rather than leaving the per-name occurrence-cap hypothesis
+/// to be independently established by each caller. NOT new content
+/// beyond what `nested_occ_cap` already asserts -- this is that same
+/// trust boundary, phrased in the `Seq`/`count_eq` vocabulary `nested_
+/// specialization_pigeonhole` needs to consume it. Trusted
+/// (`#[verifier::external_body]`), same category as `nested_occ_cap`
+/// itself, not a new empirical claim.
+#[verifier::external_body]
+pub proof fn nested_occ_cap_holds_for_reachable_seq<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, pushed_names: Seq<u64>)
+    requires
+        forall |i: int| 0 <= i < pushed_names.len() ==> env_nested_reachable(env, seed).contains(#[trigger] pushed_names[i]),
+    ensures
+        forall |m: u64| #[trigger] env_nested_reachable(env, seed).contains(m) ==> count_eq(pushed_names, m) <= nested_occ_cap(env),
 {
 }
 
