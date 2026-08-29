@@ -2152,6 +2152,89 @@ pub fn verified_mk_ctors_env_ext<'t, 'p: 't>(
     if !ok { None } else { Some(out) }
 }
 
+/// Real-arena mirror of `header_of_ty` (`inductive.rs:561-572`): given
+/// one real inductive's own `name`/`ty` and its constructor name list
+/// (all CALLER-supplied -- `InductiveData` is a real, un-registered
+/// type, so it can't be named as a Verus-checked parameter type at all;
+/// the caller must already have destructured it in plain code), look up
+/// each constructor's own stored type via `get_declar_info_ty` (covers
+/// EVERY declaration kind uniformly, constructors included) and package
+/// the result into the SAME flat `(name, ty, ctors: Vec<(NamePtr,
+/// ExprPtr)>)` shape `verified_specialize_nested_aux`'s own `headers`
+/// already uses throughout that arc -- `IndTyHeader`/`CtorHeader`
+/// themselves stay opaque to this file, same "flatten, let the caller
+/// assemble the real struct" convention as everywhere else here.
+pub fn verified_header_of_ty<'x, 'a>(
+    env: &Env<'x, 'a>,
+    t_name: NamePtr<'a>,
+    t_ty: ExprPtr<'a>,
+    all_ctor_names: &[NamePtr<'a>],
+) -> (result: Option<(NamePtr<'a>, ExprPtr<'a>, Vec<(NamePtr<'a>, ExprPtr<'a>)>)>)
+    ensures true
+{
+    let mut ctors: Vec<(NamePtr<'a>, ExprPtr<'a>)> = Vec::new();
+    let mut i: usize = 0;
+    let mut ok = true;
+    while i < all_ctor_names.len() && ok
+        invariant i <= all_ctor_names.len(),
+        decreases all_ctor_names.len() - i
+    {
+        match get_declar_info_ty(env, &all_ctor_names[i]) {
+            Some((_uparams, ty)) => {
+                ctors.push((all_ctor_names[i], ty));
+            }
+            None => { ok = false; }
+        }
+        i += 1;
+    }
+    if !ok {
+        None
+    } else {
+        Some((t_name, t_ty, ctors))
+    }
+}
+
+/// Real-arena mirror of `collect_unmodified_mutuals` (`inductive.rs:578-
+/// 586`): for a mutual block's own name list, look up each member's
+/// `ty`/own constructor names (via `get_declar_info_ty`/`get_inductive_
+/// all_names`, both already bridged) and build its own flat header via
+/// `verified_header_of_ty` -- same "caller supplies the destructured
+/// `InductiveData` fields" reasoning, since `all_ind_names` itself
+/// (`t_from_file.all_ind_names`) is the ONE field this function actually
+/// reads off its own `InductiveData` parameter.
+pub fn verified_collect_unmodified_mutuals<'x, 'a>(
+    env: &Env<'x, 'a>,
+    all_ind_names: &[NamePtr<'a>],
+) -> (result: Option<Vec<(NamePtr<'a>, ExprPtr<'a>, Vec<(NamePtr<'a>, ExprPtr<'a>)>)>>)
+    ensures true
+{
+    let mut out: Vec<(NamePtr<'a>, ExprPtr<'a>, Vec<(NamePtr<'a>, ExprPtr<'a>)>)> = Vec::new();
+    let mut i: usize = 0;
+    let mut ok = true;
+    while i < all_ind_names.len() && ok
+        invariant i <= all_ind_names.len(),
+        decreases all_ind_names.len() - i
+    {
+        let n = all_ind_names[i];
+        match get_declar_info_ty(env, &n) {
+            Some((_uparams, ty)) => {
+                match get_inductive_all_names(env, &n) {
+                    Some((_all_ind_names_of_n, all_ctor_names_of_n)) => {
+                        match verified_header_of_ty(env, n, ty, &all_ctor_names_of_n) {
+                            Some(header) => { out.push(header); }
+                            None => { ok = false; }
+                        }
+                    }
+                    None => { ok = false; }
+                }
+            }
+            None => { ok = false; }
+        }
+        i += 1;
+    }
+    if !ok { None } else { Some(out) }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
