@@ -59,7 +59,7 @@ use crate::expr_arena_bridge::local_type_cap;
 #[cfg(verus_only)]
 use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, nlbv_bound_implies_max_var_below, max_var_below_mono};
 use crate::level_arena_bridge::verified_leq;
-use crate::delta_bound_model::verified_ensure_infers_as_sort;
+use crate::delta_bound_model::{verified_ensure_infers_as_sort, verified_infer_then_whnf};
 #[cfg(verus_only)]
 use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound};
 #[cfg(verus_only)]
@@ -1894,7 +1894,14 @@ pub fn verified_handle_rec_args_aux<'t, 'p: 't, 'x>(
         depth(to_model(rec_arg_cursor)) <= d,
         env_global_cap(*env) <= cap,
         check_positivity_ok(cap, bound, d, tel_fuel as nat),
-    ensures true
+        forall |k: int| #![trigger old(xs)@[k]] 0 <= k < old(xs)@.len() ==> {
+            let m = to_model(old(xs)@[k]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures forall |k: int| #![trigger final(xs)@[k]] 0 <= k < final(xs)@.len() ==> {
+        let m = to_model(final(xs)@[k]);
+        matches!(m, ExprSpec::Free(_))
+    }
     decreases tel_fuel
 {
     if tel_fuel == 0 {
@@ -1951,7 +1958,16 @@ pub fn verified_handle_rec_args_aux<'t, 'p: 't, 'x>(
                     }
                     match verified_whnf_multi_round_bounded(ctx, env, next_cursor, fuel, cap, bound, d, 1) {
                         Some(whnfd) => {
+                            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
                             xs.push(local);
+                            assert forall |k: int| #![trigger xs@[k]] 0 <= k < xs@.len() implies {
+                                let m = to_model(xs@[k]);
+                                matches!(m, ExprSpec::Free(_))
+                            } by {
+                                if k < xs@.len() - 1 {
+                                    assert(xs@[k] == old(xs)@[k]);
+                                }
+                            }
                             verified_handle_rec_args_aux(ctx, env, whnfd, xs, fuel, tel_fuel1, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)))
                         }
                         None => None,
@@ -2140,6 +2156,198 @@ pub fn verified_sep_nonrec_rec_ctor_args_telescope<'t, 'p: 't, 'x>(
         assert(!matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
         Some(ctor_type_cursor)
     }
+}
+
+/// Real-arena mirror of `get_i_indices` (`inductive.rs:855-863`): which
+/// inductive-in-block `ind_ty_app` is a valid application of, plus the
+/// INDICES it's applied to (params stripped off). `unfold_apps_stack`
+/// (`expr.rs:453-460`) turns out to be EXACTLY `unfold_apps` minus its
+/// own final `.reverse()` (same scan, same accumulator, the real function
+/// just skips undoing the stack order) -- so rather than a whole new
+/// recursive mirror, this reuses `verified_unfold_apps` directly and
+/// re-reverses its (already `foldl_apps`-order) result in plain exec
+/// code to recover `unfold_apps_stack`'s own order, then pops the
+/// trailing `local_params_len` params off (real code's own "compensate
+/// for stack-like unfold" comment). The real function's `.unwrap()` on
+/// `which_valid_ind_app`'s `None` case (not a valid application at all)
+/// is represented as `None`, same "no honest fallback" convention as
+/// everywhere else.
+pub fn verified_get_i_indices<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    ind_ty_app: ExprPtr<'t>,
+    local_params_len: usize,
+    fuel: u32,
+) -> (result: Option<(usize, Vec<ExprPtr<'t>>)>)
+    ensures true
+{
+    match verified_which_valid_ind_app(ctx, ind_consts, local_indices_lens, local_params, ind_ty_app, fuel) {
+        Some(Some(valid_app_idx)) => {
+            match verified_unfold_apps(ctx, ind_ty_app, fuel) {
+                Some((_base, args)) => {
+                    let mut reversed: Vec<ExprPtr<'t>> = Vec::new();
+                    let mut j: usize = args.len();
+                    while j > 0
+                        invariant j <= args.len(),
+                        decreases j
+                    {
+                        j -= 1;
+                        reversed.push(args[j]);
+                    }
+                    let mut i: usize = 0;
+                    while i < local_params_len && reversed.len() > 0
+                        invariant true,
+                        decreases local_params_len - i
+                    {
+                        reversed.pop();
+                        i += 1;
+                    }
+                    Some((valid_app_idx, reversed))
+                }
+                None => None,
+            }
+        }
+        Some(None) => None,
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `handle_rec_args_minor` (`inductive.rs:1132-
+/// 1159`): for each recursive constructor argument, builds its own
+/// "inductive hypothesis" `Local` -- infers the argument's type
+/// (`verified_infer_then_whnf`, mirroring real `infer_then_whnf`),
+/// peels ITS OWN telescope (`verified_handle_rec_args_aux`), identifies
+/// which block inductive the (telescope-stripped) result applies
+/// (`verified_get_i_indices`), and builds `Π xs, motive indices (rec_arg
+/// xs*)` via `verified_foldl_apps`/`verified_abstr_pi_telescope`. `xs`'s
+/// own `applied_indices.into_iter().rev()` is realized as a plain manual
+/// reversal (`slice::reverse` itself isn't supported by this Verus fork,
+/// same gap `verified_get_i_indices` already worked around); `abstr_pis`
+/// (iterator-based in the real function) is realized via `verified_
+/// abstr_pi_telescope` directly -- SAME algorithm, `next_back()`-driven
+/// peeling from a slice's end is identical to `abstr_pi_telescope`'s own
+/// `[tl @ .., binder]` recursion, just a different real calling
+/// convention over the same underlying loop.
+///
+/// `rec_args`' own `nlbv`/`depth` facts are taken as explicit hypotheses
+/// (same disclosed reason as `verified_check_ctor_params`'s `local_
+/// param`s: `mk_unique`-created pointers have no route to a general
+/// accessor). `infer_env_cap`/`infd_bound` are `verified_infer_then_whnf`'s
+/// own ceiling pair (`dd = 0` since every `rec_arg` is a bare `mk_unique`
+/// local, `depth == 0`); `aux_bound`/`aux_d` are its RESULT's own bound
+/// pair, restated as explicit parameters (the usual "spec-fn value can't
+/// be an exec argument" reason) and fed straight into `verified_handle_
+/// rec_args_aux`'s own `check_positivity_ok`-driven recursion.
+pub fn verified_handle_rec_args_minor<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    local_params_len: usize,
+    motives: &[ExprPtr<'t>],
+    ctor_idx: usize,
+    rec_args: &[ExprPtr<'t>],
+    fuel: u32,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    tel_fuel: u32,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+) -> (result: Option<Vec<ExprPtr<'t>>>)
+    requires
+        zero_dd == 0,
+        forall |i: int| #![trigger rec_args@[i]] 0 <= i < rec_args@.len() ==> nlbv(to_model(rec_args@[i])) <= 0,
+        forall |i: int| #![trigger rec_args@[i]] 0 <= i < rec_args@.len() ==> depth(to_model(rec_args@[i])) <= 0,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut out: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < rec_args.len()
+        invariant
+            i <= rec_args.len(),
+            zero_dd == 0,
+            infer_env_cap <= 60000,
+            env_global_cap(*env) <= infer_env_cap,
+            local_type_cap() <= infer_env_cap,
+            infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+            infd_bound <= infer_env_cap,
+            infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+            whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+            check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+            forall |k: int| #![trigger rec_args@[k]] 0 <= k < rec_args@.len() ==> nlbv(to_model(rec_args@[k])) <= 0,
+            forall |k: int| #![trigger rec_args@[k]] 0 <= k < rec_args@.len() ==> depth(to_model(rec_args@[k])) <= 0,
+        decreases rec_args.len() - i
+    {
+        let rec_arg = rec_args[i];
+        assert(nlbv(to_model(rec_arg)) <= 0);
+        assert(depth(to_model(rec_arg)) <= 0);
+        assert(env_global_cap(*env) <= infer_env_cap);
+        assert(local_type_cap() <= infer_env_cap);
+        assert(infer_env_cap <= 60000);
+        assert(depth(to_model(rec_arg)) <= zero_dd);
+        assert(nlbv(to_model(rec_arg)) <= 0);
+        assert(infer_depth_fixpoint_ok(zero_dd, fuel as nat));
+        assert(infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat));
+        assert(infd_bound <= infer_env_cap);
+        assert(whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1));
+        match verified_infer_then_whnf(ctx, env, rec_arg, fuel, infer_env_cap, zero_dd, infer_env_cap, infd_bound) {
+            Some(u_i_ty) => {
+                let mut xs: Vec<ExprPtr<'t>> = Vec::new();
+                match verified_handle_rec_args_aux(ctx, env, u_i_ty, &mut xs, fuel, tel_fuel, infer_env_cap, aux_bound, aux_d) {
+                    Some(arg_ty) => {
+                        match verified_get_i_indices(ctx, ind_consts, local_indices_lens, local_params, arg_ty, local_params_len, fuel) {
+                            Some((ind_ty_idx, applied_indices)) => {
+                                if ind_ty_idx < motives.len() {
+                                    let motive = motives[ind_ty_idx];
+                                    let mut reversed: Vec<ExprPtr<'t>> = Vec::new();
+                                    let mut j: usize = applied_indices.len();
+                                    while j > 0
+                                        invariant j <= applied_indices.len(),
+                                        decreases j
+                                    {
+                                        j -= 1;
+                                        reversed.push(applied_indices[j]);
+                                    }
+                                    let lhs = verified_foldl_apps(ctx, motive, reversed.as_slice());
+                                    let u_app = verified_foldl_apps(ctx, rec_arg, xs.as_slice());
+                                    let motive_base = ctx.mk_app(lhs, u_app);
+                                    let v_i_ty = verified_abstr_pi_telescope(ctx, xs.as_slice(), motive_base);
+                                    let v_name = ctx.str1("v");
+                                    let v_name = ctx.append_index_after(v_name, ctor_idx as u64);
+                                    let v_name = ctx.append_index_after(v_name, i as u64);
+                                    let v_i = ctx.mk_unique(v_name, binder_style_default(), v_i_ty);
+                                    out.push(v_i);
+                                } else {
+                                    return None;
+                                }
+                            }
+                            None => return None,
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            None => return None,
+        }
+        i += 1;
+    }
+    Some(out)
 }
 
 }

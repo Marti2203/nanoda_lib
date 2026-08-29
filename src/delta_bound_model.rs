@@ -73,6 +73,9 @@ use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, 
 use crate::tc_model::args_model_of;
 #[cfg(verus_only)]
 use crate::tc_model::whnf_multi_round_ok;
+use crate::tc_model::verified_whnf_multi_round_bounded;
+#[cfg(verus_only)]
+use crate::tc_model::{whnf_multi_round_final_bound, whnf_multi_round_final_d};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -1607,6 +1610,60 @@ pub fn verified_ensure_infers_as_sort<'t, 'p: 't, 'x>(
                 max_var_below_mono(to_model(infd), depth(to_model(infd)), infd_bound);
             }
             verified_ensure_sort(ctx, env, infd, fuel, cap, infd_bound, infd_bound)
+        }
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `TypeChecker::infer_then_whnf` (`tc.rs:460-463`,
+/// `infer(e, flag)` then `whnf` -- NOT expecting `Sort`, unlike `verified_
+/// ensure_infers_as_sort` right above, which this otherwise mirrors
+/// exactly (SAME `nlbv_bound_implies_max_var_below` + `max_var_below_
+/// mono` composition to close the "no `max_var_below` from `infer_spec`
+/// alone" wall). Needed by `handle_rec_args_minor` (`inductive.rs:1132-
+/// 1159`), which whnf's a recursive constructor argument's OWN inferred
+/// type (NOT a sort) before peeling its telescope. Exposes the result's
+/// own `nlbv`/`max_var_below`/`depth` bounds (via `verified_whnf_multi_
+/// round_bounded`, not the plain `verified_whnf_multi_round`), since the
+/// caller needs to feed this INTO a further bounded composition (`verified_
+/// handle_rec_args_aux`), not just use it as a one-shot fact.
+pub fn verified_infer_then_whnf<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+    dd: nat,
+    cap: nat,
+    infd_bound: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        env_global_cap(*env) <= cap,
+        infd_bound == infer_result_depth_bound(dd, d, fuel as nat),
+        infd_bound <= cap,
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+    ensures match result {
+        Some(r) => {
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), whnf_multi_round_final_bound(cap, infd_bound, infd_bound, 1))
+            &&& depth(to_model(r)) <= whnf_multi_round_final_d(cap, infd_bound, infd_bound, 1)
+        },
+        None => true,
+    }
+{
+    match verified_infer(ctx, env, e, fuel, d, dd) {
+        Some(infd) => {
+            proof {
+                nlbv_bound_implies_max_var_below(to_model(infd), 0);
+                max_var_below_mono(to_model(infd), depth(to_model(infd)), infd_bound);
+            }
+            verified_whnf_multi_round_bounded(ctx, env, infd, fuel, cap, infd_bound, infd_bound, 1)
         }
         None => None,
     }
