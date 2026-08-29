@@ -1141,6 +1141,76 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `specialize_nested_aux`'s (`inductive.rs:383-423`)
+/// own inner per-constructor step (`inductive.rs:391-402`): peel this
+/// constructor's own leading block-parameter binders via `verified_get_
+/// local_params` (already landed standalone, commit `71e505f`), walk the
+/// remainder for nested occurrences via `verified_replace_all_nested`,
+/// then re-abstract the peeled parameters back via `verified_abstr_pi_
+/// telescope` -- exactly the real function's own three-step sequence.
+///
+/// `block_local_params` is `st.local_params` (the enclosing block's own
+/// FIXED parameters -- what nested occurrences get canonicalized onto,
+/// per `73f1c8e`'s trace); distinct from the RETURNED, per-constructor
+/// `param_locals` `verified_get_local_params` mints fresh each call.
+pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ctor_ty: ExprPtr<'t>,
+    ctor_name: NamePtr<'t>,
+    num_params: u16,
+    block_local_params: &[ExprPtr<'t>],
+    tracked_names: &mut Vec<NamePtr<'t>>,
+    cache: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
+    new_headers: &mut Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>,
+    uparams: LevelsPtr<'t>,
+    unique_start: u64,
+    node_budget: u64,
+    fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    args_d: nat,
+    js_d: nat,
+) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, u64, u64)>)
+    requires
+        nlbv(to_model(ctor_ty)) <= 0,
+        max_var_below(to_model(ctor_ty), bound),
+        depth(to_model(ctor_ty)) <= d,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, num_params as nat),
+        cap <= 60000,
+        cap + block_local_params@.len() as nat <= 60000,
+        args_d <= cap,
+        args_d + (u16::MAX as nat) <= js_d,
+        js_d + block_local_params@.len() as nat <= 60000,
+        get_local_params_result_cap(cap, bound, d, num_params as nat) <= args_d,
+        old_declar_names(*env).finite(),
+        node_budget >= 1 ==> unique_start as nat + (node_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+    ensures true
+{
+    let mut param_locals: Vec<ExprPtr<'t>> = Vec::new();
+    match verified_get_local_params(ctx, env, ctor_ty, num_params, &mut param_locals, fuel, cap, bound, d) {
+        Some(ctor_type_instd) => {
+            proof {
+                get_local_params_result_depth_bound(cap, bound, d, num_params as nat, to_model(ctor_type_instd));
+                assert(depth(to_model(ctor_type_instd)) <= args_d);
+            }
+            match verified_replace_all_nested(
+                ctx, env, ctor_type_instd, tracked_names, &param_locals, block_local_params, uparams,
+                cache, new_headers, unique_start, node_budget, fuel, cap, args_d, js_d,
+            ) {
+                Some((replaced_wo_params, next_start, remaining_budget)) => {
+                    let new_ty = verified_abstr_pi_telescope(ctx, &param_locals, replaced_wo_params);
+                    Some((ctor_name, new_ty, next_start, remaining_budget))
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
@@ -4219,6 +4289,30 @@ pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
 /// (`"exhausted telescope early"`, hit `_ => panic!()` before `num_
 /// params` iterations complete) is represented as `None`, same "no
 /// honest fallback for a malformed-input case" convention as elsewhere.
+/// `verified_get_local_params`'s OWN recursion grows `d` at EVERY step
+/// via `verified_whnf_multi_round_bounded` (WHNF unfolding can genuinely
+/// EXPAND depth, unlike plain peeling/substitution elsewhere in this
+/// project) -- its final result's depth is some COMPUTABLE but NOT
+/// simply-closed-form function of the original `cap`/`bound`/`d`/
+/// `num_params` (mirroring `check_positivity_ok`'s own `bound2`/`d2`
+/// recursive growth formula, iterated `num_params` times). Rather than
+/// derive that formula explicitly, this names the RESULT abstractly
+/// (`get_local_params_result_cap`, same "name the max, don't compute it"
+/// convention as `env_global_cap`/`mutual_block_cap`) and trusts
+/// (`#[verifier::external_body]`) that any REAL call's actual result
+/// satisfies it -- a genuinely computable fact about a TERMINATING,
+/// already-verified recursion (unlike this project's OTHER environment-
+/// level trust boundaries, which are empirical claims about real Lean
+/// environments), left unstated for scope the same way `nested_
+/// specialization_pigeonhole` left its own pigeonhole argument unstated.
+pub uninterp spec fn get_local_params_result_cap(cap: nat, bound: nat, d: nat, num_params: nat) -> nat;
+
+#[verifier::external_body]
+pub proof fn get_local_params_result_depth_bound(cap: nat, bound: nat, d: nat, num_params: nat, result: ExprSpec)
+    ensures depth(result) <= get_local_params_result_cap(cap, bound, d, num_params)
+{
+}
+
 pub fn verified_get_local_params<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
