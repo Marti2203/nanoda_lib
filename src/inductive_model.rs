@@ -1731,6 +1731,153 @@ pub fn verified_restore_replace<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `restore_e` (`inductive.rs:1610-1637`): peel
+/// `num_local_params` leading binders (`Pi` OR `Lambda`, matching the
+/// real function's own `Pi {..} | Lambda {..}` pattern -- remembering
+/// which shape the FIRST one was, since the telescope must be
+/// re-abstracted the SAME way it was peeled), substituting a fresh
+/// `mk_unique` local at each step (plain `inst`, no `whnf` -- unlike
+/// `verified_get_local_params`, `restore_e` never needs to look past a
+/// delta-folded definition to find the next binder), un-specialize the
+/// remainder via `verified_restore_replace`, then re-abstract via
+/// `verified_abstr_pi_telescope`/`verified_abstr_lambda_telescope`
+/// (the latter reusing the former's own model unchanged, per this
+/// project's established "Pi and Lambda both model as `ExprSpec::Bind`"
+/// convention). The real function's own `_ => panic!()` (fewer than
+/// `num_local_params` binders available) becomes `None`.
+pub fn verified_restore_e<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    num_local_params: usize,
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    specialized_rec_names_to_unspecialized_rec_names: &[(NamePtr<'t>, NamePtr<'t>)],
+    fuel: u32,
+    d: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+        depth(to_model(e)) <= d,
+        d <= 60000,
+    ensures true
+{
+    let mut e_cur = e;
+    let mut locals: Vec<ExprPtr<'t>> = Vec::new();
+    let mut is_pi = false;
+    let mut i: usize = 0;
+    let mut ok = true;
+    while i < num_local_params && ok
+        invariant
+            forall |k: int| 0 <= k < nested_to_unspecialized_ty_nofvars@.len() ==>
+                depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[k].1)) <= 60000,
+            depth(to_model(e_cur)) <= d,
+            d <= 60000,
+            forall |k: int| #![trigger locals@[k]] 0 <= k < locals@.len() ==> {
+                let m = to_model(locals@[k]);
+                matches!(m, ExprSpec::Free(_))
+            },
+        decreases num_local_params - i
+    {
+        let el = ctx.read_expr(e_cur);
+        if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+            if i == 0 { is_pi = true; }
+            assert(to_model(e_cur) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            assert(depth(to_model(body)) <= d) by { assert(depth(to_model(e_cur)) <= d); }
+            let local = ctx.mk_unique(binder_name, binder_style, binder_type);
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(depth(to_model(local)) == 0);
+            let locals_arr: [ExprPtr<'t>; 1] = [local];
+            match verified_inst(ctx, body, &locals_arr, 0, fuel) {
+                Some(e2) => {
+                    proof {
+                        let ghost substs_model: Seq<ExprSpec> = Seq::new(locals_arr@.len(), |i: int| to_model(locals_arr@[i]));
+                        assert(substs_model.len() == 1);
+                        assert(substs_model[0] == to_model(local));
+                        assert forall |ii: int| 0 <= ii < substs_model.len() implies #[trigger] depth(substs_model[ii]) <= 0 by {
+                            assert(ii == 0);
+                        }
+                        subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                        assert(to_model(e2) == subst_full(to_model(body), substs_model, 0));
+                        assert(depth(to_model(e2)) <= depth(to_model(body)));
+                    }
+                    e_cur = e2;
+                    let ghost locals_before: Seq<ExprPtr<'t>> = locals@;
+                    locals.push(local);
+                    assert(locals@ =~= locals_before.push(local));
+                    assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+                    assert forall |k: int| #![trigger locals@[k]] 0 <= k < locals@.len() implies {
+                        let m = to_model(locals@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    } by {
+                        if k < locals@.len() - 1 {
+                            assert(locals@[k] == locals_before[k]);
+                        } else {
+                            assert(locals@[k] == local);
+                        }
+                    }
+                }
+                None => { ok = false; }
+            }
+        } else if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+            if i == 0 { is_pi = false; }
+            assert(to_model(e_cur) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            assert(depth(to_model(body)) <= d) by { assert(depth(to_model(e_cur)) <= d); }
+            let local = ctx.mk_unique(binder_name, binder_style, binder_type);
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(depth(to_model(local)) == 0);
+            let locals_arr: [ExprPtr<'t>; 1] = [local];
+            match verified_inst(ctx, body, &locals_arr, 0, fuel) {
+                Some(e2) => {
+                    proof {
+                        let ghost substs_model: Seq<ExprSpec> = Seq::new(locals_arr@.len(), |i: int| to_model(locals_arr@[i]));
+                        assert(substs_model.len() == 1);
+                        assert(substs_model[0] == to_model(local));
+                        assert forall |ii: int| 0 <= ii < substs_model.len() implies #[trigger] depth(substs_model[ii]) <= 0 by {
+                            assert(ii == 0);
+                        }
+                        subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                        assert(to_model(e2) == subst_full(to_model(body), substs_model, 0));
+                        assert(depth(to_model(e2)) <= depth(to_model(body)));
+                    }
+                    e_cur = e2;
+                    let ghost locals_before: Seq<ExprPtr<'t>> = locals@;
+                    locals.push(local);
+                    assert(locals@ =~= locals_before.push(local));
+                    assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+                    assert forall |k: int| #![trigger locals@[k]] 0 <= k < locals@.len() implies {
+                        let m = to_model(locals@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    } by {
+                        if k < locals@.len() - 1 {
+                            assert(locals@[k] == locals_before[k]);
+                        } else {
+                            assert(locals@[k] == local);
+                        }
+                    }
+                }
+                None => { ok = false; }
+            }
+        } else {
+            ok = false;
+        }
+        i += 1;
+    }
+    if !ok {
+        return None;
+    }
+    match verified_restore_replace(ctx, env, e_cur, &locals, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_local_params, fuel) {
+        Some(replaced) => {
+            if is_pi {
+                Some(verified_abstr_pi_telescope(ctx, &locals, replaced))
+            } else {
+                Some(verified_abstr_lambda_telescope(ctx, &locals, replaced))
+            }
+        }
+        None => None,
+    }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
