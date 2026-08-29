@@ -593,6 +593,85 @@ pub proof fn env_declar_singleton_wf(id: u64, ks: Seq<u64>, val: ExprSpec)
     }
 }
 
+/// The environment-only mathematical foundation for `specialize_nested_
+/// aux`'s (`inductive.rs:383-423`) termination wall -- attempted, at the
+/// user's explicit request, after a dedicated scoping fork confirmed the
+/// wall is real (NOT a false alarm) and precisely characterized it: the
+/// loop's own bound (`st.all_inductives_incl_specialized.len()`) grows
+/// mid-iteration as `replace_if_nested` (`inductive.rs:609-699`)
+/// discovers new nested-container types to specialize, and termination
+/// depends on "a real, already-elaborated Lean environment's nested-type
+/// reachability is finite" -- a graph-reachability property of the
+/// ENVIRONMENT's own declaration structure, structurally different from
+/// `gen_elim_level`/`mk_unique_name`'s termination walls (both genuine
+/// finite-pigeonhole arguments over an ALREADY-FIXED-SIZE list; see
+/// [[feedback_verus_set_lib_pigeonhole]]) -- there is no already-
+/// materialized list to do a counting argument over here; the "list"
+/// ITSELF is what needs to be shown finite.
+///
+/// `Set<A>` in this vstd fork is, BY ITS OWN TYPE DEFINITION, always
+/// finite (`vstd/set.rs`'s own doc comment: "`Set` only holds finite
+/// sets" -- `Set::new` on a genuinely-infinite predicate silently
+/// produces "an arbitrary finite set" per `make_set`'s own doc comment,
+/// NOT a faithful infinite one). This does NOT mean finiteness is "free"
+/// here: if `env_nested_children` genuinely had an infinite reachable
+/// chain, asserting `env_nested_reachable` "exists" with the closure
+/// property below would be asserting something FALSE about the
+/// UNDERLYING (conceptually infinite) relation, which would be a real,
+/// silent unsoundness -- not caught by Verus's own type-checker, since
+/// axioms about uninterpreted functions are trusted, not verified for
+/// self-consistency. This is EXACTLY the same character of trust
+/// `env_global_cap`'s own existence already carries (nothing derives
+/// that a depth bound exists either; it's asserted because it's true
+/// for any REAL, finite, already-elaborated environment) -- not a step
+/// down in rigor, but genuinely NEW content: this project's very first
+/// axiom about the environment's REACHABILITY structure rather than a
+/// single declaration's own size/depth/count.
+pub uninterp spec fn env_nested_children<'x, 'a>(env: Env<'x, 'a>, name: u64) -> Set<u64>;
+
+pub uninterp spec fn env_nested_reachable<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>) -> Set<u64>;
+
+/// The trust boundary itself: `env_nested_reachable(env, seed)` contains
+/// `seed` and is closed under `env_nested_children` -- the standard
+/// declarative characterization of a transitive closure (rather than a
+/// literal recursive construction, which `Set<A>`'s own lack of a
+/// general fold/fixed-point combinator makes awkward to write directly).
+/// TRUE for any real environment (Lean's own elaborator only ever
+/// accepts well-founded, finite nested-inductive structures); NOT
+/// derived from anything more basic in this model, matching `env_global_
+/// wf`'s own `#[verifier::external_body]` treatment.
+#[verifier::external_body]
+pub proof fn env_nested_reachable_closure<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>)
+    ensures
+        seed.subset_of(env_nested_reachable(env, seed)),
+        forall |n: u64| #[trigger] env_nested_reachable(env, seed).contains(n) ==> env_nested_children(env, n).subset_of(env_nested_reachable(env, seed)),
+{
+}
+
+/// A SINGLE, uniform bound on how many nested-container-argument SUBTERM
+/// POSITIONS any one declaration's own constructors can hold, across the
+/// WHOLE environment -- same "one number for the whole environment,
+/// don't compute it per-declaration" convention `env_global_cap` already
+/// established (a per-declaration bound would ALSO be honest, but this
+/// project's own precedent is a single global one; splitting it out
+/// per-declaration only helps if some OTHER proof specifically needs a
+/// tighter bound for one declaration, which nothing here does).
+pub uninterp spec fn nested_occ_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
+
+/// The measure `specialize_nested_aux`'s own outer loop needs: an upper
+/// bound on the TOTAL number of `IndTyHeader`-push events reachable from
+/// a `seed` set of inductive names, given `env_nested_reachable(env,
+/// seed)`'s own size (itself a real `nat`, since `Set<u64>` is always
+/// finite) and the uniform per-declaration occurrence cap. Deliberately
+/// a PRODUCT, not a sum over `env_nested_reachable`'s own elements (which
+/// would need a "sum over a finite Set" fold/induction lemma this vstd
+/// fork's `set_lib.rs` doesn't provide) -- `len() * cap` over-approximates
+/// the same quantity a per-declaration sum would give exactly, which is
+/// all a termination MEASURE needs (an upper bound, not a tight count).
+pub open spec fn nested_specialization_bound<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>) -> nat {
+    env_nested_reachable(env, seed).len() * nested_occ_cap(env)
+}
+
 }
 
 #[cfg(test)]
