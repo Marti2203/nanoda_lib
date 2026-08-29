@@ -147,6 +147,17 @@ pub(crate) fn get_inductive_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a
     env.get_inductive(n).and_then(|i| i.all_ctor_names.get(0).copied())
 }
 
+/// `is_recursive`'s (`inductive.rs:8-32`) own lookup: unlike `get_inductive_
+/// first_ctor` above (just the first element), this needs BOTH full name
+/// lists (`all_ind_names`, to check self-reference against; `all_ctor_names`,
+/// to iterate over) -- still "extract only what's needed", just two whole
+/// `Vec`s instead of one scalar/first-element, same shape `ctor_app_params_
+/// ok`/`find_const`'s own bridges already take real `&[[NamePtr]]` slices.
+#[allow(dead_code)]
+pub(crate) fn get_inductive_all_names<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
+    env.get_inductive(n).map(|i| (i.all_ind_names.to_vec(), i.all_ctor_names.to_vec()))
+}
+
 /// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
 /// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
 /// `get_constructor_num_params` above (same struct, different field).
@@ -385,6 +396,24 @@ pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>
 pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
 
 pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
+
+/// `ind_all_ind_names`/`ind_all_ctor_names`: deterministic, `name_id`-keyed
+/// re-expressions of `get_inductive_all_names`'s two returned `Vec`s,
+/// same "fresh uninterpreted function of (env, n)" shape as `env_global_
+/// cap`/`local_type_cap` -- no domain/"is-inductive" fact is needed beyond
+/// what each individual call's own `Some`/`None` already gives, since
+/// nothing downstream relates two separate calls to a shared ground truth
+/// (same "plain per-call fact" convention as `get_recursor_data` above).
+pub uninterp spec fn ind_all_ind_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
+pub uninterp spec fn ind_all_ctor_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
+
+pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
+    ensures match result {
+        Some((ind_names, ctor_names)) =>
+            ind_all_ind_names(*env, *n) =~= Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))
+            && ind_all_ctor_names(*env, *n) =~= Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i])),
+        None => true,
+    };
 
 pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<bool>);
 

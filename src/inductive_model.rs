@@ -33,6 +33,10 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
+use crate::env::Env;
+use crate::env_model::{get_inductive_all_names, get_declar_info_ty};
+#[cfg(verus_only)]
+use crate::env_model::{ind_all_ind_names, ind_all_ctor_names};
 
 verus! {
 
@@ -214,6 +218,162 @@ pub fn verified_find_const_named<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>
     assert(!matches!(to_model(e), ExprSpec::Proj(_)));
     assert(contains_const_named(to_model(e), Seq::new(target_names@.len(), |i: int| name_id(target_names@[i]))) == false);
     Some(false)
+}
+
+/// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
+/// = ...` loop: walk a constructor's type telescope one binder at a time,
+/// checking each binder's TYPE (not the binder itself) for a self-
+/// referencing `Const`, stopping at the first non-`Pi`-telescope node
+/// (the constructor's actual conclusion). Conflates `Pi`/`Lambda` the same
+/// way `contains_const_named` conflates every non-`Const`/`App`/`Bind`/
+/// `Let`/`Proj` shape into one non-recursive case -- both collapse to
+/// `ExprSpec::Bind`, and a real constructor's stored TYPE is always a
+/// genuine `Pi`-telescope (never has a `Lambda` at this position), so this
+/// is a sound, if slightly loose, characterization for the one real use
+/// this predicate is scoped to.
+pub open spec fn pi_telescope_has_self_ref(e: ExprSpec, ind_ids: Seq<u64>) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::Bind(t, b) => contains_const_named(*t, ind_ids) || pi_telescope_has_self_ref(*b, ind_ids),
+        _ => false,
+    }
+}
+
+/// Real-arena mirror of `pi_telescope_has_self_ref` above, fuel-based like
+/// `verified_find_const_named` (same reason: arbitrary-depth arena-pointer
+/// recursion, no built-in Verus decreases measure).
+pub fn verified_ctor_ty_has_self_ref<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ctor_ty: ExprPtr<'t>, ind_names: &[NamePtr<'t>], fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(r) => r == pi_telescope_has_self_ref(to_model(ctor_ty), Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(ctor_ty);
+    if expr_is_bind_shape(&el) {
+        assert(matches!(to_model(ctor_ty), ExprSpec::Bind(_, _)));
+        if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_pi(&el) {
+            assert(to_model(ctor_ty) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            return match verified_find_const_named(ctx, binder_type, ind_names, fuel1) {
+                Some(true) => Some(true),
+                Some(false) => verified_ctor_ty_has_self_ref(ctx, body, ind_names, fuel1),
+                None => None,
+            };
+        }
+        if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_lambda(&el) {
+            assert(to_model(ctor_ty) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            return match verified_find_const_named(ctx, binder_type, ind_names, fuel1) {
+                Some(true) => Some(true),
+                Some(false) => verified_ctor_ty_has_self_ref(ctx, body, ind_names, fuel1),
+                None => None,
+            };
+        }
+        return None;
+    }
+    assert(!matches!(to_model(ctor_ty), ExprSpec::Bind(_, _)));
+    Some(false)
+}
+
+/// Model of `is_recursive`'s outer `for ctor_name in ind.all_ctor_names`
+/// loop: is there SOME constructor in `ctor_ids` whose stored type has a
+/// self-reference against `ind_ids`? Structural recursion on the id list
+/// itself (a real, finite `Seq`, unlike the arena-pointer recursions above)
+/// -- `to_model_of_declar_ty(env)` (already trusted, `env_model.rs`) gives
+/// each constructor's TYPE directly as a NAME-ID-keyed `ExprSpec`, so this
+/// needs no arena pointer at all.
+pub open spec fn ctor_names_have_self_ref(env: Env, ctor_ids: Seq<u64>, ind_ids: Seq<u64>) -> bool
+    decreases ctor_ids.len()
+{
+    if ctor_ids.len() == 0 {
+        false
+    } else if !crate::env_model::to_model_of_declar_ty(env).contains_key(ctor_ids[0]) {
+        ctor_names_have_self_ref(env, ctor_ids.subrange(1, ctor_ids.len() as int), ind_ids)
+    } else {
+        pi_telescope_has_self_ref(crate::env_model::to_model_of_declar_ty(env)[ctor_ids[0]].1, ind_ids)
+            || ctor_names_have_self_ref(env, ctor_ids.subrange(1, ctor_ids.len() as int), ind_ids)
+    }
+}
+
+/// Real-arena mirror of `ctor_names_have_self_ref` above. A genuine `while`
+/// loop (not fuel-based): `ctor_names.len()` is a real, Verus-visible
+/// measure, unlike the arbitrary-depth arena-pointer recursions elsewhere
+/// in this file.
+pub fn verified_ctor_names_have_self_ref<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, env: &Env<'_, 't>, ctor_names: &[NamePtr<'t>], ind_names: &[NamePtr<'t>], fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(r) => r == ctor_names_have_self_ref(*env, Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i])), Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))),
+        None => true,
+    }
+{
+    let ghost ctor_ids: Seq<u64> = Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i]));
+    let ghost ind_ids: Seq<u64> = Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]));
+    assert(ctor_ids.subrange(0, ctor_ids.len() as int) =~= ctor_ids);
+    let mut i: usize = 0;
+    while i < ctor_names.len()
+        invariant
+            i <= ctor_names.len(),
+            ctor_ids == Seq::new(ctor_names@.len(), |k: int| name_id(ctor_names@[k])),
+            ind_ids == Seq::new(ind_names@.len(), |k: int| name_id(ind_names@[k])),
+            ctor_names_have_self_ref(*env, ctor_ids, ind_ids)
+                == ctor_names_have_self_ref(*env, ctor_ids.subrange(i as int, ctor_ids.len() as int), ind_ids),
+        decreases ctor_names.len() - i
+    {
+        match get_declar_info_ty(env, &ctor_names[i]) {
+            Some((_uparams, ctor_ty)) => {
+                match verified_ctor_ty_has_self_ref(ctx, ctor_ty, ind_names, fuel) {
+                    Some(true) => {
+                        assert(ctor_names_have_self_ref(*env, ctor_ids.subrange(i as int, ctor_ids.len() as int), ind_ids)) by {
+                            reveal_with_fuel(ctor_names_have_self_ref, 1);
+                        }
+                        return Some(true);
+                    }
+                    Some(false) => {
+                        assert(ctor_ids.subrange(i as int, ctor_ids.len() as int).subrange(1, (ctor_ids.len() - i) as int)
+                            =~= ctor_ids.subrange((i + 1) as int, ctor_ids.len() as int));
+                        assert(ctor_names_have_self_ref(*env, ctor_ids.subrange(i as int, ctor_ids.len() as int), ind_ids)
+                            == ctor_names_have_self_ref(*env, ctor_ids.subrange((i + 1) as int, ctor_ids.len() as int), ind_ids))
+                            by { reveal_with_fuel(ctor_names_have_self_ref, 1); }
+                    }
+                    None => return None,
+                }
+            }
+            None => {
+                assert(ctor_ids.subrange(i as int, ctor_ids.len() as int).subrange(1, (ctor_ids.len() - i) as int)
+                    =~= ctor_ids.subrange((i + 1) as int, ctor_ids.len() as int));
+                assert(ctor_names_have_self_ref(*env, ctor_ids.subrange(i as int, ctor_ids.len() as int), ind_ids)
+                    == ctor_names_have_self_ref(*env, ctor_ids.subrange((i + 1) as int, ctor_ids.len() as int), ind_ids))
+                    by { reveal_with_fuel(ctor_names_have_self_ref, 1); }
+            }
+        }
+        i += 1;
+    }
+    assert(ctor_ids.subrange(i as int, ctor_ids.len() as int) =~= Seq::<u64>::empty());
+    Some(false)
+}
+
+/// Real-arena mirror of `is_recursive` (`inductive.rs:8-32`) itself: does
+/// SOME constructor of `ind_name` have a self-referencing occurrence in its
+/// type telescope? Takes `env: &Env` explicitly rather than reaching into
+/// `ExportFile.declars` directly (the real function's own access path) --
+/// same "caller supplies the environment" convention every other function
+/// in this whole arc already follows; `ExportFile::new_env` builds one from
+/// the same underlying `declars` map the real function reads.
+pub fn verified_is_recursive<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, env: &Env<'_, 't>, ind_name: &NamePtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(r) => r == ctor_names_have_self_ref(*env, ind_all_ctor_names(*env, *ind_name), ind_all_ind_names(*env, *ind_name)),
+        None => true,
+    }
+{
+    match get_inductive_all_names(env, ind_name) {
+        Some((ind_names_vec, ctor_names_vec)) => {
+            verified_ctor_names_have_self_ref(ctx, env, &ctor_names_vec, &ind_names_vec, fuel)
+        }
+        None => None,
+    }
 }
 
 }
