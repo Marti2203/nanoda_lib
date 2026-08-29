@@ -674,14 +674,29 @@ pub proof fn env_nested_reachable_closure<'x, 'a>(env: Env<'x, 'a>, seed: Set<u6
 {
 }
 
-/// A SINGLE, uniform bound on how many nested-container-argument SUBTERM
-/// POSITIONS any one declaration's own constructors can hold, across the
-/// WHOLE environment -- same "one number for the whole environment,
-/// don't compute it per-declaration" convention `env_global_cap` already
+/// A SINGLE, uniform bound on how many `IndTyHeader`-push events any one
+/// declaration's own constructor scan can trigger, across the WHOLE
+/// environment -- same "one number for the whole environment, don't
+/// compute it per-declaration" convention `env_global_cap` already
 /// established (a per-declaration bound would ALSO be honest, but this
 /// project's own precedent is a single global one; splitting it out
 /// per-declaration only helps if some OTHER proof specifically needs a
 /// tighter bound for one declaration, which nothing here does).
+///
+/// Deliberately phrased as PUSH EVENTS, not nested-container-argument
+/// SUBTERM POSITIONS (an earlier, narrower phrasing this comment used to
+/// carry) -- `replace_if_nested`'s real logic (`inductive.rs:641-696`,
+/// verified counterpart not yet built) pushes ONE `IndTyHeader` PER NAME
+/// in `nested_container_ty.all_ind_names`, i.e. a SINGLE discovered
+/// occurrence (one subterm position) can push MANY headers at once when
+/// the discovered container is itself part of a mutual block (e.g.
+/// finding `Array Foo` where `Array`/`List` are mutually defined pushes
+/// BOTH `_nested.Array_k` and `_nested.List_k` from that one match).
+/// Bounding subterm positions alone would UNDERCOUNT once this fan-out is
+/// included; since this is an uninterpreted "name the max" axiom with no
+/// computed value to match against, restating its meaning costs nothing,
+/// but a proof consuming this constant must read it as "pushes per scan,
+/// fan-out included," not "occurrence positions per scan."
 pub uninterp spec fn nested_occ_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
 /// The measure `specialize_nested_aux`'s own outer loop needs: an upper
