@@ -24,7 +24,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_unfold_const_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]
@@ -37,14 +37,16 @@ use crate::level_arena_bridge::name_ptr_eq;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, name_id_injective};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
+use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_levels_of, const_id, const_levels_vec};
+#[cfg(verus_only)]
+use crate::beta_model::spine_app;
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::{Env, RecRule, Declar};
-use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
+use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
 #[cfg(verus_only)]
 use crate::env_model::old_declar_names;
 #[cfg(verus_only)]
-use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, env_global_cap};
+use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, ind_num_params, env_global_cap};
 #[cfg(verus_only)]
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
@@ -303,6 +305,104 @@ pub fn verified_find_const_named<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>
     assert(!matches!(to_model(e), ExprSpec::Proj(_)));
     assert(contains_const_named(to_model(e), Seq::new(target_names@.len(), |i: int| name_id(target_names@[i]))) == false);
     Some(false)
+}
+
+/// `name_id`-mapped view of a `NamePtr` slice -- factored out so it can
+/// be named directly (rather than an inline closure) inside a `#[trigger]`
+/// or existential, which Verus disallows containing a raw lambda.
+pub open spec fn name_ids_of<'t>(names: Seq<NamePtr<'t>>) -> Seq<u64> {
+    Seq::new(names.len(), |k: int| name_id(names[k]))
+}
+
+/// Real-arena mirror of `inductive.rs::is_nested_ind_app` (`inductive.rs:
+/// 528-559`), the first piece of the nested-inductive termination wall's
+/// real algorithm to get a verified counterpart. Reveals the same pieces
+/// `replace_if_nested` (its only real caller) goes on to use: the peeled
+/// head constant (`f`), its name and universe levels, `env`'s own
+/// `num_params` for that name, and the full argument list.
+///
+/// `tracked_names` stands in for `st.all_inductives_incl_specialized`'s
+/// current name list -- `InductiveCheckState` is a real, private struct
+/// this file can't reach into, so (matching this project's established
+/// "caller supplies a sufficient ceiling/set" convention, e.g. `bound`/
+/// `cap`/`zero_dd` elsewhere in this file) the caller threads the names
+/// through explicitly rather than this function deriving them itself.
+///
+/// Two disclosed divergences from the real function, neither affecting
+/// what this piece is FOR (characterizing push events for the termination
+/// argument, not full functional correctness of `replace_if_nested`):
+/// (1) skips the real function's leading `matches!(read_expr(e), App
+/// {..})` check -- redundant with the `num_params as int <= args@.len()`
+/// test below for any real container (`num_params >= 1`), so dropping it
+/// costs nothing while avoiding the need for a fresh `is_app_shape`
+/// bridge; (2) returns `None` instead of the real function's `panic!` when
+/// a would-be-nested parameter carries loose bound variables -- a
+/// defensive check on malformed input that a well-formed, already-
+/// elaborated Lean environment's own nested-occurrence arguments never
+/// trip in practice, and this piece doesn't need to distinguish "None
+/// because not nested" from "None because malformed" to reason about how
+/// many times it can return `Some`.
+pub fn verified_is_nested_ind_app<'t, 'p: 't>(
+    ctx: &TcCtx<'t, 'p>,
+    env: &Env<'_, 't>,
+    e: ExprPtr<'t>,
+    tracked_names: &[NamePtr<'t>],
+    fuel: u32,
+) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>, u16, LevelsPtr<'t>, Vec<ExprPtr<'t>>)>)
+    ensures match result {
+        Some((f, name, num_params, levels, args)) =>
+            to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            && is_const_shape(f) && const_name_of(f) == name && const_levels_of(f) == levels
+            && ind_num_params(*env, name_id(name)) == num_params
+            && num_params as int <= args@.len()
+            && exists |i: int| 0 <= i < num_params as int
+                && contains_const_named(to_model(args@[i as int]), name_ids_of(tracked_names@)),
+        None => true,
+    }
+{
+    let (f, name, levels, args) = verified_unfold_const_apps(ctx, e, fuel)?;
+    let num_params = get_inductive_num_params(env, &name)?;
+    if num_params as usize > args.len() {
+        return None;
+    }
+    let mut i: usize = 0;
+    let mut loose_bvars = false;
+    let mut is_nested = false;
+    let ghost tracked_ids = name_ids_of(tracked_names@);
+    assert(tracked_ids =~= Seq::new(tracked_names@.len(), |k: int| name_id(tracked_names@[k])));
+    while i < num_params as usize
+        invariant
+            i <= num_params as usize,
+            num_params as int <= args@.len(),
+            tracked_ids =~= Seq::new(tracked_names@.len(), |k: int| name_id(tracked_names@[k])),
+            is_nested ==> exists |j: int| 0 <= j < i as int && #[trigger] contains_const_named(to_model(args@[j as int]), tracked_ids),
+        decreases num_params as int - i as int
+    {
+        let this_param = args[i];
+        assert(this_param == args@[i as int]);
+        if ctx.num_loose_bvars(this_param) != 0 {
+            loose_bvars = true;
+        }
+        match verified_find_const_named(ctx, this_param, tracked_names, fuel) {
+            Some(true) => {
+                is_nested = true;
+                assert(contains_const_named(to_model(this_param), Seq::new(tracked_names@.len(), |k: int| name_id(tracked_names@[k]))));
+                assert(contains_const_named(to_model(args@[i as int]), tracked_ids));
+                assert(exists |j: int| 0 <= j < (i + 1) as int && #[trigger] contains_const_named(to_model(args@[j as int]), tracked_ids)) by {
+                    assert(0 <= (i as int) && (i as int) < (i + 1) as int && contains_const_named(to_model(args@[i as int]), tracked_ids));
+                }
+            }
+            Some(false) => {}
+            None => return None,
+        }
+        i += 1;
+    }
+    if !is_nested || loose_bvars {
+        return None;
+    }
+    assert(i == num_params as usize);
+    assert(tracked_ids =~= name_ids_of(tracked_names@));
+    Some((f, name, num_params, levels, args))
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}

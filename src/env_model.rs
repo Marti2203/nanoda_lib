@@ -158,6 +158,16 @@ pub(crate) fn get_inductive_all_names<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>
     env.get_inductive(n).map(|i| (i.all_ind_names.to_vec(), i.all_ctor_names.to_vec()))
 }
 
+/// `is_nested_ind_app`'s (`inductive.rs:528-559`) own lookup: `Env::get_
+/// inductive` followed by just `num_params` -- the ONE scalar field it
+/// reads off the returned `InductiveData` before deciding whether `e` is
+/// an application of a real environment inductive at all, same "extract
+/// only what's needed" shape as `get_inductive_first_ctor` above.
+#[allow(dead_code)]
+pub(crate) fn get_inductive_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
+    env.get_inductive(n).map(|i| i.num_params)
+}
+
 /// `assert_nonnested_tys_def_eq`'s (`inductive.rs:1271-1284`) own lookup:
 /// unlike `get_inductive_all_names` (searches BOTH old+temp via `Env::get_
 /// inductive`), this needs the OLD and NEW (temp-extension) `InductiveData`
@@ -444,6 +454,22 @@ pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n
         Some((ind_names, ctor_names)) =>
             ind_all_ind_names(*env, *n) =~= Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))
             && ind_all_ctor_names(*env, *n) =~= Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i])),
+        None => true,
+    };
+
+/// `ind_num_params`: same "fresh uninterpreted function of (env, n)",
+/// `name_id`-keyed shape as `ind_all_ind_names`/`ind_all_ctor_names` --
+/// kept as a keyed map rather than a plain per-call fact since a later
+/// piece of the nested-inductive termination argument may need to relate
+/// TWO separate `get_inductive_num_params` calls for the same name back
+/// to the same ground truth (e.g. the two `get_inductive` calls in
+/// `is_nested_ind_app` and `replace_if_nested` for what's conceptually
+/// the same real declaration).
+pub uninterp spec fn ind_num_params<'x, 'a>(env: Env<'x, 'a>, n: u64) -> u16;
+
+pub assume_specification<'x, 'a> [get_inductive_num_params] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
+    ensures match result {
+        Some(num_params) => ind_num_params(*env, name_id(*n)) == num_params,
         None => true,
     };
 
