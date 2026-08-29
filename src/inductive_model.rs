@@ -39,7 +39,7 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
-use crate::env::{Env, RecRule};
+use crate::env::{Env, RecRule, Declar};
 use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
 #[cfg(verus_only)]
 use crate::env_model::old_declar_names;
@@ -71,8 +71,59 @@ use crate::level_arena_bridge::to_model_of_levels;
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound, mk_unique_name_collision_bound};
 use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
 use crate::name::Name;
+use crate::env::{DeclarInfo, RecursorData};
+
+/// `Declar`'s recursor-branch constructor, flattened to avoid needing
+/// `DeclarInfo`/`RecursorData` registered with Verus at all -- ONLY
+/// `Declar` itself (the RETURN type) needs `external_body` registration
+/// (`ExDeclar` below); this plain function builds the nested `RecursorData`/
+/// `DeclarInfo`/`Arc::from` structure entirely in real Rust, invisible to
+/// Verus, exactly like `mk_rec_rule`'s own "flatten instead of registering
+/// every nested struct" choice for the (smaller) `RecRule` case.
+#[allow(dead_code)]
+pub(crate) fn mk_recursor_declar<'t>(
+    name: NamePtr<'t>,
+    uparams: LevelsPtr<'t>,
+    ty: ExprPtr<'t>,
+    all_inductives: Vec<NamePtr<'t>>,
+    num_params: u16,
+    num_indices: u16,
+    num_motives: u16,
+    num_minors: u16,
+    rec_rules: Vec<RecRule<'t>>,
+    is_k: bool,
+) -> Declar<'t> {
+    Declar::Recursor(RecursorData {
+        info: DeclarInfo { name, uparams, ty },
+        all_inductives: std::sync::Arc::from(all_inductives),
+        num_params,
+        num_indices,
+        num_motives,
+        num_minors,
+        rec_rules: std::sync::Arc::from(rec_rules),
+        is_k,
+    })
+}
 
 verus! {
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExDeclar<'a>(Declar<'a>);
+
+pub assume_specification<'t> [mk_recursor_declar] (
+    name: NamePtr<'t>,
+    uparams: LevelsPtr<'t>,
+    ty: ExprPtr<'t>,
+    all_inductives: Vec<NamePtr<'t>>,
+    num_params: u16,
+    num_indices: u16,
+    num_motives: u16,
+    num_minors: u16,
+    rec_rules: Vec<RecRule<'t>>,
+    is_k: bool,
+) -> (result: Declar<'t>);
 
 /// What `ctor_app_params_ok` actually checks: `local_params` is a (possibly
 /// proper) prefix of `ctor_apps`, compared elementwise by real pointer
@@ -3065,6 +3116,233 @@ pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
         g += 1;
     }
     Some(rec_rules)
+}
+
+/// Real-arena mirror of `mk_recursor_aux` (`inductive.rs:1346-1384`): the
+/// FULL `Declar::Recursor` for one inductive-in-block -- builds the
+/// recursor's own `Π` type (`motive indices* major -> motive indices*
+/// major`, wrapped in FOUR more `Pi`-telescopes over `local_indices`/
+/// `flat_mapped_minors`/`motives`/`local_params`, matching the real
+/// function's own five `abstr_pi`/`abstr_pi_telescope` calls exactly),
+/// names it `ind_name.rec`, and assembles the `RecursorData` via `mk_
+/// recursor_declar` (the flattened, `Declar`-opaque constructor above).
+pub fn verified_mk_recursor_aux<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    local_params: &[ExprPtr<'t>],
+    motives: &[ExprPtr<'t>],
+    rec_uparams: LevelsPtr<'t>,
+    k_target: bool,
+    ind_name: NamePtr<'t>,
+    motive: ExprPtr<'t>,
+    major: ExprPtr<'t>,
+    local_indices: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    rec_rules: &[RecRule<'t>],
+    all_ind_names: &[NamePtr<'t>],
+) -> (result: Option<Declar<'t>>)
+    requires
+        matches!(to_model(major), ExprSpec::Free(_)),
+        forall |i: int| #![trigger local_indices@[i]] 0 <= i < local_indices@.len() ==> {
+            let m = to_model(local_indices@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+            let m = to_model(flat_mapped_minors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+            let m = to_model(motives@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+            let m = to_model(local_params@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures true
+{
+    let motive_app_base = verified_foldl_apps(ctx, motive, local_indices);
+    let motive_app = ctx.mk_app(motive_app_base, major);
+    let rec_ty = ctx.abstr_pi(major, motive_app);
+    let rec_ty = verified_abstr_pi_telescope(ctx, local_indices, rec_ty);
+    let rec_ty = verified_abstr_pi_telescope(ctx, flat_mapped_minors, rec_ty);
+    let rec_ty = verified_abstr_pi_telescope(ctx, motives, rec_ty);
+    let rec_ty = verified_abstr_pi_telescope(ctx, local_params, rec_ty);
+    let rec_str_ptr = alloc_string_rec(ctx);
+    let name = ctx.str(ind_name, rec_str_ptr);
+    match u16::try_from(local_params.len()) {
+        Ok(num_params) => match u16::try_from(local_indices.len()) {
+            Ok(num_indices) => match u16::try_from(motives.len()) {
+                Ok(num_motives) => match u16::try_from(flat_mapped_minors.len()) {
+                    Ok(num_minors) => {
+                        let mut all_inds: Vec<NamePtr<'t>> = Vec::new();
+                        let mut i: usize = 0;
+                        while i < all_ind_names.len()
+                            invariant i <= all_ind_names.len(),
+                            decreases all_ind_names.len() - i
+                        {
+                            all_inds.push(all_ind_names[i]);
+                            i += 1;
+                        }
+                        let mut rrs: Vec<RecRule<'t>> = Vec::new();
+                        let mut j: usize = 0;
+                        while j < rec_rules.len()
+                            invariant j <= rec_rules.len(),
+                            decreases rec_rules.len() - j
+                        {
+                            rrs.push(rec_rules[j]);
+                            j += 1;
+                        }
+                        Some(mk_recursor_declar(name, rec_uparams, rec_ty, all_inds, num_params, num_indices, num_motives, num_minors, rrs, k_target))
+                    }
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            },
+            Err(_) => None,
+        },
+        Err(_) => None,
+    }
+}
+
+/// Real-arena mirror of `mk_recursors` (`inductive.rs:1386-1406`), the
+/// TOP-LEVEL entry point for this whole recursor-construction arc: builds
+/// ALL the block's `RecRule` groups (`verified_mk_rec_rules`) once, then
+/// one FULL `Declar::Recursor` per inductive-in-block (`verified_mk_
+/// recursor_aux`), matching the real function's own `mk_rec_rules` call
+/// followed by a `for (i, ind) in ..` loop over `majors`/`motives`/
+/// `local_indices` in lockstep. `all_local_indices` is `st.local_indices`
+/// itself, one `Vec` of index locals per inductive -- the SAME parameter
+/// `verified_mk_majors`/`verified_mk_motives` already take, reused here
+/// unchanged.
+pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    ind_names: &[NamePtr<'t>],
+    rec_uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    majors: &[ExprPtr<'t>],
+    all_local_indices: &[Vec<ExprPtr<'t>>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    all_ctor_names: &[Vec<NamePtr<'t>>],
+    all_ctor_tys: &[Vec<ExprPtr<'t>>],
+    k_target: bool,
+    fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+    pi_fuel: u32,
+) -> (result: Option<Vec<Declar<'t>>>)
+    requires
+        all_ctor_names.len() == all_ctor_tys.len(),
+        ind_names.len() == motives.len(),
+        ind_names.len() == majors.len(),
+        ind_names.len() == all_local_indices.len(),
+        forall |g: int| #![trigger all_ctor_names@[g]] 0 <= g < all_ctor_names@.len() ==> all_ctor_names@[g]@.len() == all_ctor_tys@[g]@.len(),
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+            let m = to_model(local_params@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+            let m = to_model(motives@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger majors@[i]] 0 <= i < majors@.len() ==> {
+            let m = to_model(majors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+            let m = to_model(flat_mapped_minors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |g: int| #![trigger all_local_indices@[g]] 0 <= g < all_local_indices@.len() ==> forall |i: int| #![trigger all_local_indices@[g]@[i]] 0 <= i < all_local_indices@[g]@.len() ==> {
+            let m = to_model(all_local_indices@[g]@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> nlbv(to_model(all_ctor_tys@[g]@[i])) <= 0,
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> max_var_below(to_model(all_ctor_tys@[g]@[i]), bound),
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> depth(to_model(all_ctor_tys@[g]@[i])) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    match verified_mk_rec_rules(ctx, env, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, all_ctor_names, all_ctor_tys, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
+        Some(rec_rules) => {
+            let mut recursors: Vec<Declar<'t>> = Vec::new();
+            let mut i: usize = 0;
+            while i < ind_names.len()
+                invariant
+                    i <= ind_names.len(),
+                    ind_names.len() == motives.len(),
+                    ind_names.len() == majors.len(),
+                    ind_names.len() == all_local_indices.len(),
+                    ind_names.len() == rec_rules.len(),
+                    forall |k: int| #![trigger local_params@[k]] 0 <= k < local_params@.len() ==> {
+                        let m = to_model(local_params@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    },
+                    forall |k: int| #![trigger motives@[k]] 0 <= k < motives@.len() ==> {
+                        let m = to_model(motives@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    },
+                    forall |k: int| #![trigger majors@[k]] 0 <= k < majors@.len() ==> {
+                        let m = to_model(majors@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    },
+                    forall |k: int| #![trigger flat_mapped_minors@[k]] 0 <= k < flat_mapped_minors@.len() ==> {
+                        let m = to_model(flat_mapped_minors@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    },
+                    forall |g: int| #![trigger all_local_indices@[g]] 0 <= g < all_local_indices@.len() ==> forall |k: int| #![trigger all_local_indices@[g]@[k]] 0 <= k < all_local_indices@[g]@.len() ==> {
+                        let m = to_model(all_local_indices@[g]@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    },
+                decreases ind_names.len() - i
+            {
+                let motive = motives[i];
+                let major = majors[i];
+                let local_indices = all_local_indices[i].as_slice();
+                assert(local_indices@ =~= all_local_indices@[i as int]@);
+                assert(forall |k: int| #![trigger local_indices@[k]] 0 <= k < local_indices@.len() ==> {
+                    let m = to_model(local_indices@[k]);
+                    matches!(m, ExprSpec::Free(_))
+                });
+                let rr_slice = rec_rules[i].as_slice();
+                match verified_mk_recursor_aux(ctx, local_params, motives, rec_uparams, k_target, ind_names[i], motive, major, local_indices, flat_mapped_minors, rr_slice, ind_names) {
+                    Some(decl) => {
+                        recursors.push(decl);
+                    }
+                    None => return None,
+                }
+                i += 1;
+            }
+            Some(recursors)
+        }
+        None => None,
+    }
 }
 
 }
