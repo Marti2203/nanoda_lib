@@ -621,7 +621,7 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
     cap: nat,
     args_d: nat,
     js_d: nat,
-) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Option<ExprPtr<'t>>)>)
+) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Option<ExprPtr<'t>>, u64)>)
     requires
         num_params <= args@.len(),
         env_global_cap(*env) <= cap,
@@ -643,7 +643,10 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
         forall |j: int| 0 <= j < ind_all_ctor_names(*env, nested_container_name).len() ==>
             to_model_of_declar_ty(*env).contains_key(#[trigger] ind_all_ctor_names(*env, nested_container_name)[j])
                 ==> to_model_of_declar_ty(*env)[ind_all_ctor_names(*env, nested_container_name)[j]].0.len() == to_model_of_levels(i_levels).len(),
-    ensures true
+    ensures match result {
+        Some((_, _, _, _, _, next_start)) => next_start >= unique_start,
+        None => true,
+    }
 {
     match get_inductive_all_names(env, &nested_container_name) {
         Some((_sibling_ind_names, all_nested_container_ctor_names)) => {
@@ -694,7 +697,9 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
                     let nested_pfx = ctx.str1("_nested");
                     match verified_concat_name(ctx, nested_pfx, nested_container_name, fuel) {
                         Some(base) => {
-                            let aux_nested_container_name = verified_mk_unique_name(ctx, env, base, unique_start);
+                            let (aux_nested_container_name, winning_idx) = verified_mk_unique_name(ctx, env, base, unique_start);
+                            assert(winning_idx as nat <= unique_start as nat + old_declar_names(*env).len());
+                            let next_unique_start = winning_idx + 1;
                             match verified_subst_expr_levels(ctx, container_ty, container_uparams, i_levels, fuel) {
                                 Some(base_ty) => {
                                     proof {
@@ -726,7 +731,7 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
                                                             } else {
                                                                 None
                                                             };
-                                                            Some((aux_nested_container_name, nested_container_aux_type, jsprime, auxj_ctors, f))
+                                                            Some((aux_nested_container_name, nested_container_aux_type, jsprime, auxj_ctors, f, next_unique_start))
                                                         }
                                                         None => None,
                                                     }
@@ -2111,14 +2116,22 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Lev
 /// is named abstractly (`old_declar_names_finite_bounded`, `env_model.rs`
 /// -- same "name the max, don't claim a number" pattern as `env_global_
 /// cap`/`local_type_cap`, not a new kind of trust).
-pub fn verified_mk_unique_name_search<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64, i: u64) -> (result: NamePtr<'t>)
+///
+/// Returns the WINNING index alongside the name (`result.1 >= start`) --
+/// needed so a caller making SEVERAL `mk_unique_name` calls in a row
+/// (e.g. `verified_replace_if_nested`'s fan-out over mutual siblings,
+/// each needing its OWN fresh name) can pass `result.1 + 1` as the next
+/// call's `start` and know the two calls can't collide, matching what
+/// the real `st.next_ngen_idx = idx + 1` write-back achieves for the
+/// real, sequential caller.
+pub fn verified_mk_unique_name_search<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64, i: u64) -> (result: (NamePtr<'t>, u64))
     requires
         start <= i,
         old_declar_names(*env).finite(),
         (i - start) as nat <= old_declar_names(*env).len(),
         start as nat + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
         forall |i2: int| #![trigger append_index_after_id(n, i2 as u64)] start as int <= i2 < i as int ==> old_declar_names(*env).contains(append_index_after_id(n, i2 as u64)),
-    ensures true
+    ensures result.1 >= i, result.1 as nat <= start as nat + old_declar_names(*env).len()
     decreases (old_declar_names(*env).len() - (i - start) as nat)
 {
     let candidate = ctx.append_index_after(n, i);
@@ -2131,7 +2144,10 @@ pub fn verified_mk_unique_name_search<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e
         }
         verified_mk_unique_name_search(ctx, env, n, start, i + 1)
     } else {
-        candidate
+        proof {
+            mk_unique_name_collision_bound(n, old_declar_names(*env), start as nat, (i - start) as nat);
+        }
+        (candidate, i)
     }
 }
 
@@ -2142,12 +2158,13 @@ pub fn verified_mk_unique_name_search<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e
 /// file -- the real function's own `st.next_ngen_idx = idx + 1` write-
 /// back stays the caller's (unverified) responsibility, same as every
 /// other `InductiveCheckState`-touching real function this arc composes
-/// around rather than reimplements.
-pub fn verified_mk_unique_name<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64) -> (result: NamePtr<'t>)
+/// around rather than reimplements. Returns `(name, winning_idx)` --
+/// see `verified_mk_unique_name_search`'s own doc comment for why.
+pub fn verified_mk_unique_name<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64) -> (result: (NamePtr<'t>, u64))
     requires
         old_declar_names(*env).finite(),
         start as nat + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
-    ensures true
+    ensures result.1 >= start, result.1 as nat <= start as nat + old_declar_names(*env).len()
 {
     verified_mk_unique_name_search(ctx, env, n, start, start)
 }
