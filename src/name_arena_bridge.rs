@@ -223,6 +223,49 @@ pub proof fn gen_elim_level_collision_bound<'a>(p: NamePtr<'a>, uparams_model: S
     assert(y.len() == l);
 }
 
+/// `gen_elim_level_collision_bound`'s sibling for `mk_unique_name`
+/// (`inductive.rs:588-597`): same pigeonhole shape, against a `Set<u64>`
+/// (the OLD environment's declared-name-ids) instead of a `Seq<LevelSpec>`
+/// -- actually SIMPLER than the `Seq` version, since `Set::contains`
+/// needs no witness-position `choose` at all. If `k` candidates starting
+/// at `start` (`append_index_after(n, start), ..., append_index_after(n,
+/// start + k - 1)`) ALL already collide with `declared`, then `k` can't
+/// exceed `declared`'s own size -- same `lemma_map_size`+`lemma_len_
+/// subset` composition as the `Seq` version, no new ideas.
+pub proof fn mk_unique_name_collision_bound<'a>(n: NamePtr<'a>, declared: Set<u64>, start: nat, k: nat)
+    requires
+        declared.finite(),
+        start + k <= u64::MAX as nat,
+        forall |i: int| #![trigger append_index_after_id(n, i as u64)] start <= i < start + k ==> declared.contains(append_index_after_id(n, i as u64)),
+    ensures k <= declared.len()
+{
+    broadcast use group_set_properties;
+    broadcast use Set::lemma_map_contains;
+
+    let g = |i: int| append_index_after_id(n, i as u64);
+    let x = set_int_range(start as int, start as int + k as int);
+    lemma_int_range(start as int, start as int + k as int);
+    assert(x.injective_on(g)) by {
+        assert forall |i1: int, i2: int| x.contains(i1) && x.contains(i2) && #[trigger] g(i1) == #[trigger] g(i2) implies i1 == i2 by {
+            if i1 != i2 {
+                assert(start as int <= i1 < start as int + k as int);
+                assert(start as int <= i2 < start as int + k as int);
+                assert((i1 as u64) as int == i1);
+                assert((i2 as u64) as int == i2);
+                append_index_after_id_injective(n, i1 as u64, i2 as u64);
+                assert(false);
+            }
+        }
+    }
+    assert(x.map(g).subset_of(declared)) by {
+        assert forall |b: u64| #[trigger] x.map(g).contains(b) implies declared.contains(b) by {
+        }
+    }
+    lemma_map_size(x, x.map(g), g);
+    lemma_len_subset(x.map(g), declared);
+    assert(x.len() == k as int);
+}
+
 /// Real-arena mirror of `TcCtx::replace_pfx` (`name.rs:74-90`), proven
 /// against `name_model.rs`'s already-verified `replace_pfx_full`.
 pub fn verified_replace_pfx<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>, outgoing: NamePtr<'t>, incoming: NamePtr<'t>, fuel: u32) -> (result: Option<NamePtr<'t>>)

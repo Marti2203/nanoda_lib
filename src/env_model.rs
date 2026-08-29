@@ -167,6 +167,13 @@ pub(crate) fn get_inductive_all_names<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>
 /// afterward) -- `ensures true`, same "plain per-call fact, no keyed map"
 /// convention as `get_recursor_data`, since nothing downstream relates two
 /// separate calls to a shared ground truth.
+/// `mk_unique_name`'s (`inductive.rs:588-597`) own membership check --
+/// only the `is_some`, none of `Declar`'s fields.
+#[allow(dead_code)]
+pub(crate) fn old_declar_is_some<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> bool {
+    env.get_old_declar(n).is_some()
+}
+
 #[allow(dead_code)]
 pub(crate) fn get_old_declar_inductive_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
     match env.get_old_declar(n) {
@@ -481,6 +488,30 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, '
 /// arc's multi-round `whnf`/`reduce_proj` chaining and `lazy_delta_
 /// step`'s outer loop have both independently been blocked on needing.
 pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
+
+/// The SET of name-ids present in the OLD (persistent, pre-temp-
+/// extension) declaration map -- `mk_unique_name`'s (`inductive.rs:588-
+/// 597`) own fresh-name search checks membership against exactly this.
+pub uninterp spec fn old_declar_names<'x, 'a>(env: Env<'x, 'a>) -> Set<u64>;
+
+/// A real `Env`'s OLD declaration map (an `IndexMap`, `env.rs`) always
+/// has a genuinely FINITE element count, even though this model doesn't
+/// compute it -- an obviously-true structural fact about any real,
+/// terminating program's data structures, the SAME minimal-trust flavor
+/// as `env_global_cap`/`local_type_cap`'s own "name the max, don't claim
+/// a number" pattern, just needing finiteness rather than a numeric
+/// ceiling here: `mk_unique_name_collision_bound`'s own pigeonhole
+/// argument only needs `old_declar_names(*env).len()` to be a well-
+/// defined `nat` (via `Set::len`'s own `finite()` requirement), not any
+/// SPECIFIC bound on its value.
+#[verifier::external_body]
+pub proof fn old_declar_names_finite<'x, 'a>(env: Env<'x, 'a>)
+    ensures old_declar_names(env).finite()
+{
+}
+
+pub assume_specification<'x, 'a> [old_declar_is_some] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool)
+    ensures result == old_declar_names(*env).contains(name_id(*n));
 
 /// States exactly the `nlbv`/`max_var_below`/`depth` conjuncts of `env_wf`
 /// directly, rather than calling `env_wf` itself -- NOT for opacity

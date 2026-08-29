@@ -35,7 +35,9 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::Env;
-use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields};
+use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
+#[cfg(verus_only)]
+use crate::env_model::old_declar_names;
 #[cfg(verus_only)]
 use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, env_global_cap};
 #[cfg(verus_only)]
@@ -60,7 +62,7 @@ use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound};
+use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound, mk_unique_name_collision_bound};
 
 verus! {
 
@@ -1590,6 +1592,60 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Lev
         return p;
     }
     verified_gen_elim_level_search(ctx, p, uparams, 1)
+}
+
+/// Real-arena mirror of `mk_unique_name`'s (`inductive.rs:588-597`)
+/// search loop: tries `append_index_after(n, i)` for `i = start, start +
+/// 1, ...` until one isn't already a name in the OLD environment's
+/// declaration map. Same genuine (not fuel-capped) termination shape as
+/// `verified_gen_elim_level_search` above, against `mk_unique_name_
+/// collision_bound`/`old_declar_names` (a `Set`, not a `Seq` -- see that
+/// lemma's own doc comment) instead of `gen_elim_level_collision_bound`/
+/// `uparams`. `old_declar_count_cap(*env)` stands in for `uparams.len()`:
+/// there is no existing real-arena accessor for the OLD declar map's
+/// size the way `read_levels_vec` gives one for `uparams`, so the ceiling
+/// is named abstractly (`old_declar_names_finite_bounded`, `env_model.rs`
+/// -- same "name the max, don't claim a number" pattern as `env_global_
+/// cap`/`local_type_cap`, not a new kind of trust).
+pub fn verified_mk_unique_name_search<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64, i: u64) -> (result: NamePtr<'t>)
+    requires
+        start <= i,
+        old_declar_names(*env).finite(),
+        (i - start) as nat <= old_declar_names(*env).len(),
+        start as nat + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+        forall |i2: int| #![trigger append_index_after_id(n, i2 as u64)] start as int <= i2 < i as int ==> old_declar_names(*env).contains(append_index_after_id(n, i2 as u64)),
+    ensures true
+    decreases (old_declar_names(*env).len() - (i - start) as nat)
+{
+    let candidate = ctx.append_index_after(n, i);
+    if old_declar_is_some(env, &candidate) {
+        assert(name_id(candidate) == append_index_after_id(n, i));
+        assert forall |i2: int| #![trigger append_index_after_id(n, i2 as u64)] start as int <= i2 <= i as int implies old_declar_names(*env).contains(append_index_after_id(n, i2 as u64)) by {
+        }
+        proof {
+            mk_unique_name_collision_bound(n, old_declar_names(*env), start as nat, (i - start + 1) as nat);
+        }
+        verified_mk_unique_name_search(ctx, env, n, start, i + 1)
+    } else {
+        candidate
+    }
+}
+
+/// Real-arena mirror of `mk_unique_name` (`inductive.rs:588-597`) itself.
+/// `start` is `st.next_ngen_idx`, taken as an explicit parameter rather
+/// than through the whole (private-field) `InductiveCheckState`, same
+/// "caller supplies what's needed" convention as everywhere else in this
+/// file -- the real function's own `st.next_ngen_idx = idx + 1` write-
+/// back stays the caller's (unverified) responsibility, same as every
+/// other `InductiveCheckState`-touching real function this arc composes
+/// around rather than reimplements.
+pub fn verified_mk_unique_name<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, n: NamePtr<'t>, start: u64) -> (result: NamePtr<'t>)
+    requires
+        old_declar_names(*env).finite(),
+        start as nat + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+    ensures true
+{
+    verified_mk_unique_name_search(ctx, env, n, start, start)
 }
 
 }
