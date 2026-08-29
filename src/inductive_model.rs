@@ -2019,6 +2019,139 @@ pub fn verified_mk_base_rec_names<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, all_ind_n
     out
 }
 
+/// Real-arena mirror of `mk_ind_tys_env_ext`'s (`inductive.rs:178-196`)
+/// own per-inductive computation: repackage each specialized header's
+/// `name`/`ty` alongside `is_nested`/`num_params`/`num_indices`/
+/// `all_ind_names`/`all_ctor_names` into the flat shape a caller needs
+/// to build `Declar::Inductive(InductiveData { .. })` and insert it into
+/// `env_ext` -- `InductiveData`/`Declar::Inductive`/`DeclarMap`
+/// (`FxIndexMap` insertion) all stay in the caller's own plain,
+/// unverified code, same "flatten, let the caller assemble the real
+/// collection/struct" convention `verified_restore_recursor1`/`verified_
+/// mk_base_rec_names` just established for `RecursorData`/`FxHashSet`.
+/// `is_recursive` is always `false` in the real function's own literal
+/// (computed LATER, by a separate pass) -- not part of this tuple at
+/// all, matching the real code exactly. Pure repackaging, no real
+/// mathematical content -- `ensures true`.
+pub fn verified_mk_ind_tys_env_ext<'t>(
+    headers: &[(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)],
+    is_nested: bool,
+    local_params_len: usize,
+    local_indices_lens: &[usize],
+) -> (result: Option<Vec<(NamePtr<'t>, ExprPtr<'t>, bool, u16, u16, Vec<NamePtr<'t>>, Vec<NamePtr<'t>>)>>)
+    ensures true
+{
+    if headers.len() != local_indices_lens.len() {
+        return None;
+    }
+    let num_params = match u16::try_from(local_params_len) {
+        Ok(n) => n,
+        Err(_) => return None,
+    };
+    let mut all_ind_names: Vec<NamePtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < headers.len()
+        invariant i <= headers.len(),
+        decreases headers.len() - i
+    {
+        all_ind_names.push(headers[i].0);
+        i += 1;
+    }
+    let mut out: Vec<(NamePtr<'t>, ExprPtr<'t>, bool, u16, u16, Vec<NamePtr<'t>>, Vec<NamePtr<'t>>)> = Vec::new();
+    let mut idx: usize = 0;
+    let mut ok = true;
+    while idx < headers.len() && ok
+        invariant
+            idx <= headers.len(),
+            local_indices_lens.len() == headers.len(),
+        decreases headers.len() - idx
+    {
+        let num_indices = match u16::try_from(local_indices_lens[idx]) {
+            Ok(n) => n,
+            Err(_) => { ok = false; 0 }
+        };
+        if ok {
+            let mut all_ctor_names: Vec<NamePtr<'t>> = Vec::new();
+            let mut j: usize = 0;
+            let ctors_len = headers[idx].2.len();
+            while j < ctors_len
+                invariant
+                    j <= ctors_len,
+                    idx < headers.len(),
+                    ctors_len == headers[idx as int].2.len(),
+                decreases ctors_len - j
+            {
+                all_ctor_names.push(headers[idx].2[j].0);
+                j += 1;
+            }
+            out.push((headers[idx].0, headers[idx].1, is_nested, num_params, num_indices, all_ind_names.clone(), all_ctor_names));
+        }
+        idx += 1;
+    }
+    if !ok { None } else { Some(out) }
+}
+
+/// Real-arena mirror of `mk_ctors_env_ext`'s (`inductive.rs:200-218`) own
+/// per-constructor computation: for each constructor of each specialized
+/// header, compute `num_fields` via `verified_pi_telescope_size` (already
+/// bridged) minus the block's own `num_params`, and repackage everything
+/// needed to build `Declar::Constructor(ConstructorData { .. })` --
+/// same "flatten, let the caller assemble" convention as `verified_mk_
+/// ind_tys_env_ext` right above it. The real function's own `u16::
+/// try_from(idx).unwrap()`/subtraction can't actually fail for any real,
+/// well-formed input (a constructor telescope always has AT LEAST
+/// `num_params` leading binders), but `verified_pi_telescope_size` needs
+/// fuel and can run out -- `None` propagates that, not a manufactured
+/// failure case.
+pub fn verified_mk_ctors_env_ext<'t, 'p: 't>(
+    ctx: &TcCtx<'t, 'p>,
+    headers: &[(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)],
+    num_params: u16,
+    fuel: u32,
+) -> (result: Option<Vec<(NamePtr<'t>, ExprPtr<'t>, NamePtr<'t>, u16, u16, u16)>>)
+    ensures true
+{
+    let mut out: Vec<(NamePtr<'t>, ExprPtr<'t>, NamePtr<'t>, u16, u16, u16)> = Vec::new();
+    let mut i: usize = 0;
+    let mut ok = true;
+    while i < headers.len() && ok
+        invariant i <= headers.len(),
+        decreases headers.len() - i
+    {
+        let mut j: usize = 0;
+        let ctors_len = headers[i].2.len();
+        while j < ctors_len && ok
+            invariant
+                j <= ctors_len,
+                i < headers.len(),
+                ctors_len == headers[i as int].2.len(),
+            decreases ctors_len - j
+        {
+            let (ctor_name, ctor_ty) = headers[i].2[j];
+            match verified_pi_telescope_size(ctx, ctor_ty, fuel) {
+                Some(telescope_size) => {
+                    if telescope_size < num_params {
+                        ok = false;
+                    } else {
+                        let num_fields = telescope_size - num_params;
+                        let ctor_idx = match u16::try_from(j) {
+                            Ok(n) => n,
+                            Err(_) => { ok = false; 0 }
+                        };
+                        if ok {
+                            out.push((ctor_name, ctor_ty, headers[i].0, ctor_idx, num_params, num_fields));
+                        }
+                    }
+                }
+                None => { ok = false; }
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    if !ok { None } else { Some(out) }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
