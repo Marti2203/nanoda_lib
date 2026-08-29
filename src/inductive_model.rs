@@ -376,4 +376,76 @@ pub fn verified_is_recursive<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, env: &Env<'_, 't>,
     }
 }
 
+/// `has_ind_occ`'s (`inductive.rs:841-850`) own predicate: unlike `is_
+/// recursive`'s closure (checks membership in a `NamePtr` slice directly),
+/// this one checks membership against the NAMES of a slice of `ExprPtr`s
+/// that are each expected to be `Const`-shaped (the real closure panics
+/// otherwise -- `haystack` is always `Const`-shaped in every real caller).
+/// Extracts those names up front into an owned `Vec<NamePtr>`, then
+/// delegates directly to `verified_find_const_named` -- honestly returns
+/// `None` if some `haystack` element ISN'T `Const`-shaped, rather than
+/// mirroring the real function's panic.
+pub fn verified_extract_const_names<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, haystack: &[ExprPtr<'t>]) -> (result: Option<Vec<NamePtr<'t>>>)
+    ensures match result {
+        Some(names) =>
+            names@.len() == haystack@.len()
+            && forall |i: int| 0 <= i < haystack@.len() ==> {
+                &&& #[trigger] is_const_shape(haystack@[i])
+                &&& name_id(names@[i]) == const_id(haystack@[i])
+            },
+        None => true,
+    }
+{
+    let mut result: Vec<NamePtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < haystack.len()
+        invariant
+            i <= haystack.len(),
+            result@.len() == i,
+            forall |j: int| 0 <= j < i ==> {
+                &&& #[trigger] is_const_shape(haystack@[j])
+                &&& name_id(result@[j]) == const_id(haystack@[j])
+            },
+        decreases haystack.len() - i
+    {
+        let el = ctx.read_expr(haystack[i]);
+        if let Some((name, _levels)) = expr_as_const(haystack[i], &el) {
+            assert(is_const_shape(haystack@[i as int]) && const_name_of(haystack@[i as int]) == name);
+            proof { is_const_shape_model(haystack@[i as int]); }
+            assert(const_id(haystack@[i as int]) == name_id(name));
+            result.push(name);
+        } else {
+            return None;
+        }
+        i += 1;
+    }
+    Some(result)
+}
+
+/// Real-arena mirror of `has_ind_occ` (`inductive.rs:841-850`): does `e`
+/// contain a `Const` whose name matches one of `haystack`'s (each expected
+/// `Const`-shaped) own names?
+pub fn verified_has_ind_occ<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, haystack: &[ExprPtr<'t>], fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(r) => r == contains_const_named(to_model(e), Seq::new(haystack@.len(), |i: int| const_id(haystack@[i]))),
+        None => true,
+    }
+{
+    match verified_extract_const_names(ctx, haystack) {
+        Some(names) => {
+            assert(names@.len() == haystack@.len());
+            let ghost mapped_names: Seq<u64> = Seq::new(names@.len(), |i: int| name_id(names@[i]));
+            let ghost mapped_haystack: Seq<u64> = Seq::new(haystack@.len(), |i: int| const_id(haystack@[i]));
+            assert(mapped_names =~= mapped_haystack) by {
+                assert forall |i: int| 0 <= i < names@.len() implies #[trigger] mapped_names[i] == mapped_haystack[i] by {
+                    assert(is_const_shape(haystack@[i]));
+                    assert(name_id(names@[i]) == const_id(haystack@[i]));
+                }
+            }
+            verified_find_const_named(ctx, e, &names, fuel)
+        }
+        None => None,
+    }
+}
+
 }
