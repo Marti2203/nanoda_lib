@@ -1465,4 +1465,75 @@ pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (
     false
 }
 
+/// Real-arena mirror of `large_elim_test` (`inductive.rs:972-995`), the
+/// thin dispatcher around `large_elim_test_aux` above. Takes the FLATTENED
+/// facts the real function actually reads off `InductiveCheckState`/
+/// `IndTyHeader`/`CtorHeader` (`is_nonzero`, the block's own inductive/
+/// constructor counts, and the singleton constructor's own `ty` when
+/// applicable) as direct scalar/`Option` parameters rather than the whole
+/// (private-field) structs -- exactly `verified_init_k_target`'s own
+/// established convention for this same "real struct has no accessor
+/// surface yet" situation, not a new pattern. `num_ctors`/`only_ctor_ty`
+/// are only MEANINGFUL when `num_inductives == 1` (mirroring the real
+/// function's own `match ... { [ind_ty] => match ind_ty.ctors.as_slice()
+/// ... }` nesting) -- a caller outside that case may pass anything, since
+/// the corresponding branch is never reached.
+pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    is_nonzero: bool,
+    num_inductives: usize,
+    num_ctors: usize,
+    only_ctor_ty: Option<ExprPtr<'t>>,
+    local_params_len: usize,
+    non_prop_elems: &mut Vec<ExprPtr<'t>>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+) -> (result: Option<bool>)
+    requires
+        num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
+            Some(ty) => {
+                &&& nlbv(to_model(ty)) <= 0
+                &&& max_var_below(to_model(ty), bound)
+                &&& depth(to_model(ty)) <= d
+            },
+            None => false,
+        },
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+    ensures true
+{
+    if is_nonzero {
+        return Some(true);
+    }
+    if num_inductives == 0 {
+        return None;
+    }
+    if num_inductives != 1 {
+        return Some(false);
+    }
+    if num_ctors == 0 {
+        return Some(true);
+    }
+    if num_ctors != 1 {
+        return Some(false);
+    }
+    match only_ctor_ty {
+        Some(ty) => verified_large_elim_test_aux(ctx, env, ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound),
+        None => None,
+    }
+}
+
 }
