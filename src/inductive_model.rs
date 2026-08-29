@@ -42,7 +42,7 @@ use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, c
 use crate::beta_model::spine_app;
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::{Env, RecRule, Declar};
-use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
+use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some, get_constructor_inductive_name};
 #[cfg(verus_only)]
 use crate::env_model::old_declar_names;
 #[cfg(verus_only)]
@@ -1423,6 +1423,83 @@ pub fn verified_specialize_nested_aux<'t, 'p: 't, 'x>(
         }
     }
     if !ok { None } else { Some(cur_start) }
+}
+
+/// Real-arena mirror of `get_nested_if_aux_ctor` (`inductive.rs:1454-
+/// 1463`): looks up a constructor's own parent inductive, then checks
+/// whether THAT parent is one of the specialized nested containers (a
+/// hit means `c` is itself an auxiliary constructor like
+/// `_nested.Array_1.mk`, not an original one). `nested_to_unspecialized_
+/// ty_nofvars` is a snapshot of `st`'s own real, private map of the same
+/// name -- same "caller supplies a snapshot" convention as `cache` in
+/// `verified_replace_if_nested`. Pure lookup composition (`ensures
+/// true`) -- nothing downstream needs a semantic claim about the result
+/// beyond it being a real, well-typed pair.
+pub fn verified_get_nested_if_aux_ctor<'t, 'p: 't, 'x>(
+    env: &Env<'x, 't>,
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    c: NamePtr<'t>,
+) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>)>)
+    ensures true
+{
+    match get_constructor_inductive_name(env, &c) {
+        Some(inductive_name) => {
+            let mut i: usize = 0;
+            let mut found: Option<ExprPtr<'t>> = None;
+            while i < nested_to_unspecialized_ty_nofvars.len()
+                invariant i <= nested_to_unspecialized_ty_nofvars.len(),
+                decreases nested_to_unspecialized_ty_nofvars.len() - i
+            {
+                if name_ptr_eq(nested_to_unspecialized_ty_nofvars[i].0, inductive_name) {
+                    found = Some(nested_to_unspecialized_ty_nofvars[i].1);
+                    break;
+                }
+                i += 1;
+            }
+            match found {
+                Some(unspecialized_ty) => Some((unspecialized_ty, inductive_name)),
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `restore_ctor_name` (`inductive.rs:1465-1478`):
+/// if `ctor_name` is an auxiliary constructor (`_nested.Array_1.mk`),
+/// rename its prefix back to the REAL, original container's own
+/// constructor name (`Array.mk`) -- the inverse of what `verified_
+/// replace_if_nested_ctor_loop` did going forward. Composes `verified_
+/// get_nested_if_aux_ctor`, `verified_unfold_apps` (discarding the args,
+/// mirroring the real `unfold_apps_fun`'s own "just the head" contract),
+/// a `Const`-shape extraction (same pattern used throughout this file),
+/// and `verified_replace_pfx`. Pure composition, `ensures true`.
+pub fn verified_restore_ctor_name<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    ctor_name: NamePtr<'t>,
+    fuel: u32,
+) -> (result: Option<NamePtr<'t>>)
+    ensures true
+{
+    match verified_get_nested_if_aux_ctor(env, nested_to_unspecialized_ty_nofvars, ctor_name) {
+        Some((unspecialized_ty, base_ind_name)) => {
+            match verified_unfold_apps(ctx, unspecialized_ty, fuel) {
+                Some((unspecialized_f, _args)) => {
+                    let el = ctx.read_expr(unspecialized_f);
+                    match expr_as_const(unspecialized_f, &el) {
+                        Some((unspecialized_ty_name, _levels)) => {
+                            verified_replace_pfx(ctx, ctor_name, base_ind_name, unspecialized_ty_name, fuel)
+                        }
+                        None => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
