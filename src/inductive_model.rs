@@ -77,7 +77,7 @@ use crate::env::{DeclarInfo, RecursorData};
 use crate::name_arena_bridge::{verified_replace_pfx, verified_concat_name};
 use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_params, verified_inst_forall_params};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose, spine_app_nlbv_decompose};
+use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose};
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, const_levels_match_declared_arity, mutual_block_uniform_levels_arity};
 #[cfg(verus_only)]
@@ -368,7 +368,8 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
             && ind_num_params(*env, name_id(name)) == num_params
             && num_params as int <= args@.len()
             && exists |i: int| 0 <= i < num_params as int
-                && contains_const_named(to_model(args@[i as int]), name_ids_of(tracked_names@)),
+                && contains_const_named(to_model(args@[i as int]), name_ids_of(tracked_names@))
+            && forall |i: int| 0 <= i < num_params as int ==> nlbv(to_model(#[trigger] args@[i as int])) == 0,
         None => true,
     }
 {
@@ -388,12 +389,15 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
             num_params as int <= args@.len(),
             tracked_ids =~= Seq::new(tracked_names@.len(), |k: int| name_id(tracked_names@[k])),
             is_nested ==> exists |j: int| 0 <= j < i as int && #[trigger] contains_const_named(to_model(args@[j as int]), tracked_ids),
+            !loose_bvars ==> forall |j: int| 0 <= j < i as int ==> nlbv(to_model(#[trigger] args@[j as int])) == 0,
         decreases num_params as int - i as int
     {
         let this_param = args[i];
         assert(this_param == args@[i as int]);
         if ctx.num_loose_bvars(this_param) != 0 {
             loose_bvars = true;
+        } else {
+            assert(nlbv(to_model(this_param)) == 0);
         }
         match verified_find_const_named(ctx, this_param, tracked_names, fuel) {
             Some(true) => {
@@ -414,6 +418,7 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
     }
     assert(i == num_params as usize);
     assert(tracked_ids =~= name_ids_of(tracked_names@));
+    assert(forall |j: int| 0 <= j < num_params as int ==> nlbv(to_model(args@[j as int])) == 0);
     Some((f, name, num_params, levels, args))
 }
 
@@ -804,7 +809,6 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
         cap + outgoing_param_locals@.len() as nat <= 60000,
         args_d <= cap,
         depth(to_model(e)) <= args_d,
-        nlbv(to_model(e)) == 0,
         args_d + (u16::MAX as nat) <= js_d,
         js_d + outgoing_param_locals@.len() as nat <= 60000,
         old_declar_names(*env).finite(),
@@ -825,14 +829,17 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                 let ghost args_model: Seq<ExprSpec> = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                 assert(to_model(e) == spine_app(to_model(f), args_model));
                 spine_app_depth_decompose(to_model(f), args_model);
-                spine_app_nlbv_decompose(to_model(f), args_model);
                 assert forall |i: int| 0 <= i < num_params implies depth(to_model(#[trigger] args@[i])) <= args_d by {
                     assert(depth(args_model[i]) <= depth(to_model(e)));
                     assert(args_model[i] == to_model(args@[i]));
                 }
+                // nlbv(args[i]) == 0 comes DIRECTLY from verified_is_nested_ind_app's
+                // own strengthened ensures (its `loose_bvars` check already rules out
+                // any other case in the real code) -- NOT from e's own closedness,
+                // which the tree-walk recursing into a Pi/Lambda body can't guarantee
+                // (see project memory: the nlbv-offset gap this replaces).
                 assert forall |i: int| 0 <= i < num_params implies nlbv(to_model(#[trigger] args@[i])) <= 0 by {
-                    assert(nlbv(args_model[i]) <= nlbv(to_model(e)));
-                    assert(args_model[i] == to_model(args@[i]));
+                    assert(nlbv(to_model(args@[i])) == 0);
                 }
                 const_levels_match_declared_arity(*env, i_name, i_levels);
                 mutual_block_uniform_levels_arity(*env, i_name, to_model_of_levels(i_levels).len());
