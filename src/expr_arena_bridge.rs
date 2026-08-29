@@ -51,6 +51,8 @@ use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
 use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
+#[cfg(verus_only)]
+use crate::quot_model::local_type;
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
@@ -215,6 +217,26 @@ pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
     a == b
 }
 
+/// `BinderStyle` is registered `external_body` (`ExBinderStyle` below),
+/// so its OWN enum variants can't be constructed directly inside
+/// `verus!`-checked code ("disallowed: constructor for an opaque
+/// datatype") -- every OTHER function in this crate that needs a
+/// `BinderStyle` value takes it as a parameter, threaded through from
+/// real, already-existing data (e.g. a `Pi`'s own stored `binder_style`);
+/// `mk_majors`/`mk_motive_dep` (`inductive.rs:1049-1071`) are the first
+/// real functions that construct FRESH ones (`BinderStyle::Default`/
+/// `::Implicit`), so these two trivial helpers exist purely to move that
+/// one enum-literal construction outside verus's own checking.
+#[allow(dead_code)]
+pub(crate) fn binder_style_default() -> BinderStyle {
+    BinderStyle::Default
+}
+
+#[allow(dead_code)]
+pub(crate) fn binder_style_implicit() -> BinderStyle {
+    BinderStyle::Implicit
+}
+
 /// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: dereference
 /// and clone the arena-stored `BigUint` (real `read_bignum` returns
 /// `Option<&BigUint>`; bridged as one opaque real function rather than
@@ -311,6 +333,9 @@ pub struct ExExpr<'a>(Expr<'a>);
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExBinderStyle(BinderStyle);
+
+pub assume_specification [binder_style_default] () -> (result: BinderStyle);
+pub assume_specification [binder_style_implicit] () -> (result: BinderStyle);
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
@@ -1181,6 +1206,68 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         };
     }
     None
+}
+
+/// Closed-form model of `TcCtx::abstr_pi_telescope`'s (`expr.rs:670-676`)
+/// own recursion: peels `binder_ids`/`binder_tys` from the END (matching
+/// the real function's `while let [tl @ .., binder] = binders`), each
+/// step wrapping the accumulated body in ONE `abstr_pi`-shaped `Bind`
+/// (`abstr_pi`'s own axiom, `quot_model.rs`) before recursing on the
+/// shorter prefix -- so the OUTERMOST `Pi` in the result binds
+/// `binder_ids[0]`/`binder_tys[0]`, matching `[a, b, c], e ~> Pi(a, Pi(b,
+/// Pi(c, e)))` exactly as the doc comment there describes.
+pub open spec fn abstr_pi_telescope_model(binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec) -> ExprSpec
+    decreases binder_ids.len()
+{
+    if binder_ids.len() == 0 {
+        e
+    } else {
+        let last_id = binder_ids.last();
+        let last_ty = binder_tys.last();
+        let rest_ids = binder_ids.drop_last();
+        let rest_tys = binder_tys.drop_last();
+        abstr_pi_telescope_model(rest_ids, rest_tys, ExprSpec::Bind(Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))))
+    }
+}
+
+/// Real-arena mirror of `TcCtx::abstr_pi_telescope` (`expr.rs:670-676`),
+/// needed by `mk_motive_dep` (`inductive.rs:1058-1071`) to abstract a
+/// motive's own index binders into a `Pi`-telescope. Each `binders[i]`
+/// must be `Free`-shaped (an already-created `Local`, same precondition
+/// `abstr_pi` itself already carries) for its own `abstr_pi` step to
+/// apply.
+pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    requires forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
+        let m = to_model(binders@[i]);
+        matches!(m, ExprSpec::Free(_))
+    }
+    ensures to_model(result) == abstr_pi_telescope_model(
+        Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
+        Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
+        to_model(e),
+    )
+    decreases binders.len()
+{
+    if binders.len() == 0 {
+        assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
+        return e;
+    }
+    let last = binders[binders.len() - 1];
+    let rest = &binders[0..binders.len() - 1];
+    assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
+    let e2 = ctx.abstr_pi(last, e);
+    let result = verified_abstr_pi_telescope(ctx, rest, e2);
+    proof {
+        let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
+        let tys = Seq::new(binders@.len(), |i: int| local_type(binders@[i]));
+        let rest_ids = Seq::new(rest@.len(), |i: int| expr_id(rest@[i]));
+        let rest_tys = Seq::new(rest@.len(), |i: int| local_type(rest@[i]));
+        assert(ids.drop_last() =~= rest_ids);
+        assert(tys.drop_last() =~= rest_tys);
+        assert(ids.last() == expr_id(last));
+        assert(tys.last() == local_type(last));
+    }
+    result
 }
 
 /// Real-arena counterpart to real `TcCtx::subst_aux`/`subst_expr_levels`

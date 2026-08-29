@@ -24,7 +24,12 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_foldl_apps, verified_abstr_pi_telescope, binder_style_default, binder_style_implicit};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::abstr_pi_telescope_model;
+#[cfg(verus_only)]
+use crate::quot_model::local_type;
+use crate::expr::BinderStyle;
 use crate::level_arena_bridge::verified_eq_antisymm_many;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -1646,6 +1651,118 @@ pub fn verified_mk_unique_name<'x, 't, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, env: &En
     ensures true
 {
     verified_mk_unique_name_search(ctx, env, n, start, start)
+}
+
+/// Real-arena mirror of `mk_majors` (`inductive.rs:1049-1056`): builds
+/// one fresh "major premise" `Local` per inductive in the block, typed
+/// as `ind_const params* indices*`. Pure construction -- `verified_
+/// foldl_apps` and `mk_unique`'s own axiom are both unconditional, so
+/// this never fails; `ensures true` since nothing downstream needs a
+/// semantic claim about the RESULT here beyond it being a real, freshly-
+/// allocated `Local` (which every `mk_unique` call already guarantees).
+/// `local_indices` is `st.local_indices`, one `Vec` of index locals per
+/// inductive, taken as a direct parallel slice-of-`Vec`s rather than
+/// through the whole (private-field) `InductiveCheckState`.
+pub fn verified_mk_majors<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, ind_consts: &[ExprPtr<'t>], local_params: &[ExprPtr<'t>], local_indices: &[Vec<ExprPtr<'t>>]) -> (result: Vec<ExprPtr<'t>>)
+    requires ind_consts.len() == local_indices.len()
+    ensures true
+{
+    let mut majors: Vec<ExprPtr<'t>> = Vec::new();
+    let mut idx: usize = 0;
+    while idx < ind_consts.len()
+        invariant
+            idx <= ind_consts.len(),
+            ind_consts.len() == local_indices.len(),
+        decreases ind_consts.len() - idx
+    {
+        let ind_const = ind_consts[idx];
+        let ty1 = verified_foldl_apps(ctx, ind_const, local_params);
+        let ty2 = verified_foldl_apps(ctx, ty1, local_indices[idx].as_slice());
+        let t = ctx.str1("t");
+        let m = ctx.mk_unique(t, binder_style_default(), ty2);
+        majors.push(m);
+        idx += 1;
+    }
+    majors
+}
+
+/// Real-arena mirror of `mk_motive_dep` (`inductive.rs:1058-1071`): the
+/// motive type for ONE inductive in the block -- `Π indices, T params
+/// indices -> Sort elim_level`, named `motive`/`motive_N` depending on
+/// whether the block is genuinely mutual. `major`/`local_indices_i`'s own
+/// `Free`-shapedness (both always `mk_unique`-created locals from `mk_
+/// majors`/earlier telescoping in the real pipeline) is taken as an
+/// explicit hypothesis -- exactly `abstr_pi`/`abstr_pi_telescope`'s own
+/// preconditions, restated at the call site rather than re-derived.
+pub fn verified_mk_motive_dep<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, elim_level: LevelPtr<'t>, major: ExprPtr<'t>, local_indices_i: &[ExprPtr<'t>], ind_type_idx: u64, multi: bool) -> (result: ExprPtr<'t>)
+    requires
+        ind_type_idx < u64::MAX,
+        matches!(to_model(major), ExprSpec::Free(_)),
+        forall |i: int| #![trigger local_indices_i@[i]] 0 <= i < local_indices_i@.len() ==> {
+            let m = to_model(local_indices_i@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures true
+{
+    let elim_sort = ctx.mk_sort(elim_level);
+    let w_major = ctx.abstr_pi(major, elim_sort);
+    let motive_type = verified_abstr_pi_telescope(ctx, local_indices_i, w_major);
+    let motive_name_base = ctx.str1("motive");
+    let motive_name = if multi {
+        ctx.append_index_after(motive_name_base, ind_type_idx + 1)
+    } else {
+        motive_name_base
+    };
+    ctx.mk_unique(motive_name, binder_style_implicit(), motive_type)
+}
+
+/// Real-arena mirror of `mk_motives` (`inductive.rs:1073-1080`): one
+/// motive per inductive in the block, composing `verified_mk_motive_dep`
+/// over `majors`/`local_indices` in lockstep.
+pub fn verified_mk_motives<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, elim_level: LevelPtr<'t>, majors: &[ExprPtr<'t>], local_indices: &[Vec<ExprPtr<'t>>], multi: bool) -> (result: Vec<ExprPtr<'t>>)
+    requires
+        majors.len() == local_indices.len(),
+        majors.len() < u64::MAX as usize,
+        forall |i: int| #![trigger majors@[i]] 0 <= i < majors@.len() ==> {
+            let m = to_model(majors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger local_indices@[i]] 0 <= i < local_indices@.len() ==> forall |j: int| #![trigger local_indices@[i]@[j]] 0 <= j < local_indices@[i]@.len() ==> {
+            let m = to_model(local_indices@[i]@[j]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures true
+{
+    let mut motives: Vec<ExprPtr<'t>> = Vec::new();
+    let mut idx: usize = 0;
+    while idx < majors.len()
+        invariant
+            idx <= majors.len(),
+            majors.len() == local_indices.len(),
+            majors.len() < u64::MAX as usize,
+            forall |i: int| #![trigger majors@[i]] 0 <= i < majors@.len() ==> {
+                let m = to_model(majors@[i]);
+                matches!(m, ExprSpec::Free(_))
+            },
+            forall |i: int| #![trigger local_indices@[i]] 0 <= i < local_indices@.len() ==> forall |j: int| #![trigger local_indices@[i]@[j]] 0 <= j < local_indices@[i]@.len() ==> {
+                let m = to_model(local_indices@[i]@[j]);
+                matches!(m, ExprSpec::Free(_))
+            },
+        decreases majors.len() - idx
+    {
+        let major = majors[idx];
+        let li = local_indices[idx].as_slice();
+        assert(forall |j: int| #![trigger li@[j]] 0 <= j < li@.len() ==> {
+            let m = to_model(li@[j]);
+            matches!(m, ExprSpec::Free(_))
+        }) by {
+            assert(li@ =~= local_indices@[idx as int]@);
+        }
+        let motive = verified_mk_motive_dep(ctx, elim_level, major, li, idx as u64, multi);
+        motives.push(motive);
+        idx += 1;
+    }
+    motives
 }
 
 }
