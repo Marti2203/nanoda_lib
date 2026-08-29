@@ -74,6 +74,16 @@ use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_b
 use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
 use crate::name::Name;
 use crate::env::{DeclarInfo, RecursorData};
+use crate::name_arena_bridge::verified_replace_pfx;
+use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_params, verified_inst_forall_params};
+#[cfg(verus_only)]
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty};
+#[cfg(verus_only)]
+use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
+#[cfg(verus_only)]
+use crate::expr_model::subst_expr_levels_rel;
+#[cfg(verus_only)]
+use crate::level_model::level_names;
 
 /// `Declar`'s recursor-branch constructor, flattened to avoid needing
 /// `DeclarInfo`/`RecursorData` registered with Verus at all -- ONLY
@@ -403,6 +413,127 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
     assert(i == num_params as usize);
     assert(tracked_ids =~= name_ids_of(tracked_names@));
     Some((f, name, num_params, levels, args))
+}
+
+/// Real-arena mirror of `replace_if_nested`'s (`inductive.rs:609-699`)
+/// inner constructor loop (`inductive.rs:676-690`): for each constructor
+/// of a discovered nested container's specialized copy, rebuild its own
+/// type against the specialization -- rename its prefix
+/// (`Array.mk` -> `_nested.Array_1.mk`), swap in the enclosing block's
+/// universe levels, instantiate its own leading `num_params` binders
+/// with the discovered application's actual arguments, then re-abstract
+/// over the outgoing (fresh, per-scan) parameter locals.
+///
+/// Deliberately "ensures true", same "pure construction, nothing
+/// downstream needs a semantic claim about the result yet" convention
+/// `verified_mk_majors`/`verified_get_local_params` already use --
+/// this piece's job is composing five already-verified sub-bridges
+/// correctly (matching the real function's exact call sequence and
+/// argument order), not proving anything new about their output.
+///
+/// `aux_ctors` is pushed to directly rather than returned as a `Vec`,
+/// matching `verified_handle_rec_args_aux`'s own accumulator-threading
+/// convention; `(NamePtr, ExprPtr)` pairs stand in for the real, private
+/// `CtorHeader` (visible only inside `inductive.rs`) -- the caller
+/// reconstructs the actual struct in plain, unverified code, same
+/// "flatten to dodge private-type registration" trick `mk_recursor_
+/// declar`/`mk_rec_rule` already established for `RecursorData`/`RecRule`.
+pub fn verified_replace_if_nested_ctor_loop<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ctor_names: &[NamePtr<'t>],
+    nested_container_name: NamePtr<'t>,
+    aux_nested_container_name: NamePtr<'t>,
+    i_levels: LevelsPtr<'t>,
+    num_params: usize,
+    args: &[ExprPtr<'t>],
+    outgoing_param_locals: &[ExprPtr<'t>],
+    fuel: u32,
+    cap: nat,
+    args_d: nat,
+    aux_ctors: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
+) -> (result: Option<()>)
+    requires
+        num_params <= args@.len(),
+        env_global_cap(*env) <= cap,
+        cap <= 60000,
+        forall |i: int| 0 <= i < outgoing_param_locals@.len() ==> {
+            let m = to_model(#[trigger] outgoing_param_locals@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| 0 <= i < num_params ==> #[trigger] depth(to_model(args@[i])) <= args_d,
+        forall |i: int| 0 <= i < num_params ==> #[trigger] nlbv(to_model(args@[i])) <= 0,
+        forall |j: int| 0 <= j < ctor_names@.len() ==>
+            to_model_of_declar_ty(*env).contains_key(name_id(#[trigger] ctor_names@[j]))
+                ==> to_model_of_declar_ty(*env)[name_id(ctor_names@[j])].0.len() == to_model_of_levels(i_levels).len(),
+    ensures true
+{
+    let mut i: usize = 0;
+    while i < ctor_names.len()
+        invariant
+            i <= ctor_names.len(),
+            num_params <= args@.len(),
+            env_global_cap(*env) <= cap,
+            cap <= 60000,
+            forall |j: int| 0 <= j < ctor_names@.len() ==>
+                to_model_of_declar_ty(*env).contains_key(name_id(#[trigger] ctor_names@[j]))
+                    ==> to_model_of_declar_ty(*env)[name_id(ctor_names@[j])].0.len() == to_model_of_levels(i_levels).len(),
+            forall |k: int| 0 <= k < num_params ==> #[trigger] depth(to_model(args@[k])) <= args_d,
+            forall |k: int| 0 <= k < num_params ==> #[trigger] nlbv(to_model(args@[k])) <= 0,
+            forall |k: int| 0 <= k < outgoing_param_locals@.len() ==> {
+                let m = to_model(#[trigger] outgoing_param_locals@[k]);
+                matches!(m, ExprSpec::Free(_))
+            },
+        decreases ctor_names.len() - i
+    {
+        let j_ctor_name = ctor_names[i];
+        match get_declar_info_ty(env, &j_ctor_name) {
+            Some((j_ctor_uparams, j_ctor_ty)) => {
+                proof {
+                    env_global_wf_ty(*env);
+                    assert(to_model_of_declar_ty(*env).contains_key(name_id(ctor_names@[i as int])));
+                    assert(to_model_of_declar_ty(*env)[name_id(ctor_names@[i as int])].0.len() == to_model_of_levels(i_levels).len());
+                    assert(to_model_of_declar_ty(*env)[name_id(ctor_names@[i as int])].0 =~= level_names(to_model_of_levels(j_ctor_uparams)));
+                    assert(level_names(to_model_of_levels(j_ctor_uparams)).len() == to_model_of_levels(j_ctor_uparams).len());
+                    assert(to_model_of_levels(j_ctor_uparams).len() == to_model_of_levels(i_levels).len());
+                    assert(name_id(ctor_names@[i as int]) == name_id(j_ctor_name));
+                    assert(to_model_of_declar_ty(*env)[name_id(j_ctor_name)].1 == to_model(j_ctor_ty));
+                    assert(depth(to_model(j_ctor_ty)) <= env_global_cap(*env));
+                    assert(depth(to_model(j_ctor_ty)) <= cap);
+                }
+                match verified_replace_pfx(ctx, j_ctor_name, nested_container_name, aux_nested_container_name, fuel) {
+                    Some(auxj_ctor_name) => {
+                        match verified_subst_expr_levels(ctx, j_ctor_ty, j_ctor_uparams, i_levels, fuel) {
+                            Some(auxj_ctor_type1) => {
+                                proof {
+                                    let ghost ks = level_names(to_model_of_levels(j_ctor_uparams));
+                                    let ghost vs = to_model_of_levels(i_levels);
+                                    assert(subst_expr_levels_rel(to_model(j_ctor_ty), ks, vs, to_model(auxj_ctor_type1)));
+                                    subst_expr_levels_rel_depth(to_model(j_ctor_ty), ks, vs, to_model(auxj_ctor_type1));
+                                    subst_expr_levels_rel_nlbv(to_model(j_ctor_ty), ks, vs, to_model(auxj_ctor_type1));
+                                    assert(depth(to_model(auxj_ctor_type1)) == depth(to_model(j_ctor_ty)));
+                                    assert(depth(to_model(auxj_ctor_type1)) <= cap);
+                                    assert(nlbv(to_model(auxj_ctor_type1)) == 0);
+                                }
+                                match verified_inst_forall_params(ctx, auxj_ctor_type1, num_params, args, fuel, cap, args_d) {
+                                    Some(auxj_ctor_type2) => {
+                                        let auxj_ctor_type3 = verified_abstr_pi_telescope(ctx, outgoing_param_locals, auxj_ctor_type2);
+                                        aux_ctors.push((auxj_ctor_name, auxj_ctor_type3));
+                                    }
+                                    None => return None,
+                                }
+                            }
+                            None => return None,
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            None => return None,
+        }
+        i += 1;
+    }
+    Some(())
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
