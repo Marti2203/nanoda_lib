@@ -77,9 +77,9 @@ use crate::env::{DeclarInfo, RecursorData};
 use crate::name_arena_bridge::{verified_replace_pfx, verified_concat_name};
 use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_params, verified_inst_forall_params};
 #[cfg(verus_only)]
-use crate::beta_model::spine_app_bounds;
+use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose, spine_app_nlbv_decompose};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable};
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, const_levels_match_declared_arity, mutual_block_uniform_levels_arity};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
@@ -644,7 +644,9 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
             to_model_of_declar_ty(*env).contains_key(#[trigger] ind_all_ctor_names(*env, nested_container_name)[j])
                 ==> to_model_of_declar_ty(*env)[ind_all_ctor_names(*env, nested_container_name)[j]].0.len() == to_model_of_levels(i_levels).len(),
     ensures match result {
-        Some((_, _, _, _, _, next_start)) => next_start >= unique_start,
+        Some((_, _, _, _, _, next_start)) =>
+            next_start >= unique_start
+            && next_start as nat <= unique_start as nat + old_declar_names(*env).len() + 1,
         None => true,
     }
 {
@@ -752,6 +754,213 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
             }
         }
         None => None,
+    }
+}
+
+/// Real-arena mirror of `replace_if_nested` (`inductive.rs:609-699`)
+/// ITSELF -- the last remaining piece composing everything else built on
+/// this pathway into one function matching the real dispatcher's own
+/// entry point. `cache` is a snapshot of `st.nested_to_unspecialized_ty_
+/// wfvars` (a real, private, mutable `IndexMap` this file can't reach --
+/// same "caller supplies a snapshot, applies the real write-back itself"
+/// convention as every other `InductiveCheckState`-touching piece here).
+///
+/// Return shape: outer `Option` is fuel/failure (propagate `None`
+/// upward); inner tuple is `(replacement, new_cache_entries, new_headers,
+/// next_unique_start)` -- `replacement` is the real function's own
+/// `Option<ExprPtr>` (`None` = `e` is not a nested occurrence at all,
+/// matching `is_nested_ind_app`'s own `None`; `Some(f)` = replace `e`
+/// with `f`, whether from a cache hit OR a fresh fan-out), and
+/// `new_cache_entries`/`new_headers` are what a fresh (non-cache-hit)
+/// discovery would insert/push -- empty in both the "not nested" and
+/// "cache hit" cases, matching the real function's own control flow
+/// (neither touches `st`'s two mutable maps in those branches).
+///
+/// Pure construction (`ensures true`) composing `verified_is_nested_ind_
+/// app` (with `is_nested_ind_app_result_reachable` available to a FUTURE
+/// caller wanting to relate `new_headers`' names back to `env_nested_
+/// reachable`, not invoked here since nothing downstream needs that fact
+/// yet) and a fan-out loop over `verified_replace_if_nested_one_sibling`,
+/// threading `unique_start` -> `next_unique_start` across sibling calls
+/// via the fix `8794297` made specifically for this.
+pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    tracked_names: &[NamePtr<'t>],
+    outgoing_param_locals: &[ExprPtr<'t>],
+    local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    cache: &[(NamePtr<'t>, ExprPtr<'t>)],
+    unique_start: u64,
+    fuel: u32,
+    cap: nat,
+    args_d: nat,
+    js_d: nat,
+) -> (result: Option<(Option<ExprPtr<'t>>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>, u64)>)
+    requires
+        env_global_cap(*env) <= cap,
+        cap <= 60000,
+        cap + outgoing_param_locals@.len() as nat <= 60000,
+        args_d <= cap,
+        depth(to_model(e)) <= args_d,
+        nlbv(to_model(e)) == 0,
+        args_d + (u16::MAX as nat) <= js_d,
+        js_d + outgoing_param_locals@.len() as nat <= 60000,
+        old_declar_names(*env).finite(),
+        unique_start as nat + mutual_block_cap(*env) * (old_declar_names(*env).len() + 1) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+        forall |i: int| 0 <= i < outgoing_param_locals@.len() ==> {
+            let m = to_model(#[trigger] outgoing_param_locals@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures true
+{
+    match verified_is_nested_ind_app(ctx, env, e, tracked_names, fuel) {
+        Some((f, i_name, num_params_u16, i_levels, args)) => {
+            let num_params = num_params_u16 as usize;
+            if num_params > args.len() {
+                return None;
+            }
+            proof {
+                let ghost args_model: Seq<ExprSpec> = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                assert(to_model(e) == spine_app(to_model(f), args_model));
+                spine_app_depth_decompose(to_model(f), args_model);
+                spine_app_nlbv_decompose(to_model(f), args_model);
+                assert forall |i: int| 0 <= i < num_params implies depth(to_model(#[trigger] args@[i])) <= args_d by {
+                    assert(depth(args_model[i]) <= depth(to_model(e)));
+                    assert(args_model[i] == to_model(args@[i]));
+                }
+                assert forall |i: int| 0 <= i < num_params implies nlbv(to_model(#[trigger] args@[i])) <= 0 by {
+                    assert(nlbv(args_model[i]) <= nlbv(to_model(e)));
+                    assert(args_model[i] == to_model(args@[i]));
+                }
+                const_levels_match_declared_arity(*env, i_name, i_levels);
+                mutual_block_uniform_levels_arity(*env, i_name, to_model_of_levels(i_levels).len());
+            }
+            let i_as = verified_foldl_apps(ctx, f, &args[0..num_params]);
+            proof {
+                let ghost sliced_args: Seq<ExprPtr<'t>> = args@.subrange(0, num_params as int);
+                let ghost args_model_n: Seq<ExprSpec> = Seq::new(num_params as nat, |i: int| to_model(args@[i]));
+                assert(args_model_n =~= Seq::new(sliced_args.len(), |i: int| to_model(sliced_args[i])));
+                is_const_shape_model(f);
+                assert(to_model(f) == ExprSpec::Const(const_id(f), const_levels_vec(f)));
+                assert(nlbv(to_model(f)) == 0);
+                assert(depth(to_model(f)) == 0);
+                nlbv_bound_implies_max_var_below(to_model(f), 0);
+                assert(max_var_below(to_model(f), 0));
+                max_var_below_mono(to_model(f), 0, cap);
+                assert forall |i: int| 0 <= i < args_model_n.len() implies max_var_below(#[trigger] args_model_n[i], cap) && depth(args_model_n[i]) <= args_d by {
+                    assert(args_model_n[i] == to_model(args@[i]));
+                    nlbv_bound_implies_max_var_below(to_model(args@[i]), 0);
+                    max_var_below_mono(to_model(args@[i]), depth(to_model(args@[i])), cap);
+                }
+                spine_app_bounds(to_model(f), args_model_n, cap, 0, args_d);
+                assert(to_model(i_as) == spine_app(to_model(f), args_model_n));
+                assert(depth(to_model(i_as)) <= args_d + num_params as nat);
+                assert(depth(to_model(i_as)) <= js_d);
+            }
+            match verified_replace_params(ctx, i_as, local_params, outgoing_param_locals, fuel, js_d) {
+                Some(i_params) => {
+                    let mut k: usize = 0;
+                    let mut found: Option<NamePtr<'t>> = None;
+                    while k < cache.len()
+                        invariant k <= cache.len(),
+                        decreases cache.len() - k
+                    {
+                        if expr_ptr_eq(cache[k].1, i_params) {
+                            found = Some(cache[k].0);
+                            break;
+                        }
+                        k += 1;
+                    }
+                    match found {
+                        Some(aux_i_name) => {
+                            let f0 = ctx.mk_const(aux_i_name, uparams);
+                            let f1 = verified_foldl_apps(ctx, f0, outgoing_param_locals);
+                            let rest_args = &args[num_params..args.len()];
+                            let f2 = verified_foldl_apps(ctx, f1, rest_args);
+                            Some((Some(f2), Vec::new(), Vec::new(), unique_start))
+                        }
+                        None => {
+                            match get_inductive_all_names(env, &i_name) {
+                                Some((all_ind_names, _all_ctor_names)) => {
+                                    let mut new_cache_entries: Vec<(NamePtr<'t>, ExprPtr<'t>)> = Vec::new();
+                                    let mut new_headers: Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)> = Vec::new();
+                                    let mut result_f: Option<ExprPtr<'t>> = None;
+                                    let mut cur_start = unique_start;
+                                    let mut m: usize = 0;
+                                    let mut ok = true;
+                                    while m < all_ind_names.len() && ok
+                                        invariant
+                                            m <= all_ind_names.len(),
+                                            num_params <= args@.len(),
+                                            env_global_cap(*env) <= cap,
+                                            cap <= 60000,
+                                            cap + outgoing_param_locals@.len() as nat <= 60000,
+                                            args_d + (u16::MAX as nat) <= js_d,
+                                            args_d <= cap,
+                                            js_d + outgoing_param_locals@.len() as nat <= 60000,
+                                            old_declar_names(*env).finite(),
+                                            cur_start as nat <= unique_start as nat + (m as nat) * (old_declar_names(*env).len() + 1),
+                                            unique_start as nat + mutual_block_cap(*env) * (old_declar_names(*env).len() + 1) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+                                            all_ind_names@.len() as nat <= mutual_block_cap(*env),
+                                            forall |i: int| 0 <= i < outgoing_param_locals@.len() ==> {
+                                                let mm = to_model(#[trigger] outgoing_param_locals@[i]);
+                                                matches!(mm, ExprSpec::Free(_))
+                                            },
+                                            forall |k: int| 0 <= k < ind_all_ind_names(*env, i_name).len() ==>
+                                                to_model_of_declar_ty(*env).contains_key(#[trigger] ind_all_ind_names(*env, i_name)[k])
+                                                    ==> to_model_of_declar_ty(*env)[ind_all_ind_names(*env, i_name)[k]].0.len() == to_model_of_levels(i_levels).len(),
+                                        decreases all_ind_names.len() - m
+                                    {
+                                        let sibling = all_ind_names[m];
+                                        proof {
+                                            assert(name_id(all_ind_names@[m as int]) == ind_all_ind_names(*env, i_name)[m as int]);
+                                            assert(to_model_of_declar_ty(*env).contains_key(name_id(sibling))
+                                                ==> to_model_of_declar_ty(*env)[name_id(sibling)].0.len() == to_model_of_levels(i_levels).len());
+                                            mutual_block_uniform_levels_arity(*env, sibling, to_model_of_levels(i_levels).len());
+                                            assert(cur_start as nat + old_declar_names(*env).len() + 1
+                                                <= unique_start as nat + (m as nat) * (old_declar_names(*env).len() + 1) + old_declar_names(*env).len() + 1);
+                                            assert((m as nat) * (old_declar_names(*env).len() + 1) + (old_declar_names(*env).len() + 1)
+                                                == ((m + 1) as nat) * (old_declar_names(*env).len() + 1)) by (nonlinear_arith);
+                                            assert((m + 1) as nat <= mutual_block_cap(*env));
+                                            assert(((m + 1) as nat) * (old_declar_names(*env).len() + 1) <= mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) by (nonlinear_arith)
+                                                requires (m + 1) as nat <= mutual_block_cap(*env)
+                                            {}
+                                        }
+                                        match verified_replace_if_nested_one_sibling(
+                                            ctx, env, sibling, i_name, i_levels, num_params, &args,
+                                            outgoing_param_locals, local_params, uparams, cur_start, fuel, cap, args_d, js_d,
+                                        ) {
+                                            Some((aux_name, aux_ty, jsprime, auxj_ctors, f_opt, next_start)) => {
+                                                new_cache_entries.push((aux_name, jsprime));
+                                                new_headers.push((aux_name, aux_ty, auxj_ctors));
+                                                if f_opt.is_some() {
+                                                    result_f = f_opt;
+                                                }
+                                                cur_start = next_start;
+                                            }
+                                            None => {
+                                                ok = false;
+                                            }
+                                        }
+                                        m += 1;
+                                    }
+                                    if !ok {
+                                        None
+                                    } else {
+                                        Some((result_f, new_cache_entries, new_headers, cur_start))
+                                    }
+                                }
+                                None => None,
+                            }
+                        }
+                    }
+                }
+                None => None,
+            }
+        }
+        None => Some((None, Vec::new(), Vec::new(), unique_start)),
     }
 }
 

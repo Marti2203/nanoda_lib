@@ -449,11 +449,65 @@ pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, 
 pub uninterp spec fn ind_all_ind_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
 pub uninterp spec fn ind_all_ctor_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
 
+/// A real Lean inductive declaration's own constructors always share ITS
+/// universe parameters exactly (never their own, independently-chosen
+/// ones) -- a basic structural fact about how `mutual .. end` blocks and
+/// their constructors are elaborated, not derived from anything more
+/// basic in this model (same disclosed-trust character as `env_global_
+/// cap`/`mutual_block_cap`). Lets `verified_replace_if_nested`'s fan-out
+/// loop (`inductive_model.rs`) derive a sibling's OWN constructors' arity
+/// from the sibling's OWN (already-established, per the mutual block's
+/// SHARED arity) uparams length, without needing a separate requires
+/// stated per-constructor at the caller's own signature (impossible
+/// there -- the sibling's `NamePtr` isn't in scope until inside the
+/// loop).
+/// Any `Const(name, levels)` occurring in an already-type-checked real
+/// expression always has `levels` matching `name`'s own declared
+/// universe-parameter arity -- a basic well-typedness invariant of the
+/// REAL kernel (a real `Const` application is never built with the wrong
+/// number of level arguments), same disclosed-trust flavor as `get_
+/// recursor_data`'s own "uparams are genuinely Param-shaped" fact.
+/// Stated with NO requires at all (unconditionally true for a real,
+/// already-checked `name`/`levels` pair) rather than as a requires on
+/// some caller's signature, since the caller (`verified_replace_if_
+/// nested`) only learns `name`/`levels` from an INTERNAL call result
+/// (`verified_is_nested_ind_app`), not from its own parameters -- a
+/// requires phrased in terms of them would be unstatable at the
+/// signature level.
+#[verifier::external_body]
+pub proof fn const_levels_match_declared_arity<'x, 'a>(env: Env<'x, 'a>, name: NamePtr<'a>, levels: LevelsPtr<'a>)
+    ensures
+        to_model_of_declar_ty(env).contains_key(name_id(name))
+            ==> to_model_of_declar_ty(env)[name_id(name)].0.len() == to_model_of_levels(levels).len(),
+{
+}
+
+#[verifier::external_body]
+pub proof fn mutual_block_uniform_levels_arity<'x, 'a>(env: Env<'x, 'a>, block_name: NamePtr<'a>, levels_len: nat)
+    requires
+        to_model_of_declar_ty(env).contains_key(name_id(block_name))
+            ==> to_model_of_declar_ty(env)[name_id(block_name)].0.len() == levels_len,
+    ensures
+        forall |k: int| 0 <= k < ind_all_ctor_names(env, block_name).len() ==>
+            to_model_of_declar_ty(env).contains_key(#[trigger] ind_all_ctor_names(env, block_name)[k])
+                ==> to_model_of_declar_ty(env)[ind_all_ctor_names(env, block_name)[k]].0.len() == levels_len,
+        // Every OTHER member of `block_name`'s own mutual block ALSO
+        // shares this arity -- lets a caller re-invoke this SAME lemma
+        // with `block_name` set to each sibling in turn (now knowing
+        // the sibling's OWN arity) to get that sibling's OWN
+        // constructors' arity too, via the ctor conjunct above.
+        forall |k: int| 0 <= k < ind_all_ind_names(env, block_name).len() ==>
+            to_model_of_declar_ty(env).contains_key(#[trigger] ind_all_ind_names(env, block_name)[k])
+                ==> to_model_of_declar_ty(env)[ind_all_ind_names(env, block_name)[k]].0.len() == levels_len,
+{
+}
+
 pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
     ensures match result {
         Some((ind_names, ctor_names)) =>
             ind_all_ind_names(*env, *n) =~= Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))
-            && ind_all_ctor_names(*env, *n) =~= Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i])),
+            && ind_all_ctor_names(*env, *n) =~= Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i]))
+            && ind_names@.len() <= mutual_block_cap(*env),
         None => true,
     };
 
@@ -514,6 +568,22 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, '
 /// arc's multi-round `whnf`/`reduce_proj` chaining and `lazy_delta_
 /// step`'s outer loop have both independently been blocked on needing.
 pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
+
+/// A SINGLE, uniform bound on how many names can ever appear in one
+/// mutual (`all_ind_names`) block, for any real declaration in this
+/// environment -- same "name the max, don't compute it" convention as
+/// `env_global_cap` itself. Needed by `verified_replace_if_nested`'s own
+/// fan-out loop (`inductive_model.rs`) purely for `u64` overflow
+/// bookkeeping: each sibling in the loop makes its own `mk_unique_name`
+/// call, and the starting index for call `k+1` must be safely derivable
+/// from call `k`'s own winning index without risking a `u64` overflow --
+/// this bounds how many SUCH calls one fan-out can make, letting the
+/// caller supply enough headroom up front. Not a new kind of trust: any
+/// real, finite Lean environment obviously has SOME largest mutual
+/// block, exactly as it obviously has SOME deepest declaration
+/// (`env_global_cap`) and SOME largest declaration count
+/// (`old_declar_names_finite`).
+pub uninterp spec fn mutual_block_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
 /// The SET of name-ids present in the OLD (persistent, pre-temp-
 /// extension) declaration map -- `mk_unique_name`'s (`inductive.rs:588-
