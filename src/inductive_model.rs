@@ -587,4 +587,74 @@ pub fn verified_which_valid_ind_app<'t, 'p: 't>(
     Some(None)
 }
 
+/// Model of `expr.rs::pi_telescope_size` (`expr.rs:751-758`): the number of
+/// leading `Pi` binders. Conflates `Pi`/`Lambda` the same way `pi_telescope_
+/// has_self_ref` does (both collapse to `ExprSpec::Bind`) -- sound for the
+/// one real use this is scoped to (`init_k_target`'s `only_ctor.ty`, always
+/// a genuine `Pi`-telescope), but unlike that predicate, a mis-encountered
+/// `Lambda` mid-telescope can't be given an honest `false`-shaped answer
+/// (there's no "wrong" boolean to fall back to for a COUNT) -- so this
+/// bails with `None` instead of asserting a value the proof can't actually
+/// back, rather than silently returning a number that doesn't match the
+/// spec formula.
+pub open spec fn pi_telescope_size_spec(e: ExprSpec) -> nat
+    decreases e
+{
+    match e {
+        ExprSpec::Bind(_, b) => 1 + pi_telescope_size_spec(*b),
+        _ => 0,
+    }
+}
+
+/// Real-arena mirror of `pi_telescope_size_spec` above, fuel-based like
+/// every other arbitrary-depth arena-pointer recursion in this file.
+pub fn verified_pi_telescope_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u16>)
+    ensures match result {
+        Some(r) => r as nat == pi_telescope_size_spec(to_model(e)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let el = ctx.read_expr(e);
+    if expr_is_bind_shape(&el) {
+        assert(matches!(to_model(e), ExprSpec::Bind(_, _)));
+        if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_pi(&el) {
+            assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            return match verified_pi_telescope_size(ctx, body, fuel1) {
+                Some(r) => r.checked_add(1),
+                None => None,
+            };
+        }
+        return None;
+    }
+    assert(!matches!(to_model(e), ExprSpec::Bind(_, _)));
+    Some(0)
+}
+
+/// Real-arena mirror of `init_k_target` (`inductive.rs:1039-1047`): is this
+/// block eligible for K-like structure elimination (a single, zero-universe
+/// inductive with exactly one constructor whose type has no fields beyond
+/// the block's own parameters)? Takes the flattened facts `init_k_target`
+/// reads off `InductiveCheckState` as direct scalar/slice arguments --
+/// `is_zero`/`num_inductives`/single-ctor-type -- rather than the whole
+/// struct, same convention as everywhere else in this file.
+pub fn verified_init_k_target<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, is_zero: bool, num_inductives: usize, only_ctor_ty: Option<ExprPtr<'t>>, local_params_len: usize, fuel: u32) -> (result: Option<bool>)
+    ensures true
+{
+    if !is_zero || num_inductives != 1 {
+        return Some(false);
+    }
+    match only_ctor_ty {
+        Some(ty) => match verified_pi_telescope_size(ctx, ty, fuel) {
+            Some(size) => Some(size as usize == local_params_len),
+            None => None,
+        },
+        None => Some(false),
+    }
+}
+
 }
