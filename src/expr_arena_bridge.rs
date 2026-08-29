@@ -49,7 +49,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
+use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
@@ -1648,6 +1648,66 @@ pub fn verified_peel_pis<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_l
         }
     } else {
         Some((e, 0))
+    }
+}
+
+/// Real-arena counterpart to `expr.rs::TcCtx::inst_forall_params`
+/// (`expr.rs:153-162`): peel exactly `n` leading `Pi` binders via
+/// `verified_peel_pis` (returning `None`, not the real function's
+/// `panic!()`, if fewer than `n` are available -- same "None instead of
+/// panic" convention `verified_is_nested_ind_app` already uses), then
+/// instantiate the resulting body with `all_args[0..n]` via `verified_
+/// inst`. Structurally identical to `tc_model.rs::verified_infer_app_
+/// telescoped` (which does the same peel-then-instantiate composition),
+/// generalized to take an explicit `n` rather than always using the
+/// full `args.len()` -- needed because `replace_if_nested`'s own calls
+/// (`inductive.rs:663, 683`) pass `all_args` containing MORE than `n`
+/// entries (the container's own parameter count), using only the
+/// leading `n` of them.
+pub fn verified_inst_forall_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, n: usize, all_args: &[ExprPtr<'t>], fuel: u32, d: nat, args_d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        n <= all_args@.len(),
+        depth(to_model(e)) <= d,
+        d <= 60000,
+        nlbv(to_model(e)) == 0,
+        forall |i: int| 0 <= i < n ==> #[trigger] depth(to_model(all_args@[i])) <= args_d,
+        forall |i: int| 0 <= i < n ==> #[trigger] nlbv(to_model(all_args@[i])) <= 0,
+    ensures match result {
+        Some(r) => {
+            &&& exists |body: ExprSpec|
+                spine_bind(to_model(e), n as nat) == Some(body)
+                && to_model(r) == subst_full(body, Seq::new(n as nat, |i: int| to_model(all_args@[i])), 0)
+            &&& depth(to_model(r)) <= d + args_d
+            &&& nlbv(to_model(r)) <= 0
+        },
+        None => true,
+    }
+{
+    match verified_peel_pis(ctx, e, n, fuel) {
+        Some((peeled, n2)) => {
+            if n2 != n {
+                return None;
+            }
+            proof {
+                spine_bind_depth(to_model(e), n as nat, to_model(peeled));
+                spine_bind_nlbv(to_model(e), n as nat, to_model(peeled), 0);
+            }
+            let result = verified_inst(ctx, peeled, &all_args[0..n], 0, fuel);
+            proof {
+                if let Some(r) = result {
+                    let ghost args_model = Seq::new(n as nat, |i: int| to_model(all_args@[i]));
+                    let ghost sliced: Seq<ExprPtr<'t>> = all_args@.subrange(0, n as int);
+                    assert(args_model =~= Seq::new(sliced.len(), |i: int| to_model(sliced[i])));
+                    subst_full_depth_bound_n(to_model(peeled), args_model, 0, args_d);
+                    subst_full_nlbv_bound_n(to_model(peeled), args_model, 0);
+                    assert(depth(to_model(r)) <= depth(to_model(peeled)) + args_d);
+                    assert(depth(to_model(r)) <= d + args_d);
+                    assert(nlbv(to_model(r)) <= 0);
+                }
+            }
+            result
+        }
+        None => None,
     }
 }
 
