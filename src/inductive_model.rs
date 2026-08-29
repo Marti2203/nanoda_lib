@@ -72,6 +72,7 @@ use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
+use crate::level_arena_bridge::read_levels_vec;
 #[cfg(verus_only)]
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound, mk_unique_name_collision_bound};
 use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
@@ -3632,6 +3633,87 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Lev
         return p;
     }
     verified_gen_elim_level_search(ctx, p, uparams, 1)
+}
+
+/// Real-arena mirror of `mk_elim_level` (`inductive.rs:1013-1032`): the
+/// thin dispatcher tying `verified_large_elim_test` and `verified_gen_
+/// elim_level` together -- both already independently bridged above, so
+/// this composes them exactly as the real function does, needing only
+/// `TcCtx::alloc_levels_slice` (already bridged, `level_arena_bridge.rs`)
+/// as new infrastructure. Large-eliminating: mint a fresh `Param` level
+/// via `gen_elim_level`, then build `rec_uparams` as `[elim_level] ++
+/// uparams` (mirroring the real code's own "push `elim_level` to the
+/// front" `Vec`-then-`alloc_levels` construction). Not large-eliminating:
+/// `elim_level` is `zero`, `rec_uparams` is `uparams` itself unchanged --
+/// exactly the real `else` branch. Returns `(elim_level, rec_uparams)`
+/// for the caller (which still holds the real, private `InductiveCheckState`)
+/// to write back into `st.elim_level`/`st.rec_uparams`, same "flatten,
+/// let the caller assemble" convention as every other `InductiveCheckState`-
+/// touching bridge in this file. `None` only propagates `verified_large_
+/// elim_test`'s own fuel/infer incompleteness case.
+pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    is_nonzero: bool,
+    num_inductives: usize,
+    num_ctors: usize,
+    only_ctor_ty: Option<ExprPtr<'t>>,
+    local_params_len: usize,
+    non_prop_elems: &mut Vec<ExprPtr<'t>>,
+    uparams: LevelsPtr<'t>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+) -> (result: Option<(LevelPtr<'t>, LevelsPtr<'t>)>)
+    requires
+        num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
+            Some(ty) => {
+                &&& nlbv(to_model(ty)) <= 0
+                &&& max_var_below(to_model(ty), bound)
+                &&& depth(to_model(ty)) <= d
+            },
+            None => false,
+        },
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+        to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
+    ensures true
+{
+    match verified_large_elim_test(ctx, env, is_nonzero, num_inductives, num_ctors, only_ctor_ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound) {
+        Some(true) => {
+            let elim_level_name = verified_gen_elim_level(ctx, uparams);
+            let elim_level = ctx.param(elim_level_name);
+            let uparams_vec = read_levels_vec(ctx, uparams);
+            let mut base: Vec<LevelPtr<'t>> = Vec::new();
+            base.push(elim_level);
+            let mut i: usize = 0;
+            while i < uparams_vec.len()
+                invariant i <= uparams_vec.len(),
+                decreases uparams_vec.len() - i
+            {
+                base.push(uparams_vec[i]);
+                i += 1;
+            }
+            let rec_levels = ctx.alloc_levels_slice(base.as_slice());
+            Some((elim_level, rec_levels))
+        }
+        Some(false) => {
+            let z = ctx.zero();
+            Some((z, uparams))
+        }
+        None => None,
+    }
 }
 
 /// Real-arena mirror of `mk_unique_name`'s (`inductive.rs:588-597`)
