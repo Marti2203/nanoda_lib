@@ -577,6 +577,92 @@ pub fn verified_whnf_multi_round<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     }
 }
 
+/// The closed-form "`bound`/`d` after `outer_n` rounds" `whnf_multi_round_
+/// ok`'s own recursive feasibility check walks through internally but
+/// never surfaces -- same "expose what the recursion already tracks"
+/// story as `whnf_fixpoint_final_bound`/`_d` one level down.
+pub open spec fn whnf_multi_round_final_bound(cap: nat, bound: nat, d: nat, outer_n: nat) -> nat
+    decreases outer_n
+{
+    if outer_n == 0 {
+        bound
+    } else {
+        let bound2 = bound + d * d * d + d * d;
+        let d2 = d * d + 4 * d;
+        let next_d = cap + d2 + d2;
+        whnf_multi_round_final_bound(cap, bound2, next_d, (outer_n - 1) as nat)
+    }
+}
+
+pub open spec fn whnf_multi_round_final_d(cap: nat, bound: nat, d: nat, outer_n: nat) -> nat
+    decreases outer_n
+{
+    if outer_n == 0 {
+        d
+    } else {
+        let bound2 = bound + d * d * d + d * d;
+        let d2 = d * d + 4 * d;
+        let next_d = cap + d2 + d2;
+        whnf_multi_round_final_d(cap, bound2, next_d, (outer_n - 1) as nat)
+    }
+}
+
+/// `verified_whnf_multi_round`'s own stronger sibling: ALSO exposes
+/// `nlbv`/`max_var_below`/`depth` on the result, needed by any caller that
+/// must feed a `whnf`'d term into FURTHER structural work (peeling a `Pi`,
+/// substituting, then `whnf`-ing AGAIN -- exactly `check_positivity1`'s
+/// own loop shape) rather than just needing the one reduction fact.
+pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, cap: nat, bound: nat, d: nat, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        env_global_cap(*env) <= cap,
+        whnf_multi_round_ok(cap, bound, d, outer_n as nat),
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), whnf_multi_round_final_bound(cap, bound, d, outer_n as nat))
+            &&& depth(to_model(r)) <= whnf_multi_round_final_d(cap, bound, d, outer_n as nat)
+        },
+        None => true,
+    }
+    decreases outer_n
+{
+    if outer_n == 0 {
+        proof {
+            pstep_star_refl(to_model_of_env(*env), to_model(e));
+        }
+        return Some(e);
+    }
+    proof {
+        reveal_with_fuel(whnf_fixpoint_final_bound, 2);
+        reveal_with_fuel(whnf_fixpoint_final_d, 2);
+        assert(whnf_fixpoint_final_bound(bound, d, 1) == bound + d * d * d + d * d);
+        assert(whnf_fixpoint_final_d(d, 1) == d * d + (d + d + d + d));
+    }
+    match verified_whnf_step_bounded(ctx, env, e, fuel, bound, d, 1, bound + d * d * d + d * d, d * d + (d + d + d + d)) {
+        Some(r) => {
+            assert(env_global_cap(*env) + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
+            proof {
+                reveal_with_fuel(whnf_multi_round_final_bound, 2);
+                reveal_with_fuel(whnf_multi_round_final_d, 2);
+            }
+            match verified_whnf_multi_round_bounded(ctx, env, r, fuel, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)), outer_n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// Manual transcription of real `reduce_proj`'s "cheap" path (`tc.rs:447-
 /// 458`, `cheap_proj == true`, i.e. `structure`'s WHNF is computed via
 /// `whnf_no_unfolding_cheap_proj`/`verified_whnf_no_unfolding_step`, not
