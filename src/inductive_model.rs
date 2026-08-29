@@ -1640,6 +1640,97 @@ pub fn verified_replace_f<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `restore_replace` (`inductive.rs:1480-1544`): the
+/// recursive tree-walk that tries `verified_replace_f` FIRST at every
+/// node, recursing into children (`Lambda`/`Pi`/`Let`/`Proj`/`App`) only
+/// on `None`, exactly mirroring the real function's own control flow --
+/// and, unlike `verified_replace_all_nested`, needing NO growing
+/// accumulator at all: un-specialization is a pure tree rebuild with no
+/// state to thread (nothing here mints fresh names or pushes new
+/// declarations the way the forward `replace_if_nested` direction did).
+/// Fuel-based for the same reason every other arena-pointer recursion in
+/// this crate is; pure construction, `ensures true`.
+pub fn verified_restore_replace<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    local_params: &[ExprPtr<'t>],
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    specialized_rec_names_to_unspecialized_rec_names: &[(NamePtr<'t>, NamePtr<'t>)],
+    num_params: usize,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+    ensures true
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    match verified_replace_f(ctx, env, e, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel) {
+        Some(out) => Some(out),
+        None => {
+            let el = ctx.read_expr(e);
+            if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+                match verified_restore_replace(ctx, env, binder_type, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                    Some(binder_type2) => {
+                        match verified_restore_replace(ctx, env, body, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                            Some(body2) => Some(ctx.mk_lambda(binder_name, binder_style, binder_type2, body2)),
+                            None => None,
+                        }
+                    }
+                    None => None,
+                }
+            } else if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+                match verified_restore_replace(ctx, env, binder_type, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                    Some(binder_type2) => {
+                        match verified_restore_replace(ctx, env, body, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                            Some(body2) => Some(ctx.mk_pi(binder_name, binder_style, binder_type2, body2)),
+                            None => None,
+                        }
+                    }
+                    None => None,
+                }
+            } else if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
+                match verified_restore_replace(ctx, env, binder_type, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                    Some(binder_type2) => {
+                        match verified_restore_replace(ctx, env, val, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                            Some(val2) => {
+                                match verified_restore_replace(ctx, env, body, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                                    Some(body2) => Some(ctx.mk_let(binder_name, binder_type2, val2, body2, nondep)),
+                                    None => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    }
+                    None => None,
+                }
+            } else if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
+                match verified_restore_replace(ctx, env, structure, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                    Some(structure2) => Some(ctx.mk_proj(ty_name, idx, structure2)),
+                    None => None,
+                }
+            } else if let Some((fun, arg)) = expr_as_app(&el) {
+                match verified_restore_replace(ctx, env, fun, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                    Some(fun2) => {
+                        match verified_restore_replace(ctx, env, arg, local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, num_params, fuel1) {
+                            Some(arg2) => Some(ctx.mk_app(fun2, arg2)),
+                            None => None,
+                        }
+                    }
+                    None => None,
+                }
+            } else {
+                Some(e)
+            }
+        }
+    }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
