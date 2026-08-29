@@ -68,9 +68,11 @@ use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, 
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit_ptr_of};
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
+use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
 use crate::tc_model::args_model_of;
+#[cfg(verus_only)]
+use crate::tc_model::whnf_multi_round_ok;
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
@@ -1552,6 +1554,62 @@ pub fn verified_infer_proj_full<'t, 'p: 't, 'x>(
         max_var_below_mono(to_model(structure_ty), depth(to_model(structure_ty)), cap_s);
     }
     verified_infer_proj(ctx, env, idx, structure, structure_ty, fuel, d, cap_s, max_params, bound_s, d_s, bound1, d1, bound2, d2)
+}
+
+/// Real-arena mirror of `TypeChecker::ensure_infers_as_sort` (`tc.rs:273-
+/// 276`): `infer(e, Check)` then `ensure_sort` on the result, byte-for-
+/// byte. Same `nlbv_bound_implies_max_var_below` + `max_var_below_mono`
+/// trick `verified_infer_proj_full` (just above) already used to close
+/// the "no `max_var_below` derivable from `infer_spec` alone" wall:
+/// `verified_infer`'s result is fully closed (`nlbv <= 0`), so `nlbv_
+/// bound_implies_max_var_below(_, 0)` gives `max_var_below(result,
+/// depth(result))` for free, widened via `max_var_below_mono` to `infd_
+/// bound` (which the caller has already fixed `>= depth(result)` via
+/// `verified_infer`'s own `infer_result_depth_bound` ensures conjunct).
+///
+/// `infd_bound` is `infer_result_depth_bound(dd, d, fuel as nat)` restated
+/// as an explicit parameter -- the recursive spec fn's value can't be
+/// computed inline as `verified_ensure_sort`'s exec argument (same "spec-
+/// fn call in exec-arg position" mode-system wall as everywhere else in
+/// this project), so the caller supplies it and Verus checks the
+/// equality holds. `verified_ensure_sort` (`tc_model.rs`) is called with
+/// `infd_bound` doing double duty as both the `max_var_below` ceiling and
+/// the `depth` ceiling on the inferred type -- both hold simultaneously
+/// since `depth(result) <= infd_bound` already implies `max_var_below`'s
+/// widened form above.
+pub fn verified_ensure_infers_as_sort<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+    d: nat,
+    dd: nat,
+    cap: nat,
+    infd_bound: nat,
+) -> (result: Option<LevelPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        env_global_cap(*env) <= cap,
+        infd_bound == infer_result_depth_bound(dd, d, fuel as nat),
+        infd_bound <= cap,
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+    ensures true
+{
+    match verified_infer(ctx, env, e, fuel, d, dd) {
+        Some(infd) => {
+            proof {
+                nlbv_bound_implies_max_var_below(to_model(infd), 0);
+                max_var_below_mono(to_model(infd), depth(to_model(infd)), infd_bound);
+            }
+            verified_ensure_sort(ctx, env, infd, fuel, cap, infd_bound, infd_bound)
+        }
+        None => None,
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_sort_of`

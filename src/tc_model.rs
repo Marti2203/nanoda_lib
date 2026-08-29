@@ -689,6 +689,47 @@ pub proof fn whnf_multi_round_final_d_bound(cap: nat, bound: nat, d: nat, outer_
     }
 }
 
+/// Real-arena mirror of `TypeChecker::ensure_sort` (`tc.rs:278-287`): if
+/// `e` is already `Sort`-shaped, return its level directly (matching the
+/// real function's own fast path, no `whnf` needed at all); otherwise
+/// `whnf` it (one round, `verified_whnf_multi_round_bounded` with `outer_
+/// n` fixed to `1`, same choice `verified_check_positivity1` made) and
+/// expect `Sort` from the result. The real function's `panic!("ensur_
+/// sort could not produce a sort")` case (result stays non-`Sort` even
+/// after `whnf`) is represented as `None` here, same convention `verified_
+/// pi_telescope_size` already established for a VALUE-typed result with
+/// no honest "false" to fall back to. `bound`/`d`/`cap` are the same
+/// "caller supplies a sufficient ceiling" triple as everywhere else in
+/// this arc -- deliberately NOT derived from `e`'s own provenance (e.g.
+/// `verified_infer`'s output), since `infer`'s own result carries no
+/// derivable `max_var_below` bound yet (see `delta_bound_model.rs`'s own
+/// documented wall on this) -- callers with an established bound (an
+/// env-stored type, a `check_positivity1`-style already-bounded cursor)
+/// can use this directly; `verified_ensure_infers_as_sort` (`delta_bound_
+/// model.rs`) is the composition with `verified_infer` and takes that
+/// extra bound as an explicit, disclosed trust-boundary parameter.
+pub fn verified_ensure_sort<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, cap: nat, bound: nat, d: nat) -> (result: Option<LevelPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        env_global_cap(*env) <= cap,
+        whnf_multi_round_ok(cap, bound, d, 1),
+    ensures true
+{
+    let el = ctx.read_expr(e);
+    if let Some(level) = expr_as_sort(&el) {
+        return Some(level);
+    }
+    match verified_whnf_multi_round_bounded(ctx, env, e, fuel, cap, bound, d, 1) {
+        Some(whnfd) => {
+            let el2 = ctx.read_expr(whnfd);
+            expr_as_sort(&el2)
+        }
+        None => None,
+    }
+}
+
 /// Manual transcription of real `reduce_proj`'s "cheap" path (`tc.rs:447-
 /// 458`, `cheap_proj == true`, i.e. `structure`'s WHNF is computed via
 /// `whnf_no_unfolding_cheap_proj`/`verified_whnf_no_unfolding_step`, not
