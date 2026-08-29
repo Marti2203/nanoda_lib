@@ -458,7 +458,7 @@ pub fn verified_is_nested_ind_app<'t, 'p: 't>(
 #[verifier::external_body]
 pub proof fn is_nested_ind_app_result_reachable<'x, 't>(
     env: &Env<'x, 't>,
-    seed: Set<u64>,
+    seed: &Set<u64>,
     tracked_ids: Seq<u64>,
     discovered_name: NamePtr<'t>,
     discovered_num_params: u16,
@@ -468,7 +468,7 @@ pub proof fn is_nested_ind_app_result_reachable<'x, 't>(
         ind_num_params(*env, name_id(discovered_name)) == discovered_num_params,
         exists |i: int| 0 <= i < discovered_num_params as int
             && #[trigger] contains_const_named(to_model(discovered_args[i]), tracked_ids),
-    ensures env_nested_reachable(*env, seed).contains(name_id(discovered_name))
+    ensures env_nested_reachable(*env, *seed).contains(name_id(discovered_name))
 {
 }
 
@@ -806,11 +806,12 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
     uparams: LevelsPtr<'t>,
     cache: &[(NamePtr<'t>, ExprPtr<'t>)],
     unique_start: u64,
+    seed: &Set<u64>,
     fuel: u32,
     cap: nat,
     args_d: nat,
     js_d: nat,
-) -> (result: Option<(Option<ExprPtr<'t>>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>, u64)>)
+) -> (result: Option<(Option<ExprPtr<'t>>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>, u64, Option<NamePtr<'t>>)>)
     requires
         env_global_cap(*env) <= cap,
         cap <= 60000,
@@ -825,7 +826,23 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
             let m = to_model(#[trigger] outgoing_param_locals@[i]);
             matches!(m, ExprSpec::Free(_))
         },
-    ensures true
+    ensures match result {
+        // `attributed` is the SINGLE real declaration name that `new_
+        // hdrs`' entire contents -- however many mutual-block siblings
+        // the fan-out produced -- are attributable to, matching `nested_
+        // occ_cap`'s own documented meaning ("push events attributable
+        // to ONE name, fan-out included"). `new_hdrs` itself carries
+        // FRESH, minted aux names (never real, pre-existing
+        // declarations), so their own name-ids are not meaningfully "in"
+        // `env_nested_reachable` -- attribution to the real source name
+        // is what the termination measure needs.
+        Some((_, _, new_hdrs, _, attributed)) =>
+            new_hdrs@.len() > 0 ==> match attributed {
+                Some(attributed_name) => env_nested_reachable(*env, *seed).contains(name_id(attributed_name)),
+                None => false,
+            },
+        None => true,
+    }
 {
     match verified_is_nested_ind_app(ctx, env, e, tracked_names, fuel) {
         Some((f, i_name, num_params_u16, i_levels, args)) => {
@@ -851,6 +868,8 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                 }
                 const_levels_match_declared_arity(*env, i_name, i_levels);
                 mutual_block_uniform_levels_arity(*env, i_name, to_model_of_levels(i_levels).len());
+                is_nested_ind_app_result_reachable(env, seed, name_ids_of(tracked_names@), i_name, num_params_u16, args@);
+                assert(env_nested_reachable(*env, *seed).contains(name_id(i_name)));
             }
             let i_as = verified_foldl_apps(ctx, f, &args[0..num_params]);
             proof {
@@ -894,7 +913,7 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                             let f1 = verified_foldl_apps(ctx, f0, outgoing_param_locals);
                             let rest_args = &args[num_params..args.len()];
                             let f2 = verified_foldl_apps(ctx, f1, rest_args);
-                            Some((Some(f2), Vec::new(), Vec::new(), unique_start))
+                            Some((Some(f2), Vec::new(), Vec::new(), unique_start, None))
                         }
                         None => {
                             match get_inductive_all_names(env, &i_name) {
@@ -926,6 +945,7 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                                             forall |k: int| 0 <= k < ind_all_ind_names(*env, i_name).len() ==>
                                                 to_model_of_declar_ty(*env).contains_key(#[trigger] ind_all_ind_names(*env, i_name)[k])
                                                     ==> to_model_of_declar_ty(*env)[ind_all_ind_names(*env, i_name)[k]].0.len() == to_model_of_levels(i_levels).len(),
+                                            env_nested_reachable(*env, *seed).contains(name_id(i_name)),
                                         decreases all_ind_names.len() - m
                                     {
                                         let sibling = all_ind_names[m];
@@ -964,7 +984,8 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                                     if !ok {
                                         None
                                     } else {
-                                        Some((result_f, new_cache_entries, new_headers, cur_start))
+                                        assert(new_headers@.len() > 0 ==> env_nested_reachable(*env, *seed).contains(name_id(i_name)));
+                                        Some((result_f, new_cache_entries, new_headers, cur_start, Some(i_name)))
                                     }
                                 }
                                 None => None,
@@ -975,7 +996,7 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
                 None => None,
             }
         }
-        None => Some((None, Vec::new(), Vec::new(), unique_start)),
+        None => Some((None, Vec::new(), Vec::new(), unique_start, None)),
     }
 }
 
@@ -1018,8 +1039,10 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     uparams: LevelsPtr<'t>,
     cache: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
     new_headers: &mut Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>,
+    pushed_attributions: &mut Vec<NamePtr<'t>>,
     unique_start: u64,
     node_budget: u64,
+    seed: &Set<u64>,
     fuel: u32,
     cap: nat,
     args_d: nat,
@@ -1039,7 +1062,8 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
             let m = to_model(#[trigger] outgoing_param_locals@[i]);
             matches!(m, ExprSpec::Free(_))
         },
-    ensures true
+    ensures
+        forall |k: int| 0 <= k < final(pushed_attributions)@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(final(pushed_attributions)@[k])),
     decreases fuel
 {
     if fuel == 0 || node_budget == 0 {
@@ -1049,9 +1073,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     let node_budget1 = node_budget - 1;
     match verified_replace_if_nested(
         ctx, env, e, tracked_names.as_slice(), outgoing_param_locals, local_params, uparams,
-        cache.as_slice(), unique_start, fuel, cap, args_d, js_d,
+        cache.as_slice(), unique_start, seed, fuel, cap, args_d, js_d,
     ) {
-        Some((replacement, new_cache_entries, new_hdrs, next_start)) => {
+        Some((replacement, new_cache_entries, new_hdrs, next_start, attributed)) => {
             let mut ci: usize = 0;
             while ci < new_cache_entries.len()
                 invariant ci <= new_cache_entries.len(),
@@ -1062,10 +1086,20 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
             }
             let mut hi: usize = 0;
             while hi < new_hdrs.len()
-                invariant hi <= new_hdrs.len(),
+                invariant
+                    hi <= new_hdrs.len(),
+                    new_hdrs@.len() > 0 ==> match attributed {
+                        Some(attributed_name) => env_nested_reachable(*env, *seed).contains(name_id(attributed_name)),
+                        None => false,
+                    },
+                    forall |k: int| 0 <= k < pushed_attributions@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(pushed_attributions@[k])),
                 decreases new_hdrs.len() - hi
             {
                 tracked_names.push(new_hdrs[hi].0);
+                match attributed {
+                    Some(attributed_name) => pushed_attributions.push(attributed_name),
+                    None => { return None; }
+                }
                 hi += 1;
             }
             let mut new_hdrs = new_hdrs;
@@ -1075,9 +1109,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                 None => {
                     let el = ctx.read_expr(e);
                     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((body2, next_start3, budget3)) => {
                                         let result = ctx.mk_pi(binder_name, binder_style, binder_type2, body2);
                                         Some((result, next_start3, budget3))
@@ -1088,9 +1122,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((body2, next_start3, budget3)) => {
                                         let result = ctx.mk_lambda(binder_name, binder_style, binder_type2, body2);
                                         Some((result, next_start3, budget3))
@@ -1101,11 +1135,11 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, val, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, val, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((val2, next_start3, budget3)) => {
-                                        match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start3, budget3, fuel1, cap, args_d, js_d) {
+                                        match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start3, budget3, seed, fuel1, cap, args_d, js_d) {
                                             Some((body2, next_start4, budget4)) => {
                                                 let result = ctx.mk_let(binder_name, binder_type2, val2, body2, nondep);
                                                 Some((result, next_start4, budget4))
@@ -1119,9 +1153,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((fun, arg)) = expr_as_app(&el) {
-                        match verified_replace_all_nested(ctx, env, fun, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, fun, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((fun2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, arg, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, arg, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((arg2, next_start3, budget3)) => {
                                         let result = ctx.mk_app(fun2, arg2);
                                         Some((result, next_start3, budget3))
@@ -1132,7 +1166,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-                        match verified_replace_all_nested(ctx, env, structure, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, structure, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((structure2, next_start2, budget2)) => {
                                 let result = ctx.mk_proj(ty_name, idx, structure2);
                                 Some((result, next_start2, budget2))
@@ -1171,9 +1205,11 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
     tracked_names: &mut Vec<NamePtr<'t>>,
     cache: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
     new_headers: &mut Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>,
+    pushed_attributions: &mut Vec<NamePtr<'t>>,
     uparams: LevelsPtr<'t>,
     unique_start: u64,
     node_budget: u64,
+    seed: &Set<u64>,
     fuel: u32,
     cap: nat,
     bound: nat,
@@ -1195,7 +1231,8 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
         get_local_params_result_cap(cap, bound, d, num_params as nat) <= args_d,
         old_declar_names(*env).finite(),
         node_budget >= 1 ==> unique_start as nat + (node_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
-    ensures true
+    ensures
+        forall |k: int| 0 <= k < final(pushed_attributions)@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(final(pushed_attributions)@[k])),
 {
     let mut param_locals: Vec<ExprPtr<'t>> = Vec::new();
     match verified_get_local_params(ctx, env, ctor_ty, num_params, &mut param_locals, fuel, cap, bound, d) {
@@ -1206,7 +1243,7 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
             }
             match verified_replace_all_nested(
                 ctx, env, ctor_type_instd, tracked_names, &param_locals, block_local_params, uparams,
-                cache, new_headers, unique_start, node_budget, fuel, cap, args_d, js_d,
+                cache, new_headers, pushed_attributions, unique_start, node_budget, seed, fuel, cap, args_d, js_d,
             ) {
                 Some((replaced_wo_params, next_start, remaining_budget)) => {
                     let new_ty = verified_abstr_pi_telescope(ctx, &param_locals, replaced_wo_params);
