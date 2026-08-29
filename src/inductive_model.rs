@@ -74,8 +74,10 @@ use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_b
 use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
 use crate::name::Name;
 use crate::env::{DeclarInfo, RecursorData};
-use crate::name_arena_bridge::verified_replace_pfx;
+use crate::name_arena_bridge::{verified_replace_pfx, verified_concat_name};
 use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_params, verified_inst_forall_params};
+#[cfg(verus_only)]
+use crate::beta_model::spine_app_bounds;
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty};
 #[cfg(verus_only)]
@@ -534,6 +536,176 @@ pub fn verified_replace_if_nested_ctor_loop<'t, 'p: 't, 'x>(
         i += 1;
     }
     Some(())
+}
+
+/// Real-arena mirror of ONE iteration of `replace_if_nested`'s
+/// (`inductive.rs:609-699`) outer `for nested_container_name in
+/// nested_container_ty.all_ind_names` loop (`inductive.rs:641-696`):
+/// rebuild one mutual sibling's own specialized copy -- a fresh unique
+/// name, its own re-specialized type, the canonicalized cache key
+/// (`jsprime`) the real function would insert into `st.nested_to_
+/// unspecialized_ty_wfvars`, its own constructor list (via `verified_
+/// replace_if_nested_ctor_loop`), and (when this sibling IS the
+/// originally-discovered container, `nested_container_name == i_name`)
+/// the replacement expression `replace_if_nested` returns in place of
+/// the original occurrence.
+///
+/// Same "pure construction, ensures true" convention as its ctor-loop
+/// sibling -- this piece's job is exact composition of the real
+/// function's own call sequence, not a new semantic claim. `st`'s two
+/// mutations (the cache insert and the `all_inductives_incl_specialized`
+/// push) are NOT performed here -- `InductiveCheckState` is real,
+/// private, unreachable from this file, so (same convention as
+/// `verified_mk_unique_name`'s own doc comment already established for
+/// `st.next_ngen_idx`) the caller applies both write-backs itself in
+/// plain, unverified code from this function's returned values.
+///
+/// `(NamePtr, ExprPtr, ExprPtr, Vec<(NamePtr,ExprPtr)>, Option<ExprPtr>)`
+/// is `(aux_nested_container_name, nested_container_aux_type, jsprime,
+/// auxj_ctors, replacement_if_this_is_i_name)`.
+pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    nested_container_name: NamePtr<'t>,
+    i_name: NamePtr<'t>,
+    i_levels: LevelsPtr<'t>,
+    num_params: usize,
+    args: &[ExprPtr<'t>],
+    outgoing_param_locals: &[ExprPtr<'t>],
+    local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    unique_start: u64,
+    fuel: u32,
+    cap: nat,
+    args_d: nat,
+    js_d: nat,
+) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Option<ExprPtr<'t>>)>)
+    requires
+        num_params <= args@.len(),
+        env_global_cap(*env) <= cap,
+        cap <= 60000,
+        cap + outgoing_param_locals@.len() as nat <= 60000,
+        args_d + num_params as nat <= js_d,
+        args_d <= cap,
+        js_d + outgoing_param_locals@.len() as nat <= 60000,
+        old_declar_names(*env).finite(),
+        unique_start as nat + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+        forall |i: int| 0 <= i < outgoing_param_locals@.len() ==> {
+            let m = to_model(#[trigger] outgoing_param_locals@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| 0 <= i < num_params ==> #[trigger] depth(to_model(args@[i])) <= args_d,
+        forall |i: int| 0 <= i < num_params ==> #[trigger] nlbv(to_model(args@[i])) <= 0,
+        to_model_of_declar_ty(*env).contains_key(name_id(nested_container_name))
+            ==> to_model_of_declar_ty(*env)[name_id(nested_container_name)].0.len() == to_model_of_levels(i_levels).len(),
+        forall |j: int| 0 <= j < ind_all_ctor_names(*env, nested_container_name).len() ==>
+            to_model_of_declar_ty(*env).contains_key(#[trigger] ind_all_ctor_names(*env, nested_container_name)[j])
+                ==> to_model_of_declar_ty(*env)[ind_all_ctor_names(*env, nested_container_name)[j]].0.len() == to_model_of_levels(i_levels).len(),
+    ensures true
+{
+    match get_inductive_all_names(env, &nested_container_name) {
+        Some((_sibling_ind_names, all_nested_container_ctor_names)) => {
+            proof {
+                assert(ind_all_ctor_names(*env, nested_container_name) =~= Seq::new(all_nested_container_ctor_names@.len(), |i: int| name_id(all_nested_container_ctor_names@[i])));
+                assert forall |j: int| 0 <= j < all_nested_container_ctor_names@.len() implies
+                    to_model_of_declar_ty(*env).contains_key(name_id(#[trigger] all_nested_container_ctor_names@[j]))
+                        ==> to_model_of_declar_ty(*env)[name_id(all_nested_container_ctor_names@[j])].0.len() == to_model_of_levels(i_levels).len()
+                by {
+                    assert(name_id(all_nested_container_ctor_names@[j]) == ind_all_ctor_names(*env, nested_container_name)[j]);
+                }
+            }
+            match get_declar_info_ty(env, &nested_container_name) {
+                Some((container_uparams, container_ty)) => {
+                    proof {
+                        env_global_wf_ty(*env);
+                        assert(to_model_of_declar_ty(*env).contains_key(name_id(nested_container_name)));
+                        assert(to_model_of_declar_ty(*env)[name_id(nested_container_name)].1 == to_model(container_ty));
+                        assert(depth(to_model(container_ty)) <= env_global_cap(*env));
+                        assert(depth(to_model(container_ty)) <= cap);
+                        assert(to_model_of_declar_ty(*env)[name_id(nested_container_name)].0 =~= level_names(to_model_of_levels(container_uparams)));
+                        assert(level_names(to_model_of_levels(container_uparams)).len() == to_model_of_levels(container_uparams).len());
+                        assert(to_model_of_levels(container_uparams).len() == to_model_of_levels(i_levels).len());
+                    }
+                    let base_const = ctx.mk_const(nested_container_name, i_levels);
+                    let js = verified_foldl_apps(ctx, base_const, &args[0..num_params]);
+                    proof {
+                        let ghost args_model: Seq<ExprSpec> = Seq::new(num_params as nat, |i: int| to_model(args@[i]));
+                        let ghost sliced_args: Seq<ExprPtr<'t>> = args@.subrange(0, num_params as int);
+                        assert(args_model =~= Seq::new(sliced_args.len(), |i: int| to_model(sliced_args[i])));
+                        is_const_shape_model(base_const);
+                        assert(to_model(base_const) == ExprSpec::Const(const_id(base_const), const_levels_vec(base_const)));
+                        assert(nlbv(to_model(base_const)) == 0);
+                        assert(depth(to_model(base_const)) == 0);
+                        nlbv_bound_implies_max_var_below(to_model(base_const), 0);
+                        assert(max_var_below(to_model(base_const), 0));
+                        max_var_below_mono(to_model(base_const), 0, cap);
+                        assert forall |i: int| 0 <= i < args_model.len() implies max_var_below(#[trigger] args_model[i], cap) && depth(args_model[i]) <= args_d by {
+                            assert(args_model[i] == to_model(args@[i]));
+                            nlbv_bound_implies_max_var_below(to_model(args@[i]), 0);
+                            max_var_below_mono(to_model(args@[i]), depth(to_model(args@[i])), cap);
+                        }
+                        spine_app_bounds(to_model(base_const), args_model, cap, 0, args_d);
+                        assert(to_model(js) == spine_app(to_model(base_const), args_model));
+                        assert(depth(to_model(js)) <= args_d + num_params as nat);
+                        assert(depth(to_model(js)) <= js_d);
+                    }
+                    let nested_pfx = ctx.str1("_nested");
+                    match verified_concat_name(ctx, nested_pfx, nested_container_name, fuel) {
+                        Some(base) => {
+                            let aux_nested_container_name = verified_mk_unique_name(ctx, env, base, unique_start);
+                            match verified_subst_expr_levels(ctx, container_ty, container_uparams, i_levels, fuel) {
+                                Some(base_ty) => {
+                                    proof {
+                                        let ghost ks = level_names(to_model_of_levels(container_uparams));
+                                        let ghost vs = to_model_of_levels(i_levels);
+                                        subst_expr_levels_rel_depth(to_model(container_ty), ks, vs, to_model(base_ty));
+                                        subst_expr_levels_rel_nlbv(to_model(container_ty), ks, vs, to_model(base_ty));
+                                        assert(depth(to_model(base_ty)) <= cap);
+                                        assert(nlbv(to_model(base_ty)) == 0);
+                                    }
+                                    match verified_inst_forall_params(ctx, base_ty, num_params, args, fuel, cap, args_d) {
+                                        Some(instd) => {
+                                            let nested_container_aux_type = verified_abstr_pi_telescope(ctx, outgoing_param_locals, instd);
+                                            match verified_replace_params(ctx, js, local_params, outgoing_param_locals, fuel, js_d) {
+                                                Some(jsprime) => {
+                                                    let mut auxj_ctors: Vec<(NamePtr<'t>, ExprPtr<'t>)> = Vec::new();
+                                                    match verified_replace_if_nested_ctor_loop(
+                                                        ctx, env, &all_nested_container_ctor_names, nested_container_name,
+                                                        aux_nested_container_name, i_levels, num_params, args, outgoing_param_locals,
+                                                        fuel, cap, args_d, &mut auxj_ctors,
+                                                    ) {
+                                                        Some(()) => {
+                                                            let f = if name_ptr_eq(nested_container_name, i_name) {
+                                                                let f0 = ctx.mk_const(aux_nested_container_name, uparams);
+                                                                let f1 = verified_foldl_apps(ctx, f0, outgoing_param_locals);
+                                                                let rest_args = &args[num_params..args.len()];
+                                                                let f2 = verified_foldl_apps(ctx, f1, rest_args);
+                                                                Some(f2)
+                                                            } else {
+                                                                None
+                                                            };
+                                                            Some((aux_nested_container_name, nested_container_aux_type, jsprime, auxj_ctors, f))
+                                                        }
+                                                        None => None,
+                                                    }
+                                                }
+                                                None => None,
+                                            }
+                                        }
+                                        None => None,
+                                    }
+                                }
+                                None => None,
+                            }
+                        }
+                        None => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
