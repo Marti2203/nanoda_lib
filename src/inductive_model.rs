@@ -68,6 +68,8 @@ use crate::level_model::LevelSpec;
 use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound, mk_unique_name_collision_bound};
+use crate::name_arena_bridge::name_as_str;
+use crate::name::Name;
 
 verus! {
 
@@ -1984,23 +1986,39 @@ pub fn verified_handle_rec_args_aux<'t, 'p: 't, 'x>(
     }
 }
 
-/// Real-arena mirror of `sep_nonrec_rec_ctor_args`'s (`inductive.rs:1104-
-/// 1130`) FIRST loop: peels `rem_params.len()` leading `Pi`s, substituting
-/// each with the CORRESPONDING already-existing `rem_params[i]` (no
-/// `mk_unique`, no def-eq check -- the real function's own panic-on-
-/// mismatch `_ => panic!()` case is represented as `None`, same "no
-/// honest fallback for a malformed-input case" convention as everywhere
-/// else). `rem_params[i]`'s own `nlbv`/`depth` facts are taken as
-/// explicit hypotheses, same disclosed reason `verified_check_ctor_
-/// params` already gives for `local_param`s: `mk_unique`'s own axiom
-/// never establishes `is_local_shape`, so there's no route from an
-/// `mk_unique`-created pointer to a general accessor-based derivation.
-pub fn verified_sep_nonrec_params<'t, 'p: 't>(
+/// Real-arena mirror of `sep_nonrec_rec_ctor_args` (`inductive.rs:1104-
+/// 1130`) IN FULL: its FIRST loop peels `rem_params.len()` leading `Pi`s,
+/// substituting each with the CORRESPONDING already-existing `rem_
+/// params[i]` (no `mk_unique`, no def-eq check -- the real function's own
+/// panic-on-mismatch `_ => panic!()` case is represented as `None`, same
+/// "no honest fallback for a malformed-input case" convention as
+/// everywhere else); once exhausted, hands off DIRECTLY to `verified_sep_
+/// nonrec_rec_ctor_args_telescope` for the SECOND loop -- same "recurse
+/// through phase 1, call phase 2 at the base case" structure `verified_
+/// check_ctor_params` already established for its own analogous two-phase
+/// real function, needed here for the SAME reason: phase 1's own
+/// `ensures true` gives phase 2's caller no bound facts to reuse unless
+/// the handoff happens INSIDE one proof, where the facts stay in scope.
+/// `rem_params[i]`'s own `nlbv`/`depth` facts are taken as explicit
+/// hypotheses, same disclosed reason `verified_check_ctor_params` already
+/// gives for `local_param`s: `mk_unique`'s own axiom never establishes
+/// `is_local_shape`, so there's no route from an `mk_unique`-created
+/// pointer to a general accessor-based derivation.
+pub fn verified_sep_nonrec_params<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
     rem_params: &[ExprPtr<'t>],
     ctor_type_cursor: ExprPtr<'t>,
     param_idx: usize,
+    all_args: &mut Vec<ExprPtr<'t>>,
+    rec_args: &mut Vec<ExprPtr<'t>>,
     fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
     bound: nat,
     d: nat,
 ) -> (result: Option<ExprPtr<'t>>)
@@ -2012,11 +2030,13 @@ pub fn verified_sep_nonrec_params<'t, 'p: 't>(
         max_var_below(to_model(ctor_type_cursor), bound),
         depth(to_model(ctor_type_cursor)) <= d,
         d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
     ensures true
     decreases rem_params.len() - param_idx
 {
     if param_idx == rem_params.len() {
-        return Some(ctor_type_cursor);
+        return verified_sep_nonrec_rec_ctor_args_telescope(ctx, env, ind_consts, local_indices_lens, local_params, ctor_type_cursor, all_args, rec_args, fuel, tel_fuel, pos_tel_fuel, cap, bound, d);
     }
     let el = ctx.read_expr(ctor_type_cursor);
     if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_pi(&el) {
@@ -2053,7 +2073,7 @@ pub fn verified_sep_nonrec_params<'t, 'p: 't>(
                 assert(nlbv(to_model(next_cursor)) <= 0);
                 assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
                 assert(max_var_below(to_model(next_cursor), bound));
-                verified_sep_nonrec_params(ctx, rem_params, next_cursor, param_idx + 1, fuel, bound, d)
+                verified_sep_nonrec_params(ctx, env, ind_consts, local_indices_lens, local_params, rem_params, next_cursor, param_idx + 1, all_args, rec_args, fuel, tel_fuel, pos_tel_fuel, cap, bound, d)
             }
             None => None,
         }
@@ -2346,6 +2366,264 @@ pub fn verified_handle_rec_args_minor<'t, 'p: 't, 'x>(
             None => return None,
         }
         i += 1;
+    }
+    Some(out)
+}
+
+/// Real-arena mirror of `mk_minors1group` (`inductive.rs:1161-1192`): one
+/// minor premise per constructor in ONE inductive-in-block. Composes,
+/// per constructor: `verified_sep_nonrec_params` (params-then-telescope,
+/// giving `all_ctor_args`/`rec_ctor_args`), `verified_get_i_indices`,
+/// `verified_foldl_apps`/`ctx.mk_const`/`ctx.mk_app` to build the
+/// constructor-application `c_app`, `verified_handle_rec_args_minor` for
+/// the inductive-hypothesis locals, then `verified_abstr_pi_telescope`
+/// TWICE (`abstr_pis` in the real function -- SAME algorithm, see
+/// `verified_handle_rec_args_minor`'s own doc comment) to build the
+/// minor's `Π` type. The constructor-name lookup (`Name::Str(_,sfx,_) =>
+/// str(anonymous(), sfx)`, else a generic `m_N` name) is realized via
+/// `name_as_str` (already bridged, `name_arena_bridge.rs`) exactly
+/// matching the real `match self.ctx.read_name(ctor.name) { .. }`.
+///
+/// Takes `ctor_names`/`ctor_tys` as parallel slices rather than `&[CtorHeader]`
+/// (that struct is PRIVATE to `inductive.rs`, not visible here at all --
+/// unlike every other "flatten instead of taking the whole struct"
+/// choice in this file, this one isn't optional). Every constructor's
+/// `ty` is assumed to share the SAME `bound`/`d` ceiling (the "caller
+/// supplies a sufficient ceiling" convention, applied uniformly across
+/// the whole group rather than per-constructor).
+pub fn verified_mk_minors1group<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    ctor_names: &[NamePtr<'t>],
+    ctor_tys: &[ExprPtr<'t>],
+    fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+) -> (result: Option<Vec<ExprPtr<'t>>>)
+    requires
+        ctor_names.len() == ctor_tys.len(),
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> nlbv(to_model(ctor_tys@[i])) <= 0,
+        forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> max_var_below(to_model(ctor_tys@[i]), bound),
+        forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> depth(to_model(ctor_tys@[i])) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut out: Vec<ExprPtr<'t>> = Vec::new();
+    let mut ctor_idx: usize = 0;
+    while ctor_idx < ctor_names.len()
+        invariant
+            ctor_idx <= ctor_names.len(),
+            ctor_names.len() == ctor_tys.len(),
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+            forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> nlbv(to_model(ctor_tys@[i])) <= 0,
+            forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> max_var_below(to_model(ctor_tys@[i]), bound),
+            forall |i: int| #![trigger ctor_tys@[i]] 0 <= i < ctor_tys@.len() ==> depth(to_model(ctor_tys@[i])) <= d,
+            d <= 60000,
+            env_global_cap(*env) <= cap,
+            check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+            env_global_cap(*env) <= infer_env_cap,
+            local_type_cap() <= infer_env_cap,
+            infer_env_cap <= 60000,
+            zero_dd == 0,
+            infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+            infd_bound <= infer_env_cap,
+            infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+            whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+            check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+        decreases ctor_names.len() - ctor_idx
+    {
+        let ctor_name = ctor_names[ctor_idx];
+        let ctor_ty = ctor_tys[ctor_idx];
+        assert(nlbv(to_model(ctor_ty)) <= 0);
+        assert(max_var_below(to_model(ctor_ty), bound));
+        assert(depth(to_model(ctor_ty)) <= d);
+        let mut all_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
+        let mut rec_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
+        match verified_sep_nonrec_params(ctx, env, ind_consts, local_indices_lens, local_params, local_params, ctor_ty, 0, &mut all_ctor_args, &mut rec_ctor_args, fuel, tel_fuel, pos_tel_fuel, cap, bound, d) {
+            Some(stripd_instd_ctor_type) => {
+                match verified_get_i_indices(ctx, ind_consts, local_indices_lens, local_params, stripd_instd_ctor_type, local_params.len(), fuel) {
+                    Some((ind_ty_idx, applied_indices)) => {
+                        if ind_ty_idx < motives.len() {
+                            let motive = motives[ind_ty_idx];
+                            let rhs = ctx.mk_const(ctor_name, uparams);
+                            let rhs = verified_foldl_apps(ctx, rhs, local_params);
+                            let c_app0 = verified_foldl_apps(ctx, rhs, all_ctor_args.as_slice());
+                            let mut reversed: Vec<ExprPtr<'t>> = Vec::new();
+                            let mut j: usize = applied_indices.len();
+                            while j > 0
+                                invariant j <= applied_indices.len(),
+                                decreases j
+                            {
+                                j -= 1;
+                                reversed.push(applied_indices[j]);
+                            }
+                            let c_app = verified_foldl_apps(ctx, motive, reversed.as_slice());
+                            let c_app = ctx.mk_app(c_app, c_app0);
+                            match verified_handle_rec_args_minor(ctx, env, ind_consts, local_indices_lens, local_params, local_params.len(), motives, ctor_idx, rec_ctor_args.as_slice(), fuel, infer_env_cap, infd_bound, tel_fuel, aux_bound, aux_d, zero_dd) {
+                                Some(v) => {
+                                    let minor_type = verified_abstr_pi_telescope(ctx, v.as_slice(), c_app);
+                                    let minor_type = verified_abstr_pi_telescope(ctx, all_ctor_args.as_slice(), minor_type);
+                                    let name_read = ctx.read_name(ctor_name);
+                                    let minor_name = match name_as_str(&name_read) {
+                                        Some((_pfx, sfx)) => {
+                                            let anon = ctx.anonymous();
+                                            ctx.str(anon, sfx)
+                                        }
+                                        None => {
+                                            let mn = ctx.str1("m");
+                                            ctx.append_index_after(mn, ctor_idx as u64)
+                                        }
+                                    };
+                                    let minor = ctx.mk_unique(minor_name, binder_style_default(), minor_type);
+                                    out.push(minor);
+                                }
+                                None => return None,
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            None => return None,
+        }
+        ctor_idx += 1;
+    }
+    Some(out)
+}
+
+/// Real-arena mirror of `mk_minors` (`inductive.rs:1194-1199`): one
+/// minors-group per inductive-in-block, composing `verified_mk_
+/// minors1group` in a loop. `all_ctor_names`/`all_ctor_tys` are `st.
+/// all_inductives_incl_specialized`'s own per-inductive `ctors` lists,
+/// pre-split into parallel `NamePtr`/`ExprPtr` slices-of-`Vec`s (`IndTyHeader`/
+/// `CtorHeader` are both PRIVATE to `inductive.rs`, same "flatten instead
+/// of taking the whole struct, not optional" reason `verified_mk_
+/// minors1group` already gives). The real function's own `assert_eq!`
+/// (block-wide vs. `ind_consts`-count sanity check) becomes a `requires`.
+pub fn verified_mk_minors<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    all_ctor_names: &[Vec<NamePtr<'t>>],
+    all_ctor_tys: &[Vec<ExprPtr<'t>>],
+    fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+) -> (result: Option<Vec<Vec<ExprPtr<'t>>>>)
+    requires
+        ind_consts.len() == all_ctor_names.len(),
+        all_ctor_names.len() == all_ctor_tys.len(),
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+        forall |g: int| #![trigger all_ctor_names@[g]] 0 <= g < all_ctor_names@.len() ==> all_ctor_names@[g]@.len() == all_ctor_tys@[g]@.len(),
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> nlbv(to_model(all_ctor_tys@[g]@[i])) <= 0,
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> max_var_below(to_model(all_ctor_tys@[g]@[i]), bound),
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> depth(to_model(all_ctor_tys@[g]@[i])) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut out: Vec<Vec<ExprPtr<'t>>> = Vec::new();
+    let mut g: usize = 0;
+    while g < all_ctor_names.len()
+        invariant
+            g <= all_ctor_names.len(),
+            ind_consts.len() == all_ctor_names.len(),
+            all_ctor_names.len() == all_ctor_tys.len(),
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+            forall |k: int| #![trigger all_ctor_names@[k]] 0 <= k < all_ctor_names@.len() ==> all_ctor_names@[k]@.len() == all_ctor_tys@[k]@.len(),
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> nlbv(to_model(all_ctor_tys@[k]@[i])) <= 0,
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> max_var_below(to_model(all_ctor_tys@[k]@[i]), bound),
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> depth(to_model(all_ctor_tys@[k]@[i])) <= d,
+            d <= 60000,
+            env_global_cap(*env) <= cap,
+            check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+            env_global_cap(*env) <= infer_env_cap,
+            local_type_cap() <= infer_env_cap,
+            infer_env_cap <= 60000,
+            zero_dd == 0,
+            infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+            infd_bound <= infer_env_cap,
+            infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+            whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+            check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+        decreases all_ctor_names.len() - g
+    {
+        let names = all_ctor_names[g].as_slice();
+        let tys = all_ctor_tys[g].as_slice();
+        assert(names@ =~= all_ctor_names@[g as int]@);
+        assert(tys@ =~= all_ctor_tys@[g as int]@);
+        assert(names@.len() == tys@.len());
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> nlbv(to_model(tys@[i])) <= 0);
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> max_var_below(to_model(tys@[i]), bound));
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> depth(to_model(tys@[i])) <= d);
+        match verified_mk_minors1group(ctx, env, ind_consts, local_indices_lens, local_params, uparams, motives, names, tys, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd) {
+            Some(group) => {
+                out.push(group);
+            }
+            None => return None,
+        }
+        g += 1;
     }
     Some(out)
 }
