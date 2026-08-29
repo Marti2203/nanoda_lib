@@ -3889,7 +3889,41 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
             let dd_i = d_i + d_i + d_xy + d_xy;
             dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy + 10 <= 60000
         },
-    ensures true
+    ensures match result {
+        Some(true) => {
+            ||| (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+                    to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+                    && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+                    && argsx.len() == argsy.len() && argsx.len() > 0)
+            ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(xt, yt)]
+                    to_model(y) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(xt, yt)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+            ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(yt, xt)]
+                    to_model(x) == spine_app(to_model(fun), args_model_of(args))
+                    && is_const_shape(fun)
+                    && def_eq_witness(yt, xt)
+                    && projs.len() <= args.len()
+                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+            ||| (exists |y_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(y_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0))))))
+            ||| (exists |x_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
+                    to_model(new_lambda) == ExprSpec::Bind(
+                        Box::new(to_model(x_binder_type)),
+                        Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0))))))
+            ||| (exists |lhs: ExprPtr<'t>|
+                    (pstep_star(to_model_of_env(*env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
+                    || (pstep_star(to_model_of_env(*env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x)))
+            ||| (exists |xt_whnfd: ExprPtr<'t>, yt: ExprPtr<'t>| def_eq_witness(xt_whnfd, yt))
+        },
+        _ => true,
+    }
 {
     match verified_def_eq_app(ctx, x, y, fuel) {
         Some(true) => return Some(true),
