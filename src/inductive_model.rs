@@ -3345,4 +3345,130 @@ pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `get_local_params` (`inductive.rs:428-442`):
+/// peels EXACTLY `num_params` leading `Pi`s (checked directly, no `whnf`
+/// before the FIRST check, matching the real function's own `while let
+/// Pi { .. } = self.ctx.read_expr(e)` -- same order `verified_handle_
+/// rec_args_aux` already established: substitute, THEN `whnf` before the
+/// NEXT check), accumulating each peeled binder into `param_locals` (a
+/// real `&mut Vec`, carrying the SAME `Free`-shapedness invariant
+/// `verified_handle_rec_args_aux`'s own `xs` does -- this feeds an
+/// `abstr_pis` call at the real function's own call site, `inductive.rs:
+/// 398`, so building it in from the start avoids the "ensures true
+/// compositions need revisiting later" pattern this whole arc kept
+/// hitting). Reuses `check_positivity_ok` UNCHANGED as its recursive-
+/// feasibility predicate -- SAME growth shape as `check_positivity1`/
+/// `verified_handle_rec_args_aux`, just bounded by a KNOWN, EXACT count
+/// (`num_params`) rather than an unbounded search, so no NEW termination
+/// argument is needed here at all. Deliberately standalone, parallel
+/// infrastructure: `get_local_params`'s only real call sites
+/// (`inductive.rs:352, 395`) are both inside `specialize_nested`/
+/// `specialize_nested_aux`, the nested-inductive pathway's OWN outer
+/// loop -- which has a genuine, currently-unresolved termination wall
+/// (see this file's own module doc comment, and `project_nanoda_
+/// verification_goal` memory) -- so this bridge is NOT yet wired into
+/// anything consuming it end-to-end. The real function's own panic
+/// (`"exhausted telescope early"`, hit `_ => panic!()` before `num_
+/// params` iterations complete) is represented as `None`, same "no
+/// honest fallback for a malformed-input case" convention as elsewhere.
+pub fn verified_get_local_params<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    num_params: u16,
+    param_locals: &mut Vec<ExprPtr<'t>>,
+    fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, num_params as nat),
+        forall |k: int| #![trigger old(param_locals)@[k]] 0 <= k < old(param_locals)@.len() ==> {
+            let m = to_model(old(param_locals)@[k]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures forall |k: int| #![trigger final(param_locals)@[k]] 0 <= k < final(param_locals)@.len() ==> {
+        let m = to_model(final(param_locals)@[k]);
+        matches!(m, ExprSpec::Free(_))
+    }
+    decreases num_params
+{
+    if num_params == 0 {
+        return Some(e);
+    }
+    proof {
+        reveal_with_fuel(check_positivity_ok, 2);
+    }
+    let el = ctx.read_expr(e);
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(nlbv(to_model(body)) <= 1) by {
+            assert(nlbv(to_model(e)) == 0);
+        }
+        assert(depth(to_model(body)) <= d) by {
+            assert(depth(to_model(e)) <= d);
+        }
+        assert(max_var_below(to_model(body), bound)) by {
+            assert(max_var_below(to_model(e), bound));
+        }
+        let local_ = ctx.mk_unique(binder_name, binder_style, binder_type);
+        let locals: [ExprPtr<'t>; 1] = [local_];
+        match verified_inst(ctx, body, &locals, 0, fuel) {
+            Some(e2) => {
+                let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+                assert(substs_model.len() == 1);
+                assert(substs_model[0] == to_model(local_));
+                assert(to_model(e2) == subst_full(to_model(body), substs_model, 0));
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
+                    assert(i == 0);
+                }
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
+                    assert(i == 0);
+                }
+                assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound) by {
+                    assert(i == 0);
+                }
+                proof {
+                    subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
+                    subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                    subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound);
+                }
+                assert(nlbv(to_model(e2)) <= 0);
+                assert(depth(to_model(e2)) <= depth(to_model(body)));
+                assert(max_var_below(to_model(e2), bound));
+                proof {
+                    reveal_with_fuel(whnf_multi_round_final_bound, 2);
+                    reveal_with_fuel(whnf_multi_round_final_d, 2);
+                    assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
+                    assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
+                }
+                match verified_whnf_multi_round_bounded(ctx, env, e2, fuel, cap, bound, d, 1) {
+                    Some(whnfd) => {
+                        assert(to_model(local_) == ExprSpec::Free(expr_id(local_)));
+                        param_locals.push(local_);
+                        assert forall |k: int| #![trigger param_locals@[k]] 0 <= k < param_locals@.len() implies {
+                            let m = to_model(param_locals@[k]);
+                            matches!(m, ExprSpec::Free(_))
+                        } by {
+                            if k < param_locals@.len() - 1 {
+                                assert(param_locals@[k] == old(param_locals)@[k]);
+                            }
+                        }
+                        verified_get_local_params(ctx, env, whnfd, num_params - 1, param_locals, fuel, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)))
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    }
+}
+
 }
