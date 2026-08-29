@@ -1440,18 +1440,32 @@ pub fn verified_get_nested_if_aux_ctor<'t, 'p: 't, 'x>(
     nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
     c: NamePtr<'t>,
 ) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>)>)
-    ensures true
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+    ensures match result {
+        Some((unspecialized_ty, _)) => depth(to_model(unspecialized_ty)) <= 60000,
+        None => true,
+    }
 {
     match get_constructor_inductive_name(env, &c) {
         Some(inductive_name) => {
             let mut i: usize = 0;
             let mut found: Option<ExprPtr<'t>> = None;
             while i < nested_to_unspecialized_ty_nofvars.len()
-                invariant i <= nested_to_unspecialized_ty_nofvars.len(),
+                invariant
+                    i <= nested_to_unspecialized_ty_nofvars.len(),
+                    forall |k: int| 0 <= k < nested_to_unspecialized_ty_nofvars@.len() ==>
+                        depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[k].1)) <= 60000,
+                    match found {
+                        Some(x) => depth(to_model(x)) <= 60000,
+                        None => true,
+                    },
                 decreases nested_to_unspecialized_ty_nofvars.len() - i
             {
                 if name_ptr_eq(nested_to_unspecialized_ty_nofvars[i].0, inductive_name) {
                     found = Some(nested_to_unspecialized_ty_nofvars[i].1);
+                    assert(depth(to_model(nested_to_unspecialized_ty_nofvars@[i as int].1)) <= 60000);
                     break;
                 }
                 i += 1;
@@ -1481,6 +1495,9 @@ pub fn verified_restore_ctor_name<'t, 'p: 't, 'x>(
     ctor_name: NamePtr<'t>,
     fuel: u32,
 ) -> (result: Option<NamePtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
     ensures true
 {
     match verified_get_nested_if_aux_ctor(env, nested_to_unspecialized_ty_nofvars, ctor_name) {
@@ -1491,6 +1508,127 @@ pub fn verified_restore_ctor_name<'t, 'p: 't, 'x>(
                     match expr_as_const(unspecialized_f, &el) {
                         Some((unspecialized_ty_name, _levels)) => {
                             verified_replace_pfx(ctx, ctor_name, base_ind_name, unspecialized_ty_name, fuel)
+                        }
+                        None => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `replace_f` (`inductive.rs:1555-1607`): the
+/// three-way un-specialization dispatch `restore_replace`'s tree-walk
+/// tries at every node. `nested_to_unspecialized_ty_nofvars` and
+/// `specialized_rec_names_to_unspecialized_rec_names` are snapshots of
+/// `st`'s and the caller's own real maps (same "caller supplies a
+/// snapshot" convention as everywhere else in this arc, `(NamePtr,
+/// ExprPtr)`/`(NamePtr, NamePtr)` pairs standing in for the real
+/// `FxIndexMap`s).
+///
+/// Three cases, exactly mirroring the real function's own three
+/// `replacing(N)` comments: (1) `e` is `Const` naming a specialized
+/// recursor -- rename directly. (2) `e` unfolds to an application of a
+/// specialized TYPE name -- swap in the real container type, applied to
+/// `local_params`, then reapply the non-parameter arguments. (3) `e`
+/// unfolds to an application of a specialized CONSTRUCTOR name -- same
+/// swap, but for the constructor: rename its prefix back to the real
+/// container's own name, then reapply BOTH the (unfolded) real
+/// container's own leading args AND the non-parameter trailing ones.
+/// Composes ONLY already-existing bridges (`verified_unfold_const_apps`,
+/// `verified_inst`, `verified_foldl_apps`, `verified_unfold_apps`,
+/// `verified_get_nested_if_aux_ctor`, `verified_replace_pfx`, `expr_as_
+/// const`) -- pure construction, `ensures true`, same convention as
+/// `verified_restore_ctor_name` right above it.
+///
+/// The real function's own `_ => panic!("Should be const")` fallback (an
+/// invariant violation on malformed input, never expected to fire on
+/// well-formed real code) becomes `None`, same "graceful bail instead of
+/// panic" convention used throughout this whole pathway.
+pub fn verified_replace_f<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    local_params: &[ExprPtr<'t>],
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    specialized_rec_names_to_unspecialized_rec_names: &[(NamePtr<'t>, NamePtr<'t>)],
+    num_params: usize,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+    ensures true
+{
+    let el = ctx.read_expr(e);
+    if let Some((name, levels)) = expr_as_const(e, &el) {
+        let mut i: usize = 0;
+        while i < specialized_rec_names_to_unspecialized_rec_names.len()
+            invariant i <= specialized_rec_names_to_unspecialized_rec_names.len(),
+            decreases specialized_rec_names_to_unspecialized_rec_names.len() - i
+        {
+            if name_ptr_eq(specialized_rec_names_to_unspecialized_rec_names[i].0, name) {
+                let rec_name = specialized_rec_names_to_unspecialized_rec_names[i].1;
+                return Some(ctx.mk_const(rec_name, levels));
+            }
+            i += 1;
+        }
+    }
+    match verified_unfold_const_apps(ctx, e, fuel) {
+        Some((_f, c_name, _levels, e_args)) => {
+            let mut k: usize = 0;
+            let mut found_ty: Option<ExprPtr<'t>> = None;
+            while k < nested_to_unspecialized_ty_nofvars.len()
+                invariant
+                    k <= nested_to_unspecialized_ty_nofvars.len(),
+                    forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+                        depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+                    match found_ty {
+                        Some(x) => depth(to_model(x)) <= 60000,
+                        None => true,
+                    },
+                decreases nested_to_unspecialized_ty_nofvars.len() - k
+            {
+                if name_ptr_eq(nested_to_unspecialized_ty_nofvars[k].0, c_name) {
+                    found_ty = Some(nested_to_unspecialized_ty_nofvars[k].1);
+                    assert(depth(to_model(nested_to_unspecialized_ty_nofvars@[k as int].1)) <= 60000);
+                    break;
+                }
+                k += 1;
+            }
+            if let Some(nested) = found_ty {
+                if e_args.len() < num_params {
+                    return None;
+                }
+                let inner = verified_inst(ctx, nested, local_params, 0, fuel)?;
+                let outer = verified_foldl_apps(ctx, inner, &e_args[num_params..e_args.len()]);
+                return Some(outer);
+            }
+            match verified_get_nested_if_aux_ctor(env, nested_to_unspecialized_ty_nofvars, c_name) {
+                Some((nested_no_inst, aux_i_name)) => {
+                    if e_args.len() < num_params {
+                        return None;
+                    }
+                    let nested_inst = verified_inst(ctx, nested_no_inst, local_params, 0, fuel)?;
+                    match verified_unfold_apps(ctx, nested_inst, fuel) {
+                        Some((nested_f, i_args)) => {
+                            let nested_f_el = ctx.read_expr(nested_f);
+                            match expr_as_const(nested_f, &nested_f_el) {
+                                Some((i_name, levels)) => {
+                                    match verified_replace_pfx(ctx, c_name, aux_i_name, i_name, fuel) {
+                                        Some(cprime_name) => {
+                                            let cprime = ctx.mk_const(cprime_name, levels);
+                                            let inner = verified_foldl_apps(ctx, cprime, &i_args);
+                                            let outer = verified_foldl_apps(ctx, inner, &e_args[num_params..e_args.len()]);
+                                            Some(outer)
+                                        }
+                                        None => None,
+                                    }
+                                }
+                                None => None,
+                            }
                         }
                         None => None,
                     }
