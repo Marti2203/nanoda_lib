@@ -1615,6 +1615,36 @@ pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
     }
 }
 
+/// Bundles the THREE facts that, by far, most often travel together
+/// across every `requires`/`ensures` in this whole verification effort:
+/// `e` is closed (`nlbv(e) <= 0`, no escaping bound variables) and its
+/// `Var`-index/structural-depth overflow bookkeeping is within a caller-
+/// chosen `(bound, d)` pair (`max_var_below(e, bound)`, `depth(e) <= d`).
+/// Any function that recurses into `e`'s children and/or substitutes into
+/// it needs exactly this triple to restate the SAME facts (with a grown
+/// `bound`/`d`) about the result -- writing it as three separate
+/// conjuncts at every call site (as this codebase did for a long time)
+/// is pure repetition with no independent content: nothing in this arc
+/// ever needs, say, `max_var_below` without also needing `nlbv`/`depth`
+/// alongside it. `open` (not `uninterp`), so it unfolds for free at
+/// every call site -- purely notational, changes no proof obligation.
+pub open spec fn closed_wf(e: ExprSpec, bound: nat, d: nat) -> bool {
+    nlbv(e) <= 0 && max_var_below(e, bound) && depth(e) <= d
+}
+
+/// `closed_wf` monotonic widening: a caller who has established `closed_
+/// wf(e, bound, d)` needs it re-derived (usually via `max_var_below_mono`
+/// alone today) whenever a LARGER `(bound2, d2)` is what some deeper
+/// call's own `requires` actually asks for. Packages exactly that widening
+/// as one call instead of two (`max_var_below_mono` for the bound,
+/// trivial arithmetic for `depth`).
+pub proof fn closed_wf_widen(e: ExprSpec, bound: nat, d: nat, bound2: nat, d2: nat)
+    requires closed_wf(e, bound, d), bound <= bound2, d <= d2
+    ensures closed_wf(e, bound2, d2)
+{
+    max_var_below_mono(e, bound, bound2);
+}
+
 /// Overflow bookkeeping: shifting up by one raises `max_var_below`'s bound
 /// by exactly one too.
 pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
@@ -8556,6 +8586,59 @@ pub proof fn pstep_star_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec,
             }
         }
     }
+}
+
+/// `defeq`: two terms are definitionally equal (in the fragment of
+/// definitional equality this file can currently see -- ordinary
+/// beta/zeta/iota/delta reduction, via `pstep`/`pstep_star`; NOT eta or
+/// proof-irrelevance, which aren't `pstep`-reductions at all) iff they
+/// share a common `pstep_star` reduct. This is the standard joinability
+/// definition of definitional/convertibility equality for a confluent
+/// rewriting system (which `pstep_diamond`, elsewhere in this file,
+/// already establishes `pstep`/`pstep_star` to be) -- reflexive and
+/// symmetric BY CONSTRUCTION (the existential doesn't distinguish `e1`
+/// from `e2`), with transitivity a real (if, given confluence, standard)
+/// lemma, proven below via `pstep_diamond`'s own confluence property
+/// rather than assumed.
+///
+/// Deliberately the FIRST piece of vocabulary in this file for
+/// definitional equality itself, as opposed to plain one-directional
+/// reduction -- everywhere else in this codebase that needed to relate
+/// two terms so far only needed one-directional `pstep_star` (e.g.
+/// `verified_whnf_multi_round`'s own "the result is reachable FROM the
+/// input" claim). `def_eq`'s own callers need genuine two-sided equality
+/// claims (e.g. "these two constructor-projection sub-terms are
+/// definitionally equal", not "one reduces to the other"), which is
+/// exactly what `defeq` is for.
+pub open spec fn defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool {
+    exists |z: ExprSpec| #[trigger] pstep_star(env, e1, z) && #[trigger] pstep_star(env, e2, z)
+}
+
+/// `defeq` is reflexive: `e` joins with itself via the empty (length-1)
+/// reduction chain.
+pub proof fn defeq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
+    ensures defeq(env, e, e)
+{
+    pstep_star_refl(env, e);
+}
+
+/// `defeq` is symmetric by construction -- the witness `z` for `defeq(env,
+/// e1, e2)` is already exactly the witness `defeq(env, e2, e1)` needs, in
+/// the other order.
+pub proof fn defeq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+    requires defeq(env, e1, e2)
+    ensures defeq(env, e2, e1)
+{
+}
+
+/// A `pstep_star` fact is automatically a `defeq` fact -- take `e2`
+/// itself as the common reduct (`e2` trivially `pstep_star`-reaches
+/// itself via `pstep_star_refl`).
+pub proof fn defeq_of_pstep_star(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+    requires pstep_star(env, e1, e2)
+    ensures defeq(env, e1, e2)
+{
+    pstep_star_refl(env, e2);
 }
 
 /// Lifts a `pstep_star` fact through `App`'s function position, keeping

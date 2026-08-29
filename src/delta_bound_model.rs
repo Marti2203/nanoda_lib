@@ -70,6 +70,8 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
+use crate::tc_model::def_eq_witness;
+#[cfg(verus_only)]
 use crate::tc_model::args_model_of;
 #[cfg(verus_only)]
 use crate::tc_model::whnf_multi_round_ok;
@@ -4393,7 +4395,12 @@ pub fn verified_try_string_lit_expansion_aux<'t, 'p: 't, 'x>(
     requires
         depth(to_model(y)) <= 60000,
         (max_str_len as nat) + 3 <= 60000,
-    ensures true
+    ensures match result {
+        Some(true) => exists |lhs: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), to_model(lhs))
+            && def_eq_witness(lhs, y),
+        _ => true,
+    }
 {
     let x_el = ctx.read_expr(x);
     let s = match expr_as_string_lit_ptr(x, &x_el) {
@@ -4429,8 +4436,17 @@ pub fn verified_try_string_lit_expansion_aux<'t, 'p: 't, 'x>(
         assert(string_len(s) <= max_str_len as nat);
         assert(depth(to_model(lhs)) <= string_len(s) + 3);
         assert(depth(to_model(lhs)) <= 60000);
+        is_string_lit_shape_model(x);
+        assert(to_model(x) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(x))))));
+        assert(string_lit_ptr_of(x) == s);
+        assert(to_model(lhs) == string_lit_expand_model(string_len(s)));
+        assert(pstep(to_model_of_env(*env), to_model(x), to_model(lhs)));
+        pstep_star_one(to_model_of_env(*env), to_model(x), to_model(lhs));
     }
-    verified_def_eq(ctx, lhs, y, fuel)
+    match verified_def_eq(ctx, lhs, y, fuel) {
+        Some(true) => Some(true),
+        r => r,
+    }
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_string_lit_
@@ -4448,7 +4464,9 @@ pub fn verified_try_string_lit_expansion<'t, 'p: 't, 'x>(
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
         (max_str_len as nat) + 3 <= 60000,
-    ensures true
+    ensures result ==> exists |lhs: ExprPtr<'t>|
+        (pstep_star(to_model_of_env(*env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
+        || (pstep_star(to_model_of_env(*env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x))
 {
     if !get_string_extension_flag(ctx) {
         return false;

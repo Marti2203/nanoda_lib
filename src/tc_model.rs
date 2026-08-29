@@ -2657,29 +2657,41 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
 /// tries `verified_def_eq_binder_step`, which recurses into instantiated
 /// sub-terms and needs to re-establish a depth bound on them via
 /// `subst_full_depth_bound_n` -- see that function's own doc comment).
+/// Names the disjunction `verified_def_eq`'s own `Some(true)` case
+/// establishes -- factored out so any OTHER function that reaches a
+/// genuine `def_eq` verdict on some pair of terms (not necessarily `x`/`y`
+/// themselves; e.g. `verified_try_string_lit_expansion_aux`'s freshly-
+/// built `lhs` vs. its own `y`) can restate the SAME real fact about ITS
+/// pair by calling this, instead of re-deriving or copy-pasting the whole
+/// seven-way disjunction at every call site. `open`, so it's purely
+/// notational: unfolds for free, changes no proof obligation anywhere
+/// this substitutes for the inline form.
+pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    to_model(x) == to_model(y)
+    || (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+        to_model(x) == ExprSpec::Sort(level_to_model(lx))
+        && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+        && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
+    || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
+    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+    || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+        && argsx.len() == argsy.len() && argsx.len() > 0)
+    || (exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
+        && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
+}
+
 pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures match result {
-        Some(true) =>
-            to_model(x) == to_model(y)
-            || (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
-                to_model(x) == ExprSpec::Sort(level_to_model(lx))
-                && to_model(y) == ExprSpec::Sort(level_to_model(ly))
-                && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
-            || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
-            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
-            || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-                to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-                && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-                && argsx.len() == argsy.len() && argsx.len() > 0)
-            || (exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
-                to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
-                && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2)))),
+        Some(true) => def_eq_witness(x, y),
         _ => true,
     }
     decreases fuel
