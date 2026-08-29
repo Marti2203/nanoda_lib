@@ -2926,7 +2926,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         Some(true) =>
             (nat_repr_is_zero(x) && nat_repr_is_zero(y))
             || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y))
-            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp)),
+            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)),
         _ => true,
     }
     decreases fuel

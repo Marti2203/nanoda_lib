@@ -2544,9 +2544,12 @@ pub fn verified_def_eq_unit<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         depth(to_model(x_ty)) <= 60000,
         depth(to_model(y_type)) <= 60000,
     ensures match result {
-        Some(_) => exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
-            to_model(x_ty) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun),
+        Some(b) => {
+            &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
+                to_model(x_ty) == spine_app(to_model(fun), args_model)
+                && is_const_shape(fun)
+            &&& b ==> def_eq_witness(x_ty, y_type)
+        },
         None => true,
     }
 {
