@@ -51,6 +51,9 @@ use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, ind_num_params, en
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
 use crate::tc_model::mk_rec_rule;
+use crate::tc_model::{rec_rule_ctor_name, rec_rule_val, rec_rule_ctor_telescope_size_wo_params};
+#[cfg(verus_only)]
+use crate::tc_model::rec_rule_val_of;
 use crate::tc_model::verified_whnf_multi_round_bounded;
 #[cfg(verus_only)]
 use crate::tc_model::{whnf_multi_round_ok, whnf_multi_round_final_bound, whnf_multi_round_final_d};
@@ -1872,6 +1875,117 @@ pub fn verified_restore_e<'t, 'p: 't, 'x>(
                 Some(verified_abstr_pi_telescope(ctx, &locals, replaced))
             } else {
                 Some(verified_abstr_lambda_telescope(ctx, &locals, replaced))
+            }
+        }
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `restore_recursor1`'s (`inductive.rs:1639-1672`)
+/// OWN transformation content -- resolving the recursor's name, un-
+/// specializing its type and each rule's value, and (when the name
+/// itself resolved to something different) restoring each rule's own
+/// constructor name -- WITHOUT constructing the final `RecursorData`
+/// struct itself.
+///
+/// Deliberately does NOT return a real `RecursorData<'t>` (the real
+/// function's own return type): unlike `Declar` (registered `external_
+/// body` via `ExDeclar` for `mk_recursor_aux`'s sake), `RecursorData`
+/// itself has never needed registering, since `mk_recursor_declar`
+/// (`inductive_model.rs`) only ever CONSTRUCTS one (never deconstructs
+/// an EXISTING one) -- and `restore_recursor1` is the opposite: it reads
+/// `self.env.get_recursor(&rec_name)`'s own fields (`info.ty`,
+/// `rec_rules`) AND copies over the rest (`num_params`/`num_indices`/
+/// `num_motives`/`num_minors`/`is_k`) via `..new_env_rec`. Registering
+/// `RecursorData` just to let THIS ONE caller assemble the final struct
+/// would be real, avoidable extra surface -- instead, `original_ty`/
+/// `original_rec_rules` are taken as EXPLICIT parameters (the real,
+/// eventual caller already has the whole `RecursorData` value in plain,
+/// unverified code and can read any of its fields directly, same
+/// "caller supplies what's needed" convention as everywhere else in this
+/// arc), and this returns just the THREE fields that actually get
+/// transformed -- `(resolved_rec_name, restored_ty, rules)` -- for the
+/// caller to slot into its own `RecursorData { ..new_env_rec }` update,
+/// exactly matching the real function's own final struct literal.
+pub fn verified_restore_recursor1<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
+    specialized_rec_names_to_unspecialized_rec_names: &[(NamePtr<'t>, NamePtr<'t>)],
+    rec_name: NamePtr<'t>,
+    original_ty: ExprPtr<'t>,
+    original_rec_rules: &[RecRule<'t>],
+    num_local_params: usize,
+    fuel: u32,
+    d: nat,
+) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, Vec<RecRule<'t>>)>)
+    requires
+        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
+            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
+        depth(to_model(original_ty)) <= d,
+        d <= 60000,
+        forall |i: int| 0 <= i < original_rec_rules@.len() ==>
+            depth(to_model(rec_rule_val_of(#[trigger] original_rec_rules@[i]))) <= d,
+    ensures true
+{
+    let mut i: usize = 0;
+    let mut resolved: Option<NamePtr<'t>> = None;
+    while i < specialized_rec_names_to_unspecialized_rec_names.len()
+        invariant i <= specialized_rec_names_to_unspecialized_rec_names.len(),
+        decreases specialized_rec_names_to_unspecialized_rec_names.len() - i
+    {
+        if name_ptr_eq(specialized_rec_names_to_unspecialized_rec_names[i].0, rec_name) {
+            resolved = Some(specialized_rec_names_to_unspecialized_rec_names[i].1);
+            break;
+        }
+        i += 1;
+    }
+    let was_resolved = resolved.is_some();
+    let resolved_rec_name = match resolved {
+        Some(n) => n,
+        None => rec_name,
+    };
+    match verified_restore_e(ctx, env, original_ty, num_local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, fuel, d) {
+        Some(restored_ty) => {
+            let mut rules: Vec<RecRule<'t>> = Vec::new();
+            let mut j: usize = 0;
+            let mut ok = true;
+            while j < original_rec_rules.len() && ok
+                invariant
+                    j <= original_rec_rules.len(),
+                    forall |k: int| 0 <= k < nested_to_unspecialized_ty_nofvars@.len() ==>
+                        depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[k].1)) <= 60000,
+                    d <= 60000,
+                    forall |k: int| 0 <= k < original_rec_rules@.len() ==>
+                        depth(to_model(rec_rule_val_of(#[trigger] original_rec_rules@[k]))) <= d,
+                decreases original_rec_rules.len() - j
+            {
+                let rule = original_rec_rules[j];
+                let ctor_name_orig = rec_rule_ctor_name(&rule);
+                let val_orig = rec_rule_val(&rule);
+                let telescope_size = rec_rule_ctor_telescope_size_wo_params(&rule);
+                assert(depth(to_model(val_orig)) <= d);
+                match verified_restore_e(ctx, env, val_orig, num_local_params, nested_to_unspecialized_ty_nofvars, specialized_rec_names_to_unspecialized_rec_names, fuel, d) {
+                    Some(new_val) => {
+                        if was_resolved {
+                            match verified_restore_ctor_name(ctx, env, nested_to_unspecialized_ty_nofvars, ctor_name_orig, fuel) {
+                                Some(new_ctor_name) => {
+                                    rules.push(mk_rec_rule(new_ctor_name, telescope_size, new_val));
+                                }
+                                None => { ok = false; }
+                            }
+                        } else {
+                            rules.push(mk_rec_rule(ctor_name_orig, telescope_size, new_val));
+                        }
+                    }
+                    None => { ok = false; }
+                }
+                j += 1;
+            }
+            if !ok {
+                None
+            } else {
+                Some((resolved_rec_name, restored_ty, rules))
             }
         }
         None => None,
