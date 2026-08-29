@@ -585,6 +585,22 @@ pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// (`old_declar_names_finite`).
 pub uninterp spec fn mutual_block_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
+/// `mutual_block_cap` itself is finite (any real environment has SOME
+/// largest mutual block) but that alone doesn't rule out it being
+/// astronomically large -- this names a generous, disclosed CEILING on
+/// it (`u32::MAX`, vastly beyond any real Lean `mutual .. end` block's
+/// actual size) purely so callers doing `u64` bookkeeping on a mutual
+/// block's own name count (e.g. `verified_mk_specialized_rec_to_
+/// unspecialized_map`'s own re-indexing counter) can discharge overflow
+/// checks without threading a bespoke requires through every such site.
+/// Same "name the max, don't compute it" trust character as `mutual_
+/// block_cap` itself.
+#[verifier::external_body]
+pub proof fn mutual_block_cap_bounded<'x, 'a>(env: Env<'x, 'a>)
+    ensures mutual_block_cap(env) <= u32::MAX as nat,
+{
+}
+
 /// The SET of name-ids present in the OLD (persistent, pre-temp-
 /// extension) declaration map -- `mk_unique_name`'s (`inductive.rs:588-
 /// 597`) own fresh-name search checks membership against exactly this.

@@ -82,7 +82,7 @@ use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_para
 #[cfg(verus_only)]
 use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, const_levels_match_declared_arity, mutual_block_uniform_levels_arity, nested_specialization_bound, nested_occ_cap_holds_for_reachable_seq, nested_specialization_pigeonhole};
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, mutual_block_cap_bounded, const_levels_match_declared_arity, mutual_block_uniform_levels_arity, nested_specialization_bound, nested_occ_cap_holds_for_reachable_seq, nested_specialization_pigeonhole};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
@@ -2233,6 +2233,57 @@ pub fn verified_collect_unmodified_mutuals<'x, 'a>(
         i += 1;
     }
     if !ok { None } else { Some(out) }
+}
+
+/// Real-arena mirror of `mk_specialized_rec_to_unspecialized_map`
+/// (`inductive.rs:1418-1444`): for every specialized name added to
+/// `main_ind_ty_name`'s (post-nested-specialization) `all_ind_names` list
+/// beyond the original `base_mutuals_len` block, pair its own `.rec` name
+/// with a freshly re-indexed `.rec` name built off `main_ind_ty_name`
+/// itself. The real function returns an `FxIndexMap<NamePtr, NamePtr>`
+/// (un-registered, can't be named in verified code) -- flattened here to
+/// a `Vec<(NamePtr, NamePtr)>` of the same (specialized, unspecialized)
+/// pairs in insertion order, matching the established Vec-for-Map
+/// convention used for `verified_mk_base_rec_names`'s own `FxHashSet`.
+pub fn verified_mk_specialized_rec_to_unspecialized_map<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    main_ind_ty_name: NamePtr<'t>,
+    base_mutuals_len: usize,
+) -> (result: Option<Vec<(NamePtr<'t>, NamePtr<'t>)>>)
+    ensures true
+{
+    match get_inductive_all_names(env, &main_ind_ty_name) {
+        Some((all_ind_names, _all_ctor_names)) => {
+            if all_ind_names.len() <= base_mutuals_len {
+                return None;
+            }
+            proof { mutual_block_cap_bounded(*env); }
+            assert(all_ind_names.len() <= u32::MAX as usize);
+            let rec_str_ptr = alloc_string_rec(ctx);
+            let mut out: Vec<(NamePtr<'t>, NamePtr<'t>)> = Vec::new();
+            let mut i: usize = base_mutuals_len;
+            while i < all_ind_names.len()
+                invariant
+                    base_mutuals_len <= i <= all_ind_names.len(),
+                    all_ind_names.len() <= u32::MAX as usize,
+                    out.len() == i - base_mutuals_len,
+                decreases all_ind_names.len() - i
+            {
+                let ind_name = all_ind_names[i];
+                let specialized_rec_name = ctx.str(ind_name, rec_str_ptr);
+                let unspecialized_rec_name_base = ctx.str(main_ind_ty_name, rec_str_ptr);
+                let unspecialized_rec_name = ctx.append_index_after(
+                    unspecialized_rec_name_base,
+                    (out.len() + 1) as u64,
+                );
+                out.push((specialized_rec_name, unspecialized_rec_name));
+                i += 1;
+            }
+            Some(out)
+        }
+        None => None,
+    }
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
