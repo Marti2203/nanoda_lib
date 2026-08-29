@@ -1307,4 +1307,162 @@ pub fn verified_check_ctor<'t, 'p: 't, 'x>(
     verified_check_ctor_params(ctx, env, ind_consts, local_indices_lens, local_params, local_param_tys, parent_ind_name, ctor_type_cursor, 0, is_zero, block_codom, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound, pos_tel_fuel)
 }
 
+/// Real-arena mirror of `large_elim_test_aux` (`inductive.rs:937-970`):
+/// walks a single constructor's type telescope, skipping the block's own
+/// `rem_params` leading binders untouched, then for each REMAINING
+/// (non-param) binder computes `ensure_infers_as_sort`/`is_zero` and
+/// records the binder's fresh local into `non_prop_elems` whenever it is
+/// NOT `Prop`-sorted -- exactly the real function's `non_prop_ctor_
+/// telescope_elems` accumulator, threaded through as a real `&mut Vec`
+/// (Verus handles mutable accumulator state through recursion the same
+/// way `&mut TcCtx` already threads through every other function here).
+/// Same "no `whnf`, syntactic `Pi`-peel only" shape as `check_ctor`'s own
+/// telescope loop, so -- same reasoning as `verified_check_ctor_
+/// telescope`'s own doc comment -- `bound`/`d`/`cap`/`infer_env_cap`/
+/// `infd_bound` all stay UNCHANGED across every recursive call; no growth
+/// bookkeeping needed. At the end of the telescope, `verified_unfold_
+/// apps` peels `parent_ind_const params* indices*` and the real function's
+/// final `.all(|arg| ind_ty_params_and_indices.contains(arg))` subset
+/// check is executed exactly as written (`ExprPtr`'s own `PartialEq`,
+/// same as the real code -- no new spec predicate needed for this one,
+/// unlike `id_subset`'s `NamePtr`-keyed version above, since this check
+/// never needs to be RELATED to anything else downstream; `ensures true`
+/// only needs the control-flow to type-check).
+pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ctor_type_cursor: ExprPtr<'t>,
+    rem_params: usize,
+    non_prop_elems: &mut Vec<ExprPtr<'t>>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ctor_type_cursor)) <= 0,
+        max_var_below(to_model(ctor_type_cursor), bound),
+        depth(to_model(ctor_type_cursor)) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
+        infd_bound <= cap,
+        infer_depth_fixpoint_ok(d, fuel as nat),
+        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+    ensures true
+    decreases tel_fuel
+{
+    if tel_fuel == 0 {
+        return None;
+    }
+    let tel_fuel1 = tel_fuel - 1;
+    let el = ctx.read_expr(ctor_type_cursor);
+    if expr_is_bind_shape(&el) {
+        assert(matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
+        if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+            assert(to_model(ctor_type_cursor) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+            assert(nlbv(to_model(binder_type)) == 0) by {
+                assert(nlbv(to_model(ctor_type_cursor)) == 0);
+            }
+            assert(max_var_below(to_model(binder_type), bound)) by {
+                assert(max_var_below(to_model(ctor_type_cursor), bound));
+            }
+            assert(depth(to_model(binder_type)) <= d) by {
+                assert(depth(to_model(ctor_type_cursor)) <= d);
+            }
+            let local = ctx.mk_unique(binder_name, binder_style, binder_type);
+            let locals: [ExprPtr<'t>; 1] = [local];
+            match verified_inst(ctx, body, &locals, 0, fuel) {
+                Some(next_cursor) => {
+                    let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+                    assert(substs_model.len() == 1);
+                    assert(substs_model[0] == to_model(local));
+                    assert(to_model(next_cursor) == subst_full(to_model(body), substs_model, 0));
+                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
+                        assert(i == 0);
+                    }
+                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
+                        assert(i == 0);
+                    }
+                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound) by {
+                        assert(i == 0);
+                    }
+                    proof {
+                        subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
+                        subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                        subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound);
+                    }
+                    assert(nlbv(to_model(next_cursor)) <= 0);
+                    assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
+                    assert(max_var_below(to_model(next_cursor), bound));
+                    if rem_params != 0 {
+                        verified_large_elim_test_aux(ctx, env, next_cursor, rem_params - 1, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
+                    } else {
+                        match verified_ensure_infers_as_sort(ctx, env, binder_type, fuel, infer_env_cap, d, cap, infd_bound) {
+                            Some(level) => {
+                                let z = ctx.zero();
+                                let is_z = verified_leq(ctx, level, z, fuel);
+                                if !is_z {
+                                    non_prop_elems.push(local);
+                                }
+                                verified_large_elim_test_aux(ctx, env, next_cursor, 0, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
+                            }
+                            None => None,
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        assert(!matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
+        match verified_unfold_apps(ctx, ctor_type_cursor, fuel) {
+            Some((_base, ind_ty_params_and_indices)) => {
+                let mut j: usize = 0;
+                while j < non_prop_elems.len()
+                    invariant j <= non_prop_elems.len(),
+                    decreases non_prop_elems.len() - j
+                {
+                    if !expr_ptr_in_slice(ind_ty_params_and_indices.as_slice(), non_prop_elems[j]) {
+                        return Some(false);
+                    }
+                    j += 1;
+                }
+                Some(true)
+            }
+            None => None,
+        }
+    }
+}
+
+/// Manual real-pointer-equality membership scan, standing in for `slice::
+/// contains` (unsupported by this Verus fork directly on arbitrary `T:
+/// PartialEq` -- `assume_specification` only covers it when `T` already
+/// has a recognized `PartialEq` bridge, which `ExprPtr` doesn't here).
+/// Used by `verified_large_elim_test_aux`'s own final subset check, same
+/// role `name_in_slice` plays for `NamePtr`s elsewhere in this file.
+pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (result: bool)
+    ensures true
+{
+    let mut i: usize = 0;
+    while i < haystack.len()
+        invariant i <= haystack.len(),
+        decreases haystack.len() - i
+    {
+        if expr_ptr_eq(haystack[i], needle) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 }
