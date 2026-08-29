@@ -39,8 +39,16 @@ use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_decl
 #[cfg(verus_only)]
 use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, env_global_cap};
 #[cfg(verus_only)]
-use crate::expr_model::depth;
+use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
+use crate::tc_model::verified_whnf_multi_round_bounded;
+#[cfg(verus_only)]
+use crate::tc_model::{whnf_multi_round_ok, whnf_multi_round_final_bound, whnf_multi_round_final_d};
+use crate::expr_arena_bridge::verified_inst;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::expr_id;
+#[cfg(verus_only)]
+use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_full_max_var_below_bound_n};
 
 verus! {
 
@@ -844,6 +852,164 @@ pub fn verified_assert_nonnested_tys_def_eq<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         i += 1;
     }
     Some(true)
+}
+
+/// Recursive-feasibility predicate for `verified_check_positivity1`'s
+/// telescope-peeling loop -- one level up from `whnf_multi_round_ok`,
+/// same "check this round's headroom, then recurse on next round's grown
+/// values" shape. Each telescope round runs `whnf_multi_round_ok` with
+/// its OWN inner round count FIXED to `1` (not a caller-supplied `outer_
+/// n`) -- same "fix the inner count to a literal" escape hatch `verified_
+/// whnf_multi_round`'s own composition of `verified_whnf_step_bounded`
+/// already used, chosen here for the SAME reason: a caller-supplied,
+/// symbolic `outer_n` can't be turned into a closed-form arithmetic
+/// `bound`/`d` step via `reveal_with_fuel` (that only works when the
+/// spec fn's OWN recursion-count argument is a literal), and threading a
+/// second explicit "next round's bound/d" parameter pair through this
+/// predicate's own recursion would need a fresh pair at every depth --
+/// fixing the inner count sidesteps needing either. `bound2`/`d2` below
+/// are exactly `whnf_multi_round_final_bound`/`_d` at `outer_n = 1`,
+/// written out as the plain arithmetic they unfold to (matching `verified_
+/// whnf_multi_round`'s own inlined formulas at `tc_model.rs`).
+pub open spec fn check_positivity_ok(cap: nat, bound: nat, d: nat, tel_fuel: nat) -> bool
+    decreases tel_fuel
+{
+    whnf_multi_round_ok(cap, bound, d, 1)
+        && (tel_fuel == 0 || {
+            let bound2 = bound + d * d * d + d * d;
+            let d2 = cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d));
+            check_positivity_ok(cap, bound2, d2, (tel_fuel - 1) as nat)
+        })
+}
+
+/// Real-arena mirror of `check_positivity1` (`inductive.rs:758-778`): walks
+/// a constructor argument type's telescope, `whnf`-ing at each step
+/// (`verified_whnf_multi_round_bounded`, inner round count fixed to `1`,
+/// matching `check_positivity_ok`'s own fixed choice), rejecting any `Pi`
+/// binder whose OWN type mentions one of the block's inductives (a
+/// non-positive occurrence -- the real function's `panic!`, represented
+/// here as `Some(false)`), and otherwise peeling the binder via `mk_unique`
+/// + `verified_inst` exactly as the real function's `self.ctx.mk_unique`/
+/// `self.ctx.inst` do. `Some(true)` mirrors the real function's two `return`
+/// sites (no occurrence anywhere left, or a well-formed end-of-telescope
+/// inductive application); `None` propagates fuel exhaustion from any
+/// composed sub-call, same convention as every other function in this file.
+///
+/// Takes `ind_consts`/`local_indices_lens`/`local_params` as direct slices
+/// (`verified_is_valid_ind_app`'s own convention) rather than the whole
+/// `InductiveCheckState`. The `bound`/`d`/`tel_fuel` triple is the same
+/// "caller supplies a sufficient ceiling" pattern as everywhere else in
+/// this arc -- `check_positivity_ok` is what lets each recursive call
+/// discharge `verified_whnf_multi_round_bounded`'s and `verified_inst`'s
+/// preconditions purely from the ORIGINAL cursor's own bound/depth, with
+/// no new lemma needed at this level (every step composes `verified_whnf_
+/// multi_round_bounded`, `mk_unique`'s existing axiom, and `subst_full_
+/// {nlbv,depth,max_var_below}_bound_n`, all pre-existing).
+pub fn verified_check_positivity1<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    ctor_type_cursor: ExprPtr<'t>,
+    fuel: u32,
+    tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ctor_type_cursor)) <= 0,
+        max_var_below(to_model(ctor_type_cursor), bound),
+        depth(to_model(ctor_type_cursor)) <= d,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, tel_fuel as nat),
+    ensures true
+    decreases tel_fuel
+{
+    if tel_fuel == 0 {
+        return None;
+    }
+    let tel_fuel1 = tel_fuel - 1;
+    proof {
+        reveal_with_fuel(check_positivity_ok, 2);
+        reveal_with_fuel(whnf_multi_round_final_bound, 2);
+        reveal_with_fuel(whnf_multi_round_final_d, 2);
+        assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
+        assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
+    }
+    match verified_whnf_multi_round_bounded(ctx, env, ctor_type_cursor, fuel, cap, bound, d, 1) {
+        Some(whnfd) => {
+            match verified_has_ind_occ(ctx, whnfd, ind_consts, fuel) {
+                Some(false) => Some(true),
+                Some(true) => {
+                    let el = ctx.read_expr(whnfd);
+                    if expr_is_bind_shape(&el) {
+                        assert(matches!(to_model(whnfd), ExprSpec::Bind(_, _)));
+                        if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+                            assert(to_model(whnfd) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+                            match verified_has_ind_occ(ctx, binder_type, ind_consts, fuel) {
+                                Some(true) => Some(false),
+                                Some(false) => {
+                                    assert(nlbv(to_model(body)) <= 1) by {
+                                        assert(nlbv(to_model(whnfd)) == 0);
+                                    }
+                                    assert(depth(to_model(body)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d))) by {
+                                        assert(depth(to_model(whnfd)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
+                                    }
+                                    assert(max_var_below(to_model(body), bound + d * d * d + d * d)) by {
+                                        assert(max_var_below(to_model(whnfd), bound + d * d * d + d * d));
+                                    }
+                                    let local = ctx.mk_unique(binder_name, binder_style, binder_type);
+                                    assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+                                    let locals: [ExprPtr<'t>; 1] = [local];
+                                    match verified_inst(ctx, body, &locals, 0, fuel) {
+                                        Some(next_cursor) => {
+                                            let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+                                            assert(substs_model.len() == 1);
+                                            assert(substs_model[0] == to_model(local));
+                                            assert(to_model(next_cursor) == subst_full(to_model(body), substs_model, 0));
+                                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
+                                                assert(i == 0);
+                                            }
+                                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
+                                                assert(i == 0);
+                                            }
+                                            assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound + d * d * d + d * d) by {
+                                                assert(i == 0);
+                                            }
+                                            proof {
+                                                subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
+                                                subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
+                                                subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound + d * d * d + d * d);
+                                            }
+                                            assert(nlbv(to_model(next_cursor)) <= 0);
+                                            assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
+                                            assert(max_var_below(to_model(next_cursor), bound + d * d * d + d * d));
+                                            verified_check_positivity1(ctx, env, ind_consts, local_indices_lens, local_params, next_cursor, fuel, tel_fuel1, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)))
+                                        }
+                                        None => None,
+                                    }
+                                }
+                                None => None,
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        assert(!matches!(to_model(whnfd), ExprSpec::Bind(_, _)));
+                        match verified_which_valid_ind_app(ctx, ind_consts, local_indices_lens, local_params, whnfd, fuel) {
+                            Some(Some(_)) => Some(true),
+                            Some(None) => Some(false),
+                            None => None,
+                        }
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }
 
 }
