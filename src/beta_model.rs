@@ -8594,12 +8594,14 @@ pub proof fn pstep_star_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec,
 /// proof-irrelevance, which aren't `pstep`-reductions at all) iff they
 /// share a common `pstep_star` reduct. This is the standard joinability
 /// definition of definitional/convertibility equality for a confluent
-/// rewriting system (which `pstep_diamond`, elsewhere in this file,
-/// already establishes `pstep`/`pstep_star` to be) -- reflexive and
-/// symmetric BY CONSTRUCTION (the existential doesn't distinguish `e1`
-/// from `e2`), with transitivity a real (if, given confluence, standard)
-/// lemma, proven below via `pstep_diamond`'s own confluence property
-/// rather than assumed.
+/// rewriting system -- reflexive and symmetric BY CONSTRUCTION (the
+/// existential doesn't distinguish `e1` from `e2`). Transitivity is NOT
+/// proven here and is NOT free: it would need `pstep_diamond`'s
+/// confluence property, which is itself restricted to `env ==
+/// Map::empty()` and small term sizes (`size(e) <= ~9`, see that
+/// function's own doc comment) -- an unconditional `defeq_trans` isn't
+/// honestly available with what this file currently proves, and is left
+/// as real, disclosed future work rather than assumed or forced through.
 ///
 /// Deliberately the FIRST piece of vocabulary in this file for
 /// definitional equality itself, as opposed to plain one-directional
@@ -8666,6 +8668,38 @@ pub proof fn pstep_star_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSp
             assert(pstep(env, a, a));
             assert(mapped[i] == ExprSpec::App(Box::new(chain[i]), Box::new(a)));
             assert(mapped[i + 1] == ExprSpec::App(Box::new(chain[i + 1]), Box::new(a)));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `pstep_star_app_congr`'s argument-side sibling: lifts a `pstep_star`
+/// fact through `App`'s ARGUMENT position, keeping the function fixed --
+/// `pstep_star(env, a, b)` gives `pstep_star(env, App(f, a), App(f, b))`.
+/// Same chain-mapping proof, `App(f, -)` mapped over the witness chain
+/// instead of `App(-, a)`, using `pstep(env, f, f)` reflexively for the
+/// function side at each step. Previously missing (confirmed absent when
+/// first needed, see `feedback_defeq_witness_vs_pstep_star`) -- the ONLY
+/// `App`-congruence lemma this file had was the function-side one above.
+pub proof fn pstep_star_app_arg_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f: ExprSpec, x: ExprSpec, y: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::App(Box::new(f), Box::new(x)), ExprSpec::App(Box::new(f), Box::new(y)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::App(Box::new(f), Box::new(chain[i])));
+
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::App(Box::new(f), Box::new(chain[0])));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::App(Box::new(f), Box::new(chain[chain.len() - 1])));
+    assert(chain[chain.len() - 1] == y);
+
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, f, f));
+            assert(mapped[i] == ExprSpec::App(Box::new(f), Box::new(chain[i])));
+            assert(mapped[i + 1] == ExprSpec::App(Box::new(f), Box::new(chain[i + 1])));
             assert(pstep(env, mapped[i], mapped[i + 1]));
         }
     }
