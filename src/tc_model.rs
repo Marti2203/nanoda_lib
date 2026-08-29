@@ -663,6 +663,32 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
     }
 }
 
+/// `whnf_multi_round_ok` holding for `outer_n` rounds implies the FINAL
+/// `d` value (whatever `whnf_multi_round_final_d` computes it to be) is
+/// itself `<= 60000` -- needed by any caller composing a whnf'd result's
+/// own `depth` bound into a FURTHER real-arena call (e.g. `verified_inst`,
+/// which requires `depth(e) <= 60000`). Can't just `reveal_with_fuel` this
+/// (the recursion depth is the caller-supplied, unbounded `outer_n`), so
+/// this is a genuine induction, mirroring `verified_whnf_multi_round_
+/// bounded`'s own recursive structure exactly (one level of unfolding per
+/// recursive call, not a fixed small fuel count).
+pub proof fn whnf_multi_round_final_d_bound(cap: nat, bound: nat, d: nat, outer_n: nat)
+    requires whnf_multi_round_ok(cap, bound, d, outer_n)
+    ensures whnf_multi_round_final_d(cap, bound, d, outer_n) <= 60000
+    decreases outer_n
+{
+    reveal_with_fuel(whnf_multi_round_ok, 2);
+    reveal_with_fuel(whnf_multi_round_final_d, 2);
+    reveal_with_fuel(whnf_fixpoint_ok, 1);
+    if outer_n == 0 {
+    } else {
+        let bound2 = bound + d * d * d + d * d;
+        let d2 = d * d + 4 * d;
+        let next_d = cap + d2 + d2;
+        whnf_multi_round_final_d_bound(cap, bound2, next_d, (outer_n - 1) as nat);
+    }
+}
+
 /// Manual transcription of real `reduce_proj`'s "cheap" path (`tc.rs:447-
 /// 458`, `cheap_proj == true`, i.e. `structure`'s WHNF is computed via
 /// `whnf_no_unfolding_cheap_proj`/`verified_whnf_no_unfolding_step`, not
