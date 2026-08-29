@@ -66,6 +66,23 @@ pub(crate) fn name_as_num<'t>(n: &Name<'t>) -> Option<(NamePtr<'t>, u64)> {
     match n { Name::Num(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
 }
 
+/// `TcCtx::alloc_string(Cow::Borrowed("rec"))`, wrapped so Verus never
+/// needs a `Cow` parameter type at all (`Cow` isn't registered with this
+/// vstd fork, and doing so just to move ONE hardcoded literal through
+/// isn't worth it) -- same "give it a `&'static str`-free real-Rust
+/// signature, bridge that instead" choice `str1` already made for `TcCtx::
+/// str1`. Used by `mk_base_rec_names`/`handle_rec_ctor_args_rec_rule`/
+/// `mk_specialized_rec_to_unspecialized_map` (`inductive.rs:147, 1207,
+/// 1368, 1425`), all of which alloc the SAME literal `"rec"` suffix for
+/// building a recursor's own name (`T.rec`). Callers never need to know
+/// WHAT `string_id` this produces (only that `ctx.str(some_name, this)`
+/// then denotes `NameSpec::Str(_, string_id(this))`, `TcCtx::str`'s own
+/// pre-existing axiom) -- fully opaque, no `ensures` needed.
+#[allow(dead_code)]
+pub(crate) fn alloc_string_rec<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>) -> StringPtr<'t> {
+    ctx.alloc_string(std::borrow::Cow::Borrowed("rec"))
+}
+
 verus! {
 
 /// What a `NamePtr` denotes in the `NameSpec` model -- uninterpreted, same
@@ -124,6 +141,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, '
 /// gen_elim_level` above) don't need anything about ITS specific model
 /// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't;
+
+pub assume_specification<'t, 'p> [alloc_string_rec] (ctx: &mut TcCtx<'t, 'p>) -> (result: StringPtr<'t>) where 'p: 't;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx));

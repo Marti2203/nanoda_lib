@@ -81,6 +81,23 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::abstr_pi] (ctx: &mut TcCtx<'t
         Box::new(abstr_full(to_model(body), seq![expr_id(binder)], 0)),
     );
 
+/// `TcCtx::apply_lambda`'s real body (`expr.rs:488-495`) is `self.mk_
+/// lambda(binder_name, binder_style, binder_type, self.abstr(body,
+/// &[binder]))` after reading `binder`'s fields off `binder` itself
+/// (panicking if `binder` isn't a `Local`) -- structurally IDENTICAL to
+/// `abstr_pi` just above, since a `Lambda`, like a `Pi`, models as
+/// `ExprSpec::Bind` (the model never distinguishes them -- same
+/// conflation `expr_is_bind_shape`/`pi_telescope_has_self_ref` already
+/// rely on elsewhere). Same ensures shape, same precondition, only the
+/// REAL constructor called differs (`mk_lambda` vs `mk_pi`), which is
+/// invisible to the model.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::apply_lambda] (ctx: &mut TcCtx<'t, 'p>, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+    requires matches!(to_model(binder), ExprSpec::Free(_))
+    ensures to_model(result) == ExprSpec::Bind(
+        Box::new(local_type(binder)),
+        Box::new(abstr_full(to_model(body), seq![expr_id(binder)], 0)),
+    );
+
 /// The concrete claim: `check_eq`'s construction of `Eq`'s expected type
 /// (`quot.rs:85-87`) really does represent `Π (α : Sort u), α → α → Prop`
 /// -- domain `Closed` (erased `Sort u`), then two correctly de-Bruijn-

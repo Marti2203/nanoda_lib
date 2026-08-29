@@ -1270,6 +1270,50 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders:
     result
 }
 
+/// Real-arena mirror of `TcCtx::abstr_lambda_telescope` (`expr.rs:658-
+/// 664`): peels `binders` from the end via `apply_lambda`, needed by
+/// `handle_rec_ctor_args_rec_rule`/`mk_rec_rule1` (`inductive.rs:1201-
+/// 1250`). Reuses `abstr_pi_telescope_model` UNCHANGED as its closed-form
+/// model, not a separate `abstr_lambda_telescope_model` -- `apply_lambda`'s
+/// own `ensures` is IDENTICAL in shape to `abstr_pi`'s (both produce
+/// `ExprSpec::Bind`, the model never distinguishes `Pi` from `Lambda`),
+/// so the two telescope functions' closed forms are the SAME spec fn,
+/// just reached via a different real constructor underneath (invisible
+/// to the model either way).
+pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    requires forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
+        let m = to_model(binders@[i]);
+        matches!(m, ExprSpec::Free(_))
+    }
+    ensures to_model(result) == abstr_pi_telescope_model(
+        Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
+        Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
+        to_model(e),
+    )
+    decreases binders.len()
+{
+    if binders.len() == 0 {
+        assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
+        return e;
+    }
+    let last = binders[binders.len() - 1];
+    let rest = &binders[0..binders.len() - 1];
+    assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
+    let e2 = ctx.apply_lambda(last, e);
+    let result = verified_abstr_lambda_telescope(ctx, rest, e2);
+    proof {
+        let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
+        let tys = Seq::new(binders@.len(), |i: int| local_type(binders@[i]));
+        let rest_ids = Seq::new(rest@.len(), |i: int| expr_id(rest@[i]));
+        let rest_tys = Seq::new(rest@.len(), |i: int| local_type(rest@[i]));
+        assert(ids.drop_last() =~= rest_ids);
+        assert(tys.drop_last() =~= rest_tys);
+        assert(ids.last() == expr_id(last));
+        assert(tys.last() == local_type(last));
+    }
+    result
+}
+
 /// Real-arena counterpart to real `TcCtx::subst_aux`/`subst_expr_levels`
 /// (`expr.rs:333-391`): substitutes universe-level PARAMETERS (not de
 /// Bruijn indices) throughout an expression -- the building block

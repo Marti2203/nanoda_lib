@@ -107,6 +107,18 @@ pub(crate) fn rec_rule_val<'t>(r: &RecRule<'t>) -> ExprPtr<'t> {
     r.val
 }
 
+/// `RecRule`'s own constructor, needed by `verified_mk_rec_rule1`
+/// (`inductive_model.rs`, mirroring `inductive.rs:1245-1249`) -- `RecRule`
+/// is `external_body`-registered (`ExRecRule` below), so its LITERAL
+/// struct-constructor syntax is disallowed inside verus-checked code,
+/// same "opaque datatype" wall `BinderStyle` already hit (`binder_style_
+/// default`/`_implicit`, `expr_arena_bridge.rs`) -- this is that SAME
+/// fix, applied to a struct instead of an enum.
+#[allow(dead_code)]
+pub(crate) fn mk_rec_rule<'t>(ctor_name: NamePtr<'t>, ctor_telescope_size_wo_params: u16, val: ExprPtr<'t>) -> RecRule<'t> {
+    RecRule { ctor_name, ctor_telescope_size_wo_params, val }
+}
+
 verus! {
 
 #[allow(dead_code)]
@@ -135,6 +147,12 @@ pub assume_specification<'t> [rec_rule_ctor_telescope_size_wo_params] (r: &RecRu
 pub uninterp spec fn rec_rule_val_of<'a>(r: RecRule<'a>) -> ExprPtr<'a>;
 pub assume_specification<'t> [rec_rule_val] (r: &RecRule<'t>) -> (result: ExprPtr<'t>)
     ensures result == rec_rule_val_of(*r);
+
+pub assume_specification<'t> [mk_rec_rule] (ctor_name: NamePtr<'t>, ctor_telescope_size_wo_params: u16, val: ExprPtr<'t>) -> (result: RecRule<'t>)
+    ensures
+        rec_rule_ctor_name_of(result) == ctor_name,
+        rec_rule_ctor_telescope_size_wo_params_of(result) == ctor_telescope_size_wo_params,
+        rec_rule_val_of(result) == val;
 
 pub open spec fn rec_rule_ctor_names<'a>(rec_rules: Seq<RecRule<'a>>) -> Seq<NamePtr<'a>> {
     Seq::new(rec_rules.len(), |i: int| rec_rule_ctor_name_of(rec_rules[i]))

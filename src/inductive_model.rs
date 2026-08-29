@@ -24,7 +24,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_foldl_apps, verified_abstr_pi_telescope, binder_style_default, binder_style_implicit};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]
@@ -39,7 +39,7 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
-use crate::env::Env;
+use crate::env::{Env, RecRule};
 use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some};
 #[cfg(verus_only)]
 use crate::env_model::old_declar_names;
@@ -48,6 +48,7 @@ use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, env_global_cap};
 #[cfg(verus_only)]
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
+use crate::tc_model::mk_rec_rule;
 use crate::tc_model::verified_whnf_multi_round_bounded;
 #[cfg(verus_only)]
 use crate::tc_model::{whnf_multi_round_ok, whnf_multi_round_final_bound, whnf_multi_round_final_d};
@@ -68,7 +69,7 @@ use crate::level_model::LevelSpec;
 use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound, mk_unique_name_collision_bound};
-use crate::name_arena_bridge::name_as_str;
+use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
 use crate::name::Name;
 
 verus! {
@@ -2032,7 +2033,14 @@ pub fn verified_sep_nonrec_params<'t, 'p: 't, 'x>(
         d <= 60000,
         env_global_cap(*env) <= cap,
         check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
-    ensures true
+        forall |k: int| #![trigger old(all_args)@[k]] 0 <= k < old(all_args)@.len() ==> {
+            let m = to_model(old(all_args)@[k]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures forall |k: int| #![trigger final(all_args)@[k]] 0 <= k < final(all_args)@.len() ==> {
+        let m = to_model(final(all_args)@[k]);
+        matches!(m, ExprSpec::Free(_))
+    }
     decreases rem_params.len() - param_idx
 {
     if param_idx == rem_params.len() {
@@ -2111,7 +2119,14 @@ pub fn verified_sep_nonrec_rec_ctor_args_telescope<'t, 'p: 't, 'x>(
         d <= 60000,
         env_global_cap(*env) <= cap,
         check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
-    ensures true
+        forall |k: int| #![trigger old(all_args)@[k]] 0 <= k < old(all_args)@.len() ==> {
+            let m = to_model(old(all_args)@[k]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures forall |k: int| #![trigger final(all_args)@[k]] 0 <= k < final(all_args)@.len() ==> {
+        let m = to_model(final(all_args)@[k]);
+        matches!(m, ExprSpec::Free(_))
+    }
     decreases tel_fuel
 {
     if tel_fuel == 0 {
@@ -2157,7 +2172,16 @@ pub fn verified_sep_nonrec_rec_ctor_args_telescope<'t, 'p: 't, 'x>(
                     assert(nlbv(to_model(next_cursor)) <= 0);
                     assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
                     assert(max_var_below(to_model(next_cursor), bound));
+                    assert(to_model(local) == ExprSpec::Free(expr_id(local)));
                     all_args.push(local);
+                    assert forall |k: int| #![trigger all_args@[k]] 0 <= k < all_args@.len() implies {
+                        let m = to_model(all_args@[k]);
+                        matches!(m, ExprSpec::Free(_))
+                    } by {
+                        if k < all_args@.len() - 1 {
+                            assert(all_args@[k] == old(all_args)@[k]);
+                        }
+                    }
                     match verified_is_rec_argument(ctx, env, ind_consts, local_indices_lens, local_params, binder_type, fuel, pos_tel_fuel, cap, bound, d) {
                         Some(Some(_pos)) => {
                             rec_args.push(local);
@@ -2626,6 +2650,421 @@ pub fn verified_mk_minors<'t, 'p: 't, 'x>(
         g += 1;
     }
     Some(out)
+}
+
+/// Real-arena mirror of `handle_rec_ctor_args_rec_rule` (`inductive.rs:
+/// 1201-1227`): for each recursive constructor argument, builds the
+/// TAIL-RECURSIVE-CALL term (`T.rec params motives minors indices (u_i
+/// xs*)`, wrapped back into a `Lambda`-telescope over `xs`) that the
+/// constructor's own computation rule composes with. Same `infer_then_
+/// whnf`+`handle_rec_args_aux`+`get_i_indices` composition as `verified_
+/// handle_rec_args_minor`, reusing the exact same bound-tracking
+/// parameters; `applied_indices.iter().copied().rev()` is realized via
+/// the same manual-reverse pattern used throughout this arc (`slice::
+/// reverse` itself unsupported). `flat_mapped_minors`/`rec_str_ptr` are
+/// computed ONCE by the real function (outside its own loop) -- `alloc_
+/// string_rec`'s own call is similarly hoisted to once per invocation of
+/// THIS function (not once per `rec_ctor_arg`), matching that.
+pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    local_params_len: usize,
+    ind_names: &[NamePtr<'t>],
+    rec_uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    rec_ctor_args: &[ExprPtr<'t>],
+    fuel: u32,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    tel_fuel: u32,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+) -> (result: Option<Vec<ExprPtr<'t>>>)
+    requires
+        forall |i: int| #![trigger rec_ctor_args@[i]] 0 <= i < rec_ctor_args@.len() ==> nlbv(to_model(rec_ctor_args@[i])) <= 0,
+        forall |i: int| #![trigger rec_ctor_args@[i]] 0 <= i < rec_ctor_args@.len() ==> depth(to_model(rec_ctor_args@[i])) <= 0,
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut out: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < rec_ctor_args.len()
+        invariant
+            i <= rec_ctor_args.len(),
+            forall |k: int| #![trigger rec_ctor_args@[k]] 0 <= k < rec_ctor_args@.len() ==> nlbv(to_model(rec_ctor_args@[k])) <= 0,
+            forall |k: int| #![trigger rec_ctor_args@[k]] 0 <= k < rec_ctor_args@.len() ==> depth(to_model(rec_ctor_args@[k])) <= 0,
+            env_global_cap(*env) <= infer_env_cap,
+            local_type_cap() <= infer_env_cap,
+            infer_env_cap <= 60000,
+            zero_dd == 0,
+            infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+            infd_bound <= infer_env_cap,
+            infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+            whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+            check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+        decreases rec_ctor_args.len() - i
+    {
+        let rec_ctor_arg = rec_ctor_args[i];
+        assert(nlbv(to_model(rec_ctor_arg)) <= 0);
+        assert(depth(to_model(rec_ctor_arg)) <= 0);
+        match verified_infer_then_whnf(ctx, env, rec_ctor_arg, fuel, infer_env_cap, zero_dd, infer_env_cap, infd_bound) {
+            Some(u_i_ty) => {
+                let mut xs: Vec<ExprPtr<'t>> = Vec::new();
+                match verified_handle_rec_args_aux(ctx, env, u_i_ty, &mut xs, fuel, tel_fuel, infer_env_cap, aux_bound, aux_d) {
+                    Some(u_i_ty2) => {
+                        match verified_get_i_indices(ctx, ind_consts, local_indices_lens, local_params, u_i_ty2, local_params_len, fuel) {
+                            Some((it_idx, applied_indices)) => {
+                                if it_idx < ind_names.len() {
+                                    let it_name = ind_names[it_idx];
+                                    let rec_str_ptr = alloc_string_rec(ctx);
+                                    let rec_name = ctx.str(it_name, rec_str_ptr);
+                                    let rec_app = ctx.mk_const(rec_name, rec_uparams);
+                                    let app = verified_foldl_apps(ctx, rec_app, local_params);
+                                    let app = verified_foldl_apps(ctx, app, motives);
+                                    let app = verified_foldl_apps(ctx, app, flat_mapped_minors);
+                                    let mut reversed: Vec<ExprPtr<'t>> = Vec::new();
+                                    let mut j: usize = applied_indices.len();
+                                    while j > 0
+                                        invariant j <= applied_indices.len(),
+                                        decreases j
+                                    {
+                                        j -= 1;
+                                        reversed.push(applied_indices[j]);
+                                    }
+                                    let app = verified_foldl_apps(ctx, app, reversed.as_slice());
+                                    let app_rhs = verified_foldl_apps(ctx, rec_ctor_arg, xs.as_slice());
+                                    let app = ctx.mk_app(app, app_rhs);
+                                    let v_hd = verified_abstr_lambda_telescope(ctx, xs.as_slice(), app);
+                                    out.push(v_hd);
+                                } else {
+                                    return None;
+                                }
+                            }
+                            None => return None,
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            None => return None,
+        }
+        i += 1;
+    }
+    Some(out)
+}
+
+/// Real-arena mirror of `mk_rec_rule1` (`inductive.rs:1229-1250`): one
+/// constructor's computation rule -- separates its non-recursive/
+/// recursive args (`verified_sep_nonrec_params`, now STRENGTHENED to
+/// expose `all_ctor_args`'s own `Free`-shapedness, needed for the
+/// `abstr_lambda_telescope` calls below), builds the tail-recursive
+/// pieces (`verified_handle_rec_ctor_args_rec_rule`), then wraps `this_
+/// minor all_ctor_args* handled_rec_args*` in FOUR nested `Lambda`-
+/// telescopes (`all_ctor_args`, `flat_mapped_minors`, `motives`, `local_
+/// params`, in that order, matching the real function's own four
+/// `abstr_lambda_telescope` calls exactly). `flat_mapped_minors`/
+/// `motives`/`local_params`/`this_minor`'s own `Free`-shapedness is taken
+/// as an explicit hypothesis (all `mk_unique`-created locals from
+/// earlier pipeline stages, same disclosed reason as everywhere else in
+/// this arc). Builds the real, public `RecRule` struct directly (its
+/// fields are all public, unlike `CtorHeader`/`IndTyHeader`).
+pub fn verified_mk_rec_rule1<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    ind_names: &[NamePtr<'t>],
+    rec_uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    ctor_name: NamePtr<'t>,
+    ctor_ty: ExprPtr<'t>,
+    this_minor: ExprPtr<'t>,
+    fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+    pi_fuel: u32,
+) -> (result: Option<RecRule<'t>>)
+    requires
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+            let m = to_model(local_params@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+            let m = to_model(motives@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+            let m = to_model(flat_mapped_minors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        nlbv(to_model(ctor_ty)) <= 0,
+        max_var_below(to_model(ctor_ty), bound),
+        depth(to_model(ctor_ty)) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut all_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
+    let mut rec_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
+    match verified_sep_nonrec_params(ctx, env, ind_consts, local_indices_lens, local_params, local_params, ctor_ty, 0, &mut all_ctor_args, &mut rec_ctor_args, fuel, tel_fuel, pos_tel_fuel, cap, bound, d) {
+        Some(_stripped) => {
+            match verified_handle_rec_ctor_args_rec_rule(ctx, env, ind_consts, local_indices_lens, local_params, local_params.len(), ind_names, rec_uparams, motives, flat_mapped_minors, rec_ctor_args.as_slice(), fuel, infer_env_cap, infd_bound, tel_fuel, aux_bound, aux_d, zero_dd) {
+                Some(handled_rec_args) => {
+                    let comp_rhs = verified_foldl_apps(ctx, this_minor, all_ctor_args.as_slice());
+                    let comp_rhs = verified_foldl_apps(ctx, comp_rhs, handled_rec_args.as_slice());
+                    let comp_rhs = verified_abstr_lambda_telescope(ctx, all_ctor_args.as_slice(), comp_rhs);
+                    let comp_rhs = verified_abstr_lambda_telescope(ctx, flat_mapped_minors, comp_rhs);
+                    let comp_rhs = verified_abstr_lambda_telescope(ctx, motives, comp_rhs);
+                    let comp_rhs = verified_abstr_lambda_telescope(ctx, local_params, comp_rhs);
+                    match verified_pi_telescope_size(ctx, ctor_ty, pi_fuel) {
+                        Some(size) => {
+                            let size_usize = size as usize;
+                            if size_usize >= local_params.len() {
+                                let num_fields = size_usize - local_params.len();
+                                match u16::try_from(num_fields) {
+                                    Ok(nf) => Some(mk_rec_rule(ctor_name, nf, comp_rhs)),
+                                    Err(_) => None,
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        None => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
+/// Real-arena mirror of `mk_rec_rules` (`inductive.rs:1252-1267`): one
+/// `RecRule` group per inductive-in-block, one rule per constructor,
+/// composing `verified_mk_rec_rule1` in a double loop (mirroring the
+/// real function's own nested `for ind_ty .. for ctor ..`, with a single
+/// `overall_ctor_idx` counter indexing into the FLATTENED `minors` list,
+/// exactly as the real function does). `flat_mapped_minors` is `st.
+/// minors.iter().flat_map(...)`'s result, taken as an already-flattened
+/// parameter (pure bookkeeping the caller does once, same "flatten
+/// what's needed" convention as `all_ctor_names`/`all_ctor_tys` --
+/// `IndTyHeader`/`CtorHeader` are private to `inductive.rs`, not
+/// optional here). The real function's own implicit invariant
+/// (`overall_ctor_idx` never runs past `minors.len()`, guaranteed by
+/// `mk_minors`/`mk_rec_rules` always processing the SAME ctor counts) is
+/// represented as an explicit bounds check, `None` if violated -- no
+/// honest fallback for a shape mismatch, same convention as elsewhere.
+pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    ind_consts: &[ExprPtr<'t>],
+    local_indices_lens: &[usize],
+    local_params: &[ExprPtr<'t>],
+    ind_names: &[NamePtr<'t>],
+    rec_uparams: LevelsPtr<'t>,
+    motives: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    all_ctor_names: &[Vec<NamePtr<'t>>],
+    all_ctor_tys: &[Vec<ExprPtr<'t>>],
+    fuel: u32,
+    tel_fuel: u32,
+    pos_tel_fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    infer_env_cap: nat,
+    infd_bound: nat,
+    aux_bound: nat,
+    aux_d: nat,
+    zero_dd: nat,
+    pi_fuel: u32,
+) -> (result: Option<Vec<Vec<RecRule<'t>>>>)
+    requires
+        all_ctor_names.len() == all_ctor_tys.len(),
+        forall |g: int| #![trigger all_ctor_names@[g]] 0 <= g < all_ctor_names@.len() ==> all_ctor_names@[g]@.len() == all_ctor_tys@[g]@.len(),
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+            let m = to_model(local_params@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+            let m = to_model(motives@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+            let m = to_model(flat_mapped_minors@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> nlbv(to_model(all_ctor_tys@[g]@[i])) <= 0,
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> max_var_below(to_model(all_ctor_tys@[g]@[i]), bound),
+        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> depth(to_model(all_ctor_tys@[g]@[i])) <= d,
+        d <= 60000,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+        env_global_cap(*env) <= infer_env_cap,
+        local_type_cap() <= infer_env_cap,
+        infer_env_cap <= 60000,
+        zero_dd == 0,
+        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+        infd_bound <= infer_env_cap,
+        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+    ensures true
+{
+    let mut rec_rules: Vec<Vec<RecRule<'t>>> = Vec::new();
+    let mut overall_ctor_idx: usize = 0;
+    let mut g: usize = 0;
+    while g < all_ctor_names.len()
+        invariant
+            g <= all_ctor_names.len(),
+            all_ctor_names.len() == all_ctor_tys.len(),
+            forall |k: int| #![trigger all_ctor_names@[k]] 0 <= k < all_ctor_names@.len() ==> all_ctor_names@[k]@.len() == all_ctor_tys@[k]@.len(),
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+            forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+                let m = to_model(local_params@[i]);
+                matches!(m, ExprSpec::Free(_))
+            },
+            forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+                let m = to_model(motives@[i]);
+                matches!(m, ExprSpec::Free(_))
+            },
+            forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+                let m = to_model(flat_mapped_minors@[i]);
+                matches!(m, ExprSpec::Free(_))
+            },
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> nlbv(to_model(all_ctor_tys@[k]@[i])) <= 0,
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> max_var_below(to_model(all_ctor_tys@[k]@[i]), bound),
+            forall |k: int| #![trigger all_ctor_tys@[k]] 0 <= k < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[k]@[i]] 0 <= i < all_ctor_tys@[k]@.len() ==> depth(to_model(all_ctor_tys@[k]@[i])) <= d,
+            d <= 60000,
+            env_global_cap(*env) <= cap,
+            check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+            env_global_cap(*env) <= infer_env_cap,
+            local_type_cap() <= infer_env_cap,
+            infer_env_cap <= 60000,
+            zero_dd == 0,
+            infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+            infd_bound <= infer_env_cap,
+            infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+            whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+            aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+            check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+        decreases all_ctor_names.len() - g
+    {
+        let names = all_ctor_names[g].as_slice();
+        let tys = all_ctor_tys[g].as_slice();
+        assert(names@ =~= all_ctor_names@[g as int]@);
+        assert(tys@ =~= all_ctor_tys@[g as int]@);
+        assert(names@.len() == tys@.len());
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> nlbv(to_model(tys@[i])) <= 0);
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> max_var_below(to_model(tys@[i]), bound));
+        assert(forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> depth(to_model(tys@[i])) <= d);
+        let mut grp: Vec<RecRule<'t>> = Vec::new();
+        let mut c: usize = 0;
+        while c < names.len()
+            invariant
+                c <= names.len(),
+                names@.len() == tys@.len(),
+                forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> nlbv(to_model(tys@[i])) <= 0,
+                forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> max_var_below(to_model(tys@[i]), bound),
+                forall |i: int| #![trigger tys@[i]] 0 <= i < tys@.len() ==> depth(to_model(tys@[i])) <= d,
+                forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
+                forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
+                forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
+                    let m = to_model(local_params@[i]);
+                    matches!(m, ExprSpec::Free(_))
+                },
+                forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
+                    let m = to_model(motives@[i]);
+                    matches!(m, ExprSpec::Free(_))
+                },
+                forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
+                    let m = to_model(flat_mapped_minors@[i]);
+                    matches!(m, ExprSpec::Free(_))
+                },
+                d <= 60000,
+                env_global_cap(*env) <= cap,
+                check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
+                env_global_cap(*env) <= infer_env_cap,
+                local_type_cap() <= infer_env_cap,
+                infer_env_cap <= 60000,
+                zero_dd == 0,
+                infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
+                infd_bound <= infer_env_cap,
+                infer_depth_fixpoint_ok(zero_dd, fuel as nat),
+                whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
+                aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
+                aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
+                check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
+            decreases names.len() - c
+        {
+            assert(nlbv(to_model(tys@[c as int])) <= 0);
+            assert(max_var_below(to_model(tys@[c as int]), bound));
+            assert(depth(to_model(tys@[c as int])) <= d);
+            if overall_ctor_idx < flat_mapped_minors.len() {
+                let this_minor = flat_mapped_minors[overall_ctor_idx];
+                match verified_mk_rec_rule1(ctx, env, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, names[c], tys[c], this_minor, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
+                    Some(rr) => {
+                        grp.push(rr);
+                    }
+                    None => return None,
+                }
+                overall_ctor_idx += 1;
+            } else {
+                return None;
+            }
+            c += 1;
+        }
+        rec_rules.push(grp);
+        g += 1;
+    }
+    Some(rec_rules)
 }
 
 }
