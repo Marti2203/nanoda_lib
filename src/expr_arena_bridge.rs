@@ -1976,6 +1976,75 @@ pub fn verified_whnf_no_unfolding_fixpoint<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, 
     }
 }
 
+/// The closed-form "`d` after `n` rounds" that `whnf_fixpoint_ok`'s own
+/// recursive feasibility check walks through internally but never
+/// SURFACES -- needed so `verified_whnf_no_unfolding_fixpoint_bounded`
+/// below can state a genuine forward bound on its own result (not just
+/// feasibility of getting there), the same way `verified_whnf_no_
+/// unfolding_step`'s own `ensures` already exposes `whnf_step_next_d`/
+/// `whnf_step_next_bound` for a SINGLE round.
+pub open spec fn whnf_fixpoint_final_d(d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { d } else { whnf_fixpoint_final_d(whnf_step_next_d(d), (n - 1) as nat) }
+}
+
+pub open spec fn whnf_fixpoint_final_bound(bound: nat, d: nat, n: nat) -> nat
+    decreases n
+{
+    if n == 0 { bound } else { whnf_fixpoint_final_bound(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat) }
+}
+
+/// `verified_whnf_no_unfolding_fixpoint`'s own stronger sibling: ALSO
+/// exposes `nlbv`/`max_var_below`/`depth` on the result via `whnf_
+/// fixpoint_final_bound`/`_d` above, not just `pstep_star` -- needed so
+/// this fixpoint's own output can be fed into a FURTHER round (a delta
+/// attempt, or another beta/zeta fixpoint), which the original couldn't
+/// support despite its own single-step building block (`verified_whnf_
+/// no_unfolding_step`) already tracking exactly this internally. Pure
+/// restatement of facts the original's own recursive structure already
+/// establishes -- no new lemmas, just carrying them through to the
+/// `ensures` by induction on `n` (mirroring the original's own `decreases
+/// n` exactly).
+pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), whnf_fixpoint_final_bound(bound, d, n as nat))
+            &&& depth(to_model(r)) <= whnf_fixpoint_final_d(d, n as nat)
+        },
+        None => true,
+    }
+    decreases n
+{
+    if n == 0 {
+        proof {
+            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+        }
+        return Some(e);
+    }
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+        Some(r) => {
+            match verified_whnf_no_unfolding_fixpoint_bounded(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// Plain range-slicing on `&[ExprPtr<'t>]`, factored out here specifically
 /// (rather than written inline at each call site) because slice-index
 /// preconditions for `ExprPtr` slices verify fine in THIS file (see

@@ -56,9 +56,9 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, c
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, expr_as_nat_lit, read_bignum_value};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, verified_whnf_no_unfolding_fixpoint_bounded, expr_as_nat_lit, read_bignum_value};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{whnf_fixpoint_ok, is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
+use crate::expr_arena_bridge::{whnf_fixpoint_ok, whnf_fixpoint_final_bound, whnf_fixpoint_final_d, is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{bool_true_id, bool_false_id, nat_zero_id, nat_succ_id, nat_repr_is_zero, nat_repr_pred};
@@ -77,7 +77,7 @@ use crate::level_model::level_names;
 use crate::env_model::to_model_of_env;
 use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular, get_declar_info_ty};
 #[cfg(verus_only)]
-use crate::env_model::{env_global_wf_ty, env_global_cap};
+use crate::env_model::{env_global_wf_ty, env_global_wf, env_global_cap};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_declar_ty;
 #[cfg(verus_only)]
@@ -88,7 +88,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -302,6 +302,198 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
             assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
             assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
             Some(result)
+        }
+        None => None,
+    }
+}
+
+/// `verified_unfold_def_step`'s own stronger sibling: ALSO exposes `nlbv`/
+/// `max_var_below`/`depth` on the result, not just the `pstep_star` fact --
+/// needed so a delta step's own output can be fed back into a FURTHER
+/// round of reduction (the ORIGINAL `verified_unfold_def_step`/`verified_
+/// whnf_step` can't be chained into a genuine multi-round `whnf`, since
+/// their `ensures` drops these bounds entirely). Every piece needed
+/// already existed: `env_global_wf` (the definition body's own depth/nlbv/
+/// max_var_below cap), `subst_expr_levels_rel_{nlbv,depth,max_var_below}`
+/// (level substitution preserves all three exactly), and `spine_app_
+/// decompose`/`spine_app_bounds`/`spine_app_nlbv` (already used throughout
+/// this project for exactly this "peel a spine, recombine with a new
+/// head" shape) -- this is pure composition, no new lemmas. Requires
+/// `env_global_cap(*env) <= bound` so the definition body's own natural
+/// cap and the caller's `bound` can be unified via `max_var_below_mono`.
+pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        env_global_cap(*env) <= bound,
+    ensures match result {
+        Some(r) => {
+            &&& exists |id: u64, ks: Seq<u64>, val: ExprSpec| {
+                &&& to_model_of_env(*env).contains_key(id)
+                &&& to_model_of_env(*env)[id] == (ks, val)
+                &&& pstep_star(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                        to_model(e),
+                        to_model(r),
+                    )
+            }
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound)
+            &&& depth(to_model(r)) <= env_global_cap(*env) + d + d
+        },
+        None => true,
+    }
+{
+    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+    proof {
+        spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
+    }
+    assert(args@.len() <= d);
+    let fun_el = ctx.read_expr(fun);
+    let (name, levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let (def_uparams, def_value) = match env.get_declar_val(&name) {
+        Some(p) => p,
+        None => return None,
+    };
+    let levels_vec = read_levels_vec(ctx, levels);
+    let uparams_vec = read_levels_vec(ctx, def_uparams);
+    if levels_vec.len() != uparams_vec.len() {
+        return None;
+    }
+    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+        Some(def_val) => {
+            let ghost id = name_id(name);
+            let ghost ks = level_names(to_model_of_levels(def_uparams));
+            let ghost val = to_model(def_value);
+            assert(to_model_of_env(*env).contains_key(id));
+            assert(to_model_of_env(*env)[id] == (ks, val));
+            proof {
+                is_const_shape_model(fun);
+                const_levels_vec_model(fun);
+            }
+            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+            assert(const_id(fun) == id);
+            assert(const_levels_vec(fun)@ =~= to_model_of_levels(levels));
+            proof {
+                assert(pstep(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                    to_model(fun),
+                    to_model(def_val),
+                ));
+                pstep_star_one(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                    to_model(fun),
+                    to_model(def_val),
+                );
+                pstep_spine_app_star(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                    to_model(fun),
+                    to_model(def_val),
+                    Seq::new(args@.len(), |i: int| to_model(args@[i])),
+                );
+            }
+            proof {
+                env_global_wf(*env);
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
+                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(levels), to_model(def_val));
+                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(levels), to_model(def_val), env_global_cap(*env));
+                max_var_below_mono(to_model(def_val), env_global_cap(*env), bound);
+            }
+            assert(nlbv(to_model(def_val)) == 0);
+            assert(depth(to_model(def_val)) <= env_global_cap(*env));
+            assert(max_var_below(to_model(def_val), bound));
+            let result = verified_foldl_apps(ctx, def_val, &args);
+            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            proof {
+                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+                spine_app_bounds(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound, env_global_cap(*env), d);
+            }
+            assert(nlbv(to_model(result)) <= 0);
+            assert(max_var_below(to_model(result), bound));
+            assert(depth(to_model(result)) <= env_global_cap(*env) + d + args@.len());
+            Some(result)
+        }
+        None => None,
+    }
+}
+
+/// `verified_whnf_step`'s own stronger sibling, composing `verified_whnf_
+/// no_unfolding_fixpoint_bounded` (`n` rounds of beta/zeta, WITH forward
+/// bounds) and `verified_unfold_def_step_bounded` (one delta attempt,
+/// WITH forward bounds) -- unlike the original `verified_whnf_step`, this
+/// one's OWN result carries `nlbv`/`max_var_below`/`depth` too, so it can
+/// be fed into a FURTHER round of itself (the real missing piece this
+/// whole project's "multi-round whnf" gap has been about). Requires
+/// `env_global_cap(*env)` fit under the bound the no-unfolding fixpoint
+/// leaves behind, so the definition body's own natural cap unifies with
+/// the beta/zeta phase's already-grown bound (same "caller supplies a
+/// sufficient ceiling" pattern as everywhere else).
+pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32, bound2: nat, d2: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+        bound2 == whnf_fixpoint_final_bound(bound, d, n as nat),
+        d2 == whnf_fixpoint_final_d(d, n as nat),
+        env_global_cap(*env) <= bound2,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound2)
+            &&& depth(to_model(r)) <= env_global_cap(*env) + d2 + d2
+        },
+        None => true,
+    }
+{
+    match verified_whnf_no_unfolding_fixpoint_bounded(ctx, e, fuel, bound, d, n) {
+        Some(whnfd) => {
+            proof {
+                assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                    to_model_of_env(*env).contains_key(k)
+                    && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+                by {}
+                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(e), to_model(whnfd));
+            }
+            match verified_unfold_def_step_bounded(ctx, env, whnfd, fuel, bound2, d2) {
+                Some(r) => {
+                    proof {
+                        let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
+                            &&& to_model_of_env(*env).contains_key(id)
+                            &&& to_model_of_env(*env)[id] == (ks, val)
+                            &&& pstep_star(
+                                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
+                                    to_model(whnfd),
+                                    to_model(r),
+                                )
+                        };
+                        let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
+                        assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
+                            to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
+                        by {
+                            assert(k == id);
+                        }
+                        pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(whnfd), to_model(r));
+                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(whnfd), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => {
+                    assert(d2 <= env_global_cap(*env) + d2 + d2);
+                    Some(whnfd)
+                }
+            }
         }
         None => None,
     }
