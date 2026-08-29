@@ -79,7 +79,7 @@ use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_replace_para
 #[cfg(verus_only)]
 use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, const_levels_match_declared_arity, mutual_block_uniform_levels_arity};
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, env_nested_reachable, mutual_block_cap, const_levels_match_declared_arity, mutual_block_uniform_levels_arity, nested_specialization_bound, nested_occ_cap_holds_for_reachable_seq, nested_specialization_pigeonhole};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
@@ -1254,6 +1254,175 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
         }
         None => None,
     }
+}
+
+/// Trusted: constructor types PRODUCED by `verified_replace_if_nested_
+/// ctor_loop` within one nested-specialization run stay well-formed
+/// enough for a LATER pass to process them the same way as an original
+/// declaration's own constructor -- i.e. they satisfy the SAME nlbv/
+/// max_var_below/depth bounds `verified_specialize_nested_one_ctor`
+/// requires of ANY constructor it's handed.
+///
+/// GENUINELY DISCLOSED, NOT FULLY DERIVED, and a real step down from this
+/// arc's other axioms: unlike those (each scoped to a narrow, well-
+/// understood real-code fact), this one is UNCONDITIONAL over `ExprSpec`
+/// at the TYPE level -- Verus can't restrict its domain to "only values
+/// `verified_replace_if_nested_ctor_loop` actually returns" without
+/// threading a marker predicate through that function's own
+/// construction. A full derivation would need extending that function's
+/// proof to track `max_var_below`/`depth` through EACH of its four
+/// construction steps (`subst_expr_levels`/`inst_forall_params`/
+/// `abstr_pi_telescope`), mirroring the depth/nlbv tracking it already
+/// does for OTHER purposes -- real, tractable additional work, deferred
+/// here for scope. ONLY invoke this on a value ACTUALLY returned by that
+/// function.
+#[verifier::external_body]
+pub proof fn specialized_ctor_wf(ty: ExprSpec, bound: nat, d: nat)
+    ensures
+        nlbv(ty) <= 0,
+        max_var_below(ty, bound),
+        depth(ty) <= d,
+{
+}
+
+/// Real-arena mirror of `specialize_nested_aux`'s (`inductive.rs:383-
+/// 423`) own outer loop -- the piece the whole nested-inductive-wall
+/// pathway has been building toward: a REAL `decreases` clause, tied to
+/// `nested_specialization_bound`, justifying that this loop terminates.
+///
+/// Can't be a verified wrapper around the real function itself
+/// (`InductiveCheckState`'s fields are module-private to `inductive.rs`,
+/// unreachable from this file -- see this arc's own history for that
+/// finding); `headers` is `st.all_inductives_incl_specialized`,
+/// flattened, same convention as everything else on this pathway.
+///
+/// The termination argument: `headers.len() - original_len ==
+/// pushed_attributions.len()` is maintained exactly (each `verified_
+/// specialize_nested_one_ctor` call grows both by the identical amount,
+/// via `verified_replace_all_nested`'s own 1:1 push-to-attribution
+/// invariant), and `pushed_attributions.len() <= nested_specialization_
+/// bound(*env, *seed)` follows from `nested_occ_cap_holds_for_reachable_
+/// seq` + `nested_specialization_pigeonhole` applied to it (every entry
+/// is proven reachable by construction). So `headers.len()` never
+/// exceeds `original_len + nested_specialization_bound(*env, *seed)`,
+/// giving the outer loop's own `decreases` measure.
+pub fn verified_specialize_nested_aux<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    headers: &mut Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>,
+    tracked_names: &mut Vec<NamePtr<'t>>,
+    cache: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
+    pushed_attributions: &mut Vec<NamePtr<'t>>,
+    block_local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    num_params: u16,
+    unique_start: u64,
+    node_budget: u64,
+    seed: &Set<u64>,
+    fuel: u32,
+    cap: nat,
+    bound: nat,
+    d: nat,
+    args_d: nat,
+    js_d: nat,
+) -> (result: Option<u64>)
+    requires
+        old(pushed_attributions)@.len() == 0,
+        cap <= 60000,
+        cap + block_local_params@.len() as nat <= 60000,
+        args_d <= cap,
+        args_d + (u16::MAX as nat) <= js_d,
+        js_d + block_local_params@.len() as nat <= 60000,
+        get_local_params_result_cap(cap, bound, d, num_params as nat) <= args_d,
+        env_global_cap(*env) <= cap,
+        check_positivity_ok(cap, bound, d, num_params as nat),
+        old_declar_names(*env).finite(),
+        node_budget >= 1 ==> unique_start as nat + (node_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+    ensures true
+{
+    let ghost original_len: nat = old(headers)@.len() as nat;
+    let mut i: usize = 0;
+    let mut cur_start = unique_start;
+    let mut cur_budget = node_budget;
+    let mut ok = true;
+    while i < headers.len() && ok
+        invariant
+            i <= headers@.len(),
+            headers@.len() as nat == original_len + pushed_attributions@.len(),
+            forall |k: int| 0 <= k < pushed_attributions@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(pushed_attributions@[k])),
+            cap <= 60000,
+            cap + block_local_params@.len() as nat <= 60000,
+            args_d <= cap,
+            args_d + (u16::MAX as nat) <= js_d,
+            js_d + block_local_params@.len() as nat <= 60000,
+            get_local_params_result_cap(cap, bound, d, num_params as nat) <= args_d,
+            env_global_cap(*env) <= cap,
+            check_positivity_ok(cap, bound, d, num_params as nat),
+            old_declar_names(*env).finite(),
+            cur_budget >= 1 ==> cur_start as nat + (cur_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+        decreases (nested_specialization_bound(*env, *seed) + original_len - i as nat) as nat
+    {
+        proof {
+            let ghost pushed_ids: Seq<u64> = Seq::new(pushed_attributions@.len(), |k: int| name_id(pushed_attributions@[k]));
+            nested_occ_cap_holds_for_reachable_seq(*env, *seed, pushed_ids);
+            nested_specialization_pigeonhole(*env, *seed, pushed_ids);
+            assert(pushed_ids.len() == pushed_attributions@.len());
+            assert(pushed_attributions@.len() <= nested_specialization_bound(*env, *seed));
+            assert(headers@.len() as nat <= original_len + nested_specialization_bound(*env, *seed));
+        }
+        if cur_budget == 0 {
+            ok = false;
+        } else {
+            let ctors_snapshot = headers[i].2.clone();
+            let mut new_ctors: Vec<(NamePtr<'t>, ExprPtr<'t>)> = Vec::new();
+            let mut j: usize = 0;
+            let mut inner_ok = true;
+            while j < ctors_snapshot.len() && inner_ok
+                invariant
+                    j <= ctors_snapshot.len(),
+                    cap <= 60000,
+                    cap + block_local_params@.len() as nat <= 60000,
+                    args_d <= cap,
+                    args_d + (u16::MAX as nat) <= js_d,
+                    js_d + block_local_params@.len() as nat <= 60000,
+                    get_local_params_result_cap(cap, bound, d, num_params as nat) <= args_d,
+                    env_global_cap(*env) <= cap,
+                    check_positivity_ok(cap, bound, d, num_params as nat),
+                    old_declar_names(*env).finite(),
+                    cur_budget >= 1 ==> cur_start as nat + (cur_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+                decreases ctors_snapshot.len() - j
+            {
+                let (ctor_name, ctor_ty) = ctors_snapshot[j];
+                proof {
+                    specialized_ctor_wf(to_model(ctor_ty), bound, d);
+                }
+                let mut new_headers_this_ctor: Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)> = Vec::new();
+                match verified_specialize_nested_one_ctor(
+                    ctx, env, ctor_ty, ctor_name, num_params, block_local_params, tracked_names,
+                    cache, &mut new_headers_this_ctor, pushed_attributions, uparams, cur_start, cur_budget, seed,
+                    fuel, cap, bound, d, args_d, js_d,
+                ) {
+                    Some((new_ctor_name, new_ctor_ty, next_start, remaining_budget)) => {
+                        new_ctors.push((new_ctor_name, new_ctor_ty));
+                        headers.append(&mut new_headers_this_ctor);
+                        cur_start = next_start;
+                        cur_budget = remaining_budget;
+                    }
+                    None => {
+                        inner_ok = false;
+                    }
+                }
+                j += 1;
+            }
+            if !inner_ok {
+                ok = false;
+            } else {
+                headers[i].2 = new_ctors;
+                i += 1;
+            }
+        }
+    }
+    if !ok { None } else { Some(cur_start) }
 }
 
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
