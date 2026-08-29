@@ -971,6 +971,176 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `replace_all_nested` (`inductive.rs:701-740`), the
+/// recursive tree-walk calling `verified_replace_if_nested` FIRST at
+/// every node, recursing into children (`Pi`/`Lambda`/`Let`/`App`/`Proj`)
+/// only when it returns `None` (not a nested occurrence there). Threads
+/// THREE growing pieces of state through the whole walk, mutated in
+/// place: `tracked_names` (the growing set `is_nested_ind_app` checks
+/// against -- a discovery anywhere in the tree must be visible to EVERY
+/// later scan, including siblings), `cache`, and `new_headers` (what a
+/// caller applies to the real, private `st` afterward, same convention
+/// `verified_replace_if_nested` itself already established).
+///
+/// `node_budget` is NOT part of the real algorithm -- it's this piece's
+/// own honest acknowledgment that PROVING `unique_start` never overflows
+/// `u64` across an UNBOUNDED-shape tree walk needs SOME cap on how many
+/// nodes can trigger a fresh-name search, and deriving a TIGHT one needs
+/// the very termination measure (`nested_specialization_bound`) this
+/// whole arc has been building toward but hasn't wired to a real loop
+/// yet. Rather than block on that, this takes the bound as an explicit,
+/// caller-supplied `u64` (matching the "caller supplies a sufficient
+/// ceiling" convention everywhere else in this project), decrements it
+/// by one per node visited (a safe over-approximation of the real
+/// per-node call count, which is at most one fan-out's worth), and
+/// returns the REMAINING budget so a
+/// sibling call (e.g. `Pi`'s `body` after `binder_type`) knows how much
+/// it has left -- same "return what changed" pattern `unique_start`/
+/// `next_unique_start` already established for this exact reason.
+/// Runs out gracefully (`None`, not a panic or a wrong answer) if the
+/// caller's budget was too small -- honest incompleteness, not
+/// unsoundness.
+pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    tracked_names: &mut Vec<NamePtr<'t>>,
+    outgoing_param_locals: &[ExprPtr<'t>],
+    local_params: &[ExprPtr<'t>],
+    uparams: LevelsPtr<'t>,
+    cache: &mut Vec<(NamePtr<'t>, ExprPtr<'t>)>,
+    new_headers: &mut Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>,
+    unique_start: u64,
+    node_budget: u64,
+    fuel: u32,
+    cap: nat,
+    args_d: nat,
+    js_d: nat,
+) -> (result: Option<(ExprPtr<'t>, u64, u64)>)
+    requires
+        env_global_cap(*env) <= cap,
+        cap <= 60000,
+        cap + outgoing_param_locals@.len() as nat <= 60000,
+        args_d <= cap,
+        depth(to_model(e)) <= args_d,
+        args_d + (u16::MAX as nat) <= js_d,
+        js_d + outgoing_param_locals@.len() as nat <= 60000,
+        old_declar_names(*env).finite(),
+        node_budget >= 1 ==> unique_start as nat + (node_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
+        forall |i: int| 0 <= i < outgoing_param_locals@.len() ==> {
+            let m = to_model(#[trigger] outgoing_param_locals@[i]);
+            matches!(m, ExprSpec::Free(_))
+        },
+    ensures true
+    decreases fuel
+{
+    if fuel == 0 || node_budget == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let node_budget1 = node_budget - 1;
+    match verified_replace_if_nested(
+        ctx, env, e, tracked_names.as_slice(), outgoing_param_locals, local_params, uparams,
+        cache.as_slice(), unique_start, fuel, cap, args_d, js_d,
+    ) {
+        Some((replacement, new_cache_entries, new_hdrs, next_start)) => {
+            let mut ci: usize = 0;
+            while ci < new_cache_entries.len()
+                invariant ci <= new_cache_entries.len(),
+                decreases new_cache_entries.len() - ci
+            {
+                cache.push(new_cache_entries[ci]);
+                ci += 1;
+            }
+            let mut hi: usize = 0;
+            while hi < new_hdrs.len()
+                invariant hi <= new_hdrs.len(),
+                decreases new_hdrs.len() - hi
+            {
+                tracked_names.push(new_hdrs[hi].0);
+                hi += 1;
+            }
+            let mut new_hdrs = new_hdrs;
+            new_headers.append(&mut new_hdrs);
+            match replacement {
+                Some(eprime) => Some((eprime, next_start, node_budget1)),
+                None => {
+                    let el = ctx.read_expr(e);
+                    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                            Some((binder_type2, next_start2, budget2)) => {
+                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                    Some((body2, next_start3, budget3)) => {
+                                        let result = ctx.mk_pi(binder_name, binder_style, binder_type2, body2);
+                                        Some((result, next_start3, budget3))
+                                    }
+                                    None => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    } else if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                            Some((binder_type2, next_start2, budget2)) => {
+                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                    Some((body2, next_start3, budget3)) => {
+                                        let result = ctx.mk_lambda(binder_name, binder_style, binder_type2, body2);
+                                        Some((result, next_start3, budget3))
+                                    }
+                                    None => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    } else if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
+                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                            Some((binder_type2, next_start2, budget2)) => {
+                                match verified_replace_all_nested(ctx, env, val, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                    Some((val2, next_start3, budget3)) => {
+                                        match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start3, budget3, fuel1, cap, args_d, js_d) {
+                                            Some((body2, next_start4, budget4)) => {
+                                                let result = ctx.mk_let(binder_name, binder_type2, val2, body2, nondep);
+                                                Some((result, next_start4, budget4))
+                                            }
+                                            None => None,
+                                        }
+                                    }
+                                    None => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    } else if let Some((fun, arg)) = expr_as_app(&el) {
+                        match verified_replace_all_nested(ctx, env, fun, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                            Some((fun2, next_start2, budget2)) => {
+                                match verified_replace_all_nested(ctx, env, arg, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start2, budget2, fuel1, cap, args_d, js_d) {
+                                    Some((arg2, next_start3, budget3)) => {
+                                        let result = ctx.mk_app(fun2, arg2);
+                                        Some((result, next_start3, budget3))
+                                    }
+                                    None => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    } else if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
+                        match verified_replace_all_nested(ctx, env, structure, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, next_start, node_budget1, fuel1, cap, args_d, js_d) {
+                            Some((structure2, next_start2, budget2)) => {
+                                let result = ctx.mk_proj(ty_name, idx, structure2);
+                                Some((result, next_start2, budget2))
+                            }
+                            None => None,
+                        }
+                    } else {
+                        Some((e, next_start, node_budget1))
+                    }
+                }
+            }
+        }
+        None => None,
+    }
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
