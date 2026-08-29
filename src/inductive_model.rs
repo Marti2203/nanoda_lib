@@ -35,9 +35,12 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_id, const_levels_vec};
 use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::Env;
-use crate::env_model::{get_inductive_all_names, get_declar_info_ty};
+use crate::env_model::{get_inductive_all_names, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields};
 #[cfg(verus_only)]
-use crate::env_model::{ind_all_ind_names, ind_all_ctor_names};
+use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, env_global_cap};
+#[cfg(verus_only)]
+use crate::expr_model::depth;
+use crate::tc_model::verified_def_eq;
 
 verus! {
 
@@ -655,6 +658,192 @@ pub fn verified_init_k_target<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, is_zero: bool, nu
         },
         None => Some(false),
     }
+}
+
+/// Does some element of `b` share `x`'s `name_id`? Takes `Seq<NamePtr>`
+/// directly (a real slice's OWN view, e.g. `a@`/`b@`) rather than a
+/// separately-constructed `Seq<u64>` -- avoids a real Verus gotcha: two
+/// independently-written `Seq::new(len, |i| ...)` closures over the SAME
+/// slice are NOT automatically recognized as equal (even via `=~=`/`==`)
+/// just because they look identical, since each closure literal gets its
+/// own opaque term -- only a canonical, single-source value like `a@`
+/// itself is safe to reuse across a loop invariant and a function's own
+/// `ensures` without needing to re-bridge them at every use site.
+pub open spec fn contains_name_id(b: Seq<NamePtr>, x: NamePtr) -> bool {
+    Seq::new(b.len(), |j: int| name_id(b[j])).contains(name_id(x))
+}
+
+/// Mirrors `.iter().collect::<HashSet<_>>() == .iter().collect::<HashSet<_>>()`
+/// (`env.rs::InductiveData::aux_data_ck`, e.g. `env.rs:94,98`): same set of
+/// distinct names, order/duplicates irrelevant.
+pub open spec fn id_set_eq_bidirectional(a: Seq<NamePtr>, b: Seq<NamePtr>) -> bool {
+    (forall |i: int| 0 <= i < a.len() ==> #[trigger] contains_name_id(b, a[i]))
+    && (forall |j: int| 0 <= j < b.len() ==> #[trigger] contains_name_id(a, b[j]))
+}
+
+/// Mirrors `.iter().collect::<HashSet<_>>().is_subset(&...)`
+/// (`env.rs::InductiveData::aux_data_ck`, e.g. `env.rs:96`).
+pub open spec fn id_subset(a: Seq<NamePtr>, b: Seq<NamePtr>) -> bool {
+    forall |i: int| 0 <= i < a.len() ==> #[trigger] contains_name_id(b, a[i])
+}
+
+/// Mirrors `.iter().collect::<HashSet<_>>() == .iter().collect::<HashSet<_>>()`
+/// (`env.rs::InductiveData::aux_data_ck`, e.g. `env.rs:94,98`): same set of
+/// distinct names, order/duplicates irrelevant. Reuses `name_in_slice`
+/// (`inductive_model.rs`, already proven) for both membership directions.
+pub fn verified_id_set_eq<'t>(a: &[NamePtr<'t>], b: &[NamePtr<'t>]) -> (result: bool)
+    ensures result == id_set_eq_bidirectional(a@, b@)
+{
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a.len(),
+            forall |k: int| 0 <= k < i ==> #[trigger] contains_name_id(b@, a@[k]),
+        decreases a.len() - i
+    {
+        let ai = a[i];
+        if !name_in_slice(b, ai) {
+            assert(!Seq::new(b@.len(), |k: int| name_id(b@[k])).contains(name_id(ai)));
+            assert(!contains_name_id(b@, ai));
+            assert(!contains_name_id(b@, a@[i as int]));
+            return false;
+        }
+        assert(Seq::new(b@.len(), |k: int| name_id(b@[k])).contains(name_id(ai)));
+        assert(contains_name_id(b@, ai));
+        i += 1;
+    }
+    let mut j: usize = 0;
+    while j < b.len()
+        invariant
+            j <= b.len(),
+            forall |k: int| 0 <= k < a.len() ==> #[trigger] contains_name_id(b@, a@[k]),
+            forall |k: int| 0 <= k < j ==> #[trigger] contains_name_id(a@, b@[k]),
+        decreases b.len() - j
+    {
+        let bj = b[j];
+        if !name_in_slice(a, bj) {
+            assert(!Seq::new(a@.len(), |k: int| name_id(a@[k])).contains(name_id(bj)));
+            assert(!contains_name_id(a@, bj));
+            assert(!contains_name_id(a@, b@[j as int]));
+            return false;
+        }
+        assert(Seq::new(a@.len(), |k: int| name_id(a@[k])).contains(name_id(bj)));
+        assert(contains_name_id(a@, bj));
+        j += 1;
+    }
+    true
+}
+
+/// Mirrors `.iter().collect::<HashSet<_>>().is_subset(&...)`
+/// (`env.rs::InductiveData::aux_data_ck`, e.g. `env.rs:96`).
+pub fn verified_id_subset<'t>(a: &[NamePtr<'t>], b: &[NamePtr<'t>]) -> (result: bool)
+    ensures result == id_subset(a@, b@)
+{
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a.len(),
+            forall |k: int| 0 <= k < i ==> #[trigger] contains_name_id(b@, a@[k]),
+        decreases a.len() - i
+    {
+        let ai = a[i];
+        if !name_in_slice(b, ai) {
+            assert(!Seq::new(b@.len(), |k: int| name_id(b@[k])).contains(name_id(ai)));
+            assert(!contains_name_id(b@, ai));
+            assert(!contains_name_id(b@, a@[i as int]));
+            return false;
+        }
+        assert(Seq::new(b@.len(), |k: int| name_id(b@[k])).contains(name_id(ai)));
+        assert(contains_name_id(b@, ai));
+        i += 1;
+    }
+    true
+}
+
+/// Mirrors `InductiveData::aux_data_ck` (`env.rs:88-100`) itself.
+pub open spec fn aux_data_ck_spec(
+    self_name: NamePtr, self_num_params: u16, self_num_indices: u16, self_is_nested: bool, self_ctor_names: Seq<NamePtr>, self_ind_names: Seq<NamePtr>,
+    temp_name: NamePtr, temp_num_params: u16, temp_num_indices: u16, temp_is_nested: bool, temp_ctor_names: Seq<NamePtr>, temp_ind_names: Seq<NamePtr>,
+) -> bool {
+    self_name == temp_name
+    && self_num_params == temp_num_params
+    && self_num_indices == temp_num_indices
+    && self_is_nested == temp_is_nested
+    && id_set_eq_bidirectional(self_ctor_names, temp_ctor_names)
+    && if temp_is_nested { id_subset(self_ind_names, temp_ind_names) } else { id_set_eq_bidirectional(self_ind_names, temp_ind_names) }
+}
+
+/// Real-code mirror of `InductiveData::aux_data_ck` (`env.rs:88-100`),
+/// proven equal to `aux_data_ck_spec` above.
+pub fn verified_aux_data_ck<'t>(
+    self_name: NamePtr<'t>, self_num_params: u16, self_num_indices: u16, self_is_nested: bool, self_ctor_names: &[NamePtr<'t>], self_ind_names: &[NamePtr<'t>],
+    temp_name: NamePtr<'t>, temp_num_params: u16, temp_num_indices: u16, temp_is_nested: bool, temp_ctor_names: &[NamePtr<'t>], temp_ind_names: &[NamePtr<'t>],
+) -> (result: bool)
+    ensures result == aux_data_ck_spec(
+        self_name, self_num_params, self_num_indices, self_is_nested, self_ctor_names@, self_ind_names@,
+        temp_name, temp_num_params, temp_num_indices, temp_is_nested, temp_ctor_names@, temp_ind_names@,
+    )
+{
+    if !name_ptr_eq(self_name, temp_name) {
+        return false;
+    }
+    if self_num_params != temp_num_params || self_num_indices != temp_num_indices || self_is_nested != temp_is_nested {
+        return false;
+    }
+    if !verified_id_set_eq(self_ctor_names, temp_ctor_names) {
+        return false;
+    }
+    if temp_is_nested {
+        verified_id_subset(self_ind_names, temp_ind_names)
+    } else {
+        verified_id_set_eq(self_ind_names, temp_ind_names)
+    }
+}
+
+/// Real-arena mirror of `assert_nonnested_tys_def_eq` (`inductive.rs:1271-
+/// 1284`): for each name in the block, check the OLD (imported) and TEMP
+/// (freshly-specialized) `InductiveData` agree on their auxiliary fields
+/// (`verified_aux_data_ck`), then that their stored types are `def_eq`
+/// (`verified_def_eq` -- the ENV-FREE, non-delta variant; a deliberately
+/// weaker composition than the real `assert_def_eq`'s full delta-aware
+/// check, an honest, disclosed scope choice rather than threading the much
+/// larger `verified_def_eq_with_delta` parameter list through this purely
+/// self-consistency-checking loop). `ensures true` -- thin, control-flow-
+/// faithful composition, same choice as `verified_is_valid_ind_app`.
+/// Requires `env_global_cap(*env) <= 60000` so the fetched types' already-
+/// established depth bound (`get_old_declar_inductive_fields`/`get_temp_
+/// declar_inductive_fields`'s own ensures) satisfies `verified_def_eq`'s
+/// own precondition -- same "caller supplies a sufficient ceiling" pattern
+/// as everywhere else in this project.
+pub fn verified_assert_nonnested_tys_def_eq<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, all_ind_names: &[NamePtr<'t>], fuel: u32) -> (result: Option<bool>)
+    requires env_global_cap(*env) <= 60000
+    ensures true
+{
+    let mut i: usize = 0;
+    while i < all_ind_names.len()
+        invariant
+            i <= all_ind_names.len(),
+            env_global_cap(*env) <= 60000,
+        decreases all_ind_names.len() - i
+    {
+        let old_fields = get_old_declar_inductive_fields(env, &all_ind_names[i]);
+        let temp_fields = get_temp_declar_inductive_fields(env, &all_ind_names[i]);
+        match (old_fields, temp_fields) {
+            (Some((old_name, old_ty, old_np, old_ni, old_nest, old_ind, old_ctor)), Some((temp_name, temp_ty, temp_np, temp_ni, temp_nest, temp_ind, temp_ctor))) => {
+                if !verified_aux_data_ck(old_name, old_np, old_ni, old_nest, &old_ctor, &old_ind, temp_name, temp_np, temp_ni, temp_nest, &temp_ctor, &temp_ind) {
+                    return Some(false);
+                }
+                match verified_def_eq(ctx, old_ty, temp_ty, fuel) {
+                    Some(true) => {}
+                    Some(false) => return Some(false),
+                    None => return None,
+                }
+            }
+            _ => return None,
+        }
+        i += 1;
+    }
+    Some(true)
 }
 
 }

@@ -158,6 +158,31 @@ pub(crate) fn get_inductive_all_names<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>
     env.get_inductive(n).map(|i| (i.all_ind_names.to_vec(), i.all_ctor_names.to_vec()))
 }
 
+/// `assert_nonnested_tys_def_eq`'s (`inductive.rs:1271-1284`) own lookup:
+/// unlike `get_inductive_all_names` (searches BOTH old+temp via `Env::get_
+/// inductive`), this needs the OLD and NEW (temp-extension) `InductiveData`
+/// SEPARATELY, and the full field set `InductiveData::aux_data_ck`
+/// (`env.rs:88-100`) compares (`name`/`num_params`/`num_indices`/
+/// `is_nested`/both name lists) plus `info.ty` (for the `def_eq` call
+/// afterward) -- `ensures true`, same "plain per-call fact, no keyed map"
+/// convention as `get_recursor_data`, since nothing downstream relates two
+/// separate calls to a shared ground truth.
+#[allow(dead_code)]
+pub(crate) fn get_old_declar_inductive_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
+    match env.get_old_declar(n) {
+        Some(Declar::Inductive(i)) => Some((i.info.name, i.info.ty, i.num_params, i.num_indices, i.is_nested, i.all_ind_names.to_vec(), i.all_ctor_names.to_vec())),
+        _ => None,
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn get_temp_declar_inductive_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
+    match env.get_temp_declar(n) {
+        Some(Declar::Inductive(i)) => Some((i.info.name, i.info.ty, i.num_params, i.num_indices, i.is_nested, i.all_ind_names.to_vec(), i.all_ctor_names.to_vec())),
+        _ => None,
+    }
+}
+
 /// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
 /// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
 /// `get_constructor_num_params` above (same struct, different field).
@@ -416,6 +441,23 @@ pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n
     };
 
 pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<bool>);
+
+/// Same whole-environment depth bound `env_global_wf_ty` already asserts
+/// for `to_model_of_declar_ty`'s (merged old-then-temp) domain, restated
+/// for the OLD-specific and TEMP-specific lookups directly: one real
+/// environment has one real deepest declaration regardless of which view
+/// finds it, so this is the same fact, not a new independent one.
+pub assume_specification<'x, 'a> [get_old_declar_inductive_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
+    ensures match result {
+        Some((_, ty, ..)) => nlbv(expr_to_model(ty)) == 0 && depth(expr_to_model(ty)) <= env_global_cap(*env),
+        None => true,
+    };
+
+pub assume_specification<'x, 'a> [get_temp_declar_inductive_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
+    ensures match result {
+        Some((_, ty, ..)) => nlbv(expr_to_model(ty)) == 0 && depth(expr_to_model(ty)) <= env_global_cap(*env),
+        None => true,
+    };
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
 /// returns a plain `bool`, no struct field extraction required), same
