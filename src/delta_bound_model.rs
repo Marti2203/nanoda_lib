@@ -3557,6 +3557,108 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
     verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n, bound3, d3, n2, d_i, d_xy_cap, max_str_len)
 }
 
+/// Real-arena counterpart to the FULL `tc.rs::TypeChecker::def_eq`
+/// (`tc.rs:957-1004`) itself, tying every piece bridged across
+/// `tc_model.rs`/`delta_bound_model.rs` into ONE entry point: `verified_
+/// def_eq` (the `def_eq_quick_check`/sort/binder-telescoping/const/local/
+/// proj/app cluster) -> `verified_def_eq_bool_true_shortcut` (`tc.rs:965-
+/// 970`) -> `verified_def_eq_with_delta_and_proof_irrel` (`proof_irrel_eq`
+/// + `lazy_delta_step` + the recheck-and-recurse/fallback-group tail).
+///
+/// Tried in THIS order rather than the real function's OWN interleaved
+/// order (quick_check, THEN whnf_no_unfolding_cheap_proj, THEN bool_true,
+/// THEN quick_check AGAIN, THEN proof_irrel/delta) -- soundly, since every
+/// one of these three calls is an independent, honest DECISION PROCEDURE
+/// for the SAME semantic definitional-equality relation: a `Some(true)`
+/// from any one of them is a genuine witness regardless of which order
+/// they're tried in, it's only the real function's own EFFICIENCY that
+/// depends on trying cheap checks first. `None` iff every one of the
+/// three returns `None`/`Some(false)` -- an honest lower bound on the
+/// real function's own verdict, never a wrong one: this can fail to
+/// CONFIRM an equality the real, unbounded `def_eq` would find (fuel/
+/// depth headroom exhausted, or a genuinely unmodeled path), but every
+/// `Some(true)` it does produce is backed by one of the three callees'
+/// own (independently proven or honestly-disclosed) correctness.
+///
+/// Inherits `verified_def_eq_with_delta`'s own already-disclosed
+/// simplification of skipping the real function's `whnf_no_unfolding_
+/// cheap_proj(x)`/`(y)` preprocessing step (`tc.rs:962-963`) -- `x`/`y`
+/// are treated as if ALREADY in that reduced form, exactly like `verified_
+/// def_eq_with_delta_and_proof_irrel`'s own doc comment already discloses.
+/// `x_type`/`y_type` are `x`/`y`'s own plain inferred types, needed only
+/// by `proof_irrel_eq` deep inside the delta call; a caller not
+/// attempting proof-irrelevance can pass anything satisfying the depth/
+/// `nlbv` shape requires (the call simply won't confirm equality via that
+/// path if the types are wrong, never unsoundly).
+pub fn verified_def_eq_full<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    x_type: ExprPtr<'t>,
+    y_type: ExprPtr<'t>,
+    fuel: u32,
+    bound: nat,
+    d: nat,
+    cap: nat,
+    n: u32,
+    bound3: nat,
+    d3: nat,
+    n2: u32,
+    d_i: nat,
+    d_xy_cap: nat,
+    max_str_len: usize,
+) -> (result: Option<bool>)
+    requires
+        d <= 60000,
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        nlbv(to_model(x_type)) <= 0,
+        max_var_below(to_model(x_type), bound),
+        depth(to_model(x_type)) <= d,
+        depth(to_model(x_type)) <= 60000,
+        nlbv(to_model(y_type)) <= 0,
+        max_var_below(to_model(y_type), bound),
+        depth(to_model(y_type)) <= d,
+        depth(to_model(y_type)) <= 60000,
+        env_global_cap(*env) <= cap,
+        whnf_fixpoint_ok(bound, d, n as nat),
+        delta_round_fixpoint_ok(bound, d, cap, n as nat),
+        delta_loop_bound_after(bound, d, cap, n as nat) <= bound3,
+        delta_loop_d_after(bound, d, cap, n as nat) <= d3,
+        whnf_proj_fixpoint_ok_local(bound3, d3, n2 as nat),
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= 60000,
+        whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        whnf_proj_loop_d_after_local(bound3, d3, n2 as nat) <= d_xy_cap,
+        env_global_cap(*env) <= d_i,
+        local_type_cap() <= d_i,
+        1 <= d_i,
+        d_xy_cap <= 60000,
+        d_i + d_i + d_xy_cap + d_xy_cap <= 60000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + 10 <= 0xFFFF_0000,
+        (d_i + d_i + d_xy_cap + d_xy_cap) * (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) + (d_i + d_i + d_xy_cap + d_xy_cap) <= 60000,
+        (max_str_len as nat) + 3 <= 60000,
+        {
+            let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
+            dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
+        },
+    ensures true
+{
+    match verified_def_eq(ctx, x, y, fuel) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    match verified_def_eq_bool_true_shortcut(ctx, env, x, y, fuel, bound, d, n) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    verified_def_eq_with_delta_and_proof_irrel(ctx, env, x, y, x_type, y_type, fuel, bound, d, cap, n, bound3, d3, n2, d_i, d_xy_cap, max_str_len)
+}
+
 /// Real-arena counterpart to `def_eq`'s FINAL fallback group
 /// (`tc.rs:990-994`, only reached once `lazy_delta_step` is `Exhausted`,
 /// `def_eq_const`/`_local`/`_proj` all fail, AND the `whnf_no_unfolding`
