@@ -1992,6 +1992,33 @@ pub fn verified_restore_recursor1<'t, 'p: 't, 'x>(
     }
 }
 
+/// Real-arena mirror of `mk_base_rec_names` (`inductive.rs:146-153`):
+/// for each name in the mutual block, build its own "rec"-suffixed
+/// recursor name (`Lean.Syntax` -> `Lean.Syntax.rec`). Reuses `alloc_
+/// string_rec` (the SAME "rec" string interned throughout this whole
+/// recursor-construction arc) and `TcCtx::str` (already bridged).
+/// Returns a flat `Vec<NamePtr>` rather than the real function's own
+/// `FxHashSet<NamePtr>` -- same "flatten, let the caller build the real
+/// collection" convention `verified_id_set_eq`/`verified_id_subset`
+/// already established for `HashSet`-shaped real code in this file (no
+/// Verus support for `HashSet::insert`/`new` is needed either way).
+/// Pure construction, `ensures true`.
+pub fn verified_mk_base_rec_names<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, all_ind_names: &[NamePtr<'t>]) -> (result: Vec<NamePtr<'t>>)
+    ensures true
+{
+    let rec_str_ptr = alloc_string_rec(ctx);
+    let mut out: Vec<NamePtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < all_ind_names.len()
+        invariant i <= all_ind_names.len(),
+        decreases all_ind_names.len() - i
+    {
+        out.push(ctx.str(all_ind_names[i], rec_str_ptr));
+        i += 1;
+    }
+    out
+}
+
 /// Model of `is_recursive`'s (`inductive.rs:8-32`) inner `while let Pi {..}
 /// = ...` loop: walk a constructor's type telescope one binder at a time,
 /// checking each binder's TYPE (not the binder itself) for a self-
