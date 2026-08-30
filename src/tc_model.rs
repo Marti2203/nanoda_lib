@@ -2542,6 +2542,41 @@ pub proof fn deq_spine_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, fx: ExprSp
     }
 }
 
+/// `deq` at SOME height -- the height-erased, consumer-facing form (the
+/// height index is well-foundedness plumbing, not semantic content).
+/// Non-recursive, so it inlines and both directions (witnessing from any
+/// concrete height, extracting via choose) work freely.
+pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec) -> bool {
+    exists |h: nat| #[trigger] deq(env, x, y, h)
+}
+
+/// The claim `verified_def_eq`'s `Some(true)` can honestly make, one
+/// disjunct per dispatch path's current strength: real `deq` under every
+/// env (ptr-equality, the Sort/Const leaf cluster, and app spines whose
+/// every pairwise verdict was `deq`-expressible -- lifted through
+/// `deq_spine_app_congr`); or the ptr-level local-fvar identity (see
+/// `verified_def_eq_core`'s doc for why that cannot be model-level); or
+/// one of the residual shape-only forms (Proj / applied-spine / Bind)
+/// for the paths whose sub-comparisons happen on INSTANTIATED terms
+/// (`verified_def_eq_binder_step`'s telescoping) or on mixed
+/// local-infected pairs -- exactly `def_eq_witness`'s weak disjuncts,
+/// minus the three `deq` now subsumes. As more paths strengthen,
+/// verdicts migrate into the first disjunct with no signature change.
+pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))
+    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+    || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+        && argsx.len() == argsy.len() && argsx.len() > 0)
+    || (exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
+        && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
+}
+
 /// The `deq`-side claim `verified_def_eq_core` (and, pairwise,
 /// `verified_def_eq_app`) can honestly make about a `Some(true)` verdict
 /// on `(x, y)` -- named as a NON-recursive spec fn (it inlines, so
@@ -3372,16 +3407,31 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures match result {
-        Some(true) => def_eq_witness(x, y),
+        Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
         _ => true,
     }
     decreases fuel
 {
     if expr_ptr_eq(x, y) {
+        proof {
+            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                deq_refl(env, to_model(x), 0);
+                assert(deq(env, to_model(x), to_model(y), 0));
+            }
+        }
         return Some(true);
     }
     match verified_def_eq_core(ctx, x, y, fuel) {
-        Some(true) => return Some(true),
+        Some(true) => {
+            proof {
+                if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) {
+                    assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                        assert(deq(env, to_model(x), to_model(y), fuel as nat));
+                    }
+                }
+            }
+            return Some(true);
+        },
         Some(false) => {},
         None => return None,
     }
@@ -3393,7 +3443,41 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
         Some(false) => {},
         None => return None,
     }
-    verified_def_eq_app(ctx, x, y, fuel)
+    let r = verified_def_eq_app(ctx, x, y, fuel);
+    proof {
+        if r == Some(true) {
+            // If every pairwise verdict (args and head) landed on the
+            // deq disjunct, lift the whole spine through
+            // deq_spine_app_congr; otherwise the spine-shape disjunct
+            // of deq_full_claim already holds from the app ensures.
+            let (fx, fy, argsx, argsy) = choose |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+                to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+                && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+                && argsx.len() == argsy.len() && argsx.len() > 0
+                && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], fuel as nat))
+                && deq_core_claim(fx, fy, fuel as nat);
+            if (forall |i: int| 0 <= i < argsx.len() ==> forall |env: Map<u64, (Seq<u64>, ExprSpec)>| deq(env, to_model(#[trigger] argsx[i]), to_model(argsy[i]), fuel as nat))
+                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(fx), to_model(fy), fuel as nat)) {
+                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                    let ax = args_model_of(argsx);
+                    let ay = args_model_of(argsy);
+                    assert(ax.len() == ay.len());
+                    assert forall |i: int| 0 <= i < ax.len() implies deq(env, #[trigger] ax[i], ay[i], fuel as nat) by {
+                        assert(ax[i] == to_model(argsx[i]));
+                        assert(ay[i] == to_model(argsy[i]));
+                        assert(deq(env, to_model(argsx[i]), to_model(argsy[i]), fuel as nat));
+                    }
+                    assert(deq(env, to_model(fx), to_model(fy), fuel as nat));
+                    deq_spine_app_congr(env, to_model(fx), to_model(fy), ax, ay, fuel as nat);
+                    assert(deq(env, to_model(x), to_model(y), (fuel as nat + ax.len()) as nat));
+                }
+                assert(deq_full_claim(x, y));
+            } else {
+                assert(deq_full_claim(x, y));
+            }
+        }
+    }
+    r
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_binder_aux`'s
