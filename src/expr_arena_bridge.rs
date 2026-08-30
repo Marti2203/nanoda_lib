@@ -449,6 +449,39 @@ pub uninterp spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool;
 pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
 pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 
+/// The arena's local context, viewed at the MODEL level: the (total,
+/// ambient) map from a `Local`-shaped node's model identity
+/// (`expr_id`, i.e. the payload of its `ExprSpec::Free` model) to the
+/// MODEL of its recorded binder type. Same "pure function of the one
+/// ambient arena" convention as `to_model` itself -- and the same
+/// disclosed-trust character: `arena_lctx_local` below is the one
+/// axiom connecting it to the real `local_binder_type_of` field, so
+/// the model-level typing relation (`types_to`, `delta_bound_model.rs`)
+/// can give `Free` leaves a type without reaching back into ptr-land.
+pub uninterp spec fn arena_lctx() -> Map<u32, ExprSpec>;
+
+#[verifier::external_body]
+pub proof fn arena_lctx_local<'a>(ptr: ExprPtr<'a>)
+    requires is_local_shape(ptr)
+    ensures
+        arena_lctx().contains_key(expr_id(ptr)),
+        arena_lctx()[expr_id(ptr)] == to_model(local_binder_type_of(ptr)),
+{
+}
+
+/// Read-side twin of `is_const_shape_model` for `Local`s: a bare
+/// `is_local_shape` fact pins the model to `Free(expr_id(...))` --
+/// the same content `expr_is_local`'s `assume_specification` already
+/// asserts at its own call sites, just callable from the shape flag
+/// alone (needed by `types_to` producers that hold `is_local_shape`
+/// from an earlier accessor rather than a fresh `expr_is_local` call).
+#[verifier::external_body]
+pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
+    requires is_local_shape(ptr)
+    ensures to_model(ptr) == ExprSpec::Free(expr_id(ptr))
+{
+}
+
 /// `env_global_cap`'s counterpart for LOCALS instead of declarations:
 /// "there's a real maximum depth some Local's stored `binder_type` can
 /// reach, even though this model doesn't compute it" -- same "name the

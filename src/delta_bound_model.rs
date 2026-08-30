@@ -1068,6 +1068,170 @@ pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
 /// coincide by `verified_inst`'s own postcondition, so the recursion stays
 /// entirely in terms of real arena pointers, exactly like every other
 /// function in this arc).
+/// THE MODEL-LEVEL TYPING RELATION -- `infer_spec` lifted off the arena:
+/// pure `ExprSpec`-to-`ExprSpec`, with the arena's implicit local-type
+/// lookup replaced by an explicit context map `lctx` (produced as
+/// `arena_lctx()` by real callers, via that bridge's one disclosed
+/// axiom) and the declaration-type / delta environments as explicit
+/// model maps. Mirrors `infer_spec`'s nine disjuncts EXACTLY --
+/// including their honest weaknesses (the `App` case's opaque
+/// telescoped form; the binder cases' loose fresh-variable discipline:
+/// `lid` is existential with no freshness or context-extension
+/// tracking, exactly as `infer_spec` leaves the local ptr loose) -- so
+/// producer functions can emit both relations from the same branch
+/// facts. This is deliberately "what the checker's infer computes,
+/// stated over models", NOT an independent declarative type system;
+/// tightening it into one (freshness, context extension, arg checking
+/// in `App`) is real future metatheory. Its purpose: give `deq` a
+/// model-pure way to classify proofs (both operands typed by
+/// `Prop`-reaching types), unblocking proof irrelevance and
+/// unit-equality as relation cases. Match-based wherever possible; the
+/// three remaining existentials carry explicit arithmetic-free triggers
+/// (per `docs/verus_recursive_exists_note.md`, so the intro direction
+/// producers need actually works).
+pub open spec fn types_to(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    e: ExprSpec,
+    t: ExprSpec,
+    fuel: nat,
+) -> bool
+    decreases fuel
+{
+    ||| (match e {
+        ExprSpec::Free(lid) => lctx.contains_key(lid) && t == lctx[lid],
+        _ => false,
+    })
+    ||| (match (e, t) {
+        (ExprSpec::Sort(l), ExprSpec::Sort(ls)) => ls == LevelSpec::Succ(Box::new(l)),
+        _ => false,
+    })
+    ||| (match e {
+        ExprSpec::Const(cid, clevels) =>
+            dty.contains_key(cid) && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels@, t),
+        _ => false,
+    })
+    ||| (exists |fid: u64, flevels: Vec<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec|
+            #![trigger spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0)]
+            e == spine_app(ExprSpec::Const(fid, flevels), args_model)
+            && t == subst_full(body, args_model, 0))
+    ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
+        ExprSpec::Const(cid, _) => cid == nat_type_id(),
+        _ => false,
+    })
+    ||| (matches!(e, ExprSpec::StringLit(_)) && match t {
+        ExprSpec::Const(cid, _) => cid == string_type_id(),
+        _ => false,
+    })
+    ||| (fuel > 0 && match e {
+        ExprSpec::Let(_ty0, val, body) =>
+            types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, (fuel - 1) as nat),
+        _ => false,
+    })
+    ||| (fuel > 0 && match e {
+        ExprSpec::Bind(binder_type, body) => exists |lid: u32, infd: ExprSpec|
+            #![trigger subst_full(*body, seq![ExprSpec::Free(lid)], 0), abstr_full(infd, seq![lid], 0)]
+            types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat)
+            && t == ExprSpec::Bind(
+                Box::new(abstr_full(*binder_type, seq![lid], 0)),
+                Box::new(abstr_full(infd, seq![lid], 0))),
+        _ => false,
+    })
+    ||| (fuel > 0 && match e {
+        ExprSpec::Bind(binder_type, body) => exists |lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
+            #![trigger subst_full(*body, seq![ExprSpec::Free(lid)], 0), pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)), pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))]
+            types_to(dty, denv, lctx, *binder_type, bt_ty, (fuel - 1) as nat)
+            && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
+            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat)
+            && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
+            && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
+        _ => false,
+    })
+}
+
+pub proof fn types_to_nat_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, fuel: nat)
+    requires
+        matches!(e, ExprSpec::NatLit(_)),
+        matches!(t, ExprSpec::Const(_, _)),
+        (match t { ExprSpec::Const(cid, _) => cid == nat_type_id(), _ => false }),
+    ensures types_to(dty, denv, lctx, e, t, fuel)
+{
+}
+
+pub proof fn types_to_string_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, fuel: nat)
+    requires
+        matches!(e, ExprSpec::StringLit(_)),
+        matches!(t, ExprSpec::Const(_, _)),
+        (match t { ExprSpec::Const(cid, _) => cid == string_type_id(), _ => false }),
+    ensures types_to(dty, denv, lctx, e, t, fuel)
+{
+}
+
+/// Constructor lemmas for `types_to` -- one per disjunct, the intro API
+/// producers use (each is definitional; the two binder cases witness
+/// their existentials, validated to encode correctly per the
+/// recursive-exists note).
+pub proof fn types_to_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, lid: u32, fuel: nat)
+    requires lctx.contains_key(lid)
+    ensures types_to(dty, denv, lctx, ExprSpec::Free(lid), lctx[lid], fuel)
+{
+}
+
+pub proof fn types_to_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, l: LevelSpec, fuel: nat)
+    ensures types_to(dty, denv, lctx, ExprSpec::Sort(l), ExprSpec::Sort(LevelSpec::Succ(Box::new(l))), fuel)
+{
+}
+
+pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, cid: u64, clevels: Vec<LevelSpec>, t: ExprSpec, fuel: nat)
+    requires
+        dty.contains_key(cid),
+        subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels@, t),
+    ensures types_to(dty, denv, lctx, ExprSpec::Const(cid, clevels), t, fuel)
+{
+}
+
+pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, fid: u64, flevels: Vec<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
+    ensures types_to(dty, denv, lctx, spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0), fuel)
+{
+    assert(spine_app(ExprSpec::Const(fid, flevels), args_model) == spine_app(ExprSpec::Const(fid, flevels), args_model)
+        && subst_full(body, args_model, 0) == subst_full(body, args_model, 0));
+}
+
+pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, fuel: nat)
+    requires
+        fuel > 0,
+        types_to(dty, denv, lctx, subst_full(body, seq![val], 0), t, (fuel - 1) as nat),
+    ensures types_to(dty, denv, lctx, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), t, fuel)
+{
+}
+
+pub proof fn types_to_lambda(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, infd: ExprSpec, fuel: nat)
+    requires
+        fuel > 0,
+        types_to(dty, denv, lctx, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat),
+    ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
+        ExprSpec::Bind(Box::new(abstr_full(binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0))), fuel)
+{
+    assert(subst_full(body, seq![ExprSpec::Free(lid)], 0) == subst_full(body, seq![ExprSpec::Free(lid)], 0)
+        && abstr_full(infd, seq![lid], 0) == abstr_full(infd, seq![lid], 0));
+}
+
+pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec, fuel: nat)
+    requires
+        fuel > 0,
+        types_to(dty, denv, lctx, binder_type, bt_ty, (fuel - 1) as nat),
+        pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)),
+        types_to(dty, denv, lctx, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat),
+        pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)),
+    ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
+        ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))), fuel)
+{
+    assert(subst_full(body, seq![ExprSpec::Free(lid)], 0) == subst_full(body, seq![ExprSpec::Free(lid)], 0)
+        && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
+        && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)));
+}
+
 pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool
     decreases fuel
 {
