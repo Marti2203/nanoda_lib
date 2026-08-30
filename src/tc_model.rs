@@ -2504,10 +2504,28 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
 /// are compared as real exec values (native `usize`/`name_ptr_eq`) but
 /// not surfaced in the ensures, since `ExprSpec::Proj` itself erases them
 /// (same scoping choice `pstep_star_proj` already made for `idx`).
+/// The `Some(true)` ensures carries TWO conjuncts: the original four-way
+/// witness-shaped disjunction (kept verbatim so every existing caller,
+/// `verified_def_eq`'s `def_eq_witness` claim included, verifies
+/// unchanged), AND the new `deq`-based claim (additive strengthening):
+/// the Sort and Const verdicts now surface as genuine `deq_leaf` facts
+/// (levels interp-equal under every assignment -- content the old
+/// witness disjunction dropped for `Const`), and a Proj verdict whose
+/// child verdict was `deq`-expressible lifts through `deq_proj_congr`.
+/// The `Local` verdict stays a PTR-LEVEL disjunct by necessity, not
+/// laziness: locals model as `ExprSpec::Free(expr_id(ptr))` -- pointer
+/// identity, not the `FVarId` -- so two ptr-distinct same-fvar locals
+/// have DIFFERENT models and "same fvar id" is not a model-level
+/// equality this claim could state. (Re-keying the local model by
+/// `local_id_of` is the eventual fix; it's a trust-boundary change in
+/// `expr_arena_bridge.rs` out of scope here.) A Proj whose children hit
+/// that local case falls back to the shape-only Proj disjunct for the
+/// same reason. `fuel` doubles as the `deq` height: each Proj recursion
+/// level costs one congruence layer.
 pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     ensures match result {
         Some(true) =>
-            (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+            ((exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
                 to_model(x) == ExprSpec::Sort(level_to_model(lx))
                 && to_model(y) == ExprSpec::Sort(level_to_model(ly))
                 && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
@@ -2515,17 +2533,46 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
             || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
             || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
                 to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy)))),
+                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy)))))
+            && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat))
+            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))),
         _ => true,
     }
     decreases fuel
 {
     if let Some(r) = verified_def_eq_sort(ctx, x, y, fuel) {
         if r {
+            proof {
+                assert(deq_leaf(to_model(x), to_model(y)));
+                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
+                    deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
+                }
+            }
             return Some(true);
         }
     }
     if verified_def_eq_const(ctx, x, y, fuel) {
+        proof {
+            is_const_shape_model(x);
+            is_const_shape_model(y);
+            const_levels_vec_model(x);
+            const_levels_vec_model(y);
+            assert(to_model(x) == ExprSpec::Const(const_id(x), const_levels_vec(x)));
+            assert(to_model(y) == ExprSpec::Const(const_id(y), const_levels_vec(y)));
+            assert(const_levels_vec(x)@.len() == const_levels_vec(y)@.len());
+            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < const_levels_vec(x)@.len() implies #[trigger] interp(const_levels_vec(x)@[i], rho) == interp(const_levels_vec(y)@[i], rho) by {
+                assert(const_levels_vec(x)@[i] == to_model_of_levels(const_levels_of(x))[i]);
+                assert(const_levels_vec(y)@[i] == to_model_of_levels(const_levels_of(y))[i]);
+                assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho));
+            }
+            assert(deq_leaf(to_model(x), to_model(y)));
+            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
+                deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
+            }
+        }
         return Some(true);
     }
     let x_el = ctx.read_expr(x);
@@ -2552,6 +2599,17 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
                     return None;
                 }
                 if let Some(true) = verified_def_eq_core(ctx, x_struct, y_struct, fuel - 1) {
+                    proof {
+                        assert(to_model(x) == ExprSpec::Proj(Box::new(to_model(x_struct))));
+                        assert(to_model(y) == ExprSpec::Proj(Box::new(to_model(y_struct))));
+                        if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat) {
+                            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
+                                assert(deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat));
+                                deq_proj_congr(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat);
+                                assert((fuel - 1) as nat + 1 == fuel as nat);
+                            }
+                        }
+                    }
                     return Some(true);
                 }
             }
