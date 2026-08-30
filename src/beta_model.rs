@@ -3365,6 +3365,122 @@ pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
     assert(pstep_star(env, a, w) && pstep_star(env, c, w));
 }
 
+/// First ladder level for the single-middle-step join: dominates the
+/// one-deep Takahashi cap values of both middle-chain elements (and the
+/// link level itself, for the monos). Computed DEFINITIONALLY from the
+/// concrete data -- this and `join2_m`/`join2_d` below are what make
+/// `defeq_trans_single_middle`'s `conf_ok` obligation close by
+/// construction, demonstrating the confluence requires are genuinely
+/// satisfiable (the check the original strip formulation failed).
+pub open spec fn join1_m(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let t = if tak_m(bound, mlink, dlink, b) >= tak_m(bound, mlink, dlink, z) { tak_m(bound, mlink, dlink, b) } else { tak_m(bound, mlink, dlink, z) };
+    if mlink >= t { mlink } else { t }
+}
+
+pub open spec fn join1_d(bound: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let t = if tak_d(dlink, b) >= tak_d(dlink, z) { tak_d(dlink, b) } else { tak_d(dlink, z) };
+    if dlink >= t { dlink } else { t }
+}
+
+/// Second ladder level: dominates the two-deep Takahashi values (tak at
+/// the first level) of both middle-chain elements, and the first level.
+pub open spec fn join2_m(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let m1 = join1_m(bound, mlink, dlink, b, z);
+    let d1 = join1_d(bound, dlink, b, z);
+    let t = if tak_m(bound, m1, d1, b) >= tak_m(bound, m1, d1, z) { tak_m(bound, m1, d1, b) } else { tak_m(bound, m1, d1, z) };
+    if m1 >= t { m1 } else { t }
+}
+
+pub open spec fn join2_d(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let m1 = join1_m(bound, mlink, dlink, b, z);
+    let d1 = join1_d(bound, dlink, b, z);
+    let t = if tak_d(d1, b) >= tak_d(d1, z) { tak_d(d1, b) } else { tak_d(d1, z) };
+    if d1 >= t { d1 } else { t }
+}
+
+/// `defeq` transitivity for the SINGLE-MIDDLE-STEP case, with the cap
+/// ladder computed definitionally from the concrete data: `a -->* z1`,
+/// `c -->* z2` plain, and `b ==> z1`, `b ==> z2` each ONE certified
+/// step. The only numeric obligations left to the caller are the
+/// takahashi overflow ceilings at the two computed levels -- everything
+/// else (`conf_ok`'s entire ladder) closes by construction. This is
+/// both the usable corollary for producers holding two single-step
+/// whnf facts out of the same term AND the satisfiability witness for
+/// the general machinery's requires (the discipline adopted after the
+/// original strip formulation turned out true-but-vacuous).
+#[verifier::spinoff_prover]
+pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_star(env, a, z1),
+        pstep_star(env, c, z2),
+        pstep_d(env, b, z1, mlink, dlink),
+        pstep_d(env, b, z2, mlink, dlink),
+        max_var_below(b, bound),
+        max_var_below(z2, bound),
+        string_lits_ok(b, 0),
+        string_lits_ok(z2, 0),
+        bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, b) + 4 * tak_d(dlink, b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
+        bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, z2) + 4 * tak_d(dlink, z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
+        bound + join1_m(bound, mlink, dlink, b, z2) + 6 * join1_d(bound, dlink, b, z2) + tak_m(bound, join1_m(bound, mlink, dlink, b, z2), join1_d(bound, dlink, b, z2), b) + 4 * tak_d(join1_d(bound, dlink, b, z2), b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
+        bound + join1_m(bound, mlink, dlink, b, z2) + 6 * join1_d(bound, dlink, b, z2) + tak_m(bound, join1_m(bound, mlink, dlink, b, z2), join1_d(bound, dlink, b, z2), z2) + 4 * tak_d(join1_d(bound, dlink, b, z2), z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
+    ensures defeq(env, a, c)
+{
+    let qch = seq![b, z1];
+    let rch = seq![b, z2];
+    let m1 = join1_m(bound, mlink, dlink, b, z2);
+    let d1 = join1_d(bound, dlink, b, z2);
+    let m2 = join2_m(bound, mlink, dlink, b, z2);
+    let d2 = join2_d(bound, mlink, dlink, b, z2);
+    let ms = seq![m1, m2];
+    let ds = seq![d1, d2];
+    assert(qch.len() == 2 && rch.len() == 2);
+    assert(qch[0] == b && qch[1] == z1);
+    assert(rch[0] == b && rch[1] == z2);
+    assert forall |i: int| 0 <= i < qch.len() - 1 implies pstep_d(env, #[trigger] qch[i], qch[i + 1], mlink, dlink) by {
+        assert(i == 0);
+    }
+    assert forall |i: int| 0 <= i < rch.len() - 1 implies pstep_d(env, #[trigger] rch[i], rch[i + 1], mlink, dlink) by {
+        assert(i == 0);
+    }
+    // conf_ok closes by construction of the ladder.
+    let qch2 = qch.subrange(1, 2);
+    let ms2 = ms.subrange(2, 2);
+    let ds2 = ds.subrange(2, 2);
+    assert(qch2.len() == 1);
+    assert(ms2.len() == 0 && ds2.len() == 0);
+    assert(conf_ok(bound, qch2, conf_zch(rch, qch[1]), m2, d2, ms2, ds2));
+    assert forall |i: int| 0 <= i < rch.len() implies max_var_below(#[trigger] rch[i], bound) by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies string_lits_ok(#[trigger] rch[i], 0) by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies tak_m(bound, mlink, dlink, #[trigger] rch[i]) <= m1 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies tak_d(dlink, #[trigger] rch[i]) <= d1 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies tak_m(bound, m1, d1, #[trigger] rch[i]) <= m2 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies tak_d(d1, #[trigger] rch[i]) <= d2 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, #[trigger] rch[i]) + 4 * tak_d(dlink, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert forall |i: int| 0 <= i < rch.len() implies bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] rch[i]) + 4 * tak_d(d1, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
+        if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
+    }
+    assert(mlink <= m1 && m1 <= m2 && dlink <= d1 && d1 <= d2);
+    assert(conf_ok(bound, qch, rch, mlink, dlink, ms, ds));
+    assert(qch[qch.len() - 1] == z1);
+    assert(rch[rch.len() - 1] == z2);
+    defeq_trans_certified(env, bound, a, c, qch, rch, mlink, dlink, ms, ds);
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
