@@ -408,6 +408,106 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
     }
 }
 
+/// Takahashi's "complete development": contracts EVERY redex in `e`
+/// simultaneously (matching exactly which shapes `pstep` itself gives a
+/// real reduction rule for -- `App` headed by `Bind` contracts; `Let`
+/// always zeta-contracts; `NatLit`/`StringLit` unfold to their one fixed
+/// target; `Const` is left alone here, matching this whole file's
+/// `env == Map::empty()` convention elsewhere -- delta is out of scope).
+/// The standard auxiliary function behind Takahashi's proof of the
+/// diamond property for parallel reduction (see `pstep_complete_refl`'s
+/// own doc comment for why this sidesteps this file's earlier
+/// size-tracking difficulties): a single-step reduct of `e` ALWAYS
+/// reduces further to `complete(e)`, which turns the diamond property
+/// into "apply that fact twice," no case-by-case reconciliation of two
+/// independently-chosen reducts needed.
+pub open spec fn complete(e: ExprSpec) -> ExprSpec
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => e,
+        ExprSpec::NatLit(n) => if n.0@ == 0 {
+            const_expr_no_levels(nat_zero_id())
+        } else {
+            ExprSpec::App(
+                Box::new(const_expr_no_levels(nat_succ_id())),
+                Box::new(ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)))),
+            )
+        },
+        ExprSpec::StringLit(len) => string_lit_expand_model(len.0@),
+        ExprSpec::App(f, a) => match *f {
+            ExprSpec::Bind(_, body) => subst1(complete(*body), complete(*a)),
+            _ => ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))),
+        },
+        ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))),
+        ExprSpec::Let(t, v, b) => subst1(complete(*b), complete(*v)),
+        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(complete(*s))),
+    }
+}
+
+/// The foundational Takahashi lemma, and it needs -- confirmed by direct
+/// case analysis, not assumed -- ZERO numeric side-conditions (no
+/// `size`/`depth`/`max_var_below`/`0xFFFF_0000` anywhere): every real
+/// term `pstep`-reduces to its own complete development, `env ==
+/// Map::empty()` aside (delta out of scope, matching `pstep_diamond`'s
+/// own restriction). Every case is a DIRECT application of one of
+/// `pstep`'s own disjuncts using the two recursive IH facts as the
+/// disjunct's own existential witnesses -- e.g. the beta case needs
+/// `pstep(body, complete(body))` and `pstep(a, complete(a))` (both from
+/// the IH) to instantiate `pstep`'s own beta rule with EXACTLY
+/// `complete(e)`'s own definition (`subst1(complete(body),
+/// complete(a))`) as the witness -- no substitution-COMMUTATION identity
+/// is needed here at all (unlike `pstep_subst1`'s own role), since we
+/// are not relating `complete(e)` to some OTHER, already-existing
+/// reduct -- `complete(e)` IS the constructed witness, definitionally.
+/// This is the one piece of this whole investigation that turned out to
+/// be completely free; the full diamond property (relating an ARBITRARY
+/// second reduct to `complete(e)`, not just `e` to its own development)
+/// still needs `pstep_subst1`'s substitutivity machinery for its beta
+/// case, which is where this file's real size-tracking difficulty lives
+/// -- see `feedback_defeq_witness_vs_pstep_star`'s own running account.
+pub proof fn pstep_complete_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
+    requires env == Map::<u64, (Seq<u64>, ExprSpec)>::empty()
+    ensures pstep(env, e, complete(e))
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) => {}
+        ExprSpec::Const(id, _levels) => {
+            assert(!env.contains_key(id));
+        }
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {}
+        ExprSpec::App(f, a) => match *f {
+            ExprSpec::Bind(_, body) => {
+                pstep_complete_refl(env, *body);
+                pstep_complete_refl(env, *a);
+                assert(pstep(env, *body, complete(*body)));
+                assert(pstep(env, *a, complete(*a)));
+                assert(complete(e) == subst1(complete(*body), complete(*a)));
+            }
+            _ => {
+                pstep_complete_refl(env, *f);
+                pstep_complete_refl(env, *a);
+                assert(pstep(env, *f, complete(*f)));
+                assert(pstep(env, *a, complete(*a)));
+                assert(complete(e) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+            }
+        },
+        ExprSpec::Bind(t, b) => {
+            pstep_complete_refl(env, *t);
+            pstep_complete_refl(env, *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            pstep_complete_refl(env, *v);
+            pstep_complete_refl(env, *b);
+            assert(complete(e) == subst1(complete(*b), complete(*v)));
+        }
+        ExprSpec::Proj(s) => {
+            pstep_complete_refl(env, *s);
+        }
+    }
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
