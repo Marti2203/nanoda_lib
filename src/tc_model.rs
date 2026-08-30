@@ -89,7 +89,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::nat_zero_arity_is_zero;
 #[cfg(verus_only)]
@@ -2699,12 +2699,17 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// expressible). Neither alone is universal: `defeq` can't see universe-
 /// level-equivalence-without-syntactic-equality (`def_eq_const`'s own
 /// case), and `def_eq_witness` can't see delta/NatLit/iota unfolding.
-/// This is genuinely just their union, NOT a congruence closure -- it
-/// does NOT (yet) know that `full_def_eq` on two sub-terms implies
-/// `full_def_eq` on the terms built from them (e.g. two `App`s sharing a
-/// function but with `full_def_eq`-related arguments); building that
-/// closure is real, substantial future work (a proper inductive
-/// definitional-equality relation, not a flat disjunction).
+/// This is genuinely just their union, NOT a congruence closure. On the
+/// `defeq` DISJUNCT, congruence and transitivity are now proven at the
+/// model level (`defeq_app_congr`/`defeq_bind_congr`/`defeq_let_congr`/
+/// `defeq_proj_congr`, and `defeq_trans_certified` from the certified-
+/// confluence arc, all in `beta_model.rs`) -- so `full_def_eq` facts
+/// whose sub-facts are reduction-joinability DO lift structurally. What
+/// remains genuinely open is the `def_eq_witness` disjunct: its leaf
+/// cases are not reduction facts, so a witness-side sub-fact cannot feed
+/// the `defeq` congruences, and a proper inductive definitional-equality
+/// relation (closing BOTH disjuncts under congruence/transitivity at
+/// once) is still real, substantial future work.
 pub open spec fn full_def_eq<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
     defeq(env, to_model(x), to_model(y)) || def_eq_witness(x, y)
 }
@@ -2730,6 +2735,488 @@ pub proof fn full_def_eq_of_def_eq_witness<'t>(env: Map<u64, (Seq<u64>, ExprSpec
     requires def_eq_witness(x, y)
     ensures full_def_eq(env, x, y)
 {
+}
+
+/// The NON-REDUCTION leaf equalities of definitional equality: two
+/// `Sort`s whose levels agree under every level-variable assignment, or
+/// two `Const`s with the same id and pointwise interp-equal level lists.
+/// These are exactly the equalities `defeq` (reduction joinability) can
+/// never see -- levels don't reduce -- and, unlike `def_eq_witness`'s
+/// leaf disjuncts, they are stated over the MODEL (`ExprSpec`) and carry
+/// the REAL semantic content (`def_eq_witness`'s `Const` case only
+/// compares ids, its `Sort` case only relates ptr-shaped occurrences).
+/// `Free`/`Var`/literal leaf equality needs no case here: syntactic
+/// equality is already `defeq` via reflexivity.
+pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
+    match (x, y) {
+        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) =>
+            forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(l2, rho),
+        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) =>
+            id1 == id2 && ls1@.len() == ls2@.len()
+            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1@.len() ==> #[trigger] interp(ls1@[i], rho) == interp(ls2@[i], rho)),
+        _ => false,
+    }
+}
+
+/// ONE PARALLEL STEP of the inductive definitional-equality relation:
+/// the congruence closure of (reduction joinability `defeq` ∪ the leaf
+/// level equalities `deq_leaf`), height-indexed for well-foundedness --
+/// NO transitivity here. `deq_c(env, x, y, 0)` degenerates to
+/// `defeq || deq_leaf`; each extra height unit allows one more layer of
+/// congruence (at every `ExprSpec` shape with sub-positions, mirroring
+/// `pstep`'s own congruence arms). Transitivity lives one level up in
+/// `deq` as EXPLICIT CHAINS of these steps -- deliberately the exact
+/// architecture `pstep`/`pstep_chain_valid`/`pstep_star` already use,
+/// and for the same encoding reason: an inlined transitivity
+/// existential inside a RECURSIVE spec fn is unusable (Verus cannot
+/// bridge separately-written alpha-equivalent quantifiers, and a
+/// recursive fn's body is fuel-guarded rather than inlined -- found
+/// empirically via probe lemmas after both the direct and the
+/// named-helper formulations failed), while a chain existential in a
+/// NON-recursive wrapper spec fn inlines and works, as the whole
+/// `pstep_star` lemma family demonstrates. A classic normalization
+/// argument says chains of congruence steps lose no generality vs.
+/// arbitrarily interleaved congruence/transitivity derivations: a
+/// congruence node OVER a transitive composition flattens into a chain
+/// of whole-term congruence steps (e.g. `App(f1, a) ~ App(f2, a) ~
+/// App(f3, a)` for `f1 ~ f2 ~ f3`).
+pub open spec fn deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
+    decreases h
+{
+    ||| defeq(env, x, y)
+    ||| deq_leaf(x, y)
+    ||| (h > 0 && match (x, y) {
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
+            deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
+            deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
+            deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
+        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) =>
+            deq_c(env, *s1, *s2, (h - 1) as nat),
+        _ => false,
+    })
+}
+
+/// A chain of `deq_c` steps at height `h` -- `pstep_chain_valid`'s
+/// direct analogue.
+pub open spec fn deq_chain_valid(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, h: nat) -> bool {
+    forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 ==> deq_c(env, ch[i], ch[i + 1], h)
+}
+
+/// THE INDUCTIVE DEFINITIONAL-EQUALITY RELATION -- the "proper
+/// inductive definitional-equality relation, not a flat disjunction"
+/// that `full_def_eq`'s doc comment names as the honest target:
+/// chain-witnessed transitive closure of `deq_c` (see its doc for why
+/// chains rather than a transitivity constructor). Reflexive (length-1
+/// chain), symmetric (`deq_symm`, chain reversal + per-link `deq_c_symm`),
+/// transitive (`deq_trans`, chain concatenation -- free, exactly like
+/// `pstep_star_trans`), congruent (`deq_app_congr` etc.), and subsumes
+/// both `defeq` and the leaf equalities (length-2 chains).
+pub open spec fn deq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool {
+    exists |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h)
+}
+
+/// `deq_c` is monotone in its height index.
+pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
+    requires deq_c(env, x, y, h1), h1 <= h2
+    ensures deq_c(env, x, y, h2)
+    decreases h1
+{
+    if defeq(env, x, y) || deq_leaf(x, y) {
+    } else {
+        assert(h1 > 0);
+        match (x, y) {
+            (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
+                assert(deq_c(env, *f1, *f2, (h1 - 1) as nat) && deq_c(env, *a1, *a2, (h1 - 1) as nat));
+                deq_c_mono(env, *f1, *f2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_c_mono(env, *a1, *a2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_c(env, *f1, *f2, (h2 - 1) as nat) && deq_c(env, *a1, *a2, (h2 - 1) as nat));
+                assert(deq_c(env, x, y, h2));
+            }
+            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+                assert(deq_c(env, *t1, *t2, (h1 - 1) as nat) && deq_c(env, *b1, *b2, (h1 - 1) as nat));
+                deq_c_mono(env, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_c_mono(env, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
+                assert(deq_c(env, x, y, h2));
+            }
+            (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
+                assert(deq_c(env, *t1, *t2, (h1 - 1) as nat) && deq_c(env, *v1, *v2, (h1 - 1) as nat) && deq_c(env, *b1, *b2, (h1 - 1) as nat));
+                deq_c_mono(env, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_c_mono(env, *v1, *v2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_c_mono(env, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(env, *v1, *v2, (h2 - 1) as nat) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
+                assert(deq_c(env, x, y, h2));
+            }
+            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+                assert(deq_c(env, *s1, *s2, (h1 - 1) as nat));
+                deq_c_mono(env, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_c(env, *s1, *s2, (h2 - 1) as nat));
+                assert(deq_c(env, x, y, h2));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
+/// `deq_c` is symmetric, height-preserving: `defeq` by its own lemma,
+/// `deq_leaf` by the symmetry of its interp equalities, congruence by
+/// the IH on sub-derivations.
+pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq_c(env, x, y, h)
+    ensures deq_c(env, y, x, h)
+    decreases h
+{
+    if defeq(env, x, y) {
+        defeq_symm(env, x, y);
+    } else if deq_leaf(x, y) {
+        assert(deq_leaf(y, x));
+    } else {
+        assert(h > 0);
+        match (x, y) {
+            (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
+                assert(deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat));
+                deq_c_symm(env, *f1, *f2, (h - 1) as nat);
+                deq_c_symm(env, *a1, *a2, (h - 1) as nat);
+                assert(h > 0 && deq_c(env, *f2, *f1, (h - 1) as nat) && deq_c(env, *a2, *a1, (h - 1) as nat));
+                assert(deq_c(env, y, x, h));
+            }
+            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+                assert(deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat));
+                deq_c_symm(env, *t1, *t2, (h - 1) as nat);
+                deq_c_symm(env, *b1, *b2, (h - 1) as nat);
+                assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(env, *b2, *b1, (h - 1) as nat));
+                assert(deq_c(env, y, x, h));
+            }
+            (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
+                assert(deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat));
+                deq_c_symm(env, *t1, *t2, (h - 1) as nat);
+                deq_c_symm(env, *v1, *v2, (h - 1) as nat);
+                deq_c_symm(env, *b1, *b2, (h - 1) as nat);
+                assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(env, *v2, *v1, (h - 1) as nat) && deq_c(env, *b2, *b1, (h - 1) as nat));
+                assert(deq_c(env, y, x, h));
+            }
+            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+                assert(deq_c(env, *s1, *s2, (h - 1) as nat));
+                deq_c_symm(env, *s1, *s2, (h - 1) as nat);
+                assert(h > 0 && deq_c(env, *s2, *s1, (h - 1) as nat));
+                assert(deq_c(env, y, x, h));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
+/// A single `deq_c` step is a `deq` fact: the length-2 chain.
+pub proof fn deq_of_deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq_c(env, x, y, h)
+    ensures deq(env, x, y, h)
+{
+    let ch = seq![x, y];
+    assert(ch.len() == 2);
+    assert(ch[0] == x);
+    assert(ch[ch.len() - 1] == y);
+    assert(deq_chain_valid(env, ch, h)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h) by {
+            assert(i == 0);
+        }
+    }
+}
+
+/// Constructor lemma: joinability is `deq` at any height.
+pub proof fn deq_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires defeq(env, x, y)
+    ensures deq(env, x, y, h)
+{
+    deq_of_deq_c(env, x, y, h);
+}
+
+/// Constructor lemma: a leaf level-equality is `deq` at any height.
+pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq_leaf(x, y)
+    ensures deq(env, x, y, h)
+{
+    deq_of_deq_c(env, x, y, h);
+}
+
+/// `deq` is reflexive at every height: the length-1 chain.
+pub proof fn deq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, h: nat)
+    ensures deq(env, x, x, h)
+{
+    let ch = seq![x];
+    assert(ch.len() == 1);
+    assert(ch[0] == x);
+    assert(ch[ch.len() - 1] == x);
+    assert(deq_chain_valid(env, ch, h));
+}
+
+/// `deq` is monotone in its height index: per-link `deq_c_mono` over
+/// the witness chain.
+pub proof fn deq_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
+    requires deq(env, x, y, h1), h1 <= h2
+    ensures deq(env, x, y, h2)
+{
+    let ch = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h1);
+    assert(deq_chain_valid(env, ch, h2)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h2) by {
+            assert(deq_c(env, ch[i], ch[i + 1], h1));
+            deq_c_mono(env, ch[i], ch[i + 1], h1, h2);
+        }
+    }
+}
+
+/// `deq` is symmetric, height-preserving: reverse the witness chain and
+/// flip each link with `deq_c_symm`.
+pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq(env, x, y, h)
+    ensures deq(env, y, x, h)
+{
+    let ch = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
+    let n = ch.len();
+    let rev = Seq::new(n, |i: int| ch[n - 1 - i]);
+    assert(rev.len() == n);
+    assert(rev[0] == ch[n - 1]);
+    assert(rev[rev.len() - 1] == ch[0]);
+    assert(deq_chain_valid(env, rev, h)) by {
+        assert forall |i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_c(env, rev[i], rev[i + 1], h) by {
+            assert(rev[i] == ch[n - 1 - i]);
+            assert(rev[i + 1] == ch[n - 2 - i]);
+            assert(deq_c(env, ch[n - 2 - i], ch[n - 1 - i], h));
+            deq_c_symm(env, ch[n - 2 - i], ch[n - 1 - i], h);
+        }
+    }
+}
+
+/// `deq` is transitive -- for FREE, by chain concatenation, exactly like
+/// `pstep_star_trans` (and unlike every attempt to keep transitivity as
+/// a constructor inside a recursive relation, see `deq_c`'s doc).
+pub proof fn deq_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, z: ExprSpec, h: nat)
+    requires deq(env, x, y, h), deq(env, y, z, h)
+    ensures deq(env, x, z, h)
+{
+    let ch1 = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
+    let ch2 = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == y && ch[ch.len() - 1] == z && deq_chain_valid(env, ch, h);
+    let n1 = ch1.len();
+    let ch2_tail = ch2.subrange(1, ch2.len() as int);
+    let ch = ch1 + ch2_tail;
+    assert(ch.len() == n1 + ch2.len() - 1);
+    assert(ch[0] == ch1[0]);
+    if ch2.len() == 1 {
+        assert(ch2_tail =~= Seq::<ExprSpec>::empty());
+        assert(ch =~= ch1);
+        assert(ch[ch.len() - 1] == y);
+        assert(y == z);
+    } else {
+        assert(ch[ch.len() - 1] == ch2_tail[ch2_tail.len() - 1]);
+        assert(ch2_tail[ch2_tail.len() - 1] == ch2[ch2.len() - 1]);
+    }
+    assert(deq_chain_valid(env, ch, h)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h) by {
+            if i < n1 - 1 {
+                assert(ch[i] == ch1[i]);
+                assert(ch[i + 1] == ch1[i + 1]);
+                assert(deq_c(env, ch1[i], ch1[i + 1], h));
+            } else if i == n1 - 1 {
+                assert(ch[i] == ch1[n1 - 1]);
+                assert(ch1[n1 - 1] == y);
+                assert(ch[i + 1] == ch2_tail[0]);
+                assert(ch2_tail[0] == ch2[1]);
+                assert(deq_c(env, ch2[0], ch2[1], h));
+                assert(ch2[0] == y);
+            } else {
+                assert(ch[i] == ch2_tail[i - n1]);
+                assert(ch[i + 1] == ch2_tail[i + 1 - n1]);
+                assert(ch2_tail[i - n1] == ch2[i - n1 + 1]);
+                assert(ch2_tail[i + 1 - n1] == ch2[i + 2 - n1]);
+                assert(deq_c(env, ch2[i - n1 + 1], ch2[i - n1 + 2], h));
+            }
+        }
+    }
+}
+
+/// `deq` congruence at `App`, both positions varying: map `App(-, a1)`
+/// over the function-side chain, `App(f2, -)` over the argument-side
+/// chain, and concatenate -- each mapped link is a `deq_c` congruence
+/// step one height up (the fixed side rides along via `deq_c`
+/// reflexivity through `defeq`).
+pub proof fn deq_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec, h: nat)
+    requires deq(env, f1, f2, h), deq(env, a1, a2, h)
+    ensures deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1)
+{
+    let chf = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == f1 && ch[ch.len() - 1] == f2 && deq_chain_valid(env, ch, h);
+    let cha = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == a1 && ch[ch.len() - 1] == a2 && deq_chain_valid(env, ch, h);
+    let mf = Seq::new(chf.len(), |i: int| ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
+    let ma = Seq::new(cha.len(), |i: int| ExprSpec::App(Box::new(f2), Box::new(cha[i])));
+    assert(deq_chain_valid(env, mf, h + 1)) by {
+        assert forall |i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_c(env, mf[i], mf[i + 1], h + 1) by {
+            assert(deq_c(env, chf[i], chf[i + 1], h));
+            defeq_refl(env, a1);
+            assert(deq_c(env, a1, a1, h));
+            assert(mf[i] == ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
+            assert(mf[i + 1] == ExprSpec::App(Box::new(chf[i + 1]), Box::new(a1)));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mf[i], mf[i + 1], h + 1));
+        }
+    }
+    assert(deq_chain_valid(env, ma, h + 1)) by {
+        assert forall |i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_c(env, ma[i], ma[i + 1], h + 1) by {
+            assert(deq_c(env, cha[i], cha[i + 1], h));
+            defeq_refl(env, f2);
+            assert(deq_c(env, f2, f2, h));
+            assert(ma[i] == ExprSpec::App(Box::new(f2), Box::new(cha[i])));
+            assert(ma[i + 1] == ExprSpec::App(Box::new(f2), Box::new(cha[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, ma[i], ma[i + 1], h + 1));
+        }
+    }
+    assert(mf[0] == ExprSpec::App(Box::new(f1), Box::new(a1)));
+    assert(mf[mf.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a1)));
+    assert(ma[0] == ExprSpec::App(Box::new(f2), Box::new(a1)));
+    assert(ma[ma.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a2)));
+    assert(deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), h + 1));
+    assert(deq(env, ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1));
+    deq_trans(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1);
+}
+
+/// `deq` congruence at `Bind`, both positions varying (same two-segment
+/// chain-mapping as `deq_app_congr`).
+pub proof fn deq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, h: nat)
+    requires deq(env, t1, t2, h), deq(env, b1, b2, h)
+    ensures deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+{
+    let cht = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
+    let chb = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_chain_valid(env, ch, h);
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
+    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+    assert(deq_chain_valid(env, mt, h + 1)) by {
+        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(env, mt[i], mt[i + 1], h + 1) by {
+            assert(deq_c(env, cht[i], cht[i + 1], h));
+            defeq_refl(env, b1);
+            assert(deq_c(env, b1, b1, h));
+            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mt[i], mt[i + 1], h + 1));
+        }
+    }
+    assert(deq_chain_valid(env, mb, h + 1)) by {
+        assert forall |i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_c(env, mb[i], mb[i + 1], h + 1) by {
+            assert(deq_c(env, chb[i], chb[i + 1], h));
+            defeq_refl(env, t2);
+            assert(deq_c(env, t2, t2, h));
+            assert(mb[i] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+            assert(mb[i + 1] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mb[i], mb[i + 1], h + 1));
+        }
+    }
+    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
+    assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
+    assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
+    assert(deq(env, ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
+    deq_trans(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1);
+}
+
+/// `deq` congruence at `Let`, all three positions varying (three mapped
+/// segments glued by `deq_trans`).
+pub proof fn deq_let_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, v1: ExprSpec, v2: ExprSpec, b1: ExprSpec, b2: ExprSpec, h: nat)
+    requires deq(env, t1, t2, h), deq(env, v1, v2, h), deq(env, b1, b2, h)
+    ensures deq(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), h + 1)
+{
+    let cht = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
+    let chv = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == v1 && ch[ch.len() - 1] == v2 && deq_chain_valid(env, ch, h);
+    let chb = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_chain_valid(env, ch, h);
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Let(Box::new(cht[i]), Box::new(v1), Box::new(b1)));
+    let mv = Seq::new(chv.len(), |i: int| ExprSpec::Let(Box::new(t2), Box::new(chv[i]), Box::new(b1)));
+    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(chb[i])));
+    assert(deq_chain_valid(env, mt, h + 1)) by {
+        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(env, mt[i], mt[i + 1], h + 1) by {
+            assert(deq_c(env, cht[i], cht[i + 1], h));
+            defeq_refl(env, v1);
+            defeq_refl(env, b1);
+            assert(deq_c(env, v1, v1, h) && deq_c(env, b1, b1, h));
+            assert(mt[i] == ExprSpec::Let(Box::new(cht[i]), Box::new(v1), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Let(Box::new(cht[i + 1]), Box::new(v1), Box::new(b1)));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mt[i], mt[i + 1], h + 1));
+        }
+    }
+    assert(deq_chain_valid(env, mv, h + 1)) by {
+        assert forall |i: int| #![trigger mv[i]] 0 <= i < mv.len() - 1 implies deq_c(env, mv[i], mv[i + 1], h + 1) by {
+            assert(deq_c(env, chv[i], chv[i + 1], h));
+            defeq_refl(env, t2);
+            defeq_refl(env, b1);
+            assert(deq_c(env, t2, t2, h) && deq_c(env, b1, b1, h));
+            assert(mv[i] == ExprSpec::Let(Box::new(t2), Box::new(chv[i]), Box::new(b1)));
+            assert(mv[i + 1] == ExprSpec::Let(Box::new(t2), Box::new(chv[i + 1]), Box::new(b1)));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mv[i], mv[i + 1], h + 1));
+        }
+    }
+    assert(deq_chain_valid(env, mb, h + 1)) by {
+        assert forall |i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_c(env, mb[i], mb[i + 1], h + 1) by {
+            assert(deq_c(env, chb[i], chb[i + 1], h));
+            defeq_refl(env, t2);
+            defeq_refl(env, v2);
+            assert(deq_c(env, t2, t2, h) && deq_c(env, v2, v2, h));
+            assert(mb[i] == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(chb[i])));
+            assert(mb[i + 1] == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(chb[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, mb[i], mb[i + 1], h + 1));
+        }
+    }
+    assert(mt[0] == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Let(Box::new(t2), Box::new(v1), Box::new(b1)));
+    assert(mv[0] == ExprSpec::Let(Box::new(t2), Box::new(v1), Box::new(b1)));
+    assert(mv[mv.len() - 1] == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)));
+    assert(mb[0] == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)));
+    assert(mb[mb.len() - 1] == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+    assert(deq(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v1), Box::new(b1)), h + 1));
+    assert(deq(env, ExprSpec::Let(Box::new(t2), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)), h + 1));
+    assert(deq(env, ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), h + 1));
+    deq_trans(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)), h + 1);
+    deq_trans(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), h + 1);
+}
+
+/// `deq` congruence at `Proj` (single mapped chain).
+pub proof fn deq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, s1: ExprSpec, s2: ExprSpec, h: nat)
+    requires deq(env, s1, s2, h)
+    ensures deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1)
+{
+    let chs = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_chain_valid(env, ch, h);
+    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(Box::new(chs[i])));
+    assert(deq_chain_valid(env, ms, h + 1)) by {
+        assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_c(env, ms[i], ms[i + 1], h + 1) by {
+            assert(deq_c(env, chs[i], chs[i + 1], h));
+            assert(ms[i] == ExprSpec::Proj(Box::new(chs[i])));
+            assert(ms[i + 1] == ExprSpec::Proj(Box::new(chs[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_c(env, ms[i], ms[i + 1], h + 1));
+        }
+    }
+    assert(ms[0] == ExprSpec::Proj(Box::new(s1)));
+    assert(ms[ms.len() - 1] == ExprSpec::Proj(Box::new(s2)));
+    assert(deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
 }
 
 /// `nat_repr_is_zero(e)` (EITHER a `NatLit` valued 0, or a `Const` named
