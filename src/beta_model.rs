@@ -802,6 +802,384 @@ pub proof fn pstep_d_implies_pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: Expr
     }
 }
 
+/// `complete`'s own depth bound -- LINEAR in `size(e)`, the first rung
+/// of the `pstep_d` ladder's polynomial bookkeeping: beta/zeta nodes go
+/// through `subst1_depth_bound`'s ADDITIVE formula, and the summed sizes
+/// of DISJOINT subterms telescope back into `size(e)` (this is exactly
+/// why `size`, not `depth`, is the right measure here -- see the
+/// depth-compounds-under-nesting finding in the project notes).
+/// `string_lits_ok(e, 0)` only for the `StringLit` case (its expansion's
+/// depth must fit zero string headroom), same narrow role as everywhere
+/// else in this file.
+pub proof fn complete_depth_bound(e: ExprSpec)
+    requires string_lits_ok(e, 0)
+    ensures depth(complete(e)) <= size(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {
+            assert(complete(e) == e);
+            assert(depth(e) == 0);
+            assert(size(e) == 1);
+        }
+        ExprSpec::NatLit(n) => {
+            assert(size(e) == 1);
+            if n.0@ == 0 {
+                const_expr_no_levels_shape(nat_zero_id());
+                assert(depth(complete(e)) == 0);
+            } else {
+                const_expr_no_levels_shape(nat_succ_id());
+                let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                assert(complete(e) == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                assert(depth(const_expr_no_levels(nat_succ_id())) == 0);
+                assert(depth(a2) == 0);
+                assert(depth(complete(e)) == 1);
+            }
+        }
+        ExprSpec::StringLit(len) => {
+            assert(size(e) == 1);
+            assert(complete(e) == string_lit_expand_model(len.0@));
+            assert(depth(string_lit_expand_model(len.0@)) <= 1 + 0 * 3);
+        }
+        ExprSpec::App(f, a) => {
+            assert(string_lits_ok(*f, 0));
+            assert(string_lits_ok(*a, 0));
+            assert(size(e) == 1 + size(*f) + size(*a));
+            match *f {
+                ExprSpec::Bind(t, body) => {
+                    assert(string_lits_ok(*body, 0));
+                    complete_depth_bound(*body);
+                    complete_depth_bound(*a);
+                    assert(complete(e) == subst1(complete(*body), complete(*a)));
+                    subst1_depth_bound(complete(*body), complete(*a));
+                    assert(size(*f) == 1 + size(*t) + size(*body));
+                }
+                _ => {
+                    complete_depth_bound(*f);
+                    complete_depth_bound(*a);
+                    assert(complete(e) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                }
+            }
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(string_lits_ok(*t, 0));
+            assert(string_lits_ok(*b, 0));
+            complete_depth_bound(*t);
+            complete_depth_bound(*b);
+            assert(complete(e) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+            assert(size(e) == 1 + size(*t) + size(*b));
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(string_lits_ok(*v, 0));
+            assert(string_lits_ok(*b, 0));
+            complete_depth_bound(*b);
+            complete_depth_bound(*v);
+            assert(complete(e) == subst1(complete(*b), complete(*v)));
+            subst1_depth_bound(complete(*b), complete(*v));
+            assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
+            assert(size(*t) >= 1);
+        }
+        ExprSpec::Proj(s) => {
+            assert(string_lits_ok(*s, 0));
+            complete_depth_bound(*s);
+            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(size(e) == 1 + size(*s));
+        }
+    }
+}
+
+/// `complete`'s own `max_var_below` bound -- QUADRATIC (`growth(size(e))
+/// = size² + size`, the file's existing quadratic budget), the second
+/// rung. Checked by hand before writing: a LINEAR budget (`bound +
+/// size(e)`) is NOT enough -- each nested beta level adds `+ depth(
+/// complete(body_level)) + 1` on top of a max-combined child budget, and
+/// sizes of NESTED (not disjoint) subterms don't telescope, giving a
+/// genuinely quadratic worst case over a chain of nested redexes -- but
+/// the quadratic budget absorbs it comfortably (`max(growth(sb),
+/// growth(sa)) + 1 + sb <= growth(2 + st + sb + sa)`, by expanding the
+/// square). No `size_growth` (exponential) anywhere.
+pub proof fn complete_max_var_below(bound: nat, e: ExprSpec)
+    requires
+        max_var_below(e, bound),
+        string_lits_ok(e, 0),
+        bound + growth(size(e)) + size(e) + 2 <= 0xFFFF_0000,
+    ensures max_var_below(complete(e), (bound + growth(size(e))) as nat)
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {
+            assert(complete(e) == e);
+            max_var_below_mono(e, bound, (bound + growth(size(e))) as nat);
+        }
+        ExprSpec::NatLit(n) => {
+            if n.0@ == 0 {
+                const_expr_no_levels_shape(nat_zero_id());
+                assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
+            } else {
+                const_expr_no_levels_shape(nat_succ_id());
+                let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                assert(complete(e) == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                assert(max_var_below(const_expr_no_levels(nat_succ_id()), (bound + growth(size(e))) as nat));
+                assert(max_var_below(a2, (bound + growth(size(e))) as nat));
+                assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
+            }
+        }
+        ExprSpec::StringLit(len) => {
+            assert(complete(e) == string_lit_expand_model(len.0@));
+            string_lit_expand_model_bounds(len.0@);
+            max_var_below_mono(complete(e), 0, (bound + growth(size(e))) as nat);
+        }
+        ExprSpec::App(f, a) => {
+            assert(string_lits_ok(*f, 0));
+            assert(string_lits_ok(*a, 0));
+            assert(max_var_below(*f, bound));
+            assert(max_var_below(*a, bound));
+            assert(size(e) == 1 + size(*f) + size(*a));
+            growth_mono(size(*a), size(e));
+            match *f {
+                ExprSpec::Bind(t, body) => {
+                    assert(string_lits_ok(*body, 0));
+                    assert(max_var_below(*body, bound));
+                    assert(size(*f) == 1 + size(*t) + size(*body));
+                    assert(size(*t) >= 1);
+                    growth_mono(size(*body), size(e));
+                    complete_max_var_below(bound, *body);
+                    complete_max_var_below(bound, *a);
+                    complete_depth_bound(*body);
+                    let sb = size(*body);
+                    let sa = size(*a);
+                    let se = size(e);
+                    let gb = growth(sb);
+                    let ga = growth(sa);
+                    let m: nat = if gb >= ga { gb } else { ga };
+                    max_var_below_mono(complete(*body), (bound + gb) as nat, (bound + m) as nat);
+                    max_var_below_mono(complete(*a), (bound + ga) as nat, (bound + m) as nat);
+                    assert(m <= growth(se));
+                    assert(depth(complete(*body)) <= sb);
+                    assert((bound + m) + depth(complete(*body)) + 1 <= 0xFFFF_0000);
+                    subst1_max_var_below((bound + m) as nat, complete(*body), complete(*a));
+                    assert(complete(e) == subst1(complete(*body), complete(*a)));
+                    assert(growth(sb) == sb * sb + sb);
+                    assert(growth(sa) == sa * sa + sa);
+                    assert(growth(se) == se * se + se);
+                    assert(m <= gb + ga);
+                    assert(m + 1 + depth(complete(*body)) <= growth(se)) by (nonlinear_arith)
+                        requires
+                            m <= gb + ga,
+                            gb == sb * sb + sb,
+                            ga == sa * sa + sa,
+                            growth(se) == se * se + se,
+                            depth(complete(*body)) <= sb,
+                            sb + sa + 3 <= se,
+                    {}
+                    max_var_below_mono(complete(e), (((bound + m) as nat + 1) + depth(complete(*body))) as nat, (bound + growth(se)) as nat);
+                }
+                _ => {
+                    growth_mono(size(*f), size(e));
+                    complete_max_var_below(bound, *f);
+                    complete_max_var_below(bound, *a);
+                    max_var_below_mono(complete(*f), (bound + growth(size(*f))) as nat, (bound + growth(size(e))) as nat);
+                    max_var_below_mono(complete(*a), (bound + growth(size(*a))) as nat, (bound + growth(size(e))) as nat);
+                    assert(complete(e) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                    assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
+                }
+            }
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(string_lits_ok(*t, 0));
+            assert(string_lits_ok(*b, 0));
+            assert(max_var_below(*t, bound));
+            assert(max_var_below(*b, bound));
+            assert(size(e) == 1 + size(*t) + size(*b));
+            growth_mono(size(*t), size(e));
+            growth_mono(size(*b), size(e));
+            complete_max_var_below(bound, *t);
+            complete_max_var_below(bound, *b);
+            max_var_below_mono(complete(*t), (bound + growth(size(*t))) as nat, (bound + growth(size(e))) as nat);
+            max_var_below_mono(complete(*b), (bound + growth(size(*b))) as nat, (bound + growth(size(e))) as nat);
+            assert(complete(e) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+            assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(string_lits_ok(*v, 0));
+            assert(string_lits_ok(*b, 0));
+            assert(max_var_below(*v, bound));
+            assert(max_var_below(*b, bound));
+            assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
+            assert(size(*t) >= 1);
+            growth_mono(size(*b), size(e));
+            growth_mono(size(*v), size(e));
+            complete_max_var_below(bound, *b);
+            complete_max_var_below(bound, *v);
+            complete_depth_bound(*b);
+            let sb = size(*b);
+            let sv = size(*v);
+            let se = size(e);
+            let gb = growth(sb);
+            let gv = growth(sv);
+            let m: nat = if gb >= gv { gb } else { gv };
+            max_var_below_mono(complete(*b), (bound + gb) as nat, (bound + m) as nat);
+            max_var_below_mono(complete(*v), (bound + gv) as nat, (bound + m) as nat);
+            assert(m <= growth(se));
+            assert(depth(complete(*b)) <= sb);
+            assert((bound + m) + depth(complete(*b)) + 1 <= 0xFFFF_0000);
+            subst1_max_var_below((bound + m) as nat, complete(*b), complete(*v));
+            assert(complete(e) == subst1(complete(*b), complete(*v)));
+            assert(growth(sb) == sb * sb + sb);
+            assert(growth(sv) == sv * sv + sv);
+            assert(growth(se) == se * se + se);
+            assert(m <= gb + gv);
+            assert(m + 1 + depth(complete(*b)) <= growth(se)) by (nonlinear_arith)
+                requires
+                    m <= gb + gv,
+                    gb == sb * sb + sb,
+                    gv == sv * sv + sv,
+                    growth(se) == se * se + se,
+                    depth(complete(*b)) <= sb,
+                    sb + sv + 2 <= se,
+            {}
+            max_var_below_mono(complete(e), (((bound + m) as nat + 1) + depth(complete(*b))) as nat, (bound + growth(se)) as nat);
+        }
+        ExprSpec::Proj(s) => {
+            assert(string_lits_ok(*s, 0));
+            assert(max_var_below(*s, bound));
+            assert(size(e) == 1 + size(*s));
+            growth_mono(size(*s), size(e));
+            complete_max_var_below(bound, *s);
+            max_var_below_mono(complete(*s), (bound + growth(size(*s))) as nat, (bound + growth(size(e))) as nat);
+            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
+        }
+    }
+}
+
+/// The payoff of the two bounds above: `pstep_complete_refl` UPGRADED to
+/// `pstep_d` with a QUADRATIC witness bound -- the demonstration that the
+/// whole `pstep_d` pipeline stays polynomial where the old `pstep`-level
+/// machinery needed `pstep_size_bound`'s exponential. Every beta/zeta
+/// witness this construction uses is `complete` of a SUBTERM, whose
+/// `depth` (`<= size`, linear) and `max_var_below` (`<= bound +
+/// growth(size)`, quadratic) the two lemmas above bound directly -- no
+/// witness ever needs bounding "from the outside" via worst-case growth
+/// formulas, because the construction is deterministic and we know
+/// exactly what each witness IS.
+pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        max_var_below(e, bound),
+        string_lits_ok(e, 0),
+        bound + growth(size(e)) + size(e) + 2 <= 0xFFFF_0000,
+    ensures pstep_d(env, e, complete(e), (bound + growth(size(e)) + size(e)) as nat)
+    decreases e
+{
+    let w: nat = (bound + growth(size(e)) + size(e)) as nat;
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {
+            assert(complete(e) == e);
+        }
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
+            // `complete(e)` is verbatim the arm's own fixed target;
+            // neither arm mentions `wcap` at all.
+            assert(pstep_d(env, e, complete(e), w));
+        }
+        ExprSpec::App(f, a) => {
+            assert(string_lits_ok(*f, 0));
+            assert(string_lits_ok(*a, 0));
+            assert(max_var_below(*f, bound));
+            assert(max_var_below(*a, bound));
+            assert(size(e) == 1 + size(*f) + size(*a));
+            growth_mono(size(*a), size(e));
+            match *f {
+                ExprSpec::Bind(t, body) => {
+                    assert(string_lits_ok(*body, 0));
+                    assert(max_var_below(*body, bound));
+                    assert(size(*f) == 1 + size(*t) + size(*body));
+                    growth_mono(size(*body), size(e));
+                    pstep_complete_refl_d(env, bound, *body);
+                    pstep_complete_refl_d(env, bound, *a);
+                    pstep_d_mono(env, *body, complete(*body), (bound + growth(size(*body)) + size(*body)) as nat, w);
+                    pstep_d_mono(env, *a, complete(*a), (bound + growth(size(*a)) + size(*a)) as nat, w);
+                    complete_depth_bound(*body);
+                    complete_depth_bound(*a);
+                    complete_max_var_below(bound, *body);
+                    complete_max_var_below(bound, *a);
+                    max_var_below_mono(complete(*body), (bound + growth(size(*body))) as nat, w);
+                    max_var_below_mono(complete(*a), (bound + growth(size(*a))) as nat, w);
+                    assert(complete(e) == subst1(complete(*body), complete(*a)));
+                    assert(pstep_d(env, *body, complete(*body), w) && pstep_d(env, *a, complete(*a), w)
+                        && depth(complete(*body)) <= w && depth(complete(*a)) <= w
+                        && max_var_below(complete(*body), w) && max_var_below(complete(*a), w)
+                        && complete(e) == subst1(complete(*body), complete(*a)));
+                    assert(pstep_d(env, e, complete(e), w));
+                }
+                _ => {
+                    growth_mono(size(*f), size(e));
+                    pstep_complete_refl_d(env, bound, *f);
+                    pstep_complete_refl_d(env, bound, *a);
+                    pstep_d_mono(env, *f, complete(*f), (bound + growth(size(*f)) + size(*f)) as nat, w);
+                    pstep_d_mono(env, *a, complete(*a), (bound + growth(size(*a)) + size(*a)) as nat, w);
+                    assert(complete(e) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                    assert(pstep_d(env, *f, complete(*f), w) && pstep_d(env, *a, complete(*a), w)
+                        && complete(e) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                    assert(pstep_d(env, e, complete(e), w));
+                }
+            }
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(string_lits_ok(*t, 0));
+            assert(string_lits_ok(*b, 0));
+            assert(max_var_below(*t, bound));
+            assert(max_var_below(*b, bound));
+            assert(size(e) == 1 + size(*t) + size(*b));
+            growth_mono(size(*t), size(e));
+            growth_mono(size(*b), size(e));
+            pstep_complete_refl_d(env, bound, *t);
+            pstep_complete_refl_d(env, bound, *b);
+            pstep_d_mono(env, *t, complete(*t), (bound + growth(size(*t)) + size(*t)) as nat, w);
+            pstep_d_mono(env, *b, complete(*b), (bound + growth(size(*b)) + size(*b)) as nat, w);
+            assert(complete(e) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+            assert(pstep_d(env, *t, complete(*t), w) && pstep_d(env, *b, complete(*b), w)
+                && complete(e) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+            assert(pstep_d(env, e, complete(e), w));
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(string_lits_ok(*v, 0));
+            assert(string_lits_ok(*b, 0));
+            assert(max_var_below(*v, bound));
+            assert(max_var_below(*b, bound));
+            assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
+            growth_mono(size(*v), size(e));
+            growth_mono(size(*b), size(e));
+            pstep_complete_refl_d(env, bound, *b);
+            pstep_complete_refl_d(env, bound, *v);
+            pstep_d_mono(env, *b, complete(*b), (bound + growth(size(*b)) + size(*b)) as nat, w);
+            pstep_d_mono(env, *v, complete(*v), (bound + growth(size(*v)) + size(*v)) as nat, w);
+            complete_depth_bound(*b);
+            complete_depth_bound(*v);
+            complete_max_var_below(bound, *b);
+            complete_max_var_below(bound, *v);
+            max_var_below_mono(complete(*b), (bound + growth(size(*b))) as nat, w);
+            max_var_below_mono(complete(*v), (bound + growth(size(*v))) as nat, w);
+            assert(complete(e) == subst1(complete(*b), complete(*v)));
+            assert(pstep_d(env, *b, complete(*b), w) && pstep_d(env, *v, complete(*v), w)
+                && depth(complete(*b)) <= w && depth(complete(*v)) <= w
+                && max_var_below(complete(*b), w) && max_var_below(complete(*v), w)
+                && complete(e) == subst1(complete(*b), complete(*v)));
+            assert(pstep_d(env, e, complete(e), w));
+        }
+        ExprSpec::Proj(s) => {
+            assert(string_lits_ok(*s, 0));
+            assert(max_var_below(*s, bound));
+            assert(size(e) == 1 + size(*s));
+            growth_mono(size(*s), size(e));
+            pstep_complete_refl_d(env, bound, *s);
+            pstep_d_mono(env, *s, complete(*s), (bound + growth(size(*s)) + size(*s)) as nat, w);
+            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(pstep_d(env, e, complete(e), w));
+        }
+    }
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
