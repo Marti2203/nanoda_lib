@@ -10587,6 +10587,248 @@ pub proof fn subst1_abstr_commute(bound: nat, b: ExprSpec, a: ExprSpec, ks: Seq<
         == shift(-1, 0, subst(0, shift(1, 0, abstr_full(a, ks, o)), abstr_full(b, ks, (o + 1) as nat))));
 }
 
+/// PSTEP IS STABLE UNDER ABSTRACTION: a parallel step transports
+/// through `abstr_full` (binder bodies at offset `o + 1`, everything
+/// else at `o` -- matching `abstr_full`'s own recursion). The heart of
+/// the binder anti-substitution arc: with the roundtrip lemma this
+/// means a step between fresh-local instantiations IS a step between
+/// the original bodies' abstractions. Mirrors `pstep_to_pstep_d`'s
+/// skeleton exactly (per-witness `pstep_bounds` at `env == empty`); the
+/// beta/zeta arms close through `subst1_abstr_commute` (C2), the
+/// literal-unfolding arms through the targets being `Free`-free.
+pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep(env, e1, e2),
+        max_var_below(e1, bound),
+        string_lits_ok(e1, 0),
+        o + ks.len() + bound + growth(size(e1)) + 2 * size(e1) + depth(e1) + 30 <= 0xFFFF_0000,
+    ensures pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o))
+    decreases e1
+{
+    assert(env_wf(env, 0));
+    if e1 == e2 {
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(string_lits_ok(*f, 0));
+                assert(string_lits_ok(*a, 0));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                assert(depth(*f) < depth(e1));
+                assert(depth(*a) < depth(e1));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(max_var_below(*t, bound));
+                        assert(string_lits_ok(*body, 0));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        assert(depth(*t) < depth(*f));
+                        assert(depth(*body) < depth(*f));
+                        growth_mono(size(*body), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
+                            pstep_abstr(env, bound, *body, body2, ks, (o + 1) as nat);
+                            pstep_abstr(env, bound, *a, a2, ks, o);
+                            let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *body, body2);
+                            let (amvb, adepth) = pstep_bounds(env, 0, bound, *a, a2);
+                            assert(bdepth <= size(*body) + 0 * size_growth(size(*body)));
+                            assert(adepth <= size(*a) + 0 * size_growth(size(*a)));
+                            assert(amvb <= bound + growth(size(*a)) + 0 * size_growth(size(*a)));
+                            assert(depth(body2) <= size(e1));
+                            assert(depth(a2) <= size(e1));
+                            subst1_abstr_commute(amvb, body2, a2, ks, o);
+                            assert(abstr_full(e2, ks, o) == subst1(abstr_full(body2, ks, (o + 1) as nat), abstr_full(a2, ks, o)));
+                            assert(abstr_full(e1, ks, o) == ExprSpec::App(
+                                Box::new(ExprSpec::Bind(
+                                    Box::new(abstr_full(*t, ks, o)),
+                                    Box::new(abstr_full(*body, ks, (o + 1) as nat)),
+                                )),
+                                Box::new(abstr_full(*a, ks, o)),
+                            ));
+                            assert(pstep(env, abstr_full(*body, ks, (o + 1) as nat), abstr_full(body2, ks, (o + 1) as nat))
+                                && pstep(env, abstr_full(*a, ks, o), abstr_full(a2, ks, o))
+                                && abstr_full(e2, ks, o) == subst1(abstr_full(body2, ks, (o + 1) as nat), abstr_full(a2, ks, o)));
+                            assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_abstr(env, bound, *f, f2, ks, o);
+                            pstep_abstr(env, bound, *a, a2, ks, o);
+                            assert(abstr_full(e1, ks, o) == ExprSpec::App(Box::new(abstr_full(*f, ks, o)), Box::new(abstr_full(*a, ks, o))));
+                            assert(abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
+                            assert(pstep(env, abstr_full(*f, ks, o), abstr_full(f2, ks, o))
+                                && pstep(env, abstr_full(*a, ks, o), abstr_full(a2, ks, o))
+                                && abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
+                            assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_abstr(env, bound, *f, f2, ks, o);
+                        pstep_abstr(env, bound, *a, a2, ks, o);
+                        assert(abstr_full(e1, ks, o) == ExprSpec::App(Box::new(abstr_full(*f, ks, o)), Box::new(abstr_full(*a, ks, o))));
+                        assert(abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
+                        assert(pstep(env, abstr_full(*f, ks, o), abstr_full(f2, ks, o))
+                            && pstep(env, abstr_full(*a, ks, o), abstr_full(a2, ks, o))
+                            && abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
+                        assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                assert(depth(*t) < depth(e1));
+                assert(depth(*b) < depth(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_abstr(env, bound, *t, t2, ks, o);
+                pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
+                assert(abstr_full(e1, ks, o) == ExprSpec::Bind(Box::new(abstr_full(*t, ks, o)), Box::new(abstr_full(*b, ks, (o + 1) as nat))));
+                assert(abstr_full(e2, ks, o) == ExprSpec::Bind(Box::new(abstr_full(t2, ks, o)), Box::new(abstr_full(b2, ks, (o + 1) as nat))));
+                assert(pstep(env, abstr_full(*t, ks, o), abstr_full(t2, ks, o))
+                    && pstep(env, abstr_full(*b, ks, (o + 1) as nat), abstr_full(b2, ks, (o + 1) as nat))
+                    && abstr_full(e2, ks, o) == ExprSpec::Bind(Box::new(abstr_full(t2, ks, o)), Box::new(abstr_full(b2, ks, (o + 1) as nat))));
+                assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*v, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                assert(depth(*t) < depth(e1));
+                assert(depth(*v) < depth(e1));
+                assert(depth(*b) < depth(e1));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
+                    pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
+                    pstep_abstr(env, bound, *v, v2, ks, o);
+                    let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(env, 0, bound, *v, v2);
+                    assert(bdepth <= size(*b) + 0 * size_growth(size(*b)));
+                    assert(vdepth <= size(*v) + 0 * size_growth(size(*v)));
+                    assert(vmvb <= bound + growth(size(*v)) + 0 * size_growth(size(*v)));
+                    assert(depth(b2) <= size(e1));
+                    assert(depth(v2) <= size(e1));
+                    subst1_abstr_commute(vmvb, b2, v2, ks, o);
+                    assert(abstr_full(e2, ks, o) == subst1(abstr_full(b2, ks, (o + 1) as nat), abstr_full(v2, ks, o)));
+                    assert(abstr_full(e1, ks, o) == ExprSpec::Let(
+                        Box::new(abstr_full(*t, ks, o)),
+                        Box::new(abstr_full(*v, ks, o)),
+                        Box::new(abstr_full(*b, ks, (o + 1) as nat)),
+                    ));
+                    assert(pstep(env, abstr_full(*b, ks, (o + 1) as nat), abstr_full(b2, ks, (o + 1) as nat))
+                        && pstep(env, abstr_full(*v, ks, o), abstr_full(v2, ks, o))
+                        && abstr_full(e2, ks, o) == subst1(abstr_full(b2, ks, (o + 1) as nat), abstr_full(v2, ks, o)));
+                    assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                } else {
+                    assert(exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_abstr(env, bound, *t, t2, ks, o);
+                    pstep_abstr(env, bound, *v, v2, ks, o);
+                    pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
+                    assert(abstr_full(e1, ks, o) == ExprSpec::Let(
+                        Box::new(abstr_full(*t, ks, o)),
+                        Box::new(abstr_full(*v, ks, o)),
+                        Box::new(abstr_full(*b, ks, (o + 1) as nat)),
+                    ));
+                    assert(abstr_full(e2, ks, o) == ExprSpec::Let(
+                        Box::new(abstr_full(t2, ks, o)),
+                        Box::new(abstr_full(v2, ks, o)),
+                        Box::new(abstr_full(b2, ks, (o + 1) as nat)),
+                    ));
+                    assert(pstep(env, abstr_full(*t, ks, o), abstr_full(t2, ks, o))
+                        && pstep(env, abstr_full(*v, ks, o), abstr_full(v2, ks, o))
+                        && pstep(env, abstr_full(*b, ks, (o + 1) as nat), abstr_full(b2, ks, (o + 1) as nat))
+                        && abstr_full(e2, ks, o) == ExprSpec::Let(Box::new(abstr_full(t2, ks, o)), Box::new(abstr_full(v2, ks, o)), Box::new(abstr_full(b2, ks, (o + 1) as nat))));
+                    assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                }
+            }
+            ExprSpec::Proj(sx) => {
+                assert(max_var_below(*sx, bound));
+                assert(string_lits_ok(*sx, 0));
+                assert(size(e1) == 1 + size(*sx));
+                assert(depth(*sx) < depth(e1));
+                growth_mono(size(*sx), size(e1));
+                match e2 {
+                    ExprSpec::Proj(sx2) => {
+                        assert(pstep(env, *sx, *sx2));
+                        pstep_abstr(env, bound, *sx, *sx2, ks, o);
+                        assert(abstr_full(e1, ks, o) == ExprSpec::Proj(Box::new(abstr_full(*sx, ks, o))));
+                        assert(abstr_full(e2, ks, o) == ExprSpec::Proj(Box::new(abstr_full(*sx2, ks, o))));
+                        assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                    }
+                    _ => {
+                        assert(false);
+                    }
+                }
+            }
+            ExprSpec::Const(id, _levels) => {
+                assert(env.contains_key(id));
+                assert(false);
+            }
+            ExprSpec::NatLit(n) => {
+                assert(abstr_full(e1, ks, o) == e1);
+                if n.0@ == 0 {
+                    assert(e2 == const_expr_no_levels(nat_zero_id()));
+                    const_expr_no_levels_shape(nat_zero_id());
+                    assert(abstr_full(e2, ks, o) == e2);
+                    assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                } else {
+                    assert(e2 == ExprSpec::App(
+                        Box::new(const_expr_no_levels(nat_succ_id())),
+                        Box::new(ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)))),
+                    ));
+                    const_expr_no_levels_shape(nat_succ_id());
+                    assert(abstr_full(const_expr_no_levels(nat_succ_id()), ks, o) == const_expr_no_levels(nat_succ_id()));
+                    let nl = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                    assert(abstr_full(nl, ks, o) == nl);
+                    assert(abstr_full(e2, ks, o) == ExprSpec::App(
+                        Box::new(abstr_full(const_expr_no_levels(nat_succ_id()), ks, o)),
+                        Box::new(abstr_full(nl, ks, o)),
+                    ));
+                    assert(abstr_full(e2, ks, o) == e2);
+                    assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+                }
+            }
+            ExprSpec::StringLit(len) => {
+                assert(e2 == string_lit_expand_model(len.0@));
+                string_lit_expand_model_no_free(len.0@);
+                abstr_full_noop(e2, ks, o);
+                assert(abstr_full(e1, ks, o) == e1);
+                assert(abstr_full(e2, ks, o) == e2);
+                assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
 /// (not just `+1`/`-1`) -- `shift`'s own cutoff comparison never fires.
 pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
