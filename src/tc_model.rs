@@ -91,7 +91,7 @@ use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::nat_zero_arity_is_zero;
+use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero};
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full};
 
@@ -2550,6 +2550,129 @@ pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
     exists |h: nat| #[trigger] deq(env, x, y, h)
 }
 
+/// A `nat_repr_pred(e, p)` pair's whole term is `deq_any`-related to the
+/// CANONICAL successor application `App(const_expr_no_levels(succ),
+/// to_model(p))`: exact equality for the real-`App` representation (its
+/// head pinned to the canonical form by `nat_succ_arity_is_zero` +
+/// `const_expr_no_levels_canonical`), one `pstep` (the `NatLit`
+/// unfolding rule) for the literal representation. The connecting edge
+/// `verified_def_eq_nat`'s pred case needs on each side.
+pub proof fn nat_repr_pred_reaches_succ_app<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprPtr<'t>, p: ExprPtr<'t>)
+    requires nat_repr_pred(e, p)
+    ensures deq_any(env, to_model(e), ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p))))
+{
+    let target = ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p)));
+    if exists |fun: ExprPtr<'t>|
+        to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
+        && is_const_shape(fun) && const_id(fun) == nat_succ_id() {
+        let fun = choose |fun: ExprPtr<'t>|
+            to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+        nat_succ_arity_is_zero(fun);
+        const_levels_vec_model(fun);
+        is_const_shape_model(fun);
+        assert(const_levels_vec(fun)@.len() == 0);
+        assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+        const_expr_no_levels_canonical(to_model(fun), nat_succ_id());
+        assert(to_model(e) == target);
+        deq_any_refl(env, to_model(e));
+    } else {
+        assert(is_nat_lit_shape(e) && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e) - 1) as nat);
+        is_nat_lit_shape_model(e);
+        is_nat_lit_shape_model(p);
+        assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
+        assert(to_model(p) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(p)))));
+        assert((nat_lit_value(e) - 1) as nat == nat_lit_value(p));
+        assert(pstep(env, to_model(e), target));
+        pstep_star_one(env, to_model(e), target);
+        defeq_of_pstep_star(env, to_model(e), target);
+        deq_any_of_defeq(env, to_model(e), target);
+    }
+}
+
+/// The equivalence-relation API at the `deq_any` level -- what
+/// consumers actually want (heights erased, monotonicity handled
+/// internally via `deq_mono`).
+pub proof fn deq_any_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires defeq(env, x, y)
+    ensures deq_any(env, x, y)
+{
+    deq_of_defeq(env, x, y, 0);
+    assert(deq(env, x, y, 0));
+}
+
+pub proof fn deq_any_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires deq_leaf(x, y)
+    ensures deq_any(env, x, y)
+{
+    deq_of_leaf(env, x, y, 0);
+    assert(deq(env, x, y, 0));
+}
+
+pub proof fn deq_any_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec)
+    ensures deq_any(env, x, x)
+{
+    deq_refl(env, x, 0);
+    assert(deq(env, x, x, 0));
+}
+
+pub proof fn deq_any_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires deq_any(env, x, y)
+    ensures deq_any(env, y, x)
+{
+    let h = choose |h: nat| deq(env, x, y, h);
+    deq_symm(env, x, y, h);
+    assert(deq(env, y, x, h));
+}
+
+pub proof fn deq_any_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+    requires deq_any(env, x, y), deq_any(env, y, z)
+    ensures deq_any(env, x, z)
+{
+    let h1 = choose |h: nat| deq(env, x, y, h);
+    let h2 = choose |h: nat| deq(env, y, z, h);
+    let hm = if h1 >= h2 { h1 } else { h2 };
+    deq_mono(env, x, y, h1, hm);
+    deq_mono(env, y, z, h2, hm);
+    deq_trans(env, x, y, z, hm);
+    assert(deq(env, x, z, hm));
+}
+
+pub proof fn deq_any_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
+    requires deq_any(env, f1, f2), deq_any(env, a1, a2)
+    ensures deq_any(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
+{
+    let h1 = choose |h: nat| deq(env, f1, f2, h);
+    let h2 = choose |h: nat| deq(env, a1, a2, h);
+    let hm = if h1 >= h2 { h1 } else { h2 };
+    deq_mono(env, f1, f2, h1, hm);
+    deq_mono(env, a1, a2, h2, hm);
+    deq_app_congr(env, f1, f2, a1, a2, hm);
+    assert(deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), hm + 1));
+}
+
+pub proof fn deq_any_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
+    requires deq_any(env, t1, t2), deq_any(env, b1, b2)
+    ensures deq_any(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+{
+    let h1 = choose |h: nat| deq(env, t1, t2, h);
+    let h2 = choose |h: nat| deq(env, b1, b2, h);
+    let hm = if h1 >= h2 { h1 } else { h2 };
+    deq_mono(env, t1, t2, h1, hm);
+    deq_mono(env, b1, b2, h2, hm);
+    deq_bind_congr(env, t1, t2, b1, b2, hm);
+    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
+}
+
+pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, s1: ExprSpec, s2: ExprSpec)
+    requires deq_any(env, s1, s2)
+    ensures deq_any(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)))
+{
+    let h = choose |h: nat| deq(env, s1, s2, h);
+    deq_proj_congr(env, s1, s2, h);
+    assert(deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
+}
+
 /// The claim `verified_def_eq`'s `Some(true)` can honestly make, one
 /// disjunct per dispatch path's current strength: real `deq` under every
 /// env (ptr-equality, the Sort/Const leaf cluster, and app spines whose
@@ -3690,9 +3813,14 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
     ensures match result {
         Some(true) =>
             (nat_repr_is_zero(x) && nat_repr_is_zero(y)
-                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y)))
-            || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y))
-            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)),
+                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y))
+                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
+            || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y)
+                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
+            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)
+                && deq_full_claim(xp, yp)
+                && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)))
+                    ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))),
         _ => true,
     }
     decreases fuel
@@ -3704,13 +3832,27 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
                 nat_repr_is_zero_reaches_canonical(env, y);
                 assert(defeq(env, to_model(x), to_model(y)));
             }
+            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                nat_repr_is_zero_reaches_canonical(env, x);
+                nat_repr_is_zero_reaches_canonical(env, y);
+                assert(defeq(env, to_model(x), to_model(y)));
+                deq_any_of_defeq(env, to_model(x), to_model(y));
+            }
         }
         return Some(true);
     }
     let x_el = ctx.read_expr(x);
     let y_el = ctx.read_expr(y);
     if expr_as_nat_lit(x, &x_el).is_some() && expr_as_nat_lit(y, &y_el).is_some() {
-        return Some(expr_ptr_eq(x, y));
+        let b = expr_ptr_eq(x, y);
+        proof {
+            if b {
+                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                    deq_any_refl(env, to_model(x));
+                }
+            }
+        }
+        return Some(b);
     }
     let x_pred = ctx.pred_of_nat_succ(x);
     let y_pred = ctx.pred_of_nat_succ(y);
@@ -3729,7 +3871,29 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             if fuel == 0 {
                 return None;
             }
-            verified_def_eq(ctx, xp, yp, fuel - 1)
+            let r = verified_def_eq(ctx, xp, yp, fuel - 1);
+            proof {
+                if r == Some(true) {
+                    if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)) {
+                        // Lift through the canonical successor application:
+                        // x ~ App(succ, xp) ~ App(succ, yp) ~ y.
+                        assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                            let sc = const_expr_no_levels(nat_succ_id());
+                            let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
+                            let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
+                            nat_repr_pred_reaches_succ_app(env, x, xp);
+                            nat_repr_pred_reaches_succ_app(env, y, yp);
+                            deq_any_refl(env, sc);
+                            assert(deq_any(env, to_model(xp), to_model(yp)));
+                            deq_any_app_congr(env, sc, sc, to_model(xp), to_model(yp));
+                            deq_any_trans(env, to_model(x), ax, ay);
+                            deq_any_symm(env, to_model(y), ay);
+                            deq_any_trans(env, to_model(x), ay, to_model(y));
+                        }
+                    }
+                }
+            }
+            r
         }
         _ => None,
     }

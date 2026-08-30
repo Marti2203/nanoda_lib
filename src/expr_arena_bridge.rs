@@ -621,6 +621,20 @@ pub proof fn nat_zero_arity_is_zero<'a>(e: ExprPtr<'a>)
 {
 }
 
+/// `Nat.succ`'s twin of `nat_zero_arity_is_zero` (see that lemma's doc
+/// comment for the full rationale): `Nat.succ` is likewise not
+/// universe-polymorphic in the real Lean prelude, so a real
+/// `Const`-shaped pointer named `Nat.succ` always carries empty levels
+/// -- needed to identify the head of a real `Nat.succ _` application
+/// with the canonical `const_expr_no_levels(nat_succ_id())` that
+/// `pstep`'s `NatLit` unfolding rule targets.
+#[verifier::external_body]
+pub proof fn nat_succ_arity_is_zero<'a>(e: ExprPtr<'a>)
+    requires is_const_shape(e), const_id(e) == nat_succ_id()
+    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+{
+}
+
 /// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
 pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
     (exists |fun: ExprPtr<'a>|
