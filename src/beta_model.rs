@@ -1180,6 +1180,199 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
     }
 }
 
+/// `pstep_shift` over the ghost-certified relation -- and the payoff is
+/// stark next to the original: the ONLY ceiling precondition is `wcap +
+/// wcap + 2 <= 0xFFFF_0000` (linear in the carried witness bound), no
+/// `max_var_below(e1, ..)` hypothesis at all, no `growth(size(..))`, no
+/// `cap * size_growth(..)`. Every place the original `pstep_shift` had
+/// to call `pstep_bounds` to bound its `choose`d witnesses from scratch,
+/// this simply READS the certificates the relation carries: the beta
+/// case's `shift_subst1_commute` needs `B + depth(body2) + 1 <= ceiling`
+/// with `mvb(body2, B)`/`mvb(a2, B)` -- take `B = wcap` and both come
+/// straight from the certificates. New witnesses re-certify at `wcap+1`
+/// via `shift_preserves_depth` (depth unchanged) and
+/// `shift_up_max_var_below` (+1). Restricted to `env == Map::empty()`
+/// (the whole confluence track's standing restriction): the `Const` arm
+/// becomes vacuous, and `NatLit`/`StringLit` targets are var-free so
+/// `shift` is the identity on them (`nlbv_shift_noop`).
+pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: ExprSpec, e2: ExprSpec, wcap: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_d(env, e1, e2, wcap),
+        wcap + wcap + 2 <= 0xFFFF_0000,
+    ensures pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat)
+    decreases e1
+{
+    reveal(shift);
+    if e1 == e2 {
+        assert(shift(1, c, e1) == shift(1, c, e2));
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep_d(env, *body, body2, wcap) && pstep_d(env, *a, a2, wcap)
+                            && depth(body2) <= wcap && depth(a2) <= wcap
+                            && max_var_below(body2, wcap) && max_var_below(a2, wcap)
+                            && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep_d(env, *body, body2, wcap) && pstep_d(env, *a, a2, wcap)
+                                && depth(body2) <= wcap && depth(a2) <= wcap
+                                && max_var_below(body2, wcap) && max_var_below(a2, wcap)
+                                && e2 == subst1(body2, a2);
+                            pstep_d_shift(env, (c + 1) as nat, *body, body2, wcap);
+                            pstep_d_shift(env, c, *a, a2, wcap);
+                            shift_preserves_depth(1, (c + 1) as nat, body2);
+                            shift_preserves_depth(1, c, a2);
+                            shift_up_max_var_below((c + 1) as nat, wcap, body2);
+                            shift_up_max_var_below(c, wcap, a2);
+                            shift_subst1_commute(wcap, c, body2, a2);
+                            assert(shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, body2), shift(1, c, a2)));
+                            assert(shift(1, c, e1) == ExprSpec::App(
+                                Box::new(ExprSpec::Bind(Box::new(shift(1, c, *t)), Box::new(shift(1, (c + 1) as nat, *body)))),
+                                Box::new(shift(1, c, *a)),
+                            ));
+                            assert(pstep_d(env, shift(1, (c + 1) as nat, *body), shift(1, (c + 1) as nat, body2), (wcap + 1) as nat)
+                                && pstep_d(env, shift(1, c, *a), shift(1, c, a2), (wcap + 1) as nat)
+                                && depth(shift(1, (c + 1) as nat, body2)) <= (wcap + 1) as nat
+                                && depth(shift(1, c, a2)) <= (wcap + 1) as nat
+                                && max_var_below(shift(1, (c + 1) as nat, body2), (wcap + 1) as nat)
+                                && max_var_below(shift(1, c, a2), (wcap + 1) as nat)
+                                && shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, body2), shift(1, c, a2)));
+                            assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, wcap) && pstep_d(env, *a, a2, wcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, wcap) && pstep_d(env, *a, a2, wcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_d_shift(env, c, *f, f2, wcap);
+                            pstep_d_shift(env, c, *a, a2, wcap);
+                            assert(shift(1, c, e1) == ExprSpec::App(Box::new(shift(1, c, *f)), Box::new(shift(1, c, *a))));
+                            assert(shift(1, c, e2) == ExprSpec::App(Box::new(shift(1, c, f2)), Box::new(shift(1, c, a2))));
+                            assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, wcap) && pstep_d(env, *a, a2, wcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, wcap) && pstep_d(env, *a, a2, wcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_d_shift(env, c, *f, f2, wcap);
+                        pstep_d_shift(env, c, *a, a2, wcap);
+                        assert(shift(1, c, e1) == ExprSpec::App(Box::new(shift(1, c, *f)), Box::new(shift(1, c, *a))));
+                        assert(shift(1, c, e2) == ExprSpec::App(Box::new(shift(1, c, f2)), Box::new(shift(1, c, a2))));
+                        assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep_d(env, *t, t2, wcap) && pstep_d(env, *b, b2, wcap) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_d_shift(env, c, *t, t2, wcap);
+                pstep_d_shift(env, (c + 1) as nat, *b, b2, wcap);
+                assert(shift(1, c, e1) == ExprSpec::Bind(Box::new(shift(1, c, *t)), Box::new(shift(1, (c + 1) as nat, *b))));
+                assert(shift(1, c, e2) == ExprSpec::Bind(Box::new(shift(1, c, t2)), Box::new(shift(1, (c + 1) as nat, b2))));
+                assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+            }
+            ExprSpec::Let(t, v, b) => {
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep_d(env, *b, b2, wcap) && pstep_d(env, *v, v2, wcap)
+                    && depth(b2) <= wcap && depth(v2) <= wcap
+                    && max_var_below(b2, wcap) && max_var_below(v2, wcap)
+                    && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep_d(env, *b, b2, wcap) && pstep_d(env, *v, v2, wcap)
+                        && depth(b2) <= wcap && depth(v2) <= wcap
+                        && max_var_below(b2, wcap) && max_var_below(v2, wcap)
+                        && e2 == subst1(b2, v2);
+                    pstep_d_shift(env, (c + 1) as nat, *b, b2, wcap);
+                    pstep_d_shift(env, c, *v, v2, wcap);
+                    shift_preserves_depth(1, (c + 1) as nat, b2);
+                    shift_preserves_depth(1, c, v2);
+                    shift_up_max_var_below((c + 1) as nat, wcap, b2);
+                    shift_up_max_var_below(c, wcap, v2);
+                    shift_subst1_commute(wcap, c, b2, v2);
+                    assert(shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, b2), shift(1, c, v2)));
+                    assert(shift(1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
+                    ));
+                    assert(pstep_d(env, shift(1, (c + 1) as nat, *b), shift(1, (c + 1) as nat, b2), (wcap + 1) as nat)
+                        && pstep_d(env, shift(1, c, *v), shift(1, c, v2), (wcap + 1) as nat)
+                        && depth(shift(1, (c + 1) as nat, b2)) <= (wcap + 1) as nat
+                        && depth(shift(1, c, v2)) <= (wcap + 1) as nat
+                        && max_var_below(shift(1, (c + 1) as nat, b2), (wcap + 1) as nat)
+                        && max_var_below(shift(1, c, v2), (wcap + 1) as nat)
+                        && shift(1, c, e2) == subst1(shift(1, (c + 1) as nat, b2), shift(1, c, v2)));
+                    assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                } else {
+                    assert(exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep_d(env, *t, t2, wcap) && pstep_d(env, *v, v2, wcap) && pstep_d(env, *b, b2, wcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep_d(env, *t, t2, wcap) && pstep_d(env, *v, v2, wcap) && pstep_d(env, *b, b2, wcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_d_shift(env, c, *t, t2, wcap);
+                    pstep_d_shift(env, c, *v, v2, wcap);
+                    pstep_d_shift(env, (c + 1) as nat, *b, b2, wcap);
+                    assert(shift(1, c, e1) == ExprSpec::Let(
+                        Box::new(shift(1, c, *t)), Box::new(shift(1, c, *v)), Box::new(shift(1, (c + 1) as nat, *b)),
+                    ));
+                    assert(shift(1, c, e2) == ExprSpec::Let(
+                        Box::new(shift(1, c, t2)), Box::new(shift(1, c, v2)), Box::new(shift(1, (c + 1) as nat, b2)),
+                    ));
+                    assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                }
+            }
+            ExprSpec::Proj(s) => {
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep_d(env, *s, *s2, wcap));
+                        pstep_d_shift(env, c, *s, *s2, wcap);
+                        assert(shift(1, c, e1) == ExprSpec::Proj(Box::new(shift(1, c, *s))));
+                        assert(shift(1, c, e2) == ExprSpec::Proj(Box::new(shift(1, c, *s2))));
+                        assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                    }
+                    _ => {
+                        assert(false);
+                    }
+                }
+            }
+            ExprSpec::Const(id, _levels) => {
+                assert(env.contains_key(id));
+                assert(false);
+            }
+            ExprSpec::NatLit(n) => {
+                if n.0@ == 0 {
+                    const_expr_no_levels_shape(nat_zero_id());
+                    assert(nlbv(e2) == 0);
+                    assert(shift(1, c, e1) == e1);
+                    nlbv_shift_noop(1, c, e2);
+                    assert(shift(1, c, e2) == e2);
+                    assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                } else {
+                    let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                    assert(e2 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                    const_expr_no_levels_shape(nat_succ_id());
+                    assert(nlbv(const_expr_no_levels(nat_succ_id())) == 0);
+                    assert(nlbv(a2) == 0);
+                    assert(nlbv(e2) == 0);
+                    assert(shift(1, c, e1) == e1);
+                    nlbv_shift_noop(1, c, e2);
+                    assert(shift(1, c, e2) == e2);
+                    assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+                }
+            }
+            ExprSpec::StringLit(len) => {
+                string_lit_expand_model_bounds(len.0@);
+                assert(nlbv(e2) == 0);
+                assert(shift(1, c, e1) == e1);
+                nlbv_shift_noop(1, c, e2);
+                assert(shift(1, c, e2) == e2);
+                assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (wcap + 1) as nat));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
