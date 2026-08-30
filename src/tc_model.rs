@@ -2586,6 +2586,8 @@ pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: na
         && is_const_shape(fx) && is_const_shape(fy) && const_id(fx) == const_id(fy)
         && deq_leaf(to_model(fx), to_model(fy))
         && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], h))
+        && ((forall |i: int| 0 <= i < argsx.len() ==> forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| deq(env2, to_model(#[trigger] argsx[i]), to_model(argsy[i]), h))
+            ==> (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(y))))
 }
 
 /// A `nat_repr_pred(e, p)` pair's whole term is `deq_any`-related to the
@@ -4181,6 +4183,61 @@ pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
     assert(deq_p(dty, env, lctx, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
 }
 
+/// `deq_p_any` API -- height-erased typed equality, mirroring `deq_any`'s.
+pub proof fn deq_p_any_of_deq_any(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires deq_any(env, x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    let h = choose |h: nat| deq(env, x, y, h);
+    deq_p_of_deq(dty, env, lctx, x, y, h);
+    assert(deq_p(dty, env, lctx, x, y, h));
+}
+
+pub proof fn deq_p_any_of_defeq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires defeq(env, x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    deq_any_of_defeq(env, x, y);
+    deq_p_any_of_deq_any(dty, env, lctx, x, y);
+}
+
+pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires proof_irrel_pair(dty, env, lctx, x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    deq_p_of_irrel(dty, env, lctx, x, y, 0);
+    assert(deq_p(dty, env, lctx, x, y, 0));
+}
+
+pub proof fn deq_p_any_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec)
+    ensures deq_p_any(dty, env, lctx, x, x)
+{
+    deq_p_refl(dty, env, lctx, x, 0);
+    assert(deq_p(dty, env, lctx, x, x, 0));
+}
+
+pub proof fn deq_p_any_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires deq_p_any(dty, env, lctx, x, y)
+    ensures deq_p_any(dty, env, lctx, y, x)
+{
+    let h = choose |h: nat| deq_p(dty, env, lctx, x, y, h);
+    deq_p_symm(dty, env, lctx, x, y, h);
+    assert(deq_p(dty, env, lctx, y, x, h));
+}
+
+pub proof fn deq_p_any_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+    requires deq_p_any(dty, env, lctx, x, y), deq_p_any(dty, env, lctx, y, z)
+    ensures deq_p_any(dty, env, lctx, x, z)
+{
+    let h1 = choose |h: nat| deq_p(dty, env, lctx, x, y, h);
+    let h2 = choose |h: nat| deq_p(dty, env, lctx, y, z, h);
+    let hm = if h1 >= h2 { h1 } else { h2 };
+    deq_p_mono(dty, env, lctx, x, y, h1, hm);
+    deq_p_mono(dty, env, lctx, y, z, h2, hm);
+    deq_p_trans(dty, env, lctx, x, y, z, hm);
+    assert(deq_p(dty, env, lctx, x, z, hm));
+}
+
 /// `nat_repr_is_zero(e)` (EITHER a `NatLit` valued 0, or a `Const` named
 /// `Nat.zero`) always `pstep_star`-reaches the ONE canonical empty-levels
 /// form `pstep`'s own `NatLit` rule targets, for ANY `env` (this fact
@@ -4723,6 +4780,26 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     assert(to_model(x) == spine_app(to_model(l_fun), args_model_of(l_args@)));
     assert(to_model(y) == spine_app(to_model(r_fun), args_model_of(r_args@)));
     assert(forall |j: int| 0 <= j < l_args@.len() ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat));
+    proof {
+        // The whole-spine lift: heads are deq_leaf UNCONDITIONALLY, so
+        // if every arg pair's verdict was deq-expressible the spines
+        // are deq under every env (mirrors verified_def_eq's app path).
+        if forall |i: int| 0 <= i < l_args@.len() ==> forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| deq(env2, to_model(#[trigger] l_args@[i]), to_model(r_args@[i]), fuel as nat) {
+            assert forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(y)) by {
+                let ax = args_model_of(l_args@);
+                let ay = args_model_of(r_args@);
+                assert(ax.len() == ay.len());
+                assert forall |i: int| 0 <= i < ax.len() implies deq(env2, #[trigger] ax[i], ay[i], fuel as nat) by {
+                    assert(ax[i] == to_model(l_args@[i]));
+                    assert(ay[i] == to_model(r_args@[i]));
+                    assert(deq(env2, to_model(l_args@[i]), to_model(r_args@[i]), fuel as nat));
+                }
+                deq_of_leaf(env2, to_model(l_fun), to_model(r_fun), fuel as nat);
+                deq_spine_app_congr(env2, to_model(l_fun), to_model(r_fun), ax, ay, fuel as nat);
+                assert(deq(env2, to_model(x), to_model(y), (fuel as nat + ax.len()) as nat));
+            }
+        }
+    }
     Some(true)
 }
 

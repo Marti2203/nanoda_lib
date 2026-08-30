@@ -58,7 +58,7 @@ use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_leve
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model};
+use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model, bool_true_arity_is_zero};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
 #[cfg(verus_only)]
@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair};
+use crate::tc_model::{deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -96,7 +96,7 @@ use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
+use crate::beta_model::{const_expr_no_levels_canonical, defeq_of_pstep_star, pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -4955,6 +4955,37 @@ pub open spec fn bool_true_claim<'t, 'x>(env: Env<'x, 't>, x_n: ExprPtr<'t>, y_n
     && (exists |x_nn: ExprPtr<'t>|
         pstep_star(to_model_of_env(env), to_model(x_n), to_model(x_nn))
         && is_const_shape(x_nn) && const_id(x_nn) == bool_true_id())
+}
+
+/// UNCONDITIONAL lift of the `Bool.true` shortcut verdict to a
+/// model-level joinability fact: both sides identify with the ONE
+/// canonical `Const(bool_true_id, [])` (via the `bool_true_arity_is_zero`
+/// axiom -- `Bool.true` is not universe-polymorphic), so `x` reaching
+/// its `Bool.true` form joins `y` (already that form) directly, hence
+/// `deq_any` and `deq_p_any` at the real env model.
+pub proof fn bool_true_claim_lift<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires bool_true_claim(env, x, y)
+    ensures deq_any(to_model_of_env(env), to_model(x), to_model(y))
+{
+    let x_nn = choose |x_nn: ExprPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(x), to_model(x_nn))
+        && is_const_shape(x_nn) && const_id(x_nn) == bool_true_id();
+    bool_true_arity_is_zero(x_nn);
+    const_levels_vec_model(x_nn);
+    is_const_shape_model(x_nn);
+    assert(const_levels_vec(x_nn)@.len() == 0);
+    assert(to_model(x_nn) == ExprSpec::Const(const_id(x_nn), const_levels_vec(x_nn)));
+    const_expr_no_levels_canonical(to_model(x_nn), bool_true_id());
+    bool_true_arity_is_zero(y);
+    const_levels_vec_model(y);
+    is_const_shape_model(y);
+    assert(const_levels_vec(y)@.len() == 0);
+    assert(to_model(y) == ExprSpec::Const(const_id(y), const_levels_vec(y)));
+    const_expr_no_levels_canonical(to_model(y), bool_true_id());
+    assert(to_model(x_nn) == to_model(y));
+    assert(pstep_star(to_model_of_env(env), to_model(x), to_model(y)));
+    defeq_of_pstep_star(to_model_of_env(env), to_model(x), to_model(y));
+    deq_any_of_defeq(to_model_of_env(env), to_model(x), to_model(y));
 }
 
 pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x_n: ExprPtr<'t>, y_n: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)

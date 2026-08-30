@@ -654,6 +654,19 @@ pub proof fn nat_zero_arity_is_zero<'a>(e: ExprPtr<'a>)
 {
 }
 
+/// `Bool.true`'s twin of `nat_zero_arity_is_zero` (see that lemma's doc
+/// for the rationale): `Bool.true` is not universe-polymorphic, so a
+/// real `Const` named `Bool.true` always carries empty levels -- needed
+/// to identify any two such constants with the one canonical form and
+/// lift `verified_def_eq_bool_true_shortcut`'s verdict to a model-level
+/// joinability fact.
+#[verifier::external_body]
+pub proof fn bool_true_arity_is_zero<'a>(e: ExprPtr<'a>)
+    requires is_const_shape(e), const_id(e) == bool_true_id()
+    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+{
+}
+
 /// `Nat.succ`'s twin of `nat_zero_arity_is_zero` (see that lemma's doc
 /// comment for the full rationale): `Nat.succ` is likewise not
 /// universe-polymorphic in the real Lean prelude, so a real
