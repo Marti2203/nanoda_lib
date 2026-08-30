@@ -2628,7 +2628,7 @@ pub fn verified_def_eq_unit<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
             &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>|
                 to_model(x_ty) == spine_app(to_model(fun), args_model)
                 && is_const_shape(fun)
-            &&& b ==> def_eq_witness(x_ty, y_type)
+            &&& b ==> def_eq_witness(x_ty, y_type) && deq_full_claim(x_ty, y_type)
         },
         None => true,
     }
