@@ -10377,6 +10377,206 @@ pub proof fn shift_abstr_commute(d: int, c: nat, e: ExprSpec, ks: Seq<u32>, o: n
     }
 }
 
+/// C2a of the commutation family: `subst` and `abstr_full` commute when
+/// every abstraction-produced variable sits strictly above the
+/// substitution target (`j < o`, preserved down binders since both
+/// indices step together). The binder arm bridges the two sides'
+/// s-arguments via `shift_abstr_commute` (C1).
+pub proof fn subst_abstr_commute(j: nat, s: ExprSpec, e: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        j < o,
+        o + ks.len() + depth(e) + depth(s) + 2 <= 0xFFFF_FFFF,
+    ensures abstr_full(subst(j, s, e), ks, o) == subst(j, abstr_full(s, ks, o), abstr_full(e, ks, o))
+    decreases e
+{
+    reveal(subst);
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+                assert(abstr_full(e, ks, o) == e);
+                assert(subst(j, abstr_full(s, ks, o), e) == abstr_full(s, ks, o));
+            } else {
+                assert(subst(j, s, e) == e);
+                assert(abstr_full(e, ks, o) == e);
+                assert(subst(j, abstr_full(s, ks, o), e) == e);
+            }
+        }
+        ExprSpec::Free(id) => {
+            assert(subst(j, s, e) == e);
+            match find_from_end(ks, id) {
+                Some(p) => {
+                    find_from_end_bound(ks, id);
+                    assert(p < ks.len());
+                    assert(abstr_full(e, ks, o) == ExprSpec::Var((o + p) as u32));
+                    assert(((o + p) as u32) as nat == o + p);
+                    assert(o + p != j);
+                    assert(subst(j, abstr_full(s, ks, o), ExprSpec::Var((o + p) as u32)) == ExprSpec::Var((o + p) as u32));
+                }
+                None => {
+                    assert(abstr_full(e, ks, o) == e);
+                    assert(subst(j, abstr_full(s, ks, o), e) == e);
+                }
+            }
+        }
+        ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(subst(j, s, e) == e);
+            assert(abstr_full(e, ks, o) == e);
+            assert(subst(j, abstr_full(s, ks, o), e) == e);
+        }
+        ExprSpec::App(f, a) => {
+            assert(depth(*f) < depth(e));
+            assert(depth(*a) < depth(e));
+            subst_abstr_commute(j, s, *f, ks, o);
+            subst_abstr_commute(j, s, *a, ks, o);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(depth(*t) < depth(e));
+            assert(depth(*b) < depth(e));
+            subst_abstr_commute(j, s, *t, ks, o);
+            shift_preserves_depth(1, 0, s);
+            subst_abstr_commute((j + 1) as nat, shift(1, 0, s), *b, ks, (o + 1) as nat);
+            shift_abstr_commute(1, 0, s, ks, o);
+            assert(abstr_full(shift(1, 0, s), ks, (o + 1) as nat) == shift(1, 0, abstr_full(s, ks, o)));
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(depth(*t) < depth(e));
+            assert(depth(*v) < depth(e));
+            assert(depth(*b) < depth(e));
+            subst_abstr_commute(j, s, *t, ks, o);
+            subst_abstr_commute(j, s, *v, ks, o);
+            shift_preserves_depth(1, 0, s);
+            subst_abstr_commute((j + 1) as nat, shift(1, 0, s), *b, ks, (o + 1) as nat);
+            shift_abstr_commute(1, 0, s, ks, o);
+            assert(abstr_full(shift(1, 0, s), ks, (o + 1) as nat) == shift(1, 0, abstr_full(s, ks, o)));
+        }
+        ExprSpec::Proj(s2) => {
+            assert(depth(*s2) < depth(e));
+            subst_abstr_commute(j, s, *s2, ks, o);
+        }
+    }
+}
+
+/// C2b: the DOWN-shift and `abstr_full` commute -- abstracting first (at
+/// offset `o + 1`, one above) then shifting down equals shifting down
+/// then abstracting at `o`. Sound because `u` has no variable exactly at
+/// the cutoff (`!has_escaping_ref(u, c)` -- the invariant `subst`
+/// establishes for `subst1`'s intermediate term), so the down-shift
+/// never wraps, and every abstraction-produced variable (`>= o + 1 >
+/// c`) shifts down uniformly.
+pub proof fn shift_down_abstr_commute(c: nat, u: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        c <= o,
+        !has_escaping_ref(u, c),
+        o + ks.len() + depth(u) + 2 <= 0xFFFF_FFFF,
+    ensures abstr_full(shift(-1, c, u), ks, o) == shift(-1, c, abstr_full(u, ks, (o + 1) as nat))
+    decreases u
+{
+    reveal(shift);
+    match u {
+        ExprSpec::Var(i) => {
+            assert((i as nat) != c);
+            if (i as nat) < c {
+                assert(shift(-1, c, u) == u);
+                assert(abstr_full(u, ks, o) == u);
+                assert(abstr_full(u, ks, (o + 1) as nat) == u);
+            } else {
+                assert((i as nat) > c);
+                assert(shift(-1, c, u) == ExprSpec::Var(((i as int) - 1) as u32));
+                assert(abstr_full(u, ks, (o + 1) as nat) == u);
+                assert(abstr_full(ExprSpec::Var(((i as int) - 1) as u32), ks, o) == ExprSpec::Var(((i as int) - 1) as u32));
+            }
+        }
+        ExprSpec::Free(id) => {
+            assert(shift(-1, c, u) == u);
+            match find_from_end(ks, id) {
+                Some(p) => {
+                    find_from_end_bound(ks, id);
+                    assert(p < ks.len());
+                    assert(abstr_full(u, ks, o) == ExprSpec::Var((o + p) as u32));
+                    assert(abstr_full(u, ks, (o + 1) as nat) == ExprSpec::Var(((o + 1) + p) as u32));
+                    assert((((o + 1) + p) as u32) as nat == (o + 1) + p);
+                    assert((o + 1) + p >= c);
+                    assert((o + 1) + p != c);
+                    assert(shift(-1, c, ExprSpec::Var(((o + 1) + p) as u32)) == ExprSpec::Var((((o + 1) + p) as int - 1) as u32));
+                    assert(((((o + 1) + p) as int - 1) as u32) == ((o + p) as u32));
+                }
+                None => {
+                    assert(abstr_full(u, ks, o) == u);
+                    assert(abstr_full(u, ks, (o + 1) as nat) == u);
+                    assert(shift(-1, c, u) == u);
+                }
+            }
+        }
+        ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(shift(-1, c, u) == u);
+            assert(abstr_full(u, ks, o) == u);
+            assert(abstr_full(u, ks, (o + 1) as nat) == u);
+        }
+        ExprSpec::App(f, a) => {
+            assert(depth(*f) < depth(u));
+            assert(depth(*a) < depth(u));
+            shift_down_abstr_commute(c, *f, ks, o);
+            shift_down_abstr_commute(c, *a, ks, o);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(depth(*t) < depth(u));
+            assert(depth(*b) < depth(u));
+            shift_down_abstr_commute(c, *t, ks, o);
+            shift_down_abstr_commute((c + 1) as nat, *b, ks, (o + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(depth(*t) < depth(u));
+            assert(depth(*v) < depth(u));
+            assert(depth(*b) < depth(u));
+            shift_down_abstr_commute(c, *t, ks, o);
+            shift_down_abstr_commute(c, *v, ks, o);
+            shift_down_abstr_commute((c + 1) as nat, *b, ks, (o + 1) as nat);
+        }
+        ExprSpec::Proj(s2) => {
+            assert(depth(*s2) < depth(u));
+            shift_down_abstr_commute(c, *s2, ks, o);
+        }
+    }
+}
+
+/// C2, THE COMPOSITE: `abstr_full` transports through beta-substitution
+/// -- abstracting a `subst1` equals `subst1` of the abstractions (body
+/// side one offset up, matching the binder it sits under). Assembled
+/// from C2b (down-shift), C2a (subst), and C1 (the up-shift of the
+/// argument), with `subst_no_escaping_ref_at` discharging the
+/// no-variable-at-cutoff side condition C2b needs. The key equation of
+/// the binder anti-substitution arc: it makes `pstep`'s beta case
+/// stable under abstraction.
+pub proof fn subst1_abstr_commute(bound: nat, b: ExprSpec, a: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        max_var_below(a, bound),
+        bound + 1 + depth(b) <= 0xFFFF_0000,
+        o + ks.len() + depth(b) + depth(a) + 4 <= 0xFFFF_0000,
+    ensures abstr_full(subst1(b, a), ks, o) == subst1(abstr_full(b, ks, (o + 1) as nat), abstr_full(a, ks, o))
+{
+    let sa = shift(1, 0, a);
+    let u = subst(0, sa, b);
+    shift_up_has_escaping_ref(bound, a, 0);
+    assert(!has_escaping_ref(sa, 0));
+    shift_up_max_var_below(0, bound, a);
+    assert(max_var_below(sa, (bound + 1) as nat));
+    subst_no_escaping_ref_at((bound + 1) as nat, 0, sa, b);
+    assert(!has_escaping_ref(u, 0));
+    shift_preserves_depth(1, 0, a);
+    assert(depth(sa) == depth(a));
+    subst_depth_bound(0, sa, b);
+    shift_down_abstr_commute(0, u, ks, o);
+    assert(abstr_full(shift(-1, 0, u), ks, o) == shift(-1, 0, abstr_full(u, ks, (o + 1) as nat)));
+    subst_abstr_commute(0, sa, b, ks, (o + 1) as nat);
+    assert(abstr_full(u, ks, (o + 1) as nat) == subst(0, abstr_full(sa, ks, (o + 1) as nat), abstr_full(b, ks, (o + 1) as nat)));
+    shift_abstr_commute(1, 0, a, ks, o);
+    assert(abstr_full(sa, ks, (o + 1) as nat) == shift(1, 0, abstr_full(a, ks, o)));
+    assert(subst1(b, a) == shift(-1, 0, u));
+    assert(subst1(abstr_full(b, ks, (o + 1) as nat), abstr_full(a, ks, o))
+        == shift(-1, 0, subst(0, shift(1, 0, abstr_full(a, ks, o)), abstr_full(b, ks, (o + 1) as nat))));
+}
+
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
 /// (not just `+1`/`-1`) -- `shift`'s own cutoff comparison never fires.
 pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
