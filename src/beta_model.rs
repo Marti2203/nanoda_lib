@@ -2370,6 +2370,333 @@ pub proof fn pstep_d_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, body1: ExprSpec
     assert(subst1(body3, a3) == shift(-1, 0, t3));
 }
 
+/// The DEPTH cap for the Takahashi lemma's result, defined structurally
+/// so that every case of `pstep_d_takahashi`'s proof obligation is
+/// DEFINITIONAL (each arm is exactly the sum that case's `pstep_d_subst1`
+/// call or congruence assembly produces, plus refl-domination slack) --
+/// no closed form, no `nonlinear_arith`, ever. Tree-structured sums over
+/// DISJOINT subterms: worst case `O(size(e) * (dcap + size(e)))` --
+/// polynomial, the whole point of the two-cap design. Every arm is
+/// `>= size(e)` definitionally (the explicit `size(e)`/`+1` terms), which
+/// is what the refl branch's `pstep_complete_refl_d` result needs.
+pub open spec fn tak_d(dcap: nat, e: ExprSpec) -> nat
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => tak_d(dcap, *f) + tak_d(dcap, *a) + dcap + size(e) + 1,
+        ExprSpec::Bind(t, b) => tak_d(dcap, *t) + tak_d(dcap, *b) + size(e) + 1,
+        ExprSpec::Let(t, v, b) => tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + dcap + size(e) + 1,
+        ExprSpec::Proj(s) => tak_d(dcap, *s) + size(e) + 1,
+        _ => size(e),
+    }
+}
+
+/// The MVB cap for the Takahashi lemma's result -- same design as
+/// `tak_d`. Every arm is `>= bound + growth(size(e))` definitionally
+/// (the refl branch's need); the App/Let arms are exactly what those
+/// cases' `pstep_d_subst1` results demand.
+pub open spec fn tak_m(bound: nat, mcap: nat, dcap: nat, e: ExprSpec) -> nat
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => tak_m(bound, mcap, dcap, *f) + tak_m(bound, mcap, dcap, *a) + tak_d(dcap, *f) + tak_d(dcap, *a) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
+        ExprSpec::Bind(t, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *b) + bound + growth(size(e)) + 1,
+        ExprSpec::Let(t, v, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *v) + tak_m(bound, mcap, dcap, *b) + tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
+        ExprSpec::Proj(s) => tak_m(bound, mcap, dcap, *s) + bound + growth(size(e)) + 1,
+        _ => bound + growth(size(e)),
+    }
+}
+
+/// THE TAKAHASHI LEMMA over the ghost-certified relation -- the theorem
+/// this entire investigation has been building toward: ANY certified
+/// one-step parallel reduct `N` of `M` further reduces (with certified
+/// witnesses, at caps polynomial in `size(M)` and the input caps) to
+/// `M`'s own complete development. The diamond property is then a
+/// two-line corollary (apply this to both divergent reducts;
+/// `complete(M)` is the common target), with NO restriction to tiny
+/// terms -- the original `pstep_diamond`'s `size(e) <= ~9` cliff is
+/// gone, replaced by ceilings linear in the polynomial caps.
+///
+/// The beta case is where everything earned its keep: the given
+/// derivation's witnesses `body2`/`a2` come pre-bounded by the
+/// certificates, the IH turns them into certified reductions ONTO
+/// `complete(body)`/`complete(a)` (whose own bounds come from
+/// `complete_depth_bound`/`complete_max_var_below` -- deterministic
+/// construction, known exactly), and `pstep_d_subst1` composes them
+/// with everything linear. The App-congruence-with-Bind-head path
+/// (where the given step did NOT contract the redex but the complete
+/// development does) re-cases the function side's own derivation
+/// (refl or Bind-congruence) to expose its body reduct, then assembles
+/// the target beta step directly.
+#[verifier::spinoff_prover]
+pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_d(env, e1, e2, mcap, dcap),
+        max_var_below(e1, bound),
+        string_lits_ok(e1, 0),
+        bound + mcap + 6 * dcap + tak_m(bound, mcap, dcap, e1) + 4 * tak_d(dcap, e1) + growth(size(e1)) + size(e1) + 40 <= 0xFFFF_0000,
+    ensures pstep_d(env, e2, complete(e1), tak_m(bound, mcap, dcap, e1), tak_d(dcap, e1))
+    decreases e1
+{
+    reveal(shift);
+    reveal(subst);
+    let wm: nat = tak_m(bound, mcap, dcap, e1);
+    let wd: nat = tak_d(dcap, e1);
+    if e1 == e2 {
+        pstep_complete_refl_d(env, bound, e1);
+        pstep_d_mono(env, e1, complete(e1), (bound + growth(size(e1))) as nat, size(e1), wm, wd);
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(string_lits_ok(*f, 0));
+                assert(string_lits_ok(*a, 0));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(string_lits_ok(*body, 0));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        assert(tak_d(dcap, *f) == tak_d(dcap, *t) + tak_d(dcap, *body) + size(*f) + 1);
+                        assert(tak_m(bound, mcap, dcap, *f) == tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *body) + bound + growth(size(*f)) + 1);
+                        growth_mono(size(*f), size(e1));
+                        growth_mono(size(*body), size(e1));
+                        growth_mono(size(*a), size(e1));
+                        complete_depth_bound(*a);
+                        complete_max_var_below(bound, *a);
+                        complete_depth_bound(*body);
+                        complete_max_var_below(bound, *body);
+                        let ma1: nat = (mcap + bound + growth(size(e1))) as nat;
+                        let da1: nat = (dcap + size(e1)) as nat;
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep_d(env, *body, body2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap)
+                            && depth(body2) <= dcap && depth(a2) <= dcap
+                            && max_var_below(body2, mcap) && max_var_below(a2, mcap)
+                            && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep_d(env, *body, body2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap)
+                                && depth(body2) <= dcap && depth(a2) <= dcap
+                                && max_var_below(body2, mcap) && max_var_below(a2, mcap)
+                                && e2 == subst1(body2, a2);
+                            pstep_d_takahashi(env, bound, *body, body2, mcap, dcap);
+                            pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
+                            max_var_below_mono(a2, mcap, ma1);
+                            max_var_below_mono(complete(*a), (bound + growth(size(*a))) as nat, ma1);
+                            pstep_d_subst1(env, body2, complete(*body), a2, complete(*a), tak_m(bound, mcap, dcap, *body), tak_d(dcap, *body), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), ma1, da1);
+                            assert(complete(e1) == subst1(complete(*body), complete(*a)));
+                            pstep_d_mono(env, subst1(body2, a2), subst1(complete(*body), complete(*a)),
+                                (tak_m(bound, mcap, dcap, *a) + ma1 + tak_m(bound, mcap, dcap, *body) + tak_d(dcap, *body) + tak_d(dcap, *a) + 2 * depth(body2) + 6) as nat,
+                                (tak_d(dcap, *body) + tak_d(dcap, *a) + da1 + 1) as nat,
+                                wm, wd);
+                            assert(pstep_d(env, e2, complete(e1), wm, wd));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            // Expose the function side's own body reduct.
+                            let bodyp: ExprSpec;
+                            if *f == f2 {
+                                bodyp = *body;
+                                pstep_d_refl(env, *body, mcap, dcap);
+                                assert(pstep_d(env, *body, bodyp, mcap, dcap));
+                                assert(f2 == ExprSpec::Bind(t, Box::new(bodyp)));
+                            } else {
+                                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *body, b2, mcap, dcap) && f2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                                bodyp = b2;
+                                assert(pstep_d(env, *body, bodyp, mcap, dcap));
+                                assert(f2 == ExprSpec::Bind(Box::new(t2), Box::new(bodyp)));
+                            }
+                            pstep_d_takahashi(env, bound, *body, bodyp, mcap, dcap);
+                            pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
+                            // Assemble the target beta step on e2 directly:
+                            // witnesses complete(body)/complete(a), certified
+                            // via the complete-bounds lemmas.
+                            pstep_d_mono(env, bodyp, complete(*body), tak_m(bound, mcap, dcap, *body), tak_d(dcap, *body), wm, wd);
+                            pstep_d_mono(env, a2, complete(*a), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), wm, wd);
+                            max_var_below_mono(complete(*body), (bound + growth(size(*body))) as nat, wm);
+                            max_var_below_mono(complete(*a), (bound + growth(size(*a))) as nat, wm);
+                            assert(complete(e1) == subst1(complete(*body), complete(*a)));
+                            assert(pstep_d(env, bodyp, complete(*body), wm, wd) && pstep_d(env, a2, complete(*a), wm, wd)
+                                && depth(complete(*body)) <= wd && depth(complete(*a)) <= wd
+                                && max_var_below(complete(*body), wm) && max_var_below(complete(*a), wm)
+                                && complete(e1) == subst1(complete(*body), complete(*a)));
+                            assert(pstep_d(env, e2, complete(e1), wm, wd));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        growth_mono(size(*f), size(e1));
+                        growth_mono(size(*a), size(e1));
+                        pstep_d_takahashi(env, bound, *f, f2, mcap, dcap);
+                        pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
+                        pstep_d_mono(env, f2, complete(*f), tak_m(bound, mcap, dcap, *f), tak_d(dcap, *f), wm, wd);
+                        pstep_d_mono(env, a2, complete(*a), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), wm, wd);
+                        assert(complete(e1) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                        assert(pstep_d(env, f2, complete(*f), wm, wd) && pstep_d(env, a2, complete(*a), wm, wd)
+                            && complete(e1) == ExprSpec::App(Box::new(complete(*f)), Box::new(complete(*a))));
+                        assert(pstep_d(env, e2, complete(e1), wm, wd));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*b, 0));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                pstep_d_takahashi(env, bound, *t, t2, mcap, dcap);
+                pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
+                pstep_d_mono(env, t2, complete(*t), tak_m(bound, mcap, dcap, *t), tak_d(dcap, *t), wm, wd);
+                pstep_d_mono(env, b2, complete(*b), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), wm, wd);
+                assert(complete(e1) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+                assert(pstep_d(env, t2, complete(*t), wm, wd) && pstep_d(env, b2, complete(*b), wm, wd)
+                    && complete(e1) == ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))));
+                assert(pstep_d(env, e2, complete(e1), wm, wd));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*v, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                complete_depth_bound(*v);
+                complete_max_var_below(bound, *v);
+                complete_depth_bound(*b);
+                complete_max_var_below(bound, *b);
+                let ma1: nat = (mcap + bound + growth(size(e1))) as nat;
+                let da1: nat = (dcap + size(e1)) as nat;
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep_d(env, *b, b2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap)
+                    && depth(b2) <= dcap && depth(v2) <= dcap
+                    && max_var_below(b2, mcap) && max_var_below(v2, mcap)
+                    && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep_d(env, *b, b2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap)
+                        && depth(b2) <= dcap && depth(v2) <= dcap
+                        && max_var_below(b2, mcap) && max_var_below(v2, mcap)
+                        && e2 == subst1(b2, v2);
+                    pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
+                    pstep_d_takahashi(env, bound, *v, v2, mcap, dcap);
+                    max_var_below_mono(v2, mcap, ma1);
+                    max_var_below_mono(complete(*v), (bound + growth(size(*v))) as nat, ma1);
+                    pstep_d_subst1(env, b2, complete(*b), v2, complete(*v), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), tak_m(bound, mcap, dcap, *v), tak_d(dcap, *v), ma1, da1);
+                    assert(complete(e1) == subst1(complete(*b), complete(*v)));
+                    pstep_d_mono(env, subst1(b2, v2), subst1(complete(*b), complete(*v)),
+                        (tak_m(bound, mcap, dcap, *v) + ma1 + tak_m(bound, mcap, dcap, *b) + tak_d(dcap, *b) + tak_d(dcap, *v) + 2 * depth(b2) + 6) as nat,
+                        (tak_d(dcap, *b) + tak_d(dcap, *v) + da1 + 1) as nat,
+                        wm, wd);
+                    assert(pstep_d(env, e2, complete(e1), wm, wd));
+                } else {
+                    assert(exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
+                    pstep_d_takahashi(env, bound, *v, v2, mcap, dcap);
+                    // The complete development zeta-contracts; e2 (a Let)
+                    // beta/zeta-steps to it directly via the zeta disjunct.
+                    pstep_d_mono(env, b2, complete(*b), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), wm, wd);
+                    pstep_d_mono(env, v2, complete(*v), tak_m(bound, mcap, dcap, *v), tak_d(dcap, *v), wm, wd);
+                    max_var_below_mono(complete(*b), (bound + growth(size(*b))) as nat, wm);
+                    max_var_below_mono(complete(*v), (bound + growth(size(*v))) as nat, wm);
+                    assert(complete(e1) == subst1(complete(*b), complete(*v)));
+                    assert(pstep_d(env, b2, complete(*b), wm, wd) && pstep_d(env, v2, complete(*v), wm, wd)
+                        && depth(complete(*b)) <= wd && depth(complete(*v)) <= wd
+                        && max_var_below(complete(*b), wm) && max_var_below(complete(*v), wm)
+                        && complete(e1) == subst1(complete(*b), complete(*v)));
+                    assert(pstep_d(env, e2, complete(e1), wm, wd));
+                }
+            }
+            ExprSpec::Proj(s) => {
+                assert(max_var_below(*s, bound));
+                assert(string_lits_ok(*s, 0));
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep_d(env, *s, *s2, mcap, dcap));
+                        assert(size(e1) == 1 + size(*s));
+                        growth_mono(size(*s), size(e1));
+                        pstep_d_takahashi(env, bound, *s, *s2, mcap, dcap);
+                        pstep_d_mono(env, *s2, complete(*s), tak_m(bound, mcap, dcap, *s), tak_d(dcap, *s), wm, wd);
+                        assert(complete(e1) == ExprSpec::Proj(Box::new(complete(*s))));
+                        assert(pstep_d(env, e2, complete(e1), wm, wd));
+                    }
+                    _ => {
+                        assert(false);
+                    }
+                }
+            }
+            ExprSpec::Const(id, _levels) => {
+                assert(env.contains_key(id));
+                assert(false);
+            }
+            ExprSpec::NatLit(n) => {
+                // The stepped target IS the complete development.
+                if n.0@ == 0 {
+                    assert(e2 == const_expr_no_levels(nat_zero_id()));
+                    assert(complete(e1) == const_expr_no_levels(nat_zero_id()));
+                    assert(e2 == complete(e1));
+                    pstep_d_refl(env, e2, wm, wd);
+                } else {
+                    let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                    assert(e2 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                    assert(complete(e1) == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                    assert(e2 == complete(e1));
+                    pstep_d_refl(env, e2, wm, wd);
+                }
+            }
+            ExprSpec::StringLit(len) => {
+                assert(e2 == string_lit_expand_model(len.0@));
+                assert(complete(e1) == string_lit_expand_model(len.0@));
+                assert(e2 == complete(e1));
+                pstep_d_refl(env, e2, wm, wd);
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
+/// THE DIAMOND PROPERTY, unrestricted -- the two-line corollary of
+/// `pstep_d_takahashi`, and the closure of this file's oldest open
+/// problem: where the original `pstep_diamond` is restricted to
+/// `size(e) <= ~9` (its size-tracking proof technique collapses under
+/// beta duplication's genuine exponential worst case), this version
+/// works for ANY term whose CERTIFIED caps fit a linear ceiling --
+/// polynomial in `size(e)` and the input caps, i.e. every term the
+/// kernel actually manipulates. Both divergent certified reducts
+/// further reduce (with certificates) to the ONE deterministic common
+/// target, `complete(e)` -- no pairwise reconciliation of the two
+/// derivations against each other ever happens, which is precisely
+/// Takahashi's trick and precisely what dissolved the old proof's
+/// witness-reconciliation blowup.
+pub proof fn pstep_d_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_d(env, e, e1, mcap, dcap),
+        pstep_d(env, e, e2, mcap, dcap),
+        max_var_below(e, bound),
+        string_lits_ok(e, 0),
+        bound + mcap + 6 * dcap + tak_m(bound, mcap, dcap, e) + 4 * tak_d(dcap, e) + growth(size(e)) + size(e) + 40 <= 0xFFFF_0000,
+    ensures
+        pstep_d(env, e1, complete(e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
+        pstep_d(env, e2, complete(e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
+{
+    pstep_d_takahashi(env, bound, e, e1, mcap, dcap);
+    pstep_d_takahashi(env, bound, e, e2, mcap, dcap);
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
