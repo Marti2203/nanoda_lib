@@ -11871,6 +11871,229 @@ pub proof fn pstep_spine_app_star(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSp
     }
 }
 
+/// `Bind` type-position congruence for `pstep_star`, body fixed. Same
+/// chain-mapping proof shape as `pstep_star_app_congr` -- `pstep`'s
+/// `Bind` arm steps both positions at once, so the fixed side rides
+/// along reflexively at every link.
+pub proof fn pstep_star_bind_ty_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, b: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Bind(Box::new(x), Box::new(b)), ExprSpec::Bind(Box::new(y), Box::new(b)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Bind(Box::new(chain[i]), Box::new(b)));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Bind(Box::new(chain[0]), Box::new(b)));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Bind(Box::new(chain[chain.len() - 1]), Box::new(b)));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, b, b));
+            assert(mapped[i] == ExprSpec::Bind(Box::new(chain[i]), Box::new(b)));
+            assert(mapped[i + 1] == ExprSpec::Bind(Box::new(chain[i + 1]), Box::new(b)));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `Bind` body-position congruence for `pstep_star`, type fixed.
+pub proof fn pstep_star_bind_body_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t: ExprSpec, x: ExprSpec, y: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Bind(Box::new(t), Box::new(x)), ExprSpec::Bind(Box::new(t), Box::new(y)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Bind(Box::new(t), Box::new(chain[i])));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Bind(Box::new(t), Box::new(chain[0])));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Bind(Box::new(t), Box::new(chain[chain.len() - 1])));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, t, t));
+            assert(mapped[i] == ExprSpec::Bind(Box::new(t), Box::new(chain[i])));
+            assert(mapped[i + 1] == ExprSpec::Bind(Box::new(t), Box::new(chain[i + 1])));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `Let` type-position congruence for `pstep_star`, value and body fixed
+/// (uses `pstep`'s three-position `Let` congruence disjunct with the
+/// other two positions reflexive).
+pub proof fn pstep_star_let_ty_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, v: ExprSpec, b: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Let(Box::new(x), Box::new(v), Box::new(b)), ExprSpec::Let(Box::new(y), Box::new(v), Box::new(b)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Let(Box::new(chain[i]), Box::new(v), Box::new(b)));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Let(Box::new(chain[0]), Box::new(v), Box::new(b)));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Let(Box::new(chain[chain.len() - 1]), Box::new(v), Box::new(b)));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, v, v));
+            assert(pstep(env, b, b));
+            assert(mapped[i] == ExprSpec::Let(Box::new(chain[i]), Box::new(v), Box::new(b)));
+            assert(mapped[i + 1] == ExprSpec::Let(Box::new(chain[i + 1]), Box::new(v), Box::new(b)));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `Let` value-position congruence for `pstep_star`, type and body fixed.
+pub proof fn pstep_star_let_val_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t: ExprSpec, x: ExprSpec, y: ExprSpec, b: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Let(Box::new(t), Box::new(x), Box::new(b)), ExprSpec::Let(Box::new(t), Box::new(y), Box::new(b)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Let(Box::new(t), Box::new(chain[i]), Box::new(b)));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Let(Box::new(t), Box::new(chain[0]), Box::new(b)));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Let(Box::new(t), Box::new(chain[chain.len() - 1]), Box::new(b)));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, t, t));
+            assert(pstep(env, b, b));
+            assert(mapped[i] == ExprSpec::Let(Box::new(t), Box::new(chain[i]), Box::new(b)));
+            assert(mapped[i + 1] == ExprSpec::Let(Box::new(t), Box::new(chain[i + 1]), Box::new(b)));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `Let` body-position congruence for `pstep_star`, type and value fixed.
+pub proof fn pstep_star_let_body_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t: ExprSpec, v: ExprSpec, x: ExprSpec, y: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(x)), ExprSpec::Let(Box::new(t), Box::new(v), Box::new(y)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Let(Box::new(t), Box::new(v), Box::new(chain[i])));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Let(Box::new(t), Box::new(v), Box::new(chain[0])));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Let(Box::new(t), Box::new(v), Box::new(chain[chain.len() - 1])));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(pstep(env, t, t));
+            assert(pstep(env, v, v));
+            assert(mapped[i] == ExprSpec::Let(Box::new(t), Box::new(v), Box::new(chain[i])));
+            assert(mapped[i + 1] == ExprSpec::Let(Box::new(t), Box::new(v), Box::new(chain[i + 1])));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// `Proj` congruence for `pstep_star` (`pstep`'s `Proj` arm is already
+/// exactly inner-position congruence).
+pub proof fn pstep_star_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires pstep_star(env, x, y)
+    ensures pstep_star(env, ExprSpec::Proj(Box::new(x)), ExprSpec::Proj(Box::new(y)))
+{
+    let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Proj(Box::new(chain[i])));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == ExprSpec::Proj(Box::new(chain[0])));
+    assert(chain[0] == x);
+    assert(mapped[mapped.len() - 1] == ExprSpec::Proj(Box::new(chain[chain.len() - 1])));
+    assert(chain[chain.len() - 1] == y);
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            assert(mapped[i] == ExprSpec::Proj(Box::new(chain[i])));
+            assert(mapped[i + 1] == ExprSpec::Proj(Box::new(chain[i + 1])));
+            assert(pstep(env, mapped[i], mapped[i + 1]));
+        }
+    }
+}
+
+/// CONGRUENCE OF DEFINITIONAL EQUALITY at `App`, both positions varying:
+/// `defeq(f1, f2)` and `defeq(a1, a2)` give `defeq(App(f1, a1),
+/// App(f2, a2))`. This is the first of the `defeq` congruence family
+/// closing the gap `full_def_eq`'s doc comment discloses ("does NOT yet
+/// know that full_def_eq on two sub-terms implies full_def_eq on the
+/// terms built from them"). NO confluence needed: each side walks to the
+/// common target `App(zf, za)` by varying one position at a time
+/// (function first, then argument), gluing with `pstep_star_trans`.
+pub proof fn defeq_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
+    requires defeq(env, f1, f2), defeq(env, a1, a2)
+    ensures defeq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
+{
+    let zf = choose |z: ExprSpec| #[trigger] pstep_star(env, f1, z) && #[trigger] pstep_star(env, f2, z);
+    let za = choose |z: ExprSpec| #[trigger] pstep_star(env, a1, z) && #[trigger] pstep_star(env, a2, z);
+    pstep_star_app_congr(env, f1, zf, a1);
+    pstep_star_app_arg_congr(env, zf, a1, za);
+    pstep_star_trans(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(zf), Box::new(a1)), ExprSpec::App(Box::new(zf), Box::new(za)));
+    pstep_star_app_congr(env, f2, zf, a2);
+    pstep_star_app_arg_congr(env, zf, a2, za);
+    pstep_star_trans(env, ExprSpec::App(Box::new(f2), Box::new(a2)), ExprSpec::App(Box::new(zf), Box::new(a2)), ExprSpec::App(Box::new(zf), Box::new(za)));
+    assert(pstep_star(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(zf), Box::new(za)))
+        && pstep_star(env, ExprSpec::App(Box::new(f2), Box::new(a2)), ExprSpec::App(Box::new(zf), Box::new(za))));
+}
+
+/// `defeq` congruence at `Bind`, both positions varying.
+pub proof fn defeq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
+    requires defeq(env, t1, t2), defeq(env, b1, b2)
+    ensures defeq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+{
+    let zt = choose |z: ExprSpec| #[trigger] pstep_star(env, t1, z) && #[trigger] pstep_star(env, t2, z);
+    let zb = choose |z: ExprSpec| #[trigger] pstep_star(env, b1, z) && #[trigger] pstep_star(env, b2, z);
+    pstep_star_bind_ty_congr(env, t1, zt, b1);
+    pstep_star_bind_body_congr(env, zt, b1, zb);
+    pstep_star_trans(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(zt), Box::new(b1)), ExprSpec::Bind(Box::new(zt), Box::new(zb)));
+    pstep_star_bind_ty_congr(env, t2, zt, b2);
+    pstep_star_bind_body_congr(env, zt, b2, zb);
+    pstep_star_trans(env, ExprSpec::Bind(Box::new(t2), Box::new(b2)), ExprSpec::Bind(Box::new(zt), Box::new(b2)), ExprSpec::Bind(Box::new(zt), Box::new(zb)));
+    assert(pstep_star(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(zt), Box::new(zb)))
+        && pstep_star(env, ExprSpec::Bind(Box::new(t2), Box::new(b2)), ExprSpec::Bind(Box::new(zt), Box::new(zb))));
+}
+
+/// `defeq` congruence at `Let`, all three positions varying (type, then
+/// value, then body, each glued with `pstep_star_trans`).
+pub proof fn defeq_let_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, v1: ExprSpec, v2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
+    requires defeq(env, t1, t2), defeq(env, v1, v2), defeq(env, b1, b2)
+    ensures defeq(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)))
+{
+    let zt = choose |z: ExprSpec| #[trigger] pstep_star(env, t1, z) && #[trigger] pstep_star(env, t2, z);
+    let zv = choose |z: ExprSpec| #[trigger] pstep_star(env, v1, z) && #[trigger] pstep_star(env, v2, z);
+    let zb = choose |z: ExprSpec| #[trigger] pstep_star(env, b1, z) && #[trigger] pstep_star(env, b2, z);
+    let target = ExprSpec::Let(Box::new(zt), Box::new(zv), Box::new(zb));
+    pstep_star_let_ty_congr(env, t1, zt, v1, b1);
+    pstep_star_let_val_congr(env, zt, v1, zv, b1);
+    pstep_star_trans(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(zt), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(zt), Box::new(zv), Box::new(b1)));
+    pstep_star_let_body_congr(env, zt, zv, b1, zb);
+    pstep_star_trans(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), ExprSpec::Let(Box::new(zt), Box::new(zv), Box::new(b1)), target);
+    pstep_star_let_ty_congr(env, t2, zt, v2, b2);
+    pstep_star_let_val_congr(env, zt, v2, zv, b2);
+    pstep_star_trans(env, ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), ExprSpec::Let(Box::new(zt), Box::new(v2), Box::new(b2)), ExprSpec::Let(Box::new(zt), Box::new(zv), Box::new(b2)));
+    pstep_star_let_body_congr(env, zt, zv, b2, zb);
+    pstep_star_trans(env, ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), ExprSpec::Let(Box::new(zt), Box::new(zv), Box::new(b2)), target);
+    assert(pstep_star(env, ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)), target)
+        && pstep_star(env, ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)), target));
+}
+
+/// `defeq` congruence at `Proj`.
+pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x1: ExprSpec, x2: ExprSpec)
+    requires defeq(env, x1, x2)
+    ensures defeq(env, ExprSpec::Proj(Box::new(x1)), ExprSpec::Proj(Box::new(x2)))
+{
+    let z = choose |z: ExprSpec| #[trigger] pstep_star(env, x1, z) && #[trigger] pstep_star(env, x2, z);
+    pstep_star_proj_congr(env, x1, z);
+    pstep_star_proj_congr(env, x2, z);
+    assert(pstep_star(env, ExprSpec::Proj(Box::new(x1)), ExprSpec::Proj(Box::new(z)))
+        && pstep_star(env, ExprSpec::Proj(Box::new(x2)), ExprSpec::Proj(Box::new(z))));
+}
+
 /// The telescopic-reduction bridge to `pstep`/confluence this whole file
 /// was building toward: `spine_app(head, args)` (the ORIGINAL,
 /// unreduced spine) and `spine_reduce(head, args)` (the fully telescoped
