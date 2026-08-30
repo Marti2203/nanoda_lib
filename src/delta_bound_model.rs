@@ -86,6 +86,7 @@ use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 use crate::level_arena_bridge::verified_leq;
+use crate::level_arena_bridge::verified_may_be_prop;
 #[cfg(verus_only)]
 use crate::level_model::interp;
 #[cfg(verus_only)]
@@ -1960,6 +1961,42 @@ pub fn verified_is_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
                 Some(false)
             }
         }
+        None => None,
+    }
+}
+
+/// Real-arena counterpart to `tc.rs::TypeChecker::may_be_prop`
+/// (`tc.rs:1319-1323`), completing the `is_prop`/`may_be_prop`/`is_proof`
+/// trio alongside `verified_is_prop_of_type` above -- same "given the
+/// ALREADY-INFERRED type `ty` directly" convention: `infer_sort_of(ty)`
+/// then `TcCtx::may_be_prop` (`level.rs:276-278`, `verified_may_be_prop`,
+/// `level_arena_bridge.rs`).
+///
+/// `verified_may_be_prop`'s own soundness is the OPPOSITE direction from
+/// `verified_leq`'s: it's `Some(false)` (i.e. "definitely NOT possibly
+/// `Prop`") that carries the real semantic claim (`is_never_zero_spec`
+/// confirmed true, hence the level provably never denotes 0 under any
+/// assignment) -- `Some(true)` is the honestly weaker "couldn't rule it
+/// out" signal, matching `may_be_prop`'s own real-world role as a
+/// conservative check. `None` (from EITHER `verified_infer_sort_of`'s or
+/// `verified_may_be_prop`'s own fuel exhaustion) stays the usual honest
+/// incompleteness signal throughout this arc.
+pub fn verified_may_be_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ty)) <= 0,
+        max_var_below(to_model(ty), bound),
+        depth(to_model(ty)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+    ensures match result {
+        Some(false) => exists |r: ExprPtr<'t>, l: LevelPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && to_model(r) == ExprSpec::Sort(level_to_model(l))
+            && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(l), rho) >= 1),
+        _ => true,
+    }
+{
+    match verified_infer_sort_of(ctx, env, ty, fuel, bound, d, n) {
+        Some(level) => verified_may_be_prop(ctx, level, fuel),
         None => None,
     }
 }
