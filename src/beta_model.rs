@@ -2697,6 +2697,198 @@ pub proof fn pstep_d_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e:
     pstep_d_takahashi(env, bound, e, e2, mcap, dcap);
 }
 
+/// The `pstep ==> pstep_d` conversion -- and a pleasant surprise found
+/// by hand-deriving the caps BEFORE writing it: this is only QUADRATIC
+/// (`mcap = bound + growth(size(e1))`, `dcap = size(e1)`), NOT the
+/// exponential the design notes originally predicted for the
+/// "quarantined" lemma. The reason: `pstep_d` certifies witness DEPTH
+/// and `max_var_below`, never SIZE -- and a one-step reduct's depth is
+/// bounded by the ORIGINAL's size (linear, `pstep_bounds` at `cap = 0`),
+/// with `pstep_size_bound`'s `3^n` never needed at all. Every witness at
+/// every level of the derivation is a one-step reduct of a SUBTERM of
+/// `e1`, so the single global cap pair certifies them all.
+///
+/// With this, every bare `pstep` fact this codebase already produces
+/// (e.g. from `verified_whnf_multi_round`'s `pstep_star` chains) can be
+/// upgraded into the certified world and fed to `pstep_d_diamond`, for
+/// any term of size up to ~65000 (where `growth(size)` meets the
+/// ceiling) -- vs. the old `pstep_diamond`'s hard `size <= ~9` cliff.
+pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep(env, e1, e2),
+        max_var_below(e1, bound),
+        string_lits_ok(e1, 0),
+        bound + growth(size(e1)) + size(e1) + 10 <= 0xFFFF_0000,
+    ensures pstep_d(env, e1, e2, (bound + growth(size(e1))) as nat, size(e1))
+    decreases e1
+{
+    reveal(shift);
+    let mcap: nat = (bound + growth(size(e1))) as nat;
+    let dcap: nat = size(e1);
+    assert(env_wf(env, 0));
+    if e1 == e2 {
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                assert(string_lits_ok(*f, 0));
+                assert(string_lits_ok(*a, 0));
+                assert(size(e1) == 1 + size(*f) + size(*a));
+                growth_mono(size(*f), size(e1));
+                growth_mono(size(*a), size(e1));
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(max_var_below(*body, bound));
+                        assert(string_lits_ok(*body, 0));
+                        assert(size(*f) == 1 + size(*t) + size(*body));
+                        growth_mono(size(*body), size(e1));
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
+                            pstep_to_pstep_d(env, bound, *body, body2);
+                            pstep_to_pstep_d(env, bound, *a, a2);
+                            pstep_d_mono(env, *body, body2, (bound + growth(size(*body))) as nat, size(*body), mcap, dcap);
+                            pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
+                            let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *body, body2);
+                            let (amvb, adepth) = pstep_bounds(env, 0, bound, *a, a2);
+                            assert(bdepth <= size(*body) + 0 * size_growth(size(*body)));
+                            assert(adepth <= size(*a) + 0 * size_growth(size(*a)));
+                            assert(depth(body2) <= dcap);
+                            assert(depth(a2) <= dcap);
+                            assert(bmvb <= bound + growth(size(*body)) + 0 * size_growth(size(*body)));
+                            assert(amvb <= bound + growth(size(*a)) + 0 * size_growth(size(*a)));
+                            max_var_below_mono(body2, bmvb, mcap);
+                            max_var_below_mono(a2, amvb, mcap);
+                            assert(pstep_d(env, *body, body2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap)
+                                && depth(body2) <= dcap && depth(a2) <= dcap
+                                && max_var_below(body2, mcap) && max_var_below(a2, mcap)
+                                && e2 == subst1(body2, a2));
+                            assert(pstep_d(env, e1, e2, mcap, dcap));
+                        } else {
+                            assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_to_pstep_d(env, bound, *f, f2);
+                            pstep_to_pstep_d(env, bound, *a, a2);
+                            pstep_d_mono(env, *f, f2, (bound + growth(size(*f))) as nat, size(*f), mcap, dcap);
+                            pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
+                            assert(pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                            assert(pstep_d(env, e1, e2, mcap, dcap));
+                        }
+                    }
+                    _ => {
+                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_to_pstep_d(env, bound, *f, f2);
+                        pstep_to_pstep_d(env, bound, *a, a2);
+                        pstep_d_mono(env, *f, f2, (bound + growth(size(*f))) as nat, size(*f), mcap, dcap);
+                        pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
+                        assert(pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
+                        assert(pstep_d(env, e1, e2, mcap, dcap));
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(size(e1) == 1 + size(*t) + size(*b));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*b), size(e1));
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_to_pstep_d(env, bound, *t, t2);
+                pstep_to_pstep_d(env, bound, *b, b2);
+                pstep_d_mono(env, *t, t2, (bound + growth(size(*t))) as nat, size(*t), mcap, dcap);
+                pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
+                assert(pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+                assert(pstep_d(env, e1, e2, mcap, dcap));
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*v, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
+                growth_mono(size(*t), size(e1));
+                growth_mono(size(*v), size(e1));
+                growth_mono(size(*b), size(e1));
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
+                    pstep_to_pstep_d(env, bound, *b, b2);
+                    pstep_to_pstep_d(env, bound, *v, v2);
+                    pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
+                    pstep_d_mono(env, *v, v2, (bound + growth(size(*v))) as nat, size(*v), mcap, dcap);
+                    let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *b, b2);
+                    let (vmvb, vdepth) = pstep_bounds(env, 0, bound, *v, v2);
+                    assert(bdepth <= size(*b) + 0 * size_growth(size(*b)));
+                    assert(vdepth <= size(*v) + 0 * size_growth(size(*v)));
+                    assert(depth(b2) <= dcap);
+                    assert(depth(v2) <= dcap);
+                    assert(bmvb <= bound + growth(size(*b)) + 0 * size_growth(size(*b)));
+                    assert(vmvb <= bound + growth(size(*v)) + 0 * size_growth(size(*v)));
+                    max_var_below_mono(b2, bmvb, mcap);
+                    max_var_below_mono(v2, vmvb, mcap);
+                    assert(pstep_d(env, *b, b2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap)
+                        && depth(b2) <= dcap && depth(v2) <= dcap
+                        && max_var_below(b2, mcap) && max_var_below(v2, mcap)
+                        && e2 == subst1(b2, v2));
+                    assert(pstep_d(env, e1, e2, mcap, dcap));
+                } else {
+                    assert(exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_to_pstep_d(env, bound, *t, t2);
+                    pstep_to_pstep_d(env, bound, *v, v2);
+                    pstep_to_pstep_d(env, bound, *b, b2);
+                    pstep_d_mono(env, *t, t2, (bound + growth(size(*t))) as nat, size(*t), mcap, dcap);
+                    pstep_d_mono(env, *v, v2, (bound + growth(size(*v))) as nat, size(*v), mcap, dcap);
+                    pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
+                    assert(pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
+                    assert(pstep_d(env, e1, e2, mcap, dcap));
+                }
+            }
+            ExprSpec::Proj(s) => {
+                assert(max_var_below(*s, bound));
+                assert(string_lits_ok(*s, 0));
+                assert(size(e1) == 1 + size(*s));
+                growth_mono(size(*s), size(e1));
+                match e2 {
+                    ExprSpec::Proj(s2) => {
+                        assert(pstep(env, *s, *s2));
+                        pstep_to_pstep_d(env, bound, *s, *s2);
+                        pstep_d_mono(env, *s, *s2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
+                        assert(pstep_d(env, e1, e2, mcap, dcap));
+                    }
+                    _ => {
+                        assert(false);
+                    }
+                }
+            }
+            ExprSpec::Const(id, _levels) => {
+                assert(env.contains_key(id));
+                assert(false);
+            }
+            ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
+                // arms are verbatim identical between `pstep` and `pstep_d`.
+                assert(pstep_d(env, e1, e2, mcap, dcap));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
