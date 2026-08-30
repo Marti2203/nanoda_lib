@@ -34,6 +34,7 @@ use crate::expr_model::NatLitPayload;
 use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
+#[cfg(verus_only)]
 use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below};
 #[cfg(verus_only)]
 use crate::expr_model::nlbv;
