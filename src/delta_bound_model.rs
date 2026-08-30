@@ -2278,6 +2278,25 @@ pub fn verified_may_be_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// a reduction fact, so it can never feed `defeq`/`deq`'s reduction
 /// disjuncts; a proper irrelevance-aware equality is future metatheory
 /// (it would enter `deq` as a new leaf-style case, like `deq_leaf`).
+/// THE MODEL-LEVEL PROOF-IRRELEVANCE FACT: `x` and `y` are both PROOFS
+/// -- each typed (via `types_to`, so the type-of link is a checked
+/// relation, not caller trust) by a type reaching a `Prop`-level `Sort`
+/// -- of `deq_any`-related propositions. This is the honest semantic
+/// content a proof-irrelevance verdict SHOULD carry, and the exact
+/// ingredient a future `deq_p` (typed definitional equality with the
+/// irrelevance case) consumes. Non-recursive; clean triggers.
+pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat, lx: LevelSpec, ly: LevelSpec|
+        #![trigger types_to(dty, denv, lctx, x, tx, fx), types_to(dty, denv, lctx, y, ty2, fy), pstep_star(denv, tx, ExprSpec::Sort(lx)), pstep_star(denv, ty2, ExprSpec::Sort(ly))]
+        types_to(dty, denv, lctx, x, tx, fx)
+        && types_to(dty, denv, lctx, y, ty2, fy)
+        && pstep_star(denv, tx, ExprSpec::Sort(lx))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(lx, rho) <= 0)
+        && pstep_star(denv, ty2, ExprSpec::Sort(ly))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(ly, rho) <= 0)
+        && deq_any(denv, tx, ty2)
+}
+
 pub open spec fn proof_irrel_claim<'t, 'x>(env: Env<'x, 't>, l_type: ExprPtr<'t>, r_type: ExprPtr<'t>) -> bool {
     (exists |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
         pstep_star(to_model_of_env(env), to_model(l_type), to_model(lr))
@@ -2301,7 +2320,8 @@ pub fn verified_proof_irrel_eq_of_types<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         depth(to_model(r_type)) <= 60000,
         whnf_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(true) => proof_irrel_claim(*env, l_type, r_type),
+        Some(true) => proof_irrel_claim(*env, l_type, r_type)
+            && def_eq_witness(l_type, r_type) && deq_full_claim(l_type, r_type),
         _ => true,
     }
 {
@@ -4010,7 +4030,12 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
     ensures match result {
         Some(true) =>
             to_model(x) == to_model(y)
-            || proof_irrel_claim(*env, x_type, y_type)
+            || (proof_irrel_claim(*env, x_type, y_type)
+                && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type)
+                && (((exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(x_type), f))
+                    && (exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(y), to_model(y_type), f))
+                    && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))))
+                    ==> proof_irrel_pair(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y))))
             || with_delta_claim(*env, x, y, fuel as nat),
         _ => true,
     }
@@ -4019,7 +4044,39 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         return Some(true);
     }
     match verified_proof_irrel_eq_of_types(ctx, env, x_type, y_type, fuel, bound, d, n) {
-        Some(true) => return Some(true),
+        Some(true) => {
+            proof {
+                let dty = to_model_of_declar_ty(*env);
+                let denvm = to_model_of_env(*env);
+                let lc = arena_lctx();
+                if (exists |f: nat| #[trigger] types_to(dty, denvm, lc, to_model(x), to_model(x_type), f))
+                    && (exists |f: nat| #[trigger] types_to(dty, denvm, lc, to_model(y), to_model(y_type), f))
+                    && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))) {
+                    let fx = choose |f: nat| types_to(dty, denvm, lc, to_model(x), to_model(x_type), f);
+                    let fy = choose |f: nat| types_to(dty, denvm, lc, to_model(y), to_model(y_type), f);
+                    let (lr, ll) = choose |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
+                        pstep_star(to_model_of_env(*env), to_model(x_type), to_model(lr))
+                        && to_model(lr) == ExprSpec::Sort(level_to_model(ll))
+                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0);
+                    let (rr, rl) = choose |rr: ExprPtr<'t>, rl: LevelPtr<'t>|
+                        pstep_star(to_model_of_env(*env), to_model(y_type), to_model(rr))
+                        && to_model(rr) == ExprSpec::Sort(level_to_model(rl))
+                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0);
+                    assert(pstep_star(denvm, to_model(x_type), ExprSpec::Sort(level_to_model(ll))));
+                    assert(pstep_star(denvm, to_model(y_type), ExprSpec::Sort(level_to_model(rl))));
+                    assert(deq_any(denvm, to_model(x_type), to_model(y_type)));
+                    assert(types_to(dty, denvm, lc, to_model(x), to_model(x_type), fx)
+                        && types_to(dty, denvm, lc, to_model(y), to_model(y_type), fy)
+                        && pstep_star(denvm, to_model(x_type), ExprSpec::Sort(level_to_model(ll)))
+                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0)
+                        && pstep_star(denvm, to_model(y_type), ExprSpec::Sort(level_to_model(rl)))
+                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0)
+                        && deq_any(denvm, to_model(x_type), to_model(y_type)));
+                    assert(proof_irrel_pair(dty, denvm, lc, to_model(x), to_model(y)));
+                }
+            }
+            return Some(true);
+        },
         _ => {}
     }
     verified_def_eq_with_delta(ctx, env, x, y, fuel, bound, d, cap, n, bound3, d3, n2, d_i, d_xy_cap, max_str_len)
@@ -4069,7 +4126,12 @@ pub open spec fn def_eq_full_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: 
     ||| (def_eq_witness(x, y) && deq_full_claim(x, y))
     ||| bool_true_claim(env, x, y)
     ||| to_model(x) == to_model(y)
-    ||| proof_irrel_claim(env, x_type, y_type)
+    ||| (proof_irrel_claim(env, x_type, y_type)
+        && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type)
+        && (((exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(x_type), f))
+            && (exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(y), to_model(y_type), f))
+            && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))))
+            ==> proof_irrel_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y))))
     ||| with_delta_claim(env, x, y, fuel)
 }
 
