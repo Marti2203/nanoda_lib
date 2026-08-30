@@ -2300,6 +2300,62 @@ pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1:
     }
 }
 
+/// THE substitution-commutation lemma over the ghost-certified relation
+/// -- the exact composition (`shift`-up the argument pair, full
+/// substitutivity, `shift`-down to erase the consumed binder) whose
+/// original (`pstep_subst1`) is where this file's whole exponential
+/// story bottomed out. Compare: the original's headroom is `bound +
+/// growth(size(body1)*(size(a1)+1)) + 4*size(body1)*(size(a1)+1) + ...
+/// + 10*cap*size_growth(size(body1)*(size(a1)+1))` -- quartic in sizes
+/// at best, exponential once its CALLER has to bound reduct sizes via
+/// `pstep_size_bound`. This version: ceiling `8*wb + 12*wa +
+/// 12*depth(body1) + 30`, result cap `2*wb + 3*wa + 3*depth(body1) + 5`
+/// -- LINEAR in the certified bounds, end of story. Every sub-call's
+/// requires is fed from certificates or the three explicit `a1` bounds.
+pub proof fn pstep_d_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec, wb: nat, wa: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_d(env, body1, body3, wb),
+        pstep_d(env, a1, a3, wa),
+        depth(a1) <= wa,
+        max_var_below(a1, wa),
+        string_lits_ok(a1, 0),
+        8 * wb + 12 * wa + 12 * depth(body1) + 30 <= 0xFFFF_0000,
+    ensures pstep_d(env, subst1(body1, a1), subst1(body3, a3), (2 * wb + 3 * wa + 3 * depth(body1) + 5) as nat)
+{
+    reveal(shift);
+    reveal(subst);
+    let w1: nat = (2 * wb + 3 * wa + 3 * depth(body1) + 5) as nat;
+    // Shift the argument pair under the binder.
+    pstep_d_shift(env, 0, a1, a3, wa);
+    let s1 = shift(1, 0, a1);
+    let s3 = shift(1, 0, a3);
+    assert(pstep_d(env, s1, s3, (wa + 1) as nat));
+    shift_preserves_depth(1, 0, a1);
+    assert(depth(s1) <= (wa + 1) as nat);
+    shift_up_max_var_below(0, wa, a1);
+    assert(max_var_below(s1, (wa + 1) as nat));
+    string_lits_ok_shift(a1, 1, 0, 0);
+    // Full substitutivity.
+    pstep_d_subst(env, 0, s1, s3, body1, body3, (wa + 1) as nat, wb);
+    let t1 = subst(0, s1, body1);
+    let t3 = subst(0, s3, body3);
+    assert(pstep_d(env, t1, t3, (2 * wb + 3 * (wa + 1) + 3 * depth(body1) + 2) as nat));
+    assert((2 * wb + 3 * (wa + 1) + 3 * depth(body1) + 2) as nat == w1);
+    // The freshly-shifted argument can't reference the binder being
+    // erased, so neither can the substitution result at index 0 --
+    // exactly what the down-shift's wrap-safety needs.
+    shift_up_has_escaping_ref(wa, a1, 0);
+    assert(!has_escaping_ref(s1, 0));
+    subst_no_escaping_ref_at((wa + 1) as nat, 0, s1, body1);
+    assert(!has_escaping_ref(t1, 0));
+    // Erase the consumed binder.
+    pstep_d_shift_down(env, 0, t1, t3, w1);
+    assert(pstep_d(env, shift(-1, 0, t1), shift(-1, 0, t3), w1));
+    assert(subst1(body1, a1) == shift(-1, 0, t1));
+    assert(subst1(body3, a3) == shift(-1, 0, t3));
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
