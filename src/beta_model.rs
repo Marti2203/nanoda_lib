@@ -3717,6 +3717,76 @@ pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
     }
 }
 
+/// The OTHER direction from `subst_size_bound`: substitution never
+/// SHRINKS size, either -- every `Var(j)` leaf (size 1) that gets
+/// replaced is replaced by something of size `>= 1` (never smaller),
+/// and every other node's own "1 + children" structure is preserved
+/// exactly, with children only growing or staying the same. Unlike
+/// `subst_size_bound`, needs NO numeric precondition at all (a genuinely
+/// unconditional structural fact) -- found while investigating whether
+/// `pstep_subst1`'s own real bottleneck (needing `size` of a REDUCT,
+/// which can only be bounded via the exponential `pstep_size_bound`
+/// when derived FORWARD from the original term) could instead be
+/// bounded BACKWARD from an already-known result size, which doesn't
+/// need to track how much a reduction could have grown things at all.
+pub proof fn subst_size_ge(j: nat, s: ExprSpec, e: ExprSpec)
+    ensures size(e) <= size(subst(j, s, e))
+    decreases e
+{
+    reveal(shift);
+    reveal(subst);
+    match e {
+        ExprSpec::Var(i) => {
+            assert(size(e) == 1);
+            if (i as nat) == j {
+                assert(subst(j, s, e) == s);
+                assert(size(s) >= 1);
+            } else {
+                assert(subst(j, s, e) == e);
+            }
+        }
+        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(subst(j, s, e) == e);
+        }
+        ExprSpec::App(f, a) => {
+            assert(subst(j, s, e) == ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))));
+            subst_size_ge(j, s, *f);
+            subst_size_ge(j, s, *a);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(Box::new(subst(j, s, *t)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b))));
+            subst_size_ge(j, s, *t);
+            subst_size_ge((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(subst(j, s, e) == ExprSpec::Let(
+                Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
+            ));
+            subst_size_ge(j, s, *t);
+            subst_size_ge(j, s, *v);
+            subst_size_ge((j + 1) as nat, shift(1, 0, s), *b);
+        }
+        ExprSpec::Proj(st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            subst_size_ge(j, s, *st);
+        }
+    }
+}
+
+/// `subst1`'s own corollary of `subst_size_ge`: the BODY's own size is
+/// always `<=` the size of the full `subst1` result -- NOT true for the
+/// ARGUMENT side (`arg` can be discarded entirely if the bound variable
+/// doesn't occur in `body`, so no analogous `size(arg) <=
+/// size(subst1(body,arg))` fact holds in general).
+pub proof fn subst1_size_ge_body(body: ExprSpec, arg: ExprSpec)
+    ensures size(body) <= size(subst1(body, arg))
+{
+    reveal(shift);
+    reveal(subst);
+    subst_size_ge(0, shift(1, 0, arg), body);
+    shift_preserves_size(-1, 0, subst(0, shift(1, 0, arg), body));
+}
+
 /// Corollary for `subst1`: `size(subst1(body,arg)) <= size(body) *
 /// (size(arg) + 1)`, via `subst_size_bound` plus `shift_preserves_size`
 /// twice (`subst1`'s own two shifts).
