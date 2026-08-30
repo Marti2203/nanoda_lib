@@ -35,7 +35,7 @@ use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
 #[cfg(verus_only)]
-use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below};
+use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below, has_fv, abstr_full_noop};
 #[cfg(verus_only)]
 use crate::expr_model::nlbv;
 #[cfg(verus_only)]
@@ -338,6 +338,16 @@ pub proof fn string_lit_expand_model_bounds(len: nat)
         max_var_below(string_lit_expand_model(len), 0),
         depth(string_lit_expand_model(len)) <= len + 3,
         size(string_lit_expand_model(len)) <= 4 * len + 4,
+{}
+
+/// The expansion contains no `Free` nodes either -- same justification
+/// as `string_lit_expand_model_no_nested_string_lits` (the construction
+/// is entirely `App`/`Const`/`NatLit` nodes), same disclosed-trust
+/// character. Needed so `abstr_full` is the identity on `pstep`'s
+/// `StringLit` target (`pstep_abstr`'s `StringLit` arm).
+#[verifier::external_body]
+pub proof fn string_lit_expand_model_no_free(len: nat)
+    ensures !crate::expr_model::has_fv(string_lit_expand_model(len))
 {}
 
 /// The real `str_lit_to_constructor`'s construction is built entirely from
