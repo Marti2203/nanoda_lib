@@ -58,6 +58,8 @@ use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_leve
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model};
+#[cfg(verus_only)]
 use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
@@ -1393,6 +1395,13 @@ pub open spec fn infer_result_depth_bound(dd: nat, d: nat, fuel: nat) -> nat
         if base >= wrapped { base } else { wrapped }
     }
 }
+/// `types_to` instantiated the way `verified_infer` emits it: the real
+/// env's declaration-type and delta maps, the ambient arena local
+/// context. Non-recursive wrapper, inlines freely.
+pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool {
+    types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(e), to_model(r), fuel)
+}
+
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
@@ -1402,7 +1411,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         nlbv(to_model(e)) <= 0,
         infer_depth_fixpoint_ok(dd, fuel as nat),
     ensures match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
         None => true,
     }
     decreases fuel
@@ -1415,6 +1424,12 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(depth(to_model(ty)) <= d + dd + 1);
             assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
             assert(nlbv(to_model(ty)) == 0);
+            is_local_shape_model(e);
+            arena_lctx_local(e);
+            types_to_free(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), expr_id(e), fuel as nat);
+            assert(to_model(e) == ExprSpec::Free(expr_id(e)));
+            assert(arena_lctx()[expr_id(e)] == to_model(ty));
+            assert(infer_types_to(*env, e, ty, fuel as nat));
         }
         return Some(ty);
     }
@@ -1422,6 +1437,11 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         let result = verified_infer_sort(ctx, l);
         assert(depth(to_model(result)) == 0);
         assert(nlbv(to_model(result)) == 0);
+        proof {
+            types_to_sort(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), level_to_model(l), fuel as nat);
+            assert(to_model(e) == ExprSpec::Sort(level_to_model(l)));
+            assert(infer_types_to(*env, e, result, fuel as nat));
+        }
         return Some(result);
     }
     if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
@@ -1430,6 +1450,24 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                 assert(depth(to_model(r)) <= env_global_cap(*env));
                 assert(depth(to_model(r)) <= d + dd + 1);
                 assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+                proof {
+                    let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+                        to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+                        && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r));
+                    is_const_shape_model(e);
+                    const_levels_vec_model(e);
+                    assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+                    assert(const_id(e) == name_id(c_name));
+                    assert(const_levels_vec(e)@ =~= to_model_of_levels(const_levels_of(e)));
+                    assert(const_levels_of(e) == c_uparams);
+                    assert(const_levels_vec(e)@ == to_model_of_levels(c_uparams));
+                    assert(to_model_of_declar_ty(*env)[const_id(e)].1 == to_model(ty));
+                    assert(to_model_of_declar_ty(*env)[const_id(e)].0 == level_names(to_model_of_levels(uparams)));
+                    assert(subst_expr_levels_rel(to_model_of_declar_ty(*env)[const_id(e)].1, to_model_of_declar_ty(*env)[const_id(e)].0, const_levels_vec(e)@, to_model(r)));
+                    types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(e), const_levels_vec(e), to_model(r), fuel as nat);
+                    assert(infer_types_to(*env, e, r, fuel as nat));
+                }
                 return Some(r);
             }
             None => return None,
@@ -1441,6 +1479,16 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                 assert(depth(to_model(r)) <= d + dd);
                 assert(depth(to_model(r)) <= d + dd + 1);
                 assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+                proof {
+                    let (fun, args_model, body) = choose |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
+                        to_model(e) == spine_app(to_model(fun), args_model)
+                        && is_const_shape(fun)
+                        && to_model(r) == subst_full(body, args_model, 0);
+                    is_const_shape_model(fun);
+                    assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+                    types_to_app(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(fun), const_levels_vec(fun), args_model, body, fuel as nat);
+                    assert(infer_types_to(*env, e, r, fuel as nat));
+                }
                 return Some(r);
             }
             None => return None,
@@ -1451,6 +1499,9 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             Some(r) => {
                 proof {
                     is_const_shape_model(r);
+                    is_nat_lit_shape_model(e);
+                    types_to_nat_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), fuel as nat);
+                    assert(infer_types_to(*env, e, r, fuel as nat));
                 }
                 assert(depth(to_model(r)) == 0);
                 assert(nlbv(to_model(r)) == 0);
@@ -1464,6 +1515,9 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             Some(r) => {
                 proof {
                     is_const_shape_model(r);
+                    is_string_lit_shape_model(e);
+                    types_to_string_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), fuel as nat);
+                    assert(infer_types_to(*env, e, r, fuel as nat));
                 }
                 assert(depth(to_model(r)) == 0);
                 assert(nlbv(to_model(r)) == 0);
@@ -1526,6 +1580,15 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
             assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
             assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
             assert(nlbv(to_model(result)) == 0);
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
+            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(infd), (fuel - 1) as nat));
+            assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
+            types_to_lambda(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body), expr_id(local), to_model(infd), fuel as nat);
+            assert(to_model(abstrd_binder_type) == abstr_full(to_model(binder_type), seq![expr_id(local)], 0));
+            assert(to_model(abstrd_infd) == abstr_full(to_model(infd), seq![expr_id(local)], 0));
+            assert(infer_types_to(*env, e, result, fuel as nat));
         }
         return Some(result);
     }
@@ -1589,6 +1652,26 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         let result = ctx.mk_sort(result_level);
         assert(depth(to_model(result)) == 0);
         assert(nlbv(to_model(result)) == 0);
+        proof {
+            let dom_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(dom_univ));
+            let cod_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(cod_univ));
+            assert(pstep_star(to_model_of_env(*env), to_model(bt_ty), ExprSpec::Sort(level_to_model(dom_univ))));
+            assert(pstep_star(to_model_of_env(*env), to_model(instd_ty), ExprSpec::Sort(level_to_model(cod_univ))));
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
+            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(bt_ty), (fuel - 1) as nat));
+            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(instd_ty), (fuel - 1) as nat));
+            assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
+            types_to_pi(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body), expr_id(local), to_model(bt_ty), level_to_model(dom_univ), to_model(instd_ty), level_to_model(cod_univ), fuel as nat);
+            assert(to_model(result) == ExprSpec::Sort(level_to_model(result_level)));
+            assert(level_to_model(result_level) == LevelSpec::IMax(Box::new(level_to_model(dom_univ)), Box::new(level_to_model(cod_univ))));
+            assert(infer_types_to(*env, e, result, fuel as nat));
+        }
         return Some(result);
     }
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
@@ -1611,6 +1694,11 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                     if let Some(r) = result {
                         assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
                         assert(infer_result_depth_bound(dd, d, fuel as nat) >= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+                        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body))));
+                        assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(substituted), to_model(r), (fuel - 1) as nat));
+                        assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
+                        types_to_let(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(ty), to_model(val), to_model(body), to_model(r), fuel as nat);
+                        assert(infer_types_to(*env, e, r, fuel as nat));
                     }
                 }
                 result
