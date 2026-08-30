@@ -89,7 +89,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero};
 #[cfg(verus_only)]
@@ -3068,6 +3068,29 @@ pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
     }
 }
 
+/// `lam` is the eta-expansion of `f`: a binder (of ANY binder type --
+/// the relation is untyped, like `defeq`; in a well-typed term the type
+/// is determined, and the eventual typed-soundness statement is where
+/// that re-enters) whose body applies the WEAKENED `f` to `Var(0)`.
+/// `shift(1, 0, f)` is the general de-Bruijn-correct form; for closed
+/// `f` (`nlbv <= 0`, every real checker operand here) `shift` is the
+/// identity via `nlbv_shift_noop`. Match-based, no existential.
+pub open spec fn eta_expands_to(lam: ExprSpec, f: ExprSpec) -> bool {
+    match lam {
+        ExprSpec::Bind(_t, b) => *b == ExprSpec::App(Box::new(shift(1, 0, f)), Box::new(ExprSpec::Var(0))),
+        _ => false,
+    }
+}
+
+/// The ETA leaf of definitional equality: either side is the other's
+/// eta-expansion. Symmetric by construction, height-free -- enters
+/// `deq_c` as a disjunct exactly like `deq_leaf` (eta is not a
+/// reduction in `pstep`, so joinability can never see it; it is a
+/// genuine additional equality generator, matching Lean's own defeq).
+pub open spec fn deq_eta(x: ExprSpec, y: ExprSpec) -> bool {
+    eta_expands_to(x, y) || eta_expands_to(y, x)
+}
+
 /// ONE PARALLEL STEP of the inductive definitional-equality relation:
 /// the congruence closure of (reduction joinability `defeq` ∪ the leaf
 /// level equalities `deq_leaf`), height-indexed for well-foundedness --
@@ -3095,6 +3118,7 @@ pub open spec fn deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Expr
 {
     ||| defeq(env, x, y)
     ||| deq_leaf(x, y)
+    ||| deq_eta(x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
             deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat),
@@ -3134,7 +3158,7 @@ pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
     ensures deq_c(env, x, y, h2)
     decreases h1
 {
-    if defeq(env, x, y) || deq_leaf(x, y) {
+    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -3185,6 +3209,8 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
         defeq_symm(env, x, y);
     } else if deq_leaf(x, y) {
         assert(deq_leaf(y, x));
+    } else if deq_eta(x, y) {
+        assert(deq_eta(y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -3253,6 +3279,23 @@ pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
     ensures deq(env, x, y, h)
 {
     deq_of_deq_c(env, x, y, h);
+}
+
+/// Constructor lemma: an eta pair is `deq` at any height.
+pub proof fn deq_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq_eta(x, y)
+    ensures deq(env, x, y, h)
+{
+    deq_of_deq_c(env, x, y, h);
+}
+
+/// `deq_any` form of the eta constructor.
+pub proof fn deq_any_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires deq_eta(x, y)
+    ensures deq_any(env, x, y)
+{
+    deq_of_eta(env, x, y, 0);
+    assert(deq(env, x, y, 0));
 }
 
 /// `deq` is reflexive at every height: the length-1 chain.
@@ -4370,7 +4413,12 @@ pub fn verified_try_eta_expansion_aux<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: Ex
             to_model(new_lambda) == ExprSpec::Bind(
                 Box::new(to_model(binder_type)),
                 Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0)))),
-            ),
+            )
+            && def_eq_witness(x, new_lambda)
+            && deq_full_claim(x, new_lambda)
+            && (nlbv(to_model(y)) <= 0 ==> deq_eta(to_model(new_lambda), to_model(y)))
+            && ((nlbv(to_model(y)) <= 0 && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(new_lambda))))
+                ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))),
         _ => true,
     }
 {
@@ -4385,7 +4433,25 @@ pub fn verified_try_eta_expansion_aux<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: Ex
     assert(depth(to_model(v0)) == 0);
     assert(depth(to_model(new_lambda)) == 1 + if depth(to_model(binder_type)) >= depth(to_model(new_body)) { depth(to_model(binder_type)) } else { depth(to_model(new_body)) });
     assert(depth(to_model(new_lambda)) <= 60000);
-    verified_def_eq(ctx, x, new_lambda, fuel)
+    let r = verified_def_eq(ctx, x, new_lambda, fuel);
+    proof {
+        if r == Some(true) {
+            if nlbv(to_model(y)) <= 0 {
+                nlbv_shift_noop(1, 0, to_model(y));
+                assert(shift(1, 0, to_model(y)) == to_model(y));
+                assert(eta_expands_to(to_model(new_lambda), to_model(y)));
+                assert(deq_eta(to_model(new_lambda), to_model(y)));
+                if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(new_lambda)) {
+                    assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                        assert(deq_any(env, to_model(x), to_model(new_lambda)));
+                        deq_any_of_eta(env, to_model(new_lambda), to_model(y));
+                        deq_any_trans(env, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                }
+            }
+        }
+    }
+    r
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::try_eta_expansion`
@@ -4428,12 +4494,22 @@ pub fn verified_try_eta_expansion<'t, 'p: 't>(
                     to_model(new_lambda) == ExprSpec::Bind(
                         Box::new(to_model(y_binder_type)),
                         Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0)))),
-                    ))
+                    )
+                    && def_eq_witness(x, new_lambda)
+                    && deq_full_claim(x, new_lambda)
+                    && (nlbv(to_model(y)) <= 0 ==> deq_eta(to_model(new_lambda), to_model(y)))
+                    && ((nlbv(to_model(y)) <= 0 && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(new_lambda))))
+                        ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))))
             ||| (exists |new_lambda: ExprPtr<'t>|
                     to_model(new_lambda) == ExprSpec::Bind(
                         Box::new(to_model(x_binder_type)),
                         Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0)))),
-                    ))
+                    )
+                    && def_eq_witness(y, new_lambda)
+                    && deq_full_claim(y, new_lambda)
+                    && (nlbv(to_model(x)) <= 0 ==> deq_eta(to_model(new_lambda), to_model(x)))
+                    && ((nlbv(to_model(x)) <= 0 && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(y), to_model(new_lambda))))
+                        ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(y), to_model(x)))))
         },
         _ => true,
     }

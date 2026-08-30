@@ -70,7 +70,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim};
+use crate::tc_model::{nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -4084,11 +4084,21 @@ pub open spec fn fallback_group_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
     ||| (exists |y_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
             to_model(new_lambda) == ExprSpec::Bind(
                 Box::new(to_model(y_binder_type)),
-                Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0))))))
+                Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0)))))
+            && def_eq_witness(x, new_lambda)
+            && deq_full_claim(x, new_lambda)
+            && (nlbv(to_model(y)) <= 0 ==> deq_eta(to_model(new_lambda), to_model(y)))
+            && ((nlbv(to_model(y)) <= 0 && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(new_lambda))))
+                ==> (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(y)))))
     ||| (exists |x_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
             to_model(new_lambda) == ExprSpec::Bind(
                 Box::new(to_model(x_binder_type)),
-                Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0))))))
+                Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0)))))
+            && def_eq_witness(y, new_lambda)
+            && deq_full_claim(y, new_lambda)
+            && (nlbv(to_model(x)) <= 0 ==> deq_eta(to_model(new_lambda), to_model(x)))
+            && ((nlbv(to_model(x)) <= 0 && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(y), to_model(new_lambda))))
+                ==> (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(y), to_model(x)))))
     ||| (exists |lhs: ExprPtr<'t>|
             (pstep_star(to_model_of_env(env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
             || (pstep_star(to_model_of_env(env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x)))
