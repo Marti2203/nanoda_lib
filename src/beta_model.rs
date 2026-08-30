@@ -2895,33 +2895,51 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
 /// (through the complete developments of the chain's own elements) that
 /// rejoins at the far end. THE key structural discovery, found by
 /// hand-deriving the caps before writing (the standing discipline):
-/// with `m <= m2` and `d <= d2`, the caps stay UNIFORM across every
-/// strip step -- each square's incoming vertical edge is always a FRESH
-/// one-application Takahashi output over the previous chain element
-/// (`chain[i] ==> complete(chain[i-1])` comes from Takahashi applied to
-/// the chain link, never to the accumulated result), so nothing
-/// compounds. The output cap `(m2, d2)` is pinned by the self-
-/// referential fixpoint requirement `tak_m(bound, m2, d2, chain[i]) <=
-/// m2` (and likewise `tak_d`) -- a real caller computes `m2`/`d2` as
-/// (any upper bound on) the one-deep tak values of its own concrete
-/// chain data, and the requirement closes.
-pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, m: nat, d: nat, m2: nat, d2: nat)
+/// the caps stay UNIFORM across every strip step -- each square's
+/// incoming vertical edge is always a FRESH one-application Takahashi
+/// output over the previous chain element (`chain[i] ==>
+/// complete(chain[i-1])` comes from Takahashi applied to the CHAIN LINK
+/// at the chain's own level `(mc, dc)`, never to the accumulated
+/// result), so nothing compounds along the chain. The caps are
+/// STRATIFIED into three fixed levels rather than pinned by a
+/// self-referential fixpoint: chain links live at `(mc, dc)`; vertical
+/// edges (and the given `chain[0] ==> y` edge) at `(m1, d1)`, which
+/// must dominate the ONE-deep tak values `tak(bound, mc, dc,
+/// chain[i])`; z-links and the final rejoining edge at `(m2, d2)`,
+/// which must dominate the TWO-deep values `tak(bound, m1, d1,
+/// chain[i])`. (An earlier formulation instead required the
+/// self-referential `tak_m(bound, m2, d2, chain[i]) <= m2` -- which is
+/// UNSATISFIABLE for any chain element containing an `App`/`Let` node,
+/// since `tak_m` re-adds its `mcap` input per such node; the lemma was
+/// true but vacuous for real terms. Stratifying removes the
+/// self-reference: a caller just computes the one- and two-deep tak
+/// values of its own concrete chain data, no equation to solve.)
+pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, mc: nat, dc: nat, m1: nat, d1: nat, m2: nat, d2: nat)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         chain.len() >= 1,
-        forall |i: int| 0 <= i < chain.len() - 1 ==> pstep_d(env, #[trigger] chain[i], chain[i + 1], m, d),
+        forall |i: int| 0 <= i < chain.len() - 1 ==> pstep_d(env, #[trigger] chain[i], chain[i + 1], mc, dc),
         forall |i: int| 0 <= i < chain.len() ==> max_var_below(#[trigger] chain[i], bound),
         forall |i: int| 0 <= i < chain.len() ==> string_lits_ok(#[trigger] chain[i], 0),
-        pstep_d(env, chain[0], y, m2, d2),
-        m <= m2,
-        d <= d2,
-        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, m2, d2, #[trigger] chain[i]) <= m2,
-        forall |i: int| 0 <= i < chain.len() ==> tak_d(d2, #[trigger] chain[i]) <= d2,
-        forall |i: int| 0 <= i < chain.len() ==> bound + m2 + 6 * d2 + tak_m(bound, m2, d2, #[trigger] chain[i]) + 4 * tak_d(d2, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
+        pstep_d(env, chain[0], y, m1, d1),
+        m1 <= m2,
+        d1 <= d2,
+        // Verticals (Takahashi outputs of the CHAIN LINKS, level (mc,dc))
+        // fit the edge level (m1,d1); outputs (Takahashi of edge-level
+        // facts) fit (m2,d2). Stratified -- no self-reference, so a real
+        // caller just computes the one-deep and two-deep tak values of
+        // its own concrete chain data.
+        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, mc, dc, #[trigger] chain[i]) <= m1,
+        forall |i: int| 0 <= i < chain.len() ==> tak_d(dc, #[trigger] chain[i]) <= d1,
+        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, m1, d1, #[trigger] chain[i]) <= m2,
+        forall |i: int| 0 <= i < chain.len() ==> tak_d(d1, #[trigger] chain[i]) <= d2,
+        forall |i: int| 0 <= i < chain.len() ==> bound + mc + 6 * dc + tak_m(bound, mc, dc, #[trigger] chain[i]) + 4 * tak_d(dc, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < chain.len() ==> bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] chain[i]) + 4 * tak_d(d1, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
     ensures exists |zch: Seq<ExprSpec>|
         #![trigger zch.len()]
         zch.len() == chain.len()
         && zch[0] == y
+        && (forall |i: int| 1 <= i < zch.len() ==> zch[i] == complete(chain[i - 1]))
         && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
         && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2)
     decreases chain.len()
@@ -2930,31 +2948,37 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
         let zch = seq![y];
         assert(zch.len() == chain.len());
         assert(zch[0] == y);
+        pstep_d_mono(env, chain[0], y, m1, d1, m2, d2);
         assert(pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
         assert(zch.len() == chain.len()
             && zch[0] == y
+            && (forall |i: int| 1 <= i < zch.len() ==> zch[i] == complete(chain[i - 1]))
             && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
             && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
     } else {
         let c0 = chain[0];
         let c1 = chain[1];
-        assert(pstep_d(env, c0, c1, m, d));
+        assert(pstep_d(env, c0, c1, mc, dc));
         assert(max_var_below(c0, bound));
         assert(string_lits_ok(c0, 0));
-        pstep_d_mono(env, c0, c1, m, d, m2, d2);
-        pstep_d_takahashi(env, bound, c0, c1, m2, d2);
-        pstep_d_takahashi(env, bound, c0, y, m2, d2);
-        assert(tak_m(bound, m2, d2, c0) <= m2);
-        assert(tak_d(d2, c0) <= d2);
-        pstep_d_mono(env, c1, complete(c0), tak_m(bound, m2, d2, c0), tak_d(d2, c0), m2, d2);
-        pstep_d_mono(env, y, complete(c0), tak_m(bound, m2, d2, c0), tak_d(d2, c0), m2, d2);
+        // Vertical edge for the recursion: Takahashi of the CHAIN LINK,
+        // at level (mc,dc) -- always fresh, never the accumulated fact.
+        pstep_d_takahashi(env, bound, c0, c1, mc, dc);
+        assert(tak_m(bound, mc, dc, c0) <= m1);
+        assert(tak_d(dc, c0) <= d1);
+        pstep_d_mono(env, c1, complete(c0), tak_m(bound, mc, dc, c0), tak_d(dc, c0), m1, d1);
+        // The y-side edge, at level (m1,d1); its output is a z-link.
+        pstep_d_takahashi(env, bound, c0, y, m1, d1);
+        assert(tak_m(bound, m1, d1, c0) <= m2);
+        assert(tak_d(d1, c0) <= d2);
+        pstep_d_mono(env, y, complete(c0), tak_m(bound, m1, d1, c0), tak_d(d1, c0), m2, d2);
         let chain2 = chain.subrange(1, chain.len() as int);
         assert(chain2.len() == chain.len() - 1);
         assert(chain2[0] == c1);
-        assert forall |i: int| 0 <= i < chain2.len() - 1 implies pstep_d(env, #[trigger] chain2[i], chain2[i + 1], m, d) by {
+        assert forall |i: int| 0 <= i < chain2.len() - 1 implies pstep_d(env, #[trigger] chain2[i], chain2[i + 1], mc, dc) by {
             assert(chain2[i] == chain[i + 1]);
             assert(chain2[i + 1] == chain[i + 2]);
-            assert(pstep_d(env, chain[i + 1], chain[i + 2], m, d));
+            assert(pstep_d(env, chain[i + 1], chain[i + 2], mc, dc));
         }
         assert forall |i: int| 0 <= i < chain2.len() implies max_var_below(#[trigger] chain2[i], bound) by {
             assert(chain2[i] == chain[i + 1]);
@@ -2964,28 +2988,51 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
             assert(chain2[i] == chain[i + 1]);
             assert(string_lits_ok(chain[i + 1], 0));
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, m2, d2, #[trigger] chain2[i]) <= m2 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, mc, dc, #[trigger] chain2[i]) <= m1 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_m(bound, m2, d2, chain[i + 1]) <= m2);
+            assert(tak_m(bound, mc, dc, chain[i + 1]) <= m1);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(d2, #[trigger] chain2[i]) <= d2 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(dc, #[trigger] chain2[i]) <= d1 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_d(d2, chain[i + 1]) <= d2);
+            assert(tak_d(dc, chain[i + 1]) <= d1);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies bound + m2 + 6 * d2 + tak_m(bound, m2, d2, #[trigger] chain2[i]) + 4 * tak_d(d2, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, m1, d1, #[trigger] chain2[i]) <= m2 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(bound + m2 + 6 * d2 + tak_m(bound, m2, d2, chain[i + 1]) + 4 * tak_d(d2, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+            assert(tak_m(bound, m1, d1, chain[i + 1]) <= m2);
         }
-        pstep_d_strip(env, bound, chain2, complete(c0), m, d, m2, d2);
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(d1, #[trigger] chain2[i]) <= d2 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(tak_d(d1, chain[i + 1]) <= d2);
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies bound + mc + 6 * dc + tak_m(bound, mc, dc, #[trigger] chain2[i]) + 4 * tak_d(dc, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(bound + mc + 6 * dc + tak_m(bound, mc, dc, chain[i + 1]) + 4 * tak_d(dc, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] chain2[i]) + 4 * tak_d(d1, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(bound + m1 + 6 * d1 + tak_m(bound, m1, d1, chain[i + 1]) + 4 * tak_d(d1, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+        }
+        pstep_d_strip(env, bound, chain2, complete(c0), mc, dc, m1, d1, m2, d2);
         let zch2 = choose |zch2: Seq<ExprSpec>|
             #![trigger zch2.len()]
             zch2.len() == chain2.len()
             && zch2[0] == complete(c0)
+            && (forall |i: int| 1 <= i < zch2.len() ==> zch2[i] == complete(chain2[i - 1]))
             && (forall |i: int| 0 <= i < zch2.len() - 1 ==> pstep_d(env, #[trigger] zch2[i], zch2[i + 1], m2, d2))
             && pstep_d(env, chain2[chain2.len() - 1], zch2[zch2.len() - 1], m2, d2);
         let zch = seq![y] + zch2;
         assert(zch.len() == chain.len());
         assert(zch[0] == y);
+        assert forall |i: int| 1 <= i < zch.len() implies zch[i] == complete(chain[i - 1]) by {
+            assert(zch[i] == zch2[i - 1]);
+            if i == 1 {
+                assert(zch2[0] == complete(c0));
+                assert(chain[0] == c0);
+            } else {
+                assert(zch2[i - 1] == complete(chain2[i - 2]));
+                assert(chain2[i - 2] == chain[i - 1]);
+            }
+        }
         assert forall |i: int| 0 <= i < zch.len() - 1 implies pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2) by {
             if i == 0 {
                 assert(zch[0] == y);
@@ -3003,9 +3050,319 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
         assert(pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
         assert(zch.len() == chain.len()
             && zch[0] == y
+            && (forall |i: int| 1 <= i < zch.len() ==> zch[i] == complete(chain[i - 1]))
             && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
             && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
     }
+}
+
+/// The strip lemma's output chain, spelled as concrete data: `y` followed
+/// by the complete developments of every chain element but the last. The
+/// strip's pinned ensures says its existential `zch` IS this sequence, so
+/// downstream statements (the confluence ladder conditions in `conf_ok`)
+/// can be phrased over computable data instead of under an existential.
+/// Defined ONCE as a spec fn so every mention shares the same `Seq::new`
+/// closure term (the closure-identity gotcha).
+pub open spec fn conf_zch(chain: Seq<ExprSpec>, y: ExprSpec) -> Seq<ExprSpec> {
+    seq![y] + Seq::new((chain.len() - 1) as nat, |i: int| complete(chain[i]))
+}
+
+/// Last level of a cap ladder, with `base` as the level before the ladder
+/// starts (the two-chain confluence ensures live at this level).
+pub open spec fn ladder_last(base: nat, ladder: Seq<nat>) -> nat {
+    if ladder.len() == 0 { base } else { ladder[ladder.len() - 1] }
+}
+
+/// The side conditions for two-chain confluence, packaged as ONE recursive
+/// predicate over concrete diagram data. Stripping `ach[0] ==> ach[1]`
+/// along `bch` consumes ladder levels `(ms[0], ds[0])` (the strip's
+/// edge/vertical level, dominating the one-deep tak values of `bch`'s
+/// elements) and `(ms[1], ds[1])` (the strip's output level, dominating
+/// the two-deep values); the recursion then continues with the strip's
+/// (pinned, concrete) output chain `conf_zch(bch, ach[1])` as the new
+/// B-side at link level `(ms[1], ds[1])`. Each A-link consumes exactly two
+/// ladder levels, so a caller supplies a ladder of length
+/// `2 * (ach.len() - 1)` computed from its own concrete chains -- the
+/// tak-nesting depth grows with the A-chain's length (unavoidable: each
+/// strip is a layer of Takahashi outputs), but every condition here is a
+/// computable fact about explicit data, never a fixpoint to solve.
+pub open spec fn conf_ok(bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>) -> bool
+    decreases ach.len()
+{
+    if ach.len() <= 1 {
+        ms.len() == 0 && ds.len() == 0
+    } else {
+        ms.len() >= 2 && ds.len() >= 2
+        && mlink <= ms[0] && ms[0] <= ms[1]
+        && dlink <= ds[0] && ds[0] <= ds[1]
+        && (forall |i: int| 0 <= i < bch.len() ==> max_var_below(#[trigger] bch[i], bound))
+        && (forall |i: int| 0 <= i < bch.len() ==> string_lits_ok(#[trigger] bch[i], 0))
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(bound, mlink, dlink, #[trigger] bch[i]) <= ms[0])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(dlink, #[trigger] bch[i]) <= ds[0])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(bound, ms[0], ds[0], #[trigger] bch[i]) <= ms[1])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(ds[0], #[trigger] bch[i]) <= ds[1])
+        && (forall |i: int| 0 <= i < bch.len() ==> bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, #[trigger] bch[i]) + 4 * tak_d(dlink, bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
+        && (forall |i: int| 0 <= i < bch.len() ==> bound + ms[0] + 6 * ds[0] + tak_m(bound, ms[0], ds[0], #[trigger] bch[i]) + 4 * tak_d(ds[0], bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
+        && conf_ok(bound, ach.subrange(1, ach.len() as int), conf_zch(bch, ach[1]), ms[1], ds[1], ms.subrange(2, ms.len() as int), ds.subrange(2, ds.len() as int))
+    }
+}
+
+/// A `conf_ok` ladder is monotone from its base to its last level (each
+/// level's `mlink <= ms[0] <= ms[1]` chains through the recursion) --
+/// needed to mono every intermediate edge up to the final common level.
+pub proof fn conf_ok_le_last(bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+    requires
+        ach.len() >= 1,
+        conf_ok(bound, ach, bch, mlink, dlink, ms, ds),
+    ensures
+        mlink <= ladder_last(mlink, ms),
+        dlink <= ladder_last(dlink, ds),
+    decreases ach.len()
+{
+    if ach.len() <= 1 {
+        assert(ms.len() == 0 && ds.len() == 0);
+    } else {
+        let ach2 = ach.subrange(1, ach.len() as int);
+        let ms2 = ms.subrange(2, ms.len() as int);
+        let ds2 = ds.subrange(2, ds.len() as int);
+        conf_ok_le_last(bound, ach2, conf_zch(bch, ach[1]), ms[1], ds[1], ms2, ds2);
+        if ms2.len() == 0 {
+            assert(ms.len() == 2);
+            assert(ladder_last(mlink, ms) == ms[1]);
+        } else {
+            assert(ms2[ms2.len() - 1] == ms[ms.len() - 1]);
+        }
+        if ds2.len() == 0 {
+            assert(ds.len() == 2);
+            assert(ladder_last(dlink, ds) == ds[1]);
+        } else {
+            assert(ds2[ds2.len() - 1] == ds[ds.len() - 1]);
+        }
+    }
+}
+
+/// TWO-CHAIN CONFLUENCE over the ghost-certified relation: two certified
+/// chains out of a common start rejoin at a common end, by inducting on
+/// the A-chain and stripping each A-link along the (evolving, concrete)
+/// B-side. All numeric side conditions live in `conf_ok` over the
+/// caller's explicit chain data plus a caller-computed cap ladder; the
+/// rejoining chains land at the ladder's final level. This is the last
+/// metatheoretic ingredient for transitivity of joinability
+/// (`defeq_trans`): two joins out of the same middle term are two chains
+/// out of a common start, and this lemma hands back the common reduct.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(1000)]
+pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        ach.len() >= 1,
+        bch.len() >= 1,
+        ach[0] == bch[0],
+        forall |i: int| 0 <= i < ach.len() - 1 ==> pstep_d(env, #[trigger] ach[i], ach[i + 1], mlink, dlink),
+        forall |i: int| 0 <= i < bch.len() - 1 ==> pstep_d(env, #[trigger] bch[i], bch[i + 1], mlink, dlink),
+        conf_ok(bound, ach, bch, mlink, dlink, ms, ds),
+    ensures exists |wa: Seq<ExprSpec>, wb: Seq<ExprSpec>|
+        #![trigger wa.len(), wb.len()]
+        wa.len() >= 1
+        && wb.len() >= 1
+        && wa[0] == ach[ach.len() - 1]
+        && wb[0] == bch[bch.len() - 1]
+        && (forall |i: int| 0 <= i < wa.len() - 1 ==> pstep_d(env, #[trigger] wa[i], wa[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+        && (forall |i: int| 0 <= i < wb.len() - 1 ==> pstep_d(env, #[trigger] wb[i], wb[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+        && wa[wa.len() - 1] == wb[wb.len() - 1]
+    decreases ach.len()
+{
+    if ach.len() == 1 {
+        let wa = bch;
+        let wb = seq![bch[bch.len() - 1]];
+        assert(ms.len() == 0 && ds.len() == 0);
+        assert(ladder_last(mlink, ms) == mlink);
+        assert(ladder_last(dlink, ds) == dlink);
+        assert(wa[0] == bch[0]);
+        assert(bch[0] == ach[0]);
+        assert(ach[0] == ach[ach.len() - 1]);
+        assert(wa.len() >= 1
+            && wb.len() >= 1
+            && wa[0] == ach[ach.len() - 1]
+            && wb[0] == bch[bch.len() - 1]
+            && (forall |i: int| 0 <= i < wa.len() - 1 ==> pstep_d(env, #[trigger] wa[i], wa[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+            && (forall |i: int| 0 <= i < wb.len() - 1 ==> pstep_d(env, #[trigger] wb[i], wb[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+            && wa[wa.len() - 1] == wb[wb.len() - 1]);
+    } else {
+        let c0 = ach[0];
+        let a1 = ach[1];
+        assert(pstep_d(env, c0, a1, mlink, dlink));
+        assert(bch[0] == c0);
+        pstep_d_mono(env, c0, a1, mlink, dlink, ms[0], ds[0]);
+        pstep_d_strip(env, bound, bch, a1, mlink, dlink, ms[0], ds[0], ms[1], ds[1]);
+        let zch = choose |zch: Seq<ExprSpec>|
+            #![trigger zch.len()]
+            zch.len() == bch.len()
+            && zch[0] == a1
+            && (forall |i: int| 1 <= i < zch.len() ==> zch[i] == complete(bch[i - 1]))
+            && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], ms[1], ds[1]))
+            && pstep_d(env, bch[bch.len() - 1], zch[zch.len() - 1], ms[1], ds[1]);
+        // The strip's output IS the concrete `conf_zch` sequence.
+        let zc = conf_zch(bch, a1);
+        assert(zc.len() == bch.len());
+        assert forall |i: int| 0 <= i < zch.len() implies zch[i] == zc[i] by {
+            if i == 0 {
+                assert(zc[0] == a1);
+            } else {
+                assert(zc[i] == Seq::new((bch.len() - 1) as nat, |j: int| complete(bch[j]))[i - 1]);
+                assert(zc[i] == complete(bch[i - 1]));
+            }
+        }
+        assert(zch =~= zc);
+        let ach2 = ach.subrange(1, ach.len() as int);
+        let ms2 = ms.subrange(2, ms.len() as int);
+        let ds2 = ds.subrange(2, ds.len() as int);
+        assert(ach2.len() == ach.len() - 1);
+        assert(ach2[0] == a1);
+        assert(zch[0] == a1);
+        assert forall |i: int| 0 <= i < ach2.len() - 1 implies pstep_d(env, #[trigger] ach2[i], ach2[i + 1], ms[1], ds[1]) by {
+            assert(ach2[i] == ach[i + 1]);
+            assert(ach2[i + 1] == ach[i + 2]);
+            assert(pstep_d(env, ach[i + 1], ach[i + 2], mlink, dlink));
+            pstep_d_mono(env, ach[i + 1], ach[i + 2], mlink, dlink, ms[1], ds[1]);
+        }
+        assert(conf_ok(bound, ach2, zc, ms[1], ds[1], ms2, ds2));
+        pstep_d_confluent(env, bound, ach2, zch, ms[1], ds[1], ms2, ds2);
+        conf_ok_le_last(bound, ach2, zch, ms[1], ds[1], ms2, ds2);
+        let mf2 = ladder_last(ms[1], ms2);
+        let df2 = ladder_last(ds[1], ds2);
+        // The recursion's final level IS this call's final level.
+        if ms2.len() == 0 {
+            assert(ms.len() == 2);
+            assert(ladder_last(mlink, ms) == ms[1]);
+            assert(mf2 == ms[1]);
+        } else {
+            assert(ms2[ms2.len() - 1] == ms[ms.len() - 1]);
+        }
+        if ds2.len() == 0 {
+            assert(ds.len() == 2);
+            assert(ladder_last(dlink, ds) == ds[1]);
+            assert(df2 == ds[1]);
+        } else {
+            assert(ds2[ds2.len() - 1] == ds[ds.len() - 1]);
+        }
+        assert(mf2 == ladder_last(mlink, ms));
+        assert(df2 == ladder_last(dlink, ds));
+        let (wa2, wb2) = choose |wa2: Seq<ExprSpec>, wb2: Seq<ExprSpec>|
+            #![trigger wa2.len(), wb2.len()]
+            wa2.len() >= 1
+            && wb2.len() >= 1
+            && wa2[0] == ach2[ach2.len() - 1]
+            && wb2[0] == zch[zch.len() - 1]
+            && (forall |i: int| 0 <= i < wa2.len() - 1 ==> pstep_d(env, #[trigger] wa2[i], wa2[i + 1], mf2, df2))
+            && (forall |i: int| 0 <= i < wb2.len() - 1 ==> pstep_d(env, #[trigger] wb2[i], wb2[i + 1], mf2, df2))
+            && wa2[wa2.len() - 1] == wb2[wb2.len() - 1];
+        let wa = wa2;
+        let wb = seq![bch[bch.len() - 1]] + wb2;
+        assert(ach2[ach2.len() - 1] == ach[ach.len() - 1]);
+        assert(wa[0] == ach[ach.len() - 1]);
+        assert(wb[0] == bch[bch.len() - 1]);
+        assert(wb.len() == 1 + wb2.len());
+        assert forall |i: int| 0 <= i < wb.len() - 1 implies pstep_d(env, #[trigger] wb[i], wb[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)) by {
+            if i == 0 {
+                assert(wb[0] == bch[bch.len() - 1]);
+                assert(wb[1] == wb2[0]);
+                assert(wb2[0] == zch[zch.len() - 1]);
+                assert(pstep_d(env, bch[bch.len() - 1], zch[zch.len() - 1], ms[1], ds[1]));
+                assert(ms[1] <= mf2);
+                assert(ds[1] <= df2);
+                pstep_d_mono(env, bch[bch.len() - 1], zch[zch.len() - 1], ms[1], ds[1], ladder_last(mlink, ms), ladder_last(dlink, ds));
+            } else {
+                assert(wb[i] == wb2[i - 1]);
+                assert(wb[i + 1] == wb2[i]);
+                assert(pstep_d(env, wb2[i - 1], wb2[i], mf2, df2));
+            }
+        }
+        assert(wa[wa.len() - 1] == wa2[wa2.len() - 1]);
+        assert(wb[wb.len() - 1] == wb2[wb2.len() - 1]);
+        assert(wa[wa.len() - 1] == wb[wb.len() - 1]);
+        assert(wa.len() >= 1
+            && wb.len() >= 1
+            && wa[0] == ach[ach.len() - 1]
+            && wb[0] == bch[bch.len() - 1]
+            && (forall |i: int| 0 <= i < wa.len() - 1 ==> pstep_d(env, #[trigger] wa[i], wa[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+            && (forall |i: int| 0 <= i < wb.len() - 1 ==> pstep_d(env, #[trigger] wb[i], wb[i + 1], ladder_last(mlink, ms), ladder_last(dlink, ds)))
+            && wa[wa.len() - 1] == wb[wb.len() - 1]);
+    }
+}
+
+/// A certified chain is in particular a plain `pstep` chain, so its ends
+/// are `pstep_star`-related: forget the caps link by link
+/// (`pstep_d_implies_pstep`) and witness `pstep_star` with the chain
+/// itself. This is the exit ramp from the certified world back to the
+/// plain relations `defeq` and the `verified_*` producers speak.
+pub proof fn pstep_d_chain_star(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, m: nat, d: nat)
+    requires
+        ch.len() >= 1,
+        forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], m, d),
+    ensures pstep_star(env, ch[0], ch[ch.len() - 1])
+{
+    assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+        assert(pstep_d(env, ch[i], ch[i + 1], m, d));
+        pstep_d_implies_pstep(env, ch[i], ch[i + 1], m, d);
+    }
+    assert(pstep_chain_valid(env, ch));
+    assert(ch.len() >= 1 && ch[0] == ch[0] && ch[ch.len() - 1] == ch[ch.len() - 1] && pstep_chain_valid(env, ch));
+}
+
+/// TRANSITIVITY OF DEFINITIONAL EQUALITY (as joinability), from
+/// confluence -- the capstone of the certified-confluence arc. Shape:
+/// `defeq(a, b)` and `defeq(b, c)` mean `a -->* z1 <--* b` and
+/// `b -->* z2 <--* c`; the two middle chains `qch` (b to z1) and `rch`
+/// (b to z2) start at the same term, so confluence hands back a common
+/// reduct `w` with `z1 -->* w <--* z2`, and `pstep_star_trans` glues
+/// `a -->* z1 -->* w` and `c -->* z2 -->* w` into the join witnessing
+/// `defeq(a, c)`.
+///
+/// Honesty note on the "certified" qualifier: the OUTER joins (a to z1,
+/// c to z2) stay plain `pstep_star` -- any `defeq` fact supplies them
+/// directly. Only the two MIDDLE chains out of `b` must be explicit and
+/// certified (with a `conf_ok` cap ladder), because confluence is what
+/// consumes them and `pstep_star`'s bare existential chains carry no
+/// bounds to certify. That is not a proof gap but the honest interface:
+/// a fully unconditional `defeq_trans` over bare existentials would need
+/// bounds that the `defeq` definition deliberately does not carry, while
+/// every real producer in this codebase (the `verified_*` whnf/def_eq
+/// family) holds its concrete chains and their bounds, converts them via
+/// `pstep_to_pstep_d`, and computes the ladder from its own data.
+pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, c: ExprSpec, qch: Seq<ExprSpec>, rch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        qch.len() >= 1,
+        rch.len() >= 1,
+        qch[0] == rch[0],
+        pstep_star(env, a, qch[qch.len() - 1]),
+        pstep_star(env, c, rch[rch.len() - 1]),
+        forall |i: int| 0 <= i < qch.len() - 1 ==> pstep_d(env, #[trigger] qch[i], qch[i + 1], mlink, dlink),
+        forall |i: int| 0 <= i < rch.len() - 1 ==> pstep_d(env, #[trigger] rch[i], rch[i + 1], mlink, dlink),
+        conf_ok(bound, qch, rch, mlink, dlink, ms, ds),
+    ensures defeq(env, a, c)
+{
+    pstep_d_confluent(env, bound, qch, rch, mlink, dlink, ms, ds);
+    let mf = ladder_last(mlink, ms);
+    let df = ladder_last(dlink, ds);
+    let (wa, wb) = choose |wa: Seq<ExprSpec>, wb: Seq<ExprSpec>|
+        #![trigger wa.len(), wb.len()]
+        wa.len() >= 1
+        && wb.len() >= 1
+        && wa[0] == qch[qch.len() - 1]
+        && wb[0] == rch[rch.len() - 1]
+        && (forall |i: int| 0 <= i < wa.len() - 1 ==> pstep_d(env, #[trigger] wa[i], wa[i + 1], mf, df))
+        && (forall |i: int| 0 <= i < wb.len() - 1 ==> pstep_d(env, #[trigger] wb[i], wb[i + 1], mf, df))
+        && wa[wa.len() - 1] == wb[wb.len() - 1];
+    let w = wa[wa.len() - 1];
+    pstep_d_chain_star(env, wa, mf, df);
+    pstep_d_chain_star(env, wb, mf, df);
+    assert(pstep_star(env, qch[qch.len() - 1], w));
+    assert(pstep_star(env, rch[rch.len() - 1], w));
+    pstep_star_trans(env, a, qch[qch.len() - 1], w);
+    pstep_star_trans(env, c, rch[rch.len() - 1], w);
+    assert(pstep_star(env, a, w) && pstep_star(env, c, w));
 }
 
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
@@ -11266,12 +11623,15 @@ pub proof fn pstep_star_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec,
 /// definition of definitional/convertibility equality for a confluent
 /// rewriting system -- reflexive and symmetric BY CONSTRUCTION (the
 /// existential doesn't distinguish `e1` from `e2`). Transitivity is NOT
-/// proven here and is NOT free: it would need `pstep_diamond`'s
-/// confluence property, which is itself restricted to `env ==
-/// Map::empty()` and small term sizes (`size(e) <= ~9`, see that
-/// function's own doc comment) -- an unconditional `defeq_trans` isn't
-/// honestly available with what this file currently proves, and is left
-/// as real, disclosed future work rather than assumed or forced through.
+/// free -- it needs confluence -- and is now available as
+/// `defeq_trans_certified`: the certified-confluence arc (`pstep_d`,
+/// `pstep_d_takahashi`/`pstep_d_diamond`, `pstep_d_strip`,
+/// `pstep_d_confluent`) removed the old `size(e) <= ~9` cliff entirely,
+/// so transitivity holds whenever the two middle chains out of the
+/// shared term are supplied explicitly with certified caps (see that
+/// lemma's honesty note for why the bare-existential form can't carry
+/// the bounds; `env == Map::empty()` -- the delta-free fragment -- is
+/// still the standing restriction of the whole confluence track).
 ///
 /// Deliberately the FIRST piece of vocabulary in this file for
 /// definitional equality itself, as opposed to plain one-directional
