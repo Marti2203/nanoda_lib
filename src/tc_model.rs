@@ -4115,6 +4115,72 @@ pub proof fn deq_p_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, 
     deq_p_trans(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1);
 }
 
+/// `deq_p` congruence at `Bind`.
+pub proof fn deq_p_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, h: nat)
+    requires deq_p(dty, env, lctx, t1, t2, h), deq_p(dty, env, lctx, b1, b2, h)
+    ensures deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+{
+    let cht = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let chb = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
+    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+    assert(deq_p_chain_valid(dty, env, lctx, mt, h + 1)) by {
+        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1) by {
+            assert(deq_p_c(dty, env, lctx, cht[i], cht[i + 1], h));
+            defeq_refl(env, b1);
+            assert(deq_c(env, b1, b1, h));
+            assert(deq_p_c(dty, env, lctx, b1, b1, h));
+            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1));
+        }
+    }
+    assert(deq_p_chain_valid(dty, env, lctx, mb, h + 1)) by {
+        assert forall |i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_p_c(dty, env, lctx, mb[i], mb[i + 1], h + 1) by {
+            assert(deq_p_c(dty, env, lctx, chb[i], chb[i + 1], h));
+            defeq_refl(env, t2);
+            assert(deq_c(env, t2, t2, h));
+            assert(deq_p_c(dty, env, lctx, t2, t2, h));
+            assert(mb[i] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+            assert(mb[i + 1] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_p_c(dty, env, lctx, mb[i], mb[i + 1], h + 1));
+        }
+    }
+    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
+    assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
+    assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
+    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
+    deq_p_trans(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1);
+}
+
+/// `deq_p` congruence at `Proj`.
+pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, s1: ExprSpec, s2: ExprSpec, h: nat)
+    requires deq_p(dty, env, lctx, s1, s2, h)
+    ensures deq_p(dty, env, lctx, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1)
+{
+    let chs = choose |ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(Box::new(chs[i])));
+    assert(deq_p_chain_valid(dty, env, lctx, ms, h + 1)) by {
+        assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1) by {
+            assert(deq_p_c(dty, env, lctx, chs[i], chs[i + 1], h));
+            assert(ms[i] == ExprSpec::Proj(Box::new(chs[i])));
+            assert(ms[i + 1] == ExprSpec::Proj(Box::new(chs[i + 1])));
+            assert(((h + 1) - 1) as nat == h);
+            assert(deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1));
+        }
+    }
+    assert(ms[0] == ExprSpec::Proj(Box::new(s1)));
+    assert(ms[ms.len() - 1] == ExprSpec::Proj(Box::new(s2)));
+    assert(deq_p(dty, env, lctx, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
+}
+
 /// `nat_repr_is_zero(e)` (EITHER a `NatLit` valued 0, or a `Const` named
 /// `Nat.zero`) always `pstep_star`-reaches the ONE canonical empty-levels
 /// form `pstep`'s own `NatLit` rule targets, for ANY `env` (this fact
