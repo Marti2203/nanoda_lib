@@ -70,6 +70,8 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
+use crate::tc_model::{nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim};
+#[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
 use crate::tc_model::args_model_of;
@@ -92,7 +94,7 @@ use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound};
+use crate::beta_model::{pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -2016,6 +2018,25 @@ pub fn verified_may_be_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// restate `verified_def_eq`'s own fact about `l_type`/`r_type` (already
 /// fully covered by calling it directly), same "don't re-derive what a
 /// composed call already proved" convention as elsewhere in this arc.
+/// The claim `verified_proof_irrel_eq_of_types`'s `Some(true)` makes,
+/// NAMED for the top-level `def_eq` claim composition: both types reduce
+/// to `Prop`-level `Sort`s (interp uniformly 0), i.e. both terms are
+/// proofs -- the honest content of a proof-irrelevance verdict. Note
+/// what this deliberately does NOT say: proof irrelevance itself is not
+/// a reduction fact, so it can never feed `defeq`/`deq`'s reduction
+/// disjuncts; a proper irrelevance-aware equality is future metatheory
+/// (it would enter `deq` as a new leaf-style case, like `deq_leaf`).
+pub open spec fn proof_irrel_claim<'t, 'x>(env: Env<'x, 't>, l_type: ExprPtr<'t>, r_type: ExprPtr<'t>) -> bool {
+    (exists |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(l_type), to_model(lr))
+        && to_model(lr) == ExprSpec::Sort(level_to_model(ll))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0))
+    && (exists |rr: ExprPtr<'t>, rl: LevelPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(r_type), to_model(rr))
+        && to_model(rr) == ExprSpec::Sort(level_to_model(rl))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0))
+}
+
 pub fn verified_proof_irrel_eq_of_types<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, l_type: ExprPtr<'t>, r_type: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
     requires
         nlbv(to_model(l_type)) <= 0,
@@ -2028,16 +2049,7 @@ pub fn verified_proof_irrel_eq_of_types<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         depth(to_model(r_type)) <= 60000,
         whnf_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(true) => {
-            &&& exists |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
-                    pstep_star(to_model_of_env(*env), to_model(l_type), to_model(lr))
-                    && to_model(lr) == ExprSpec::Sort(level_to_model(ll))
-                    && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0)
-            &&& exists |rr: ExprPtr<'t>, rl: LevelPtr<'t>|
-                    pstep_star(to_model_of_env(*env), to_model(r_type), to_model(rr))
-                    && to_model(rr) == ExprSpec::Sort(level_to_model(rl))
-                    && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0)
-        },
+        Some(true) => proof_irrel_claim(*env, l_type, r_type),
         _ => true,
     }
 {
@@ -2248,6 +2260,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
             &&& depth(to_model(y2)) <= d2 * d2 + d2 + d2 + d2 + d2
         },
         Some(DeltaRoundResult::Exhausted(x2, y2)) => x2 == x && y2 == y,
+        Some(DeltaRoundResult::Found(b)) => b ==> nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat),
         _ => true,
     }
 {
@@ -2494,6 +2507,10 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
             &&& max_var_below(to_model(y2), delta_loop_bound_after(bound, d, cap, n as nat))
             &&& depth(to_model(y2)) <= delta_loop_d_after(bound, d, cap, n as nat)
         },
+        Some(DeltaRoundResult::Found(b)) => b ==> exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
+            && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi))
+            && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat)),
         _ => true,
     }
     decreases n
@@ -2508,7 +2525,18 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
     let bound2 = bound + cap;
     let d2 = cap + d + d;
     match verified_lazy_delta_round(ctx, env, x, y, fuel, bound, d, bound2, d2) {
-        Some(DeltaRoundResult::Found(b)) => Some(DeltaRoundResult::Found(b)),
+        Some(DeltaRoundResult::Found(b)) => {
+            proof {
+                if b {
+                    pstep_star_refl(to_model_of_env(*env), to_model(x));
+                    pstep_star_refl(to_model_of_env(*env), to_model(y));
+                    assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x))
+                        && pstep_star(to_model_of_env(*env), to_model(y), to_model(y))
+                        && (nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat)));
+                }
+            }
+            Some(DeltaRoundResult::Found(b))
+        },
         Some(DeltaRoundResult::Exhausted(x2, y2)) => {
             proof {
                 pstep_star_refl(to_model_of_env(*env), to_model(x));
@@ -2535,7 +2563,22 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
                 assert(pstep_star(to_model_of_env(*env), to_model(y), to_model(y2)));
             }
             match verified_lazy_delta_loop(ctx, env, x2, y2, fuel, bound2 + d2 * d2 * d2 + d2 * d2, d2 * d2 + d2 + d2 + d2 + d2, cap, n - 1) {
-                Some(DeltaRoundResult::Found(b)) => Some(DeltaRoundResult::Found(b)),
+                Some(DeltaRoundResult::Found(b)) => {
+                    proof {
+                        if b {
+                            let (xi, yi) = choose |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+                                pstep_star(to_model_of_env(*env), to_model(x2), #[trigger] to_model(xi))
+                                && pstep_star(to_model_of_env(*env), to_model(y2), #[trigger] to_model(yi))
+                                && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat));
+                            pstep_star_trans(to_model_of_env(*env), to_model(x), to_model(x2), to_model(xi));
+                            pstep_star_trans(to_model_of_env(*env), to_model(y), to_model(y2), to_model(yi));
+                            assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(xi))
+                                && pstep_star(to_model_of_env(*env), to_model(y), to_model(yi))
+                                && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat)));
+                        }
+                    }
+                    Some(DeltaRoundResult::Found(b))
+                },
                 Some(DeltaRoundResult::Exhausted(x3, y3)) => {
                     proof {
                         pstep_star_trans(to_model_of_env(*env), to_model(x), to_model(x2), to_model(x3));
@@ -3356,6 +3399,43 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
 /// bound after the delta loop) has no closed form for a variable `n`, so
 /// there's no way to compute it internally; the caller must already know
 /// SOME sufficient `bound3`/`d3`.
+/// The claim `verified_def_eq_with_delta`'s `Some(true)` makes -- one
+/// disjunct per code path, replacing its old fully-vacuous `ensures
+/// true`. Every disjunct anchors the pair the final sub-verdict is
+/// about back to `x`/`y` through real reachability facts (delta-loop
+/// `pstep_star` prefixes at the REAL env model; the whnf-recheck hop
+/// through `whnf_no_unfolding_with_proj_reaches`, which is where the
+/// separate proj-iota relation enters -- the known integration gap,
+/// carried explicitly rather than dropped):
+/// ptr-equality (models equal); a lazy-delta `Found` verdict
+/// (`nat_found_claim`/`const_app_found_claim` about a reachable pair);
+/// an `Exhausted` pair settled by the leaf cluster (`deq_core_claim`);
+/// a post-recheck pair settled by `verified_def_eq` (witness +
+/// `deq_full_claim`); or a post-recheck pair settled by the fallback
+/// group (`fallback_group_claim`).
+pub open spec fn with_delta_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: nat) -> bool {
+    ||| to_model(x) == to_model(y)
+    ||| (exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+            pstep_star(to_model_of_env(env), to_model(x), #[trigger] to_model(xi))
+            && pstep_star(to_model_of_env(env), to_model(y), #[trigger] to_model(yi))
+            && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel)))
+    ||| (exists |xn: ExprPtr<'t>, yn: ExprPtr<'t>|
+            pstep_star(to_model_of_env(env), to_model(x), #[trigger] to_model(xn))
+            && pstep_star(to_model_of_env(env), to_model(y), #[trigger] to_model(yn))
+            && deq_core_claim(xn, yn, fuel))
+    ||| (exists |xn: ExprPtr<'t>, yn: ExprPtr<'t>, xn2: ExprPtr<'t>, yn2: ExprPtr<'t>, n2: nat|
+            #![trigger whnf_no_unfolding_with_proj_reaches(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_ctor_num_params(env), to_model(xn), to_model(xn2), n2), to_model(yn), to_model(yn2)]
+            pstep_star(to_model_of_env(env), to_model(x), to_model(xn))
+            && pstep_star(to_model_of_env(env), to_model(y), to_model(yn))
+            && whnf_no_unfolding_with_proj_reaches(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_ctor_num_params(env), to_model(xn), to_model(xn2), n2)
+            && whnf_no_unfolding_with_proj_reaches(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_ctor_num_params(env), to_model(yn), to_model(yn2), n2)
+            && def_eq_witness(xn2, yn2) && deq_full_claim(xn2, yn2))
+    ||| (exists |xn: ExprPtr<'t>, yn: ExprPtr<'t>|
+            pstep_star(to_model_of_env(env), to_model(x), #[trigger] to_model(xn))
+            && pstep_star(to_model_of_env(env), to_model(y), #[trigger] to_model(yn))
+            && fallback_group_claim(env, xn, yn))
+}
+
 pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -3400,16 +3480,42 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
             let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
             dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
         },
-    ensures true
+    ensures match result {
+        Some(true) => with_delta_claim(*env, x, y, fuel as nat),
+        _ => true,
+    }
 {
     if expr_ptr_eq(x, y) {
+        proof {
+            assert(to_model(x) == to_model(y));
+        }
         return Some(true);
     }
     match verified_lazy_delta_loop(ctx, env, x, y, fuel, bound, d, cap, n) {
-        Some(DeltaRoundResult::Found(b)) => Some(b),
+        Some(DeltaRoundResult::Found(b)) => {
+            proof {
+                if b {
+                    let (xi, yi) = choose |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+                        pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
+                        && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi))
+                        && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat));
+                    assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(xi))
+                        && pstep_star(to_model_of_env(*env), to_model(y), to_model(yi))
+                        && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat)));
+                }
+            }
+            Some(b)
+        },
         Some(DeltaRoundResult::Exhausted(x_n, y_n)) => {
             match verified_def_eq_core(ctx, x_n, y_n, fuel) {
-                Some(true) => return Some(true),
+                Some(true) => {
+                    proof {
+                        assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x_n))
+                            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y_n))
+                            && deq_core_claim(x_n, y_n, fuel as nat));
+                    }
+                    return Some(true);
+                },
                 Some(false) => {}
                 None => return None,
             }
@@ -3438,7 +3544,17 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
                             // bounded incompleteness: if `x_n2`/`y_n2` need MORE delta-
                             // unfolding to confirm equal, this won't find it, but it never
                             // claims a wrong answer either.
-                            verified_def_eq(ctx, x_n2, y_n2, fuel)
+                            let r = verified_def_eq(ctx, x_n2, y_n2, fuel);
+                            proof {
+                                if r == Some(true) {
+                                    assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x_n))
+                                        && pstep_star(to_model_of_env(*env), to_model(y), to_model(y_n))
+                                        && whnf_no_unfolding_with_proj_reaches(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_ctor_num_params(*env), to_model(x_n), to_model(x_n2), n2 as nat)
+                                        && whnf_no_unfolding_with_proj_reaches(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_ctor_num_params(*env), to_model(y_n), to_model(y_n2), n2 as nat)
+                                        && def_eq_witness(x_n2, y_n2) && deq_full_claim(x_n2, y_n2));
+                                }
+                            }
+                            r
                         } else {
                             proof {
                                 max_var_below_mono(to_model(x_n2), whnf_proj_loop_bound_after_local(bound3, d3, n2 as nat), d_xy_cap);
@@ -3446,7 +3562,16 @@ pub fn verified_def_eq_with_delta<'t, 'p: 't, 'x>(
                                 assert(depth(to_model(x_n2)) <= d_xy_cap);
                                 assert(depth(to_model(y_n2)) <= d_xy_cap);
                             }
-                            verified_def_eq_fallback_group_full(ctx, env, x_n2, y_n2, fuel, d_xy_cap, d_i, max_str_len)
+                            let r = verified_def_eq_fallback_group_full(ctx, env, x_n2, y_n2, fuel, d_xy_cap, d_i, max_str_len);
+                            proof {
+                                if r == Some(true) {
+                                    assert(x_n2 == x_n && y_n2 == y_n);
+                                    assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x_n))
+                                        && pstep_star(to_model_of_env(*env), to_model(y), to_model(y_n))
+                                        && fallback_group_claim(*env, x_n, y_n));
+                                }
+                            }
+                            r
                         }
                     }
                     None => None,
@@ -3506,11 +3631,12 @@ pub open spec fn whnf_proj_loop_d_after_local(bound: nat, d: nat, n: nat) -> nat
 /// work around the cross-file spec-fn-naming bug documented above (the
 /// single-round step function itself imports and calls fine; only its
 /// sibling fixpoint's GATING PREDICATE couldn't be named from this file).
-/// Doesn't bother exposing `whnf_no_unfolding_with_proj_reaches` (the
-/// `beta_model.rs` soundness relation) since this composition's only
-/// caller (`verified_def_eq_with_delta`) already has a fully vacuous
-/// `ensures true` -- only the numeric bound is needed here, to type-check
-/// the subsequent `verified_def_eq` call.
+/// NOW exposes `whnf_no_unfolding_with_proj_reaches` (the `beta_model.rs`
+/// soundness relation), mirroring `verified_whnf_no_unfolding_fixpoint_
+/// with_proj`'s own ensures -- needed since `verified_def_eq_with_delta`'s
+/// ensures is no longer vacuous: the recheck hop `x_n -> x_n2` must be
+/// anchored to a real reachability fact for the composed claim to connect
+/// `x`/`y` to the pair the final sub-verdict is about.
 pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
@@ -3519,6 +3645,13 @@ pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         whnf_proj_fixpoint_ok_local(bound, d, n as nat),
     ensures match result {
         Some(r) => {
+            &&& whnf_no_unfolding_with_proj_reaches(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(e),
+                    to_model(r),
+                    n as nat,
+                )
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), whnf_proj_loop_bound_after_local(bound, d, n as nat))
             &&& depth(to_model(r)) <= whnf_proj_loop_d_after_local(bound, d, n as nat)
@@ -3531,7 +3664,17 @@ pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         return Some(e);
     }
     match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, bound, d) {
-        Some(r) => verified_whnf_recheck_loop_local(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1),
+        Some(r) => {
+            proof {
+                assert(one_whnf_no_unfolding_with_proj_step(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model_of_ctor_num_params(*env),
+                    to_model(e),
+                    to_model(r),
+                ));
+            }
+            verified_whnf_recheck_loop_local(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1)
+        }
         None => None,
     }
 }
@@ -3612,7 +3755,13 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
             let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
             dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
         },
-    ensures true
+    ensures match result {
+        Some(true) =>
+            to_model(x) == to_model(y)
+            || proof_irrel_claim(*env, x_type, y_type)
+            || with_delta_claim(*env, x, y, fuel as nat),
+        _ => true,
+    }
 {
     if expr_ptr_eq(x, y) {
         return Some(true);
@@ -3657,6 +3806,21 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
 /// attempting proof-irrelevance can pass anything satisfying the depth/
 /// `nlbv` shape requires (the call simply won't confirm equality via that
 /// path if the types are wrong, never unsoundly).
+/// THE claim of the FULL def_eq entry point -- `verified_def_eq_full`'s
+/// `Some(true)`, one disjunct per composed stage, replacing the last
+/// `ensures true` of the whole `def_eq` arc: the quick-check cluster's
+/// witness + `deq_full_claim`; the `Bool.true` shortcut; proof
+/// irrelevance (both sides are proofs); or the lazy-delta composite
+/// (`with_delta_claim`, itself anchored through real reachability at
+/// every hop).
+pub open spec fn def_eq_full_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, x_type: ExprPtr<'t>, y_type: ExprPtr<'t>, fuel: nat) -> bool {
+    ||| (def_eq_witness(x, y) && deq_full_claim(x, y))
+    ||| bool_true_claim(env, x, y)
+    ||| to_model(x) == to_model(y)
+    ||| proof_irrel_claim(env, x_type, y_type)
+    ||| with_delta_claim(env, x, y, fuel)
+}
+
 pub fn verified_def_eq_full<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -3713,7 +3877,10 @@ pub fn verified_def_eq_full<'t, 'p: 't, 'x>(
             let dd_i = d_i + d_i + d_xy_cap + d_xy_cap;
             dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy_cap + 10 <= 60000
         },
-    ensures true
+    ensures match result {
+        Some(true) => def_eq_full_claim(*env, x, y, x_type, y_type, fuel as nat),
+        _ => true,
+    }
 {
     match verified_def_eq(ctx, x, y, fuel) {
         Some(true) => return Some(true),
@@ -3891,6 +4058,43 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
 /// function's own callers (`verified_def_eq_with_delta`, `verified_def_
 /// eq_with_delta_and_proof_irrel`), same "caller supplies a sufficient
 /// ceiling" pattern as everywhere else in this arc.
+/// The claim `verified_def_eq_fallback_group_full`'s `Some(true)` makes,
+/// NAMED (verbatim, purely notational -- `open` unfolds free) so
+/// `verified_def_eq_with_delta`'s own composed claim can restate it
+/// about its post-recheck pair without copying the seven-way disjunction.
+pub open spec fn fallback_group_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    ||| (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+            to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+            && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+            && argsx.len() == argsy.len() && argsx.len() > 0)
+    ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+            #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(xt, yt)]
+            to_model(y) == spine_app(to_model(fun), args_model_of(args))
+            && is_const_shape(fun)
+            && def_eq_witness(xt, yt)
+            && projs.len() <= args.len()
+            && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+    ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
+            #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(yt, xt)]
+            to_model(x) == spine_app(to_model(fun), args_model_of(args))
+            && is_const_shape(fun)
+            && def_eq_witness(yt, xt)
+            && projs.len() <= args.len()
+            && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
+    ||| (exists |y_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
+            to_model(new_lambda) == ExprSpec::Bind(
+                Box::new(to_model(y_binder_type)),
+                Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0))))))
+    ||| (exists |x_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
+            to_model(new_lambda) == ExprSpec::Bind(
+                Box::new(to_model(x_binder_type)),
+                Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0))))))
+    ||| (exists |lhs: ExprPtr<'t>|
+            (pstep_star(to_model_of_env(env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
+            || (pstep_star(to_model_of_env(env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x)))
+    ||| (exists |xt_whnfd: ExprPtr<'t>, yt: ExprPtr<'t>| def_eq_witness(xt_whnfd, yt))
+}
+
 pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>,
@@ -3927,38 +4131,7 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
             dd_i * dd_i + dd_i + dd_i + dd_i + dd_i + d_xy + 10 <= 60000
         },
     ensures match result {
-        Some(true) => {
-            ||| (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-                    to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-                    && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-                    && argsx.len() == argsy.len() && argsx.len() > 0)
-            ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
-                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(xt, yt)]
-                    to_model(y) == spine_app(to_model(fun), args_model_of(args))
-                    && is_const_shape(fun)
-                    && def_eq_witness(xt, yt)
-                    && projs.len() <= args.len()
-                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
-            ||| (exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>, projs: Seq<ExprPtr<'t>>|
-                    #![trigger spine_app(to_model(fun), args_model_of(args)), projs.len(), def_eq_witness(yt, xt)]
-                    to_model(x) == spine_app(to_model(fun), args_model_of(args))
-                    && is_const_shape(fun)
-                    && def_eq_witness(yt, xt)
-                    && projs.len() <= args.len()
-                    && (forall |k: int| 0 <= k < projs.len() ==> #[trigger] def_eq_witness(projs[k], args[(args.len() - projs.len()) as int + k])))
-            ||| (exists |y_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
-                    to_model(new_lambda) == ExprSpec::Bind(
-                        Box::new(to_model(y_binder_type)),
-                        Box::new(ExprSpec::App(Box::new(to_model(y)), Box::new(ExprSpec::Var(0))))))
-            ||| (exists |x_binder_type: ExprPtr<'t>, new_lambda: ExprPtr<'t>|
-                    to_model(new_lambda) == ExprSpec::Bind(
-                        Box::new(to_model(x_binder_type)),
-                        Box::new(ExprSpec::App(Box::new(to_model(x)), Box::new(ExprSpec::Var(0))))))
-            ||| (exists |lhs: ExprPtr<'t>|
-                    (pstep_star(to_model_of_env(*env), to_model(x), to_model(lhs)) && def_eq_witness(lhs, y))
-                    || (pstep_star(to_model_of_env(*env), to_model(y), to_model(lhs)) && def_eq_witness(lhs, x)))
-            ||| (exists |xt_whnfd: ExprPtr<'t>, yt: ExprPtr<'t>| def_eq_witness(xt_whnfd, yt))
-        },
+        Some(true) => fallback_group_claim(*env, x, y),
         _ => true,
     }
 {
@@ -4632,6 +4805,17 @@ pub fn verified_try_string_lit_expansion<'t, 'p: 't, 'x>(
 /// `bool_true_id()` is an UNINTERPRETED ghost value with no real `NamePtr`
 /// to compare against at runtime, so construct-and-compare is not just
 /// convenient here, it's the only option.
+/// The claim `verified_def_eq_bool_true_shortcut`'s `Some(true)` makes,
+/// NAMED for the top-level `def_eq` claim composition: `y` is the
+/// constant `Bool.true` and `x` whnf-reaches some `Bool.true`-named
+/// constant.
+pub open spec fn bool_true_claim<'t, 'x>(env: Env<'x, 't>, x_n: ExprPtr<'t>, y_n: ExprPtr<'t>) -> bool {
+    is_const_shape(y_n) && const_id(y_n) == bool_true_id()
+    && (exists |x_nn: ExprPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(x_n), to_model(x_nn))
+        && is_const_shape(x_nn) && const_id(x_nn) == bool_true_id())
+}
+
 pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x_n: ExprPtr<'t>, y_n: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<bool>)
     requires
         nlbv(to_model(x_n)) <= 0,
@@ -4639,12 +4823,7 @@ pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p
         depth(to_model(x_n)) <= d,
         whnf_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(true) => {
-            &&& is_const_shape(y_n) && const_id(y_n) == bool_true_id()
-            &&& exists |x_nn: ExprPtr<'t>|
-                    pstep_star(to_model_of_env(*env), to_model(x_n), to_model(x_nn))
-                    && is_const_shape(x_nn) && const_id(x_nn) == bool_true_id()
-        },
+        Some(true) => bool_true_claim(*env, x_n, y_n),
         _ => true,
     }
 {

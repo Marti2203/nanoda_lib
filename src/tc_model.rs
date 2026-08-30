@@ -2550,6 +2550,44 @@ pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
     exists |h: nat| #[trigger] deq(env, x, y, h)
 }
 
+/// The claim `verified_def_eq_nat`'s `Some(true)` makes, NAMED so
+/// `delta_bound_model`'s lazy-delta round/loop can restate it about
+/// their own intermediate pairs without copying the three-way
+/// disjunction: both sides are zero-representations (joinable at the
+/// canonical zero under every env); or equal `NatLit`s; or both have
+/// `Nat` predecessors whose sub-verdict carries `deq_full_claim`, with
+/// the whole-term `deq_any` lift available whenever that sub-claim's
+/// `deq` disjunct holds. `open`, purely notational.
+pub open spec fn nat_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    (nat_repr_is_zero(x) && nat_repr_is_zero(y)
+        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y))
+        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
+    || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y)
+        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
+    || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)
+        && deq_full_claim(xp, yp)
+        && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)))
+            ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))))
+}
+
+/// The claim `verified_try_eq_const_app`'s `Some(true)` makes, NAMED for
+/// the same lazy-delta threading reason as `nat_found_claim`: both sides
+/// are applied spines of the same length whose heads are the same
+/// constant with interp-equal levels (a genuine `deq_leaf` fact -- the
+/// function checks levels via `eq_antisymm_many`, content the old
+/// shape-only ensures dropped) and whose argument pairs each carry
+/// `deq_core_claim` at height `h` -- so a consumer holding all-`deq`
+/// pairwise verdicts lifts the whole spine via `deq_spine_app_congr`.
+pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
+    exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
+        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
+        && argsx.len() == argsy.len()
+        && is_const_shape(fx) && is_const_shape(fy) && const_id(fx) == const_id(fy)
+        && deq_leaf(to_model(fx), to_model(fy))
+        && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], h))
+}
+
 /// A `nat_repr_pred(e, p)` pair's whole term is `deq_any`-related to the
 /// CANONICAL successor application `App(const_expr_no_levels(succ),
 /// to_model(p))`: exact equality for the real-`App` representation (its
@@ -3811,16 +3849,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures match result {
-        Some(true) =>
-            (nat_repr_is_zero(x) && nat_repr_is_zero(y)
-                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y))
-                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
-            || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y)
-                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
-            || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)
-                && deq_full_claim(xp, yp)
-                && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)))
-                    ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))),
+        Some(true) => nat_found_claim(x, y),
         _ => true,
     }
     decreases fuel
@@ -3963,11 +3992,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<bool>)
     ensures match result {
-        Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-            to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-            && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-            && argsx.len() == argsy.len()
-            && is_const_shape(fx) && is_const_shape(fy) && const_id(fx) == const_id(fy),
+        Some(true) => const_app_found_claim(x, y, fuel as nat),
         _ => true,
     }
 {
@@ -4014,6 +4039,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
         invariant
             i <= l_args.len(),
             l_args.len() == r_args.len(),
+            forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat),
         decreases l_args.len() - i
     {
         match verified_def_eq_core(ctx, l_args[i], r_args[i], fuel) {
@@ -4025,8 +4051,26 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     if !verified_eq_antisymm_many(ctx, l_levels, r_levels, fuel) {
         return None;
     }
+    proof {
+        // Heads: same id (name equality) with interp-equal levels -- a
+        // genuine deq_leaf fact, bridged through the levels-vec views.
+        is_const_shape_model(l_fun);
+        is_const_shape_model(r_fun);
+        const_levels_vec_model(l_fun);
+        const_levels_vec_model(r_fun);
+        assert(to_model(l_fun) == ExprSpec::Const(const_id(l_fun), const_levels_vec(l_fun)));
+        assert(to_model(r_fun) == ExprSpec::Const(const_id(r_fun), const_levels_vec(r_fun)));
+        assert(const_levels_vec(l_fun)@.len() == const_levels_vec(r_fun)@.len());
+        assert forall |i2: int, rho: Map<nat, nat>| 0 <= i2 < const_levels_vec(l_fun)@.len() implies #[trigger] interp(const_levels_vec(l_fun)@[i2], rho) == interp(const_levels_vec(r_fun)@[i2], rho) by {
+            assert(const_levels_vec(l_fun)@[i2] == to_model_of_levels(const_levels_of(l_fun))[i2]);
+            assert(const_levels_vec(r_fun)@[i2] == to_model_of_levels(const_levels_of(r_fun))[i2]);
+            assert(interp(to_model_of_levels(const_levels_of(l_fun))[i2], rho) == interp(to_model_of_levels(const_levels_of(r_fun))[i2], rho));
+        }
+        assert(deq_leaf(to_model(l_fun), to_model(r_fun)));
+    }
     assert(to_model(x) == spine_app(to_model(l_fun), args_model_of(l_args@)));
     assert(to_model(y) == spine_app(to_model(r_fun), args_model_of(r_args@)));
+    assert(forall |j: int| 0 <= j < l_args@.len() ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat));
     Some(true)
 }
 
