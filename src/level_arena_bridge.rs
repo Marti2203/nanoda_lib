@@ -37,6 +37,8 @@ use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib};
 #[cfg(verus_only)]
+use crate::level_model::{is_never_zero_spec, may_be_prop_spec, is_never_zero_spec_sound};
+#[cfg(verus_only)]
 use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param};
 
 // These accessors' only "caller" is the `assume_specification` attributes
@@ -1039,6 +1041,78 @@ pub fn verified_leq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: Lev
         }
     }
     result
+}
+
+/// Real-arena counterpart to `TcCtx::is_never_zero` (`level.rs:280-287`):
+/// a pure structural read (no arena mutation, `&TcCtx` not `&mut`),
+/// reusing the SAME `read_level`/`level_as_*`/`level_is_zero` shape-
+/// matching idiom `verified_simplify` already established. Fuel-bounded
+/// (matching every other `LevelPtr`-recursive function in this file,
+/// since `LevelPtr` is an arena pointer, not something Verus can
+/// `decreases` on directly) -- `None` only on fuel exhaustion, never on
+/// an actual real `Level` shape (every real shape is handled by one of
+/// the five `if let`s below, matching `Level`'s own five real
+/// constructors exactly).
+pub fn verified_is_never_zero<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, level: LevelPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(b) => b == is_never_zero_spec(to_model(level)),
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let fuel1 = fuel - 1;
+    let ll = ctx.read_level(level);
+    if level_is_zero(&ll) {
+        return Some(false);
+    }
+    if level_as_param(&ll).is_some() {
+        return Some(false);
+    }
+    if let Some(_a) = level_as_succ(&ll) {
+        return Some(true);
+    }
+    if let Some((a, b)) = level_as_max(&ll) {
+        match verified_is_never_zero(ctx, a, fuel1) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => return None,
+        }
+        return verified_is_never_zero(ctx, b, fuel1);
+    }
+    if let Some((_t, r)) = level_as_imax(&ll) {
+        return verified_is_never_zero(ctx, r, fuel1);
+    }
+    None
+}
+
+/// Real-arena counterpart to `TcCtx::may_be_prop` (`level.rs:276-278`):
+/// `!is_never_zero`. Also surfaces the real semantic payoff whenever it
+/// answers `Some(false)` (i.e. the real `is_never_zero` was `true`):
+/// `is_never_zero_spec_sound` gives a genuine "this level can NEVER be
+/// `Prop` under any parameter assignment" guarantee, not just "the
+/// syntactic check happened to say so" -- `Some(true)` stays the
+/// honestly weaker "couldn't rule it out" signal `may_be_prop`'s own
+/// real semantics always carried (matching `verified_leq`'s own
+/// established one-directional-soundness convention).
+pub fn verified_may_be_prop<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, level: LevelPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(false) => forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) >= 1,
+        _ => true,
+    }
+{
+    match verified_is_never_zero(ctx, level, fuel) {
+        Some(true) => {
+            proof {
+                is_never_zero_spec_sound(to_model(level));
+            }
+            Some(false)
+        }
+        Some(false) => Some(true),
+        None => None,
+    }
 }
 
 /// Real-arena counterpart to `TcCtx::eq_antisymm` (`level.rs:235`):

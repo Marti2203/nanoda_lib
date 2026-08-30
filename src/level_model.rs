@@ -57,6 +57,72 @@ pub open spec fn is_succ(l: LevelSpec) -> bool {
     match l { LevelSpec::Succ(_) => true, _ => false }
 }
 
+/// `TcCtx::is_never_zero`'s (`level.rs:280-287`) own model: a PURELY
+/// SYNTACTIC, structural over-approximation of "this level can never
+/// denote 0" -- `Succ(_)` is always non-zero; `Max` is never-zero if
+/// EITHER side is; `IMax(_, r)` is never-zero based on the RIGHT side
+/// ONLY (matching `interp`'s own `IMax` rule: the whole thing collapses
+/// to 0 whenever the right side does, regardless of the left). `Param`
+/// conservatively answers `false` (a bound universe variable COULD be
+/// instantiated to 0) -- this is deliberately NOT as precise as `interp`
+/// itself, exactly mirroring the real function's own syntactic (not
+/// semantic) check.
+pub open spec fn is_never_zero_spec(l: LevelSpec) -> bool
+    decreases l
+{
+    match l {
+        LevelSpec::Zero | LevelSpec::Param(_) => false,
+        LevelSpec::Succ(_) => true,
+        LevelSpec::Max(a, b) => is_never_zero_spec(*a) || is_never_zero_spec(*b),
+        LevelSpec::IMax(_, r) => is_never_zero_spec(*r),
+    }
+}
+
+/// `TcCtx::may_be_prop`'s (`level.rs:276-278`) own model: `!is_never_zero_spec`.
+pub open spec fn may_be_prop_spec(l: LevelSpec) -> bool {
+    !is_never_zero_spec(l)
+}
+
+/// The real semantic payoff of `is_never_zero_spec`: whenever it answers
+/// `true`, the level GENUINELY never denotes 0, under ANY parameter
+/// assignment `rho` -- not just "the syntactic check happened to say so."
+/// Proven by structural induction, mirroring `is_never_zero_spec`'s own
+/// case split against `interp`'s own definition case by case: `Succ`
+/// trivially interps to `something + 1 >= 1`; `Max`'s `max_nat` can only
+/// be `>=` whichever side the IH already bounds away from 0; `IMax`'s
+/// own "collapse to 0 iff the right side does" rule means the IH on the
+/// right side (`interp(r,rho) >= 1`, hence `!= 0`) directly rules out
+/// the collapsing branch, leaving the `max_nat` branch (again `>=` the
+/// right side).
+pub proof fn is_never_zero_spec_sound(l: LevelSpec)
+    requires is_never_zero_spec(l)
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) >= 1
+    decreases l
+{
+    match l {
+        LevelSpec::Succ(a) => {
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*a, rho) + 1);
+        }
+        LevelSpec::Max(a, b) => {
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == max_nat(interp(*a, rho), interp(*b, rho)));
+            if is_never_zero_spec(*a) {
+                is_never_zero_spec_sound(*a);
+            } else {
+                is_never_zero_spec_sound(*b);
+            }
+        }
+        LevelSpec::IMax(t, r) => {
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) ==
+                if interp(*r, rho) == 0 { 0 } else { max_nat(interp(*t, rho), interp(*r, rho)) });
+            is_never_zero_spec_sound(*r);
+        }
+        _ => {
+            assert(!is_never_zero_spec(l));
+            assert(false);
+        }
+    }
+}
+
 pub open spec fn is_imax(l: LevelSpec) -> bool {
     match l { LevelSpec::IMax(_, _) => true, _ => false }
 }
