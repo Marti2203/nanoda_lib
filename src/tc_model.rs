@@ -2504,6 +2504,61 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
 /// are compared as real exec values (native `usize`/`name_ptr_eq`) but
 /// not surfaced in the ensures, since `ExprSpec::Proj` itself erases them
 /// (same scoping choice `pstep_star_proj` already made for `idx`).
+/// Spine congruence for `deq`: a head-pair and pairwise-`deq` argument
+/// pairs lift to `deq` on the whole applied spines, one congruence
+/// layer per argument (induction matching `spine_app`'s back-peeling,
+/// exactly like `pstep_spine_app_star`). This is the lemma that turns
+/// `verified_def_eq_app`'s pairwise `deq_core_claim` facts into a
+/// whole-term equality whenever every pair lands on the `deq` disjunct.
+pub proof fn deq_spine_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, fx: ExprSpec, fy: ExprSpec, ax: Seq<ExprSpec>, ay: Seq<ExprSpec>, h: nat)
+    requires
+        ax.len() == ay.len(),
+        deq(env, fx, fy, h),
+        forall |i: int| 0 <= i < ax.len() ==> deq(env, #[trigger] ax[i], ay[i], h),
+    ensures deq(env, spine_app(fx, ax), spine_app(fy, ay), (h + ax.len()) as nat)
+    decreases ax.len()
+{
+    if ax.len() == 0 {
+        assert(spine_app(fx, ax) == fx);
+        assert(spine_app(fy, ay) == fy);
+    } else {
+        let ax0 = ax.subrange(0, ax.len() - 1);
+        let ay0 = ay.subrange(0, ay.len() - 1);
+        let lx = ax[ax.len() - 1];
+        let ly = ay[ay.len() - 1];
+        assert(ax0.len() == ay0.len());
+        assert forall |i: int| 0 <= i < ax0.len() implies deq(env, #[trigger] ax0[i], ay0[i], h) by {
+            assert(ax0[i] == ax[i]);
+            assert(ay0[i] == ay[i]);
+            assert(deq(env, ax[i], ay[i], h));
+        }
+        deq_spine_app_congr(env, fx, fy, ax0, ay0, h);
+        assert(deq(env, lx, ly, h));
+        deq_mono(env, lx, ly, h, (h + ax0.len()) as nat);
+        deq_app_congr(env, spine_app(fx, ax0), spine_app(fy, ay0), lx, ly, (h + ax0.len()) as nat);
+        assert(spine_app(fx, ax) == ExprSpec::App(Box::new(spine_app(fx, ax0)), Box::new(lx)));
+        assert(spine_app(fy, ay) == ExprSpec::App(Box::new(spine_app(fy, ay0)), Box::new(ly)));
+        assert((h + ax0.len()) as nat + 1 == (h + ax.len()) as nat);
+    }
+}
+
+/// The `deq`-side claim `verified_def_eq_core` (and, pairwise,
+/// `verified_def_eq_app`) can honestly make about a `Some(true)` verdict
+/// on `(x, y)` -- named as a NON-recursive spec fn (it inlines, so
+/// asserting/consuming it works freely, per
+/// `docs/verus_recursive_exists_note.md`): either the models are `deq`
+/// under every env at height `h`, or the verdict came from the ptr-level
+/// local-fvar identity that the current `Free(expr_id(...))` local model
+/// cannot express (see `verified_def_eq_core`'s doc), or from a Proj
+/// whose children hit that local case (shape-only fallback).
+pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
+    (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), h))
+    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
+    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+}
+
 /// The `Some(true)` ensures carries TWO conjuncts: the original four-way
 /// witness-shaped disjunction (kept verbatim so every existing caller,
 /// `verified_def_eq`'s `def_eq_witness` claim included, verifies
@@ -2534,11 +2589,7 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
             || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
                 to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
                 && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy)))))
-            && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat))
-            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))),
+            && deq_core_claim(x, y, fuel as nat),
         _ => true,
     }
     decreases fuel
@@ -2645,7 +2696,9 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
             to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
             && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-            && argsx.len() == argsy.len() && argsx.len() > 0,
+            && argsx.len() == argsy.len() && argsx.len() > 0
+            && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], fuel as nat))
+            && deq_core_claim(fx, fy, fuel as nat),
         _ => true,
     }
 {
@@ -2671,6 +2724,7 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         invariant
             i <= args1.len(),
             args1.len() == args2.len(),
+            forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] args1@[j], args2@[j], fuel as nat),
         decreases args1.len() - i
     {
         match verified_def_eq_core(ctx, args1[i], args2[i], fuel) {
@@ -2686,6 +2740,8 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             assert(to_model(y) == spine_app(to_model(f2), args_model_of(args2@)));
             assert(args1@.len() == args2@.len());
             assert(args1@.len() > 0);
+            assert(forall |i: int| 0 <= i < args1@.len() ==> deq_core_claim(#[trigger] args1@[i], args2@[i], fuel as nat));
+            assert(deq_core_claim(f1, f2, fuel as nat));
             Some(true)
         },
         Some(false) => Some(false),
