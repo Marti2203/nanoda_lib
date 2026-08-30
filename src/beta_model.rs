@@ -35,7 +35,7 @@ use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
 #[cfg(verus_only)]
-use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below, has_fv, abstr_full_noop};
+use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below, has_fv, abstr_full_noop, abstr_subst_roundtrip};
 #[cfg(verus_only)]
 use crate::expr_model::nlbv;
 #[cfg(verus_only)]
@@ -10827,6 +10827,86 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
             }
         }
     }
+}
+
+/// Chain-level abstraction stability: an EXPLICIT `pstep` chain with
+/// per-element bounds maps through `abstr_full` link by link. The chain
+/// is explicit for the same reason as the strip/confluence lemmas: a
+/// bare `pstep_star`'s hidden elements carry no bounds, and each link's
+/// `pstep_abstr` needs its source element's `max_var_below`/
+/// `string_lits_ok`/ceiling. (Only SOURCES need conditions -- the last
+/// element rides along for free.)
+pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: Seq<ExprSpec>, ks: Seq<u32>, o: nat, bound: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        chain.len() >= 1,
+        pstep_chain_valid(env, chain),
+        forall |i: int| 0 <= i < chain.len() - 1 ==> max_var_below(#[trigger] chain[i], bound),
+        forall |i: int| 0 <= i < chain.len() - 1 ==> string_lits_ok(#[trigger] chain[i], 0),
+        forall |i: int| 0 <= i < chain.len() - 1 ==> o + ks.len() + bound + growth(size(#[trigger] chain[i])) + 2 * size(chain[i]) + depth(chain[i]) + 30 <= 0xFFFF_0000,
+    ensures pstep_star(env, abstr_full(chain[0], ks, o), abstr_full(chain[chain.len() - 1], ks, o))
+{
+    let mapped = Seq::new(chain.len(), |i: int| abstr_full(chain[i], ks, o));
+    assert(mapped.len() == chain.len());
+    assert(mapped[0] == abstr_full(chain[0], ks, o));
+    assert(mapped[mapped.len() - 1] == abstr_full(chain[chain.len() - 1], ks, o));
+    assert(pstep_chain_valid(env, mapped)) by {
+        assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
+            assert(pstep(env, chain[i], chain[i + 1]));
+            pstep_abstr(env, bound, chain[i], chain[i + 1], ks, o);
+            assert(mapped[i] == abstr_full(chain[i], ks, o));
+            assert(mapped[i + 1] == abstr_full(chain[i + 1], ks, o));
+        }
+    }
+}
+
+/// THE BINDER INTRO (defeq level, explicit chains): if the two bodies'
+/// FRESH-LOCAL INSTANTIATIONS join (two explicit reduction chains to a
+/// common reduct) and the binder types are `defeq`, then the `Bind`s
+/// themselves are `defeq`. The anti-substitution arc's payoff,
+/// assembled from its three pillars: `pstep_star_abstr_chain` maps both
+/// join chains through `abstr_full(-, [k], 0)`; `abstr_subst_roundtrip`
+/// (with freshness `fv_below`) turns the mapped chains' sources back
+/// into the ORIGINAL bodies; the mapped chains then exhibit
+/// `defeq(b1, b2)` directly, and `defeq_bind_congr` closes. Chains are
+/// explicit with per-element bounds for the standing reason (hidden
+/// `pstep_star` elements carry no bounds); real producers hold their
+/// concrete chains.
+pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        fv_below(b1, k),
+        fv_below(b2, k),
+        ch1.len() >= 1,
+        ch2.len() >= 1,
+        ch1[0] == subst_full(b1, seq![ExprSpec::Free(k)], 0),
+        ch2[0] == subst_full(b2, seq![ExprSpec::Free(k)], 0),
+        ch1[ch1.len() - 1] == ch2[ch2.len() - 1],
+        pstep_chain_valid(env, ch1),
+        pstep_chain_valid(env, ch2),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> max_var_below(#[trigger] ch1[i], bound),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> string_lits_ok(#[trigger] ch1[i], 0),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch1[i])) + 2 * size(ch1[i]) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> max_var_below(#[trigger] ch2[i], bound),
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> string_lits_ok(#[trigger] ch2[i], 0),
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch2[i])) + 2 * size(ch2[i]) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
+        defeq(env, t1, t2),
+    ensures defeq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+{
+    let ks = seq![k];
+    assert(ks.len() == 1);
+    pstep_star_abstr_chain(env, ch1, ks, 0, bound);
+    pstep_star_abstr_chain(env, ch2, ks, 0, bound);
+    abstr_subst_roundtrip(b1, k, 0);
+    abstr_subst_roundtrip(b2, k, 0);
+    assert(abstr_full(ch1[0], ks, 0) == b1);
+    assert(abstr_full(ch2[0], ks, 0) == b2);
+    let z = abstr_full(ch1[ch1.len() - 1], ks, 0);
+    assert(pstep_star(env, b1, z));
+    assert(abstr_full(ch2[ch2.len() - 1], ks, 0) == z);
+    assert(pstep_star(env, b2, z));
+    assert(defeq(env, b1, b2));
+    defeq_bind_congr(env, t1, t2, b1, b2);
 }
 
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
