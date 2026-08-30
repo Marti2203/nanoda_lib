@@ -629,6 +629,95 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
 /// The abstraction analogue of `subst_full_noop`: if `e` has no free
 /// variables anywhere, abstracting it leaves it unchanged, for *any*
 /// `locals`/`offset`. Note this holds regardless of `find_from_end`'s exact
+/// A hit from `find_from_end` is a position: `p < locals.len()`.
+pub proof fn find_from_end_bound(locals: Seq<u32>, id: u32)
+    ensures match find_from_end(locals, id) {
+        Some(p) => p < locals.len(),
+        None => true,
+    }
+    decreases locals.len()
+{
+    if locals.len() == 0 {
+    } else if locals[locals.len() - 1] == id {
+    } else {
+        find_from_end_bound(locals.subrange(0, locals.len() - 1), id);
+    }
+}
+
+/// Every `Free` id occurring anywhere in `e` is `< b` -- `max_var_below`'s
+/// twin for FREE variables instead of bound ones. The freshness currency
+/// of the binder anti-substitution arc: `mk_dbj_level`'s ids come from a
+/// monotone counter, so "`k` is fresh for `e`" is exactly
+/// `fv_below(e, k)`.
+pub open spec fn fv_below(e: ExprSpec, b: u32) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::Free(id) => id < b,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => true,
+        ExprSpec::App(f, a) => fv_below(*f, b) && fv_below(*a, b),
+        ExprSpec::Bind(t, bd) => fv_below(*t, b) && fv_below(*bd, b),
+        ExprSpec::Let(t, v, bd) => fv_below(*t, b) && fv_below(*v, b) && fv_below(*bd, b),
+        ExprSpec::Proj(s) => fv_below(*s, b),
+    }
+}
+
+/// THE ROUNDTRIP: instantiating `Var(o)` with a FRESH free variable
+/// `Free(k)` and then abstracting `k` back at the same offset is the
+/// identity. The engine of the binder anti-substitution arc: it lets a
+/// binder body be recovered exactly from its fresh-local instantiation,
+/// so equality facts about instantiations transport back under the
+/// binder (once the relation itself is shown abstr-stable). Freshness
+/// (`fv_below(bdy, k)`) is what keeps `abstr` from touching any `Free`
+/// the body already had.
+pub proof fn abstr_subst_roundtrip(bdy: ExprSpec, k: u32, o: nat)
+    requires fv_below(bdy, k)
+    ensures abstr_full(subst_full(bdy, seq![ExprSpec::Free(k)], o), seq![k], o) == bdy
+    decreases bdy
+{
+    let ks = seq![k];
+    assert(ks.len() == 1);
+    assert(ks[0] == k);
+    match bdy {
+        ExprSpec::Var(i) => {
+            if (i as nat) < o {
+            } else if (i as nat - o) < 1 {
+                assert(subst_full(bdy, seq![ExprSpec::Free(k)], o) == ExprSpec::Free(k));
+                assert(ks[ks.len() - 1] == k);
+                assert(find_from_end(ks, k) == Some(0nat));
+                assert(abstr_full(ExprSpec::Free(k), ks, o) == ExprSpec::Var((o + 0) as u32));
+                assert(i as nat == o);
+            } else {
+            }
+        }
+        ExprSpec::Free(id) => {
+            assert(id < k);
+            assert(ks[ks.len() - 1] == k);
+            assert(ks.subrange(0, ks.len() - 1) =~= Seq::<u32>::empty());
+            assert(find_from_end(ks.subrange(0, ks.len() - 1), id) is None);
+            assert(find_from_end(ks, id) is None);
+        }
+        ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+        }
+        ExprSpec::App(f, a) => {
+            abstr_subst_roundtrip(*f, k, o);
+            abstr_subst_roundtrip(*a, k, o);
+        }
+        ExprSpec::Bind(t, b2) => {
+            abstr_subst_roundtrip(*t, k, o);
+            abstr_subst_roundtrip(*b2, k, o + 1);
+        }
+        ExprSpec::Let(t, v, b2) => {
+            abstr_subst_roundtrip(*t, k, o);
+            abstr_subst_roundtrip(*v, k, o);
+            abstr_subst_roundtrip(*b2, k, o + 1);
+        }
+        ExprSpec::Proj(s2) => {
+            abstr_subst_roundtrip(*s2, k, o);
+        }
+    }
+}
+
 /// behavior — the `Free` arm above is simply never reached when `e` has no
 /// `Free` nodes, so the proof below never needs to reason about it.
 pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)

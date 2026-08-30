@@ -34,6 +34,7 @@ use crate::expr_model::NatLitPayload;
 use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
+use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below};
 #[cfg(verus_only)]
 use crate::expr_model::nlbv;
 #[cfg(verus_only)]
@@ -10289,6 +10290,92 @@ pub proof fn nlbv_subst_noop(j: nat, s: ExprSpec, e: ExprSpec)
 }
 
 /// The `shift` analogue of `nlbv_subst_noop`: if `e` has no loose
+/// `shift` and `abstr_full` COMMUTE when the abstraction offset sits at
+/// or above the shift cutoff: shifting after abstracting equals
+/// abstracting (at the shifted offset) after shifting. First lemma of
+/// the commutation family the binder anti-substitution arc needs (the
+/// eta case of transporting a `deq` derivation through `abstr_full`
+/// uses exactly `d == 1, c == 0`). Non-negative `d` only -- the
+/// down-shift variant needs its own no-collision side conditions and
+/// lands with the `subst1` transport.
+pub proof fn shift_abstr_commute(d: int, c: nat, e: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        0 <= d,
+        c <= o,
+        // No u32 wrap in the abstracted variables (depth(e) bounds how
+        // far the binder-recursion pushes `o`).
+        o + d + ks.len() + depth(e) + 1 <= 0xFFFF_FFFF,
+    ensures shift(d, c, abstr_full(e, ks, o)) == abstr_full(shift(d, c, e), ks, (o + d) as nat)
+    decreases e
+{
+    reveal(shift);
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) < c {
+                assert(shift(d, c, e) == e);
+                assert(abstr_full(e, ks, o) == e);
+                assert(abstr_full(e, ks, (o + d) as nat) == e);
+            } else {
+                assert(shift(d, c, e) == ExprSpec::Var((i + d) as u32));
+                assert(abstr_full(e, ks, o) == e);
+                assert(abstr_full(ExprSpec::Var((i + d) as u32), ks, (o + d) as nat) == ExprSpec::Var((i + d) as u32));
+            }
+        }
+        ExprSpec::Free(id) => {
+            assert(shift(d, c, e) == e);
+            match find_from_end(ks, id) {
+                Some(p) => {
+                    find_from_end_bound(ks, id);
+                    assert(p < ks.len());
+                    assert(o + p + d <= 0xFFFF_FFFF);
+                    assert(abstr_full(e, ks, o) == ExprSpec::Var((o + p) as u32));
+                    assert(((o + p) as u32) as nat == o + p);
+                    assert(o + p >= c);
+                    assert(shift(d, c, ExprSpec::Var((o + p) as u32)) == ExprSpec::Var(((o + p) + d) as u32));
+                    assert(abstr_full(e, ks, (o + d) as nat) == ExprSpec::Var(((o + d) + p) as u32));
+                    assert(((o + p) + d) as u32 == ((o + d) + p) as u32);
+                }
+                None => {
+                    assert(abstr_full(e, ks, o) == e);
+                    assert(shift(d, c, e) == e);
+                    assert(abstr_full(e, ks, (o + d) as nat) == e);
+                }
+            }
+        }
+        ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+            assert(shift(d, c, e) == e);
+            assert(abstr_full(e, ks, o) == e);
+            assert(abstr_full(e, ks, (o + d) as nat) == e);
+        }
+        ExprSpec::App(f, a) => {
+            assert(depth(*f) < depth(e));
+            assert(depth(*a) < depth(e));
+            shift_abstr_commute(d, c, *f, ks, o);
+            shift_abstr_commute(d, c, *a, ks, o);
+        }
+        ExprSpec::Bind(t, b) => {
+            assert(depth(*t) < depth(e));
+            assert(depth(*b) < depth(e));
+            shift_abstr_commute(d, c, *t, ks, o);
+            shift_abstr_commute(d, (c + 1) as nat, *b, ks, (o + 1) as nat);
+            assert(((o + 1) + d) as nat == ((o + d) as nat + 1) as nat);
+        }
+        ExprSpec::Let(t, v, b) => {
+            assert(depth(*t) < depth(e));
+            assert(depth(*v) < depth(e));
+            assert(depth(*b) < depth(e));
+            shift_abstr_commute(d, c, *t, ks, o);
+            shift_abstr_commute(d, c, *v, ks, o);
+            shift_abstr_commute(d, (c + 1) as nat, *b, ks, (o + 1) as nat);
+            assert(((o + 1) + d) as nat == ((o + d) as nat + 1) as nat);
+        }
+        ExprSpec::Proj(s2) => {
+            assert(depth(*s2) < depth(e));
+            shift_abstr_commute(d, c, *s2, ks, o);
+        }
+    }
+}
+
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
 /// (not just `+1`/`-1`) -- `shift`'s own cutoff comparison never fires.
 pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
