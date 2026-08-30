@@ -2889,6 +2889,125 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
     }
 }
 
+/// THE STRIP LEMMA over the ghost-certified relation: a single certified
+/// step `chain[0] ==> y` strips along an entire certified chain
+/// `chain[0] ==> ... ==> chain[k]`, producing a parallel chain from `y`
+/// (through the complete developments of the chain's own elements) that
+/// rejoins at the far end. THE key structural discovery, found by
+/// hand-deriving the caps before writing (the standing discipline):
+/// with `m <= m2` and `d <= d2`, the caps stay UNIFORM across every
+/// strip step -- each square's incoming vertical edge is always a FRESH
+/// one-application Takahashi output over the previous chain element
+/// (`chain[i] ==> complete(chain[i-1])` comes from Takahashi applied to
+/// the chain link, never to the accumulated result), so nothing
+/// compounds. The output cap `(m2, d2)` is pinned by the self-
+/// referential fixpoint requirement `tak_m(bound, m2, d2, chain[i]) <=
+/// m2` (and likewise `tak_d`) -- a real caller computes `m2`/`d2` as
+/// (any upper bound on) the one-deep tak values of its own concrete
+/// chain data, and the requirement closes.
+pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, m: nat, d: nat, m2: nat, d2: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        chain.len() >= 1,
+        forall |i: int| 0 <= i < chain.len() - 1 ==> pstep_d(env, #[trigger] chain[i], chain[i + 1], m, d),
+        forall |i: int| 0 <= i < chain.len() ==> max_var_below(#[trigger] chain[i], bound),
+        forall |i: int| 0 <= i < chain.len() ==> string_lits_ok(#[trigger] chain[i], 0),
+        pstep_d(env, chain[0], y, m2, d2),
+        m <= m2,
+        d <= d2,
+        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, m2, d2, #[trigger] chain[i]) <= m2,
+        forall |i: int| 0 <= i < chain.len() ==> tak_d(d2, #[trigger] chain[i]) <= d2,
+        forall |i: int| 0 <= i < chain.len() ==> bound + m2 + 6 * d2 + tak_m(bound, m2, d2, #[trigger] chain[i]) + 4 * tak_d(d2, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
+    ensures exists |zch: Seq<ExprSpec>|
+        #![trigger zch.len()]
+        zch.len() == chain.len()
+        && zch[0] == y
+        && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
+        && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2)
+    decreases chain.len()
+{
+    if chain.len() == 1 {
+        let zch = seq![y];
+        assert(zch.len() == chain.len());
+        assert(zch[0] == y);
+        assert(pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
+        assert(zch.len() == chain.len()
+            && zch[0] == y
+            && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
+            && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
+    } else {
+        let c0 = chain[0];
+        let c1 = chain[1];
+        assert(pstep_d(env, c0, c1, m, d));
+        assert(max_var_below(c0, bound));
+        assert(string_lits_ok(c0, 0));
+        pstep_d_mono(env, c0, c1, m, d, m2, d2);
+        pstep_d_takahashi(env, bound, c0, c1, m2, d2);
+        pstep_d_takahashi(env, bound, c0, y, m2, d2);
+        assert(tak_m(bound, m2, d2, c0) <= m2);
+        assert(tak_d(d2, c0) <= d2);
+        pstep_d_mono(env, c1, complete(c0), tak_m(bound, m2, d2, c0), tak_d(d2, c0), m2, d2);
+        pstep_d_mono(env, y, complete(c0), tak_m(bound, m2, d2, c0), tak_d(d2, c0), m2, d2);
+        let chain2 = chain.subrange(1, chain.len() as int);
+        assert(chain2.len() == chain.len() - 1);
+        assert(chain2[0] == c1);
+        assert forall |i: int| 0 <= i < chain2.len() - 1 implies pstep_d(env, #[trigger] chain2[i], chain2[i + 1], m, d) by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(chain2[i + 1] == chain[i + 2]);
+            assert(pstep_d(env, chain[i + 1], chain[i + 2], m, d));
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies max_var_below(#[trigger] chain2[i], bound) by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(max_var_below(chain[i + 1], bound));
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies string_lits_ok(#[trigger] chain2[i], 0) by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(string_lits_ok(chain[i + 1], 0));
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, m2, d2, #[trigger] chain2[i]) <= m2 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(tak_m(bound, m2, d2, chain[i + 1]) <= m2);
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(d2, #[trigger] chain2[i]) <= d2 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(tak_d(d2, chain[i + 1]) <= d2);
+        }
+        assert forall |i: int| 0 <= i < chain2.len() implies bound + m2 + 6 * d2 + tak_m(bound, m2, d2, #[trigger] chain2[i]) + 4 * tak_d(d2, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+            assert(chain2[i] == chain[i + 1]);
+            assert(bound + m2 + 6 * d2 + tak_m(bound, m2, d2, chain[i + 1]) + 4 * tak_d(d2, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+        }
+        pstep_d_strip(env, bound, chain2, complete(c0), m, d, m2, d2);
+        let zch2 = choose |zch2: Seq<ExprSpec>|
+            #![trigger zch2.len()]
+            zch2.len() == chain2.len()
+            && zch2[0] == complete(c0)
+            && (forall |i: int| 0 <= i < zch2.len() - 1 ==> pstep_d(env, #[trigger] zch2[i], zch2[i + 1], m2, d2))
+            && pstep_d(env, chain2[chain2.len() - 1], zch2[zch2.len() - 1], m2, d2);
+        let zch = seq![y] + zch2;
+        assert(zch.len() == chain.len());
+        assert(zch[0] == y);
+        assert forall |i: int| 0 <= i < zch.len() - 1 implies pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2) by {
+            if i == 0 {
+                assert(zch[0] == y);
+                assert(zch[1] == zch2[0]);
+                assert(zch2[0] == complete(c0));
+                assert(pstep_d(env, y, complete(c0), m2, d2));
+            } else {
+                assert(zch[i] == zch2[i - 1]);
+                assert(zch[i + 1] == zch2[i]);
+                assert(pstep_d(env, zch2[i - 1], zch2[i], m2, d2));
+            }
+        }
+        assert(chain[chain.len() - 1] == chain2[chain2.len() - 1]);
+        assert(zch[zch.len() - 1] == zch2[zch2.len() - 1]);
+        assert(pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
+        assert(zch.len() == chain.len()
+            && zch[0] == y
+            && (forall |i: int| 0 <= i < zch.len() - 1 ==> pstep_d(env, #[trigger] zch[i], zch[i + 1], m2, d2))
+            && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2));
+    }
+}
+
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
 /// occurring ANYWHERE inside `e` (at any nesting depth) has an expansion
 /// small enough to fit `cap`'s own headroom -- the SAME role `env_wf`'s
