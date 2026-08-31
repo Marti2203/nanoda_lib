@@ -130,7 +130,7 @@ pub enum DeltaRoundResult<'t> {
 /// `verified_unfold_def_step` extended with a genuine, structurally-
 /// derived growth bound. See module doc comment for the full story.
 #[verifier::spinoff_prover]
-pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: crate::util::ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<crate::util::ExprPtr<'t>>)
+pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: crate::util::ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<crate::util::ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -2307,7 +2307,7 @@ pub fn verified_proof_irrel_eq_of_types<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 /// `max_var_below_mono`, so callers get ONE uniform formula regardless of
 /// which internal branch fired.
 #[verifier::spinoff_prover]
-pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, bound2: nat, d2: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -2326,7 +2326,7 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         None => true,
     }
 {
-    match verified_unfold_def_step_bounded(ctx, env, e, fuel, bound, d) {
+    match verified_unfold_def_step_bounded(ctx, env, e, fuel, Ghost(bound), Ghost(d)) {
         Some(unfolded) => {
             proof {
                 max_var_below_mono(to_model(unfolded), bound + env_global_cap(*env), bound2);
@@ -2483,7 +2483,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
     match (r1, r2) {
         (None, None) => Some(DeltaRoundResult::Exhausted(x, y)),
         (Some(_), None) => {
-            match verified_try_unfold_proj_app(ctx, y, fuel, bound, d) {
+            match verified_try_unfold_proj_app(ctx, y, fuel, Ghost(bound), Ghost(d)) {
                 Some(yprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -2496,7 +2496,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                     }
                     Some(DeltaRoundResult::Continue(x, yprime))
                 }
-                None => match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
+                None => match verified_delta_bounded(ctx, env, x, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                     Some(xprime) => {
                         proof {
                             weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
@@ -2508,7 +2508,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
             }
         }
         (None, Some(_)) => {
-            match verified_try_unfold_proj_app(ctx, x, fuel, bound, d) {
+            match verified_try_unfold_proj_app(ctx, x, fuel, Ghost(bound), Ghost(d)) {
                 Some(xprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -2521,7 +2521,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                     }
                     Some(DeltaRoundResult::Continue(xprime, y))
                 }
-                None => match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                None => match verified_delta_bounded(ctx, env, y, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                     Some(yprime) => {
                         proof {
                             weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
@@ -2534,7 +2534,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
         }
         (Some((x_name, x_hint)), Some((y_name, y_hint))) => {
             if verified_is_lt(&x_hint, &y_hint) {
-                match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                match verified_delta_bounded(ctx, env, y, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                     Some(yprime) => {
                         proof {
                             weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
@@ -2544,7 +2544,7 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                     None => None,
                 }
             } else if verified_is_lt(&y_hint, &x_hint) {
-                match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
+                match verified_delta_bounded(ctx, env, x, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                     Some(xprime) => {
                         proof {
                             weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
@@ -2556,8 +2556,8 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
             } else {
                 match verified_try_eq_const_app(ctx, x, x_name, x_hint, y, y_name, y_hint, fuel) {
                     Some(b) => Some(DeltaRoundResult::Found(b)),
-                    None => match verified_delta_bounded(ctx, env, x, fuel, bound, d, bound2, d2) {
-                        Some(xprime) => match verified_delta_bounded(ctx, env, y, fuel, bound, d, bound2, d2) {
+                    None => match verified_delta_bounded(ctx, env, x, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                        Some(xprime) => match verified_delta_bounded(ctx, env, y, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                             Some(yprime) => Some(DeltaRoundResult::Continue(xprime, yprime)),
                             None => None,
                         },

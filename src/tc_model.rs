@@ -343,7 +343,7 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 /// head" shape) -- this is pure composition, no new lemmas. Requires
 /// `env_global_cap(*env) <= bound` so the definition body's own natural
 /// cap and the caller's `bound` can be unified via `max_var_below_mono`.
-pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -488,7 +488,7 @@ pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
                 by {}
                 pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(e), to_model(whnfd));
             }
-            match verified_unfold_def_step_bounded(ctx, env, whnfd, fuel, bound2, d2) {
+            match verified_unfold_def_step_bounded(ctx, env, whnfd, fuel, Ghost(bound2), Ghost(d2)) {
                 Some(r) => {
                     proof {
                         let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
@@ -4926,7 +4926,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
 /// the real function's own `eprime != e` check via real pointer
 /// inequality), never a fabricated claim of "no further reduction
 /// possible."
-pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
