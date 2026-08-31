@@ -12900,6 +12900,47 @@ pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x1: ExprSpec,
 /// `Bind` contracted against `args[0]`, both sides taken reflexively via
 /// `pstep`'s own definition) lifted to the whole spine via
 /// `pstep_spine_app_star`, and the IH on the remaining `args[1..]` --
+/// `max_var_below` over an applied spine, from its parts (mvb only --
+/// `spine_app_bounds` bundles depth, which callers here don't have).
+pub proof fn spine_app_max_var_below(head: ExprSpec, args: Seq<ExprSpec>, bound: nat)
+    requires
+        max_var_below(head, bound),
+        forall |i: int| 0 <= i < args.len() ==> max_var_below(#[trigger] args[i], bound),
+    ensures max_var_below(spine_app(head, args), bound)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        assert forall |i: int| 0 <= i < args_init.len() implies max_var_below(#[trigger] args_init[i], bound) by {
+            assert(args_init[i] == args[i]);
+        }
+        spine_app_max_var_below(head, args_init, bound);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(max_var_below(args[args.len() - 1], bound));
+    }
+}
+
+/// `string_lits_ok` over an applied spine, from its parts.
+pub proof fn string_lits_ok_spine_app(head: ExprSpec, args: Seq<ExprSpec>, cap: nat)
+    requires
+        string_lits_ok(head, cap),
+        forall |i: int| 0 <= i < args.len() ==> string_lits_ok(#[trigger] args[i], cap),
+    ensures string_lits_ok(spine_app(head, args), cap)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        assert forall |i: int| 0 <= i < args_init.len() implies string_lits_ok(#[trigger] args_init[i], cap) by {
+            assert(args_init[i] == args[i]);
+        }
+        string_lits_ok_spine_app(head, args_init, cap);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(string_lits_ok(args[args.len() - 1], cap));
+    }
+}
+
 /// The cap dominates head-plus-argument-sum.
 pub proof fn spine_reduce_size_cap_ge_plus_sum(head_sz: nat, args: Seq<ExprSpec>)
     ensures spine_reduce_size_cap(head_sz, args) >= head_sz + args_size_sum(args)
