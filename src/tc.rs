@@ -991,6 +991,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
                 return true
             }
+            // Verified whnf-join route (see `delta_bound_model::
+            // verified_defeq_whnf_checked`): reduce both sides with the
+            // verified multi-round whnf and confirm on pointer-equal
+            // results -- a Some(true) carries a machine-checked `defeq`
+            // (model-level definitional equality by joinability).
+            if let Some(true) =
+                crate::delta_bound_model::verified_defeq_whnf_checked(self.ctx, cert, x, y, 100)
+            {
+                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+                return true
+            }
         }
 
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
@@ -1472,5 +1483,38 @@ mod routed_tests {
             Some(true),
             "the delta boundary must confirm Const(foo) == Sort 0 on its own"
         );
+    }
+
+    /// End-to-end smoke test for the verified WHNF-JOIN route: the beta
+    /// redex `(fun (_ : Sort 1) => Var 0) (Sort 0)` vs `Sort 0` is
+    /// unanswerable by the quick check (App vs Sort), the env-free
+    /// structural core, and the delta route (the head is a Lambda, not
+    /// an unfoldable Const) -- but one round of the verified multi-round
+    /// whnf beta-reduces the left side to exactly `Sort 0`, and the
+    /// pointer-equal join carries a machine-checked `defeq` claim. Also
+    /// asserts DIRECT attribution via the boundary itself.
+    #[test]
+    fn routed_whnf_join_route_confirms_beta_redex() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        export.with_tc(crate::env::EnvLimit::PpUnlimited, |tc| {
+            let anon = tc.ctx.anonymous();
+            let prop = tc.ctx.prop();
+            let zero = tc.ctx.zero();
+            let one = tc.ctx.succ(zero);
+            let ty = tc.ctx.mk_sort(one);
+            let v0 = tc.ctx.mk_var(0);
+            let lam = tc.ctx.mk_lambda(anon, crate::expr::BinderStyle::Default, ty, v0);
+            let redex = tc.ctx.mk_app(lam, prop);
+            assert_ne!(redex, prop, "distinct pointers required to exercise the route");
+            assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
+            let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(
+                crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, redex, prop, 100),
+                Some(true),
+                "the whnf-join boundary must confirm the beta redex on its own"
+            );
+        });
     }
 }
