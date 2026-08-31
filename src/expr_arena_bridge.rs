@@ -2911,8 +2911,14 @@ pub open spec fn whnf_step_next_bound(bound: nat, d: nat) -> nat { bound + d * d
 pub open spec fn whnf_fixpoint_ok(bound: nat, d: nat, n: nat) -> bool
     decreases n
 {
-    d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
-        && (n == 0 || whnf_fixpoint_ok(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat))
+    // `n == 0` demands NOTHING: no round will run, so no budget is
+    // needed. (The original also demanded the base ceilings at the
+    // never-executed post-final level, which compounded the cubic one
+    // level too far and capped d at ~38 instead of ~1625 for a single
+    // real round -- the same phantom-next-round vacuity
+    // `delta_round_fixpoint_ok` was caught with.)
+    n == 0 || (d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
+        && whnf_fixpoint_ok(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat))
 }
 
 /// Chains `verified_whnf_no_unfolding_step` up to `n` times, stitching
@@ -2994,7 +3000,7 @@ pub open spec fn whnf_fixpoint_final_bound(bound: nat, d: nat, n: nat) -> nat
 /// establishes -- no new lemmas, just carrying them through to the
 /// `ensures` by induction on `n` (mirroring the original's own `decreases
 /// n` exactly).
-pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -3019,7 +3025,7 @@ pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'
     }
     match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
-            match verified_whnf_no_unfolding_fixpoint_bounded(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
+            match verified_whnf_no_unfolding_fixpoint_bounded(ctx, r, fuel, Ghost(bound + d * d * d + d * d), Ghost(d * d + (d + d + d + d)), n - 1) {
                 Some(r2) => {
                     proof {
                         pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));

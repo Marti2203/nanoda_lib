@@ -1759,7 +1759,7 @@ pub fn verified_infer_then_whnf<'t, 'p: 't, 'x>(
                 nlbv_bound_implies_max_var_below(to_model(infd), 0);
                 max_var_below_mono(to_model(infd), depth(to_model(infd)), infd_bound);
             }
-            verified_whnf_multi_round_bounded(ctx, env, infd, fuel, cap, infd_bound, infd_bound, 1)
+            verified_whnf_multi_round_bounded(ctx, env, infd, fuel, Ghost(cap), Ghost(infd_bound), Ghost(infd_bound), 1)
         }
         None => None,
     }

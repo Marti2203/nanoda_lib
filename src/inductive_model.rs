@@ -2993,7 +2993,7 @@ pub fn verified_check_positivity1<'t, 'p: 't, 'x>(
         assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
         assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
     }
-    match verified_whnf_multi_round_bounded(ctx, env, ctor_type_cursor, fuel, cap, bound, d, 1) {
+    match verified_whnf_multi_round_bounded(ctx, env, ctor_type_cursor, fuel, Ghost(cap), Ghost(bound), Ghost(d), 1) {
         Some(whnfd) => {
             match verified_has_ind_occ(ctx, whnfd, ind_consts, fuel) {
                 Some(false) => Some(true),
@@ -3938,7 +3938,7 @@ pub fn verified_is_rec_argument<'t, 'p: 't, 'x>(
         assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
         assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
     }
-    match verified_whnf_multi_round_bounded(ctx, env, ctor_btype_cursor, fuel, cap, bound, d, 1) {
+    match verified_whnf_multi_round_bounded(ctx, env, ctor_btype_cursor, fuel, Ghost(cap), Ghost(bound), Ghost(d), 1) {
         Some(whnfd) => {
             let el = ctx.read_expr(whnfd);
             if expr_is_bind_shape(&el) {
@@ -4085,7 +4085,7 @@ pub fn verified_handle_rec_args_aux<'t, 'p: 't, 'x>(
                         assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
                         assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
                     }
-                    match verified_whnf_multi_round_bounded(ctx, env, next_cursor, fuel, cap, bound, d, 1) {
+                    match verified_whnf_multi_round_bounded(ctx, env, next_cursor, fuel, Ghost(cap), Ghost(bound), Ghost(d), 1) {
                         Some(whnfd) => {
                             assert(to_model(local) == ExprSpec::Free(expr_id(local)));
                             xs.push(local);
@@ -5546,7 +5546,7 @@ pub fn verified_get_local_params<'t, 'p: 't, 'x>(
                     assert(whnf_multi_round_final_bound(cap, bound, d, 1) == bound + d * d * d + d * d);
                     assert(whnf_multi_round_final_d(cap, bound, d, 1) == cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
                 }
-                match verified_whnf_multi_round_bounded(ctx, env, e2, fuel, cap, bound, d, 1) {
+                match verified_whnf_multi_round_bounded(ctx, env, e2, fuel, Ghost(cap), Ghost(bound), Ghost(d), 1) {
                     Some(whnfd) => {
                         assert(to_model(local_) == ExprSpec::Free(expr_id(local_)));
                         param_locals.push(local_);

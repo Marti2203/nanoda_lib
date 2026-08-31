@@ -460,7 +460,7 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 /// leaves behind, so the definition body's own natural cap unifies with
 /// the beta/zeta phase's already-grown bound (same "caller supplies a
 /// sufficient ceiling" pattern as everywhere else).
-pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32, bound2: nat, d2: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -479,7 +479,7 @@ pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         None => true,
     }
 {
-    match verified_whnf_no_unfolding_fixpoint_bounded(ctx, e, fuel, bound, d, n) {
+    match verified_whnf_no_unfolding_fixpoint_bounded(ctx, e, fuel, Ghost(bound), Ghost(d), n) {
         Some(whnfd) => {
             proof {
                 assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -537,13 +537,15 @@ pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 pub open spec fn whnf_multi_round_ok(cap: nat, bound: nat, d: nat, outer_n: nat) -> bool
     decreases outer_n
 {
-    whnf_fixpoint_ok(bound, d, 1) && cap <= bound
-        && (outer_n == 0 || {
-            let bound2 = bound + d * d * d + d * d;
-            let d2 = d * d + 4 * d;
-            let next_d = cap + d2 + d2;
-            whnf_multi_round_ok(cap, bound2, next_d, (outer_n - 1) as nat)
-        })
+    // Same phantom-next-round fix as `whnf_fixpoint_ok`: `outer_n == 0`
+    // runs nothing and demands nothing; every EXECUTED round's budget
+    // is demanded by its own recursion level.
+    outer_n == 0 || (whnf_fixpoint_ok(bound, d, 1) && cap <= bound && {
+        let bound2 = bound + d * d * d + d * d;
+        let d2 = d * d + 4 * d;
+        let next_d = cap + d2 + d2;
+        whnf_multi_round_ok(cap, bound2, next_d, (outer_n - 1) as nat)
+    })
 }
 
 /// The real payoff of this whole arc: chains `verified_whnf_step_bounded`
@@ -557,7 +559,7 @@ pub open spec fn whnf_multi_round_ok(cap: nat, bound: nat, d: nat, outer_n: nat)
 /// project -- `check_positivity1`/`ensure_sort`'s own `self.whnf(...)`
 /// calls (`inductive.rs:760`, `tc.rs:282`) can now be approximated by
 /// this with an explicit round budget, unblocking that arc.
-pub fn verified_whnf_multi_round<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, cap: nat, bound: nat, d: nat, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_multi_round<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(cap): Ghost<nat>, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -582,10 +584,10 @@ pub fn verified_whnf_multi_round<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         assert(whnf_fixpoint_final_bound(bound, d, 1) == bound + d * d * d + d * d);
         assert(whnf_fixpoint_final_d(d, 1) == d * d + (d + d + d + d));
     }
-    match verified_whnf_step_bounded(ctx, env, e, fuel, bound, d, 1, bound + d * d * d + d * d, d * d + (d + d + d + d)) {
+    match verified_whnf_step_bounded(ctx, env, e, fuel, Ghost(bound), Ghost(d), 1, Ghost(bound + d * d * d + d * d), Ghost(d * d + (d + d + d + d))) {
         Some(r) => {
             assert(env_global_cap(*env) + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
-            match verified_whnf_multi_round(ctx, env, r, fuel, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)), outer_n - 1) {
+            match verified_whnf_multi_round(ctx, env, r, fuel, Ghost(cap), Ghost(bound + d * d * d + d * d), Ghost(cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d))), outer_n - 1) {
                 Some(r2) => {
                     proof {
                         pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(r), to_model(r2));
@@ -634,7 +636,7 @@ pub open spec fn whnf_multi_round_final_d(cap: nat, bound: nat, d: nat, outer_n:
 /// must feed a `whnf`'d term into FURTHER structural work (peeling a `Pi`,
 /// substituting, then `whnf`-ing AGAIN -- exactly `check_positivity1`'s
 /// own loop shape) rather than just needing the one reduction fact.
-pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, cap: nat, bound: nat, d: nat, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(cap): Ghost<nat>, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -664,14 +666,14 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
         assert(whnf_fixpoint_final_bound(bound, d, 1) == bound + d * d * d + d * d);
         assert(whnf_fixpoint_final_d(d, 1) == d * d + (d + d + d + d));
     }
-    match verified_whnf_step_bounded(ctx, env, e, fuel, bound, d, 1, bound + d * d * d + d * d, d * d + (d + d + d + d)) {
+    match verified_whnf_step_bounded(ctx, env, e, fuel, Ghost(bound), Ghost(d), 1, Ghost(bound + d * d * d + d * d), Ghost(d * d + (d + d + d + d))) {
         Some(r) => {
             assert(env_global_cap(*env) + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
             proof {
                 reveal_with_fuel(whnf_multi_round_final_bound, 2);
                 reveal_with_fuel(whnf_multi_round_final_d, 2);
             }
-            match verified_whnf_multi_round_bounded(ctx, env, r, fuel, cap, bound + d * d * d + d * d, cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)), outer_n - 1) {
+            match verified_whnf_multi_round_bounded(ctx, env, r, fuel, Ghost(cap), Ghost(bound + d * d * d + d * d), Ghost(cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d))), outer_n - 1) {
                 Some(r2) => {
                     proof {
                         pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(r), to_model(r2));
@@ -685,31 +687,6 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
     }
 }
 
-/// `whnf_multi_round_ok` holding for `outer_n` rounds implies the FINAL
-/// `d` value (whatever `whnf_multi_round_final_d` computes it to be) is
-/// itself `<= 60000` -- needed by any caller composing a whnf'd result's
-/// own `depth` bound into a FURTHER real-arena call (e.g. `verified_inst`,
-/// which requires `depth(e) <= 60000`). Can't just `reveal_with_fuel` this
-/// (the recursion depth is the caller-supplied, unbounded `outer_n`), so
-/// this is a genuine induction, mirroring `verified_whnf_multi_round_
-/// bounded`'s own recursive structure exactly (one level of unfolding per
-/// recursive call, not a fixed small fuel count).
-pub proof fn whnf_multi_round_final_d_bound(cap: nat, bound: nat, d: nat, outer_n: nat)
-    requires whnf_multi_round_ok(cap, bound, d, outer_n)
-    ensures whnf_multi_round_final_d(cap, bound, d, outer_n) <= 60000
-    decreases outer_n
-{
-    reveal_with_fuel(whnf_multi_round_ok, 2);
-    reveal_with_fuel(whnf_multi_round_final_d, 2);
-    reveal_with_fuel(whnf_fixpoint_ok, 1);
-    if outer_n == 0 {
-    } else {
-        let bound2 = bound + d * d * d + d * d;
-        let d2 = d * d + 4 * d;
-        let next_d = cap + d2 + d2;
-        whnf_multi_round_final_d_bound(cap, bound2, next_d, (outer_n - 1) as nat);
-    }
-}
 
 /// Real-arena mirror of `TypeChecker::ensure_sort` (`tc.rs:278-287`): if
 /// `e` is already `Sort`-shaped, return its level directly (matching the
@@ -743,7 +720,7 @@ pub fn verified_ensure_sort<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     if let Some(level) = expr_as_sort(&el) {
         return Some(level);
     }
-    match verified_whnf_multi_round_bounded(ctx, env, e, fuel, cap, bound, d, 1) {
+    match verified_whnf_multi_round_bounded(ctx, env, e, fuel, Ghost(cap), Ghost(bound), Ghost(d), 1) {
         Some(whnfd) => {
             let el2 = ctx.read_expr(whnfd);
             expr_as_sort(&el2)
