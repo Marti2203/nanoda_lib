@@ -1366,3 +1366,35 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         false
     }
 }
+
+#[cfg(test)]
+mod routed_tests {
+    use std::io::BufReader;
+
+    /// End-to-end smoke test exercising the verified route in `def_eq`:
+    /// `Const(anon, [0])` vs `Const(anon, [max 0 0])` are distinct
+    /// pointers with interp-equal level lists -- a pair the quick check
+    /// CANNOT answer (not ptr-equal, not cached, not sorts, not binders),
+    /// so the routed verified core is the first responder
+    /// (`verified_def_eq_const` via level antisymmetry). The legacy
+    /// pipeline would also answer eventually (its own `def_eq_const`
+    /// sits several stages later), so this asserts behavior plus route
+    /// placement, not exclusive attribution.
+    #[test]
+    fn routed_def_eq_confirms_const_level_equality() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        export.with_tc(crate::env::EnvLimit::PpUnlimited, |tc| {
+            let z = tc.ctx.zero();
+            let mz = tc.ctx.max(z, z);
+            let anon = tc.ctx.anonymous();
+            let ls1 = tc.ctx.alloc_levels_slice(&[z]);
+            let ls2 = tc.ctx.alloc_levels_slice(&[mz]);
+            let c1 = tc.ctx.mk_const(anon, ls1);
+            let c2 = tc.ctx.mk_const(anon, ls2);
+            assert_ne!(c1, c2, "distinct pointers required to exercise the route");
+            assert!(tc.def_eq(c1, c2), "consts with interp-equal levels must be def_eq via the verified route");
+        });
+    }
+}

@@ -4355,7 +4355,7 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, Exp
 /// get wrong), never denies, so routing costs no completeness.
 pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
     ensures match result {
-        Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
+        Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
         _ => true,
     }
 {
@@ -4367,7 +4367,16 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'
         assert(depth(to_model(x)) <= 60000);
         assert(depth(to_model(y)) <= 60000);
     }
-    verified_def_eq(ctx, x, y, 100)
+    match verified_def_eq(ctx, x, y, 100) {
+        Some(true) => return Some(true),
+        _ => {}
+    }
+    // Nat-literal equality (zero representations, equal literals,
+    // successor peeling) -- same depth gates, real nat_found_claim.
+    match verified_def_eq_nat(ctx, x, y, 100) {
+        Some(true) => Some(true),
+        _ => None,
+    }
 }
 
 pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
