@@ -441,6 +441,26 @@ pub assume_specification<'x, 'a> [get_constructor_num_params] (env: &Env<'x, 'a>
         None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
     };
 
+/// Ties any env's per-env constructor-arity lookup to the ARENA-GLOBAL
+/// `ctor_num_params_of` (`expr_arena_bridge`, defined next to
+/// `nat_zero_id` -- see its doc for why it is global): whenever a
+/// constructor is visible in SOME env, the global map agrees with what
+/// that env reports. Disclosed trust, same character as `to_model`'s own
+/// arena-global convention: a name id maps to ONE declaration per
+/// export, and every `Env` (any cutoff, any temp extension) is a view of
+/// that one declaration set -- so per-env lookups can never disagree
+/// with each other, and pinning them all to one global map is consistent.
+/// This is the bridge `pstep`'s future iota rule will consume: the rule
+/// itself mentions only `ctor_num_params_of` (no env parameter), and a
+/// producer discharges it from its own env's `get_constructor_num_params`
+/// result via this lemma.
+#[verifier::external_body]
+pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    requires to_model_of_ctor_num_params(env).contains_key(id)
+    ensures crate::expr_arena_bridge::ctor_num_params_of(id) == Some(to_model_of_ctor_num_params(env)[id])
+{
+}
+
 /// The one substantive real-world fact `get_recursor_data` asserts beyond
 /// bookkeeping: a recursor's own universe parameters are always genuinely
 /// `Param`-shaped (same fact `get_declar_val` already asserts for plain

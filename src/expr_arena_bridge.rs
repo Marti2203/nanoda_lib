@@ -626,6 +626,21 @@ pub assume_specification<'t, 'p> [get_eager_mode] (ctx: &TcCtx<'t, 'p>) -> (resu
 pub uninterp spec fn nat_zero_id() -> u64;
 pub uninterp spec fn nat_succ_id() -> u64;
 
+/// ARENA-GLOBAL constructor arity: `Some(num_params)` when the name id
+/// belongs to a constructor declaration, `None` otherwise -- the piece
+/// `pstep`'s future iota (structure-projection) rule keys on, sitting
+/// here (not env_model) so `beta_model` can import it exactly the way
+/// it imports `nat_zero_id` above. Env-INDEPENDENT by design: a name id
+/// maps to ONE declaration per export (same session-global character as
+/// `to_model` itself), and every `Env` is a cutoff/temp-extension VIEW
+/// of that one declaration set, so any env where the constructor is
+/// visible reports the same `num_params` -- the per-env lookup is tied
+/// to this via `env_model::ctor_num_params_of_agrees` (disclosed
+/// trust). See the proj-iota design notes: the alternative (threading a
+/// ctor-arity map through all ~19 `pstep`-family signatures) was
+/// rejected.
+pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
+
 /// `e` is SOME representation of `Nat` zero -- reused by `verified_def_
 /// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
 /// itself.
