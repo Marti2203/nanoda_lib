@@ -12900,6 +12900,90 @@ pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x1: ExprSpec,
 /// `Bind` contracted against `args[0]`, both sides taken reflexively via
 /// `pstep`'s own definition) lifted to the whole spine via
 /// `pstep_spine_app_star`, and the IH on the remaining `args[1..]` --
+/// The cap dominates head-plus-argument-sum.
+pub proof fn spine_reduce_size_cap_ge_plus_sum(head_sz: nat, args: Seq<ExprSpec>)
+    ensures spine_reduce_size_cap(head_sz, args) >= head_sz + args_size_sum(args)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let rest = args.subrange(1, args.len() as int);
+        assert(head_sz * (1 + size(args[0])) >= head_sz) by (nonlinear_arith);
+        spine_reduce_size_cap_ge_plus_sum(head_sz * (1 + size(args[0])), rest);
+    }
+}
+
+/// A PREFIX's cap plus the remainder's spine sum is dominated by the
+/// FULL cap -- the fact that lets a producer gate on the cap over ALL
+/// arguments without knowing how many a beta step will actually consume.
+pub proof fn spine_reduce_size_cap_prefix_le(head_sz: nat, cargs: Seq<ExprSpec>, rargs: Seq<ExprSpec>)
+    ensures spine_reduce_size_cap(head_sz, cargs) + args_size_sum(rargs) <= spine_reduce_size_cap(head_sz, cargs + rargs)
+    decreases cargs.len()
+{
+    if cargs.len() == 0 {
+        assert(cargs + rargs =~= rargs);
+        spine_reduce_size_cap_ge_plus_sum(head_sz, rargs);
+    } else {
+        let a0 = cargs[0];
+        let crest = cargs.subrange(1, cargs.len() as int);
+        let full = cargs + rargs;
+        assert(full[0] == a0);
+        assert(full.subrange(1, full.len() as int) =~= crest + rargs);
+        spine_reduce_size_cap_prefix_le(head_sz * (1 + size(a0)), crest, rargs);
+        assert(spine_reduce_size_cap(head_sz, cargs) == spine_reduce_size_cap(head_sz * (1 + size(a0)), crest) + 1 + size(a0));
+        assert(spine_reduce_size_cap(head_sz, full) == spine_reduce_size_cap(head_sz * (1 + size(a0)), crest + rargs) + 1 + size(a0));
+    }
+}
+
+/// `spine_reduce_chain_sized` wrapped under a further argument spine:
+/// the sized beta chain for the CONSUMED arguments, with every element
+/// carrying the REMAINING arguments on top -- exactly the chain a
+/// partial-application whnf beta step walks. Element sizes gain the
+/// remaining arguments' spine contribution, uniformly.
+pub proof fn spine_reduce_chain_sized_wrapped(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, cargs: Seq<ExprSpec>, rargs: Seq<ExprSpec>)
+    ensures exists |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, cargs + rargs)
+        && ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs))
+{
+    spine_reduce_chain_sized(env, head, cargs);
+    let base = choose |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, cargs)
+        && ch[ch.len() - 1] == spine_reduce(head, cargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs));
+    let ch = Seq::new(base.len(), |i: int| spine_app(base[i], rargs));
+    assert(ch.len() == base.len());
+    assert(ch[0] == spine_app(base[0], rargs));
+    spine_app_concat(head, cargs, rargs);
+    assert(ch[0] == spine_app(head, cargs + rargs));
+    assert(ch[ch.len() - 1] == spine_app(base[base.len() - 1], rargs));
+    assert(ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs));
+    assert(pstep_chain_valid(env, ch)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+            assert(pstep(env, base[i], base[i + 1]));
+            pstep_spine_app_one(env, base[i], base[i + 1], rargs);
+            assert(ch[i] == spine_app(base[i], rargs));
+            assert(ch[i + 1] == spine_app(base[i + 1], rargs));
+        }
+    }
+    assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs) by {
+        assert(ch[i] == spine_app(base[i], rargs));
+        spine_app_size(base[i], rargs);
+        assert(size(base[i]) <= spine_reduce_size_cap(size(head), cargs));
+    }
+    assert(ch.len() >= 1
+        && ch[0] == spine_app(head, cargs + rargs)
+        && ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs)));
+}
+
 /// Single-STEP spine congruence: one `pstep` under a whole argument
 /// spine (the arguments ride along reflexively at every `App` layer) --
 /// `pstep_spine_app_star`'s one-step sibling.

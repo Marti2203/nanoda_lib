@@ -49,7 +49,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{size, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
+use crate::beta_model::{size, args_size_sum, spine_reduce_size_cap, spine_reduce_size_cap_prefix_le, spine_reduce_chain_sized_wrapped, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
@@ -732,6 +732,129 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         return Some(1);
     }
     None
+}
+
+/// `verified_whnf_beta_step` with a SIZED CHAIN: measures the head and
+/// every argument with `verified_size`, computes `spine_reduce_size_cap`
+/// over ALL arguments iteratively (the suffix-form loop invariant makes
+/// each step a definitional unfolding of the spec cap), gates at 60000,
+/// and then exposes the explicit `pstep` chain from the applied spine to
+/// the result with EVERY element's size <= 60000 -- dischargeable
+/// per-element bounds, without knowing in advance how many arguments the
+/// beta step will consume (`spine_reduce_size_cap_prefix_le`). `None`
+/// additionally covers any measurement or gate failure -- honest
+/// incompleteness, same convention as everywhere in this arc.
+pub fn verified_whnf_beta_step_sized<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        args.len() > 0,
+        nlbv(to_model(e_fun)) <= 0,
+        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        depth(to_model(e_fun)) <= 60000,
+        bound + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r))
+            &&& exists |ch: Seq<ExprSpec>|
+                #![trigger ch.len()]
+                ch.len() >= 1
+                && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+                && ch[ch.len() - 1] == to_model(r)
+                && pstep_chain_valid(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ch)
+                && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= 60000)
+        },
+        None => true,
+    }
+{
+    let ghost full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    let sf = match verified_size(ctx, e_fun, fuel) { Some(v) => v, None => return None };
+    let mut acc_hs: u64 = sf as u64;
+    let mut acc_sum: u64 = 0;
+    let mut k: usize = 0;
+    proof {
+        assert(full_model.subrange(0, full_model.len() as int) =~= full_model);
+        assert(sf as nat == size(to_model(e_fun)));
+    }
+    while k < args.len()
+        invariant
+            k <= args@.len(),
+            acc_hs <= 60000,
+            acc_sum <= 60000,
+            full_model == Seq::new(args@.len(), |i: int| to_model(args@[i])),
+            spine_reduce_size_cap(size(to_model(e_fun)), full_model)
+                == spine_reduce_size_cap(acc_hs as nat, full_model.subrange(k as int, full_model.len() as int)) + acc_sum as nat,
+        decreases args@.len() - k
+    {
+        let sa = match verified_size(ctx, args[k], fuel) { Some(v) => v, None => return None };
+        assert(acc_hs * (1u64 + sa as u64) <= 60000u64 * 60001u64) by (nonlinear_arith)
+            requires acc_hs <= 60000, sa <= 60000;
+        let m: u64 = acc_hs * (1u64 + sa as u64);
+        if m > 60000 {
+            return None;
+        }
+        let s2: u64 = acc_sum + 1u64 + sa as u64;
+        if s2 > 60000 {
+            return None;
+        }
+        proof {
+            let suf = full_model.subrange(k as int, full_model.len() as int);
+            assert(suf.len() > 0);
+            assert(suf[0] == to_model(args@[k as int]));
+            assert(sa as nat == size(to_model(args@[k as int])));
+            assert(size(suf[0]) == sa as nat);
+            assert(suf.subrange(1, suf.len() as int) =~= full_model.subrange(k as int + 1, full_model.len() as int));
+            assert(spine_reduce_size_cap(acc_hs as nat, suf)
+                == spine_reduce_size_cap((acc_hs as nat) * (1 + size(suf[0])), suf.subrange(1, suf.len() as int)) + 1 + size(suf[0]));
+            assert(m as nat == (acc_hs as nat) * (1 + sa as nat));
+        }
+        acc_hs = m;
+        acc_sum = s2;
+        k = k + 1;
+    }
+    if acc_hs > 60000 || acc_sum > 60000 || acc_hs + acc_sum > 60000 {
+        return None;
+    }
+    proof {
+        assert(full_model.subrange(args@.len() as int, full_model.len() as int) =~= Seq::<ExprSpec>::empty());
+        assert(spine_reduce_size_cap(acc_hs as nat, Seq::<ExprSpec>::empty()) == acc_hs as nat);
+        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) == acc_hs as nat + acc_sum as nat);
+        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) <= 60000);
+    }
+    let r = match verified_whnf_beta_step(ctx, e_fun, args, fuel, bound) { Some(v) => v, None => return None };
+    proof {
+        let env0 = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+        let n = choose |n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
+            && spine_bind(to_model(e_fun), n) is Some
+            && to_model(r) == spine_app(
+                spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
+                Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+            )
+            && pstep_star(env0, spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r));
+        let cm = Seq::new(n, |i: int| to_model(args@[i]));
+        let rm = Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i]));
+        assert(cm + rm =~= full_model);
+        spine_reduce_chain_sized_wrapped(env0, to_model(e_fun), cm, rm);
+        let ch = choose |ch: Seq<ExprSpec>|
+            #![trigger ch.len()]
+            ch.len() >= 1
+            && ch[0] == spine_app(to_model(e_fun), cm + rm)
+            && ch[ch.len() - 1] == spine_app(spine_reduce(to_model(e_fun), cm), rm)
+            && pstep_chain_valid(env0, ch)
+            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm));
+        spine_reduce_size_cap_prefix_le(size(to_model(e_fun)), cm, rm);
+        assert(spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm) <= spine_reduce_size_cap(size(to_model(e_fun)), cm + rm));
+        assert(spine_reduce_size_cap(size(to_model(e_fun)), cm + rm) == spine_reduce_size_cap(size(to_model(e_fun)), full_model));
+        assert(ch[0] == spine_app(to_model(e_fun), full_model));
+        assert(ch[ch.len() - 1] == to_model(r));
+        assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= 60000 by {
+            assert(size(ch[i]) <= spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm));
+        }
+        assert(ch.len() >= 1
+            && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            && ch[ch.len() - 1] == to_model(r)
+            && pstep_chain_valid(env0, ch)
+            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= 60000));
+    }
+    Some(r)
 }
 
 /// `Nat.zero`'s own declared universe-parameter arity is unconditionally
