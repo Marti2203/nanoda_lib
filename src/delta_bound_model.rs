@@ -2224,6 +2224,57 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
     Some(mx)
 }
 
+/// An UNFORGEABLE environment-cap certificate: carries the reference to
+/// the environment it certifies (so no cert/env mismatch is possible)
+/// plus the scanned cap, with the claim itself as a TYPE INVARIANT --
+/// consumers assume it via `use_type_invariant` with no requires, so
+/// boundaries stay total. Fields are private: the only constructor runs
+/// `verified_env_cap_scan`, and unverified code (the orchestrator,
+/// which should build ONE of these per environment and reuse it) can
+/// hold and pass it but never forge it.
+pub struct EnvCapCert<'e, 'x, 't> {
+    env: &'e Env<'x, 't>,
+    k: u32,
+}
+
+impl<'e, 'x, 't> EnvCapCert<'e, 'x, 't> {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        self.k <= 60000 && env_global_cap(*self.env) <= self.k as nat
+    }
+
+    pub closed spec fn spec_env(self) -> Env<'x, 't> {
+        *self.env
+    }
+
+    pub closed spec fn spec_cap(self) -> nat {
+        self.k as nat
+    }
+
+    /// Scan once, certify forever (for this environment).
+    pub fn make(ctx: &TcCtx<'t, '_>, env: &'e Env<'x, 't>, fuel: u32) -> (result: Option<Self>)
+        ensures match result {
+            Some(c) => c.spec_env() == *env && c.spec_cap() <= 60000,
+            None => true,
+        }
+    {
+        let k = match verified_env_cap_scan(ctx, env, fuel) { Some(v) => v, None => return None };
+        Some(EnvCapCert { env, k })
+    }
+
+    pub fn env_ref(&self) -> (r: &'e Env<'x, 't>)
+        ensures *r == self.spec_env()
+    {
+        self.env
+    }
+
+    pub fn cap(&self) -> (r: u32)
+        ensures r as nat == self.spec_cap()
+    {
+        self.k
+    }
+}
+
 /// THE DELTA ROUTE BOUNDARY: a TOTAL (no-requires) entry point routing
 /// through ONE round of lazy delta unfolding, closed by the leaf
 /// cluster -- definitional unfolding, the workhorse of real def_eq,
@@ -2239,16 +2290,21 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
 /// from the inputs (by delta/proj reduction at the REAL env model)
 /// satisfies a nat, const-app, or leaf-cluster equality claim.
 /// Everything else is `None`: fall through to the legacy path.
-pub fn verified_lazy_delta_checked<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_lazy_delta_checked_cached<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, cert: &EnvCapCert<'e, 'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     ensures match result {
         Some(true) => exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
-            pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
-            && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi))
+            pstep_star(to_model_of_env(cert.spec_env()), to_model(x), #[trigger] to_model(xi))
+            && pstep_star(to_model_of_env(cert.spec_env()), to_model(y), #[trigger] to_model(yi))
             && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat)),
         _ => true,
     }
 {
-    let k = match verified_env_cap_scan(ctx, env, fuel) { Some(v) => v, None => return None };
+    let env = cert.env_ref();
+    let k = cert.cap();
+    proof {
+        use_type_invariant(&*cert);
+        assert(env_global_cap(*env) <= k as nat);
+    }
     if k > 500 {
         return None;
     }
