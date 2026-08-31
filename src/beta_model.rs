@@ -3774,6 +3774,53 @@ pub open spec fn string_lits_ok(e: ExprSpec, cap: nat) -> bool
     }
 }
 
+/// `e` contains NO `StringLit` anywhere -- the runtime-checkable
+/// sufficient condition for `string_lits_ok` at EVERY cap (vacuously:
+/// there is no `StringLit` for the cap to constrain). This is the
+/// bridgeable form: an arena walk can check "no StringLit subterm"
+/// (see `expr_arena_bridge::verified_string_free`), while
+/// `string_lits_ok`'s own `StringLit` case constrains a ghost
+/// expansion no exec code can measure.
+pub open spec fn string_free(e: ExprSpec) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::StringLit(_) => false,
+        ExprSpec::App(f, a) => string_free(*f) && string_free(*a),
+        ExprSpec::Bind(t, b) => string_free(*t) && string_free(*b),
+        ExprSpec::Let(t, v, b) => string_free(*t) && string_free(*v) && string_free(*b),
+        ExprSpec::Proj(s) => string_free(*s),
+        _ => true,
+    }
+}
+
+/// A `StringLit`-free term satisfies `string_lits_ok` at any cap.
+pub proof fn string_free_lits_ok(e: ExprSpec, cap: nat)
+    requires string_free(e)
+    ensures string_lits_ok(e, cap)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            string_free_lits_ok(*f, cap);
+            string_free_lits_ok(*a, cap);
+        }
+        ExprSpec::Bind(t, b) => {
+            string_free_lits_ok(*t, cap);
+            string_free_lits_ok(*b, cap);
+        }
+        ExprSpec::Let(t, v, b) => {
+            string_free_lits_ok(*t, cap);
+            string_free_lits_ok(*v, cap);
+            string_free_lits_ok(*b, cap);
+        }
+        ExprSpec::Proj(s) => {
+            string_free_lits_ok(*s, cap);
+        }
+        _ => {}
+    }
+}
+
 /// `shift` never introduces or removes a `StringLit` (it's a bound-
 /// variable-inert leaf, untouched by `shift`'s own definition) and never
 /// changes any OTHER `StringLit`'s payload either -- so `string_lits_ok`,
