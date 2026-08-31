@@ -2224,6 +2224,113 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
     Some(mx)
 }
 
+/// THE DELTA ROUTE BOUNDARY: a TOTAL (no-requires) entry point routing
+/// through ONE round of lazy delta unfolding, closed by the leaf
+/// cluster -- definitional unfolding, the workhorse of real def_eq,
+/// becomes routable. Everything is established at run time: closedness
+/// via `num_loose_bvars`, sizes via `verified_size` (gated at 500), the
+/// environment cap via `verified_env_cap_scan` (gated at 500; O(env)
+/// per call -- treat this boundary as expensive until a verified
+/// session-cache exists). The round's ghost parameters are the LITERALS
+/// `(500, 500, 1000, 1500)` -- hand-checked satisfiable (the
+/// multi-round fixpoint at even n = 1 is near-vacuous, so this routes
+/// a SINGLE round), passed via the documented `Ghost(..)` argument
+/// form. `Some(true)` carries one unified claim: some pair reachable
+/// from the inputs (by delta/proj reduction at the REAL env model)
+/// satisfies a nat, const-app, or leaf-cluster equality claim.
+/// Everything else is `None`: fall through to the legacy path.
+pub fn verified_lazy_delta_checked<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) => exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
+            && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi))
+            && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat)),
+        _ => true,
+    }
+{
+    let k = match verified_env_cap_scan(ctx, env, fuel) { Some(v) => v, None => return None };
+    if k > 500 {
+        return None;
+    }
+    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
+    if sx > 500 || sy > 500 {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    proof {
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
+        assert(depth(to_model(x)) <= 500);
+        assert(depth(to_model(y)) <= 500);
+        nlbv_bound_implies_max_var_below(to_model(x), 0);
+        nlbv_bound_implies_max_var_below(to_model(y), 0);
+        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
+        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
+        assert(env_global_cap(*env) <= 500);
+        assert(500 + env_global_cap(*env) <= 1000);
+        assert(env_global_cap(*env) + 500 + 500 <= 1500);
+    }
+    let r = verified_lazy_delta_round(ctx, env, x, y, fuel, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat));
+    match r {
+        Some(DeltaRoundResult::Found(b)) => {
+            if b {
+                proof {
+                    pstep_star_refl(to_model_of_env(*env), to_model(x));
+                    pstep_star_refl(to_model_of_env(*env), to_model(y));
+                    assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x))
+                        && pstep_star(to_model_of_env(*env), to_model(y), to_model(y))
+                        && (nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat) || deq_core_claim(x, y, fuel as nat)));
+                }
+                Some(true)
+            } else {
+                None
+            }
+        }
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => {
+            match verified_def_eq_core(ctx, x2, y2, fuel) {
+                Some(true) => {
+                    proof {
+                        assert(x2 == x && y2 == y);
+                        pstep_star_refl(to_model_of_env(*env), to_model(x));
+                        pstep_star_refl(to_model_of_env(*env), to_model(y));
+                        assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+                            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))
+                            && deq_core_claim(x2, y2, fuel as nat));
+                    }
+                    Some(true)
+                }
+                _ => None,
+            }
+        }
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            match verified_def_eq_core(ctx, x2, y2, fuel) {
+                Some(true) => {
+                    proof {
+                        if x2 == x {
+                            pstep_star_refl(to_model_of_env(*env), to_model(x));
+                        }
+                        if y2 == y {
+                            pstep_star_refl(to_model_of_env(*env), to_model(y));
+                        }
+                        assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(x2))
+                            && pstep_star(to_model_of_env(*env), to_model(y), to_model(y2))
+                            && deq_core_claim(x2, y2, fuel as nat));
+                    }
+                    Some(true)
+                }
+                _ => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// The claim `verified_proof_irrel_eq_of_types`'s `Some(true)` makes,
 /// NAMED for the top-level `def_eq` claim composition: both types reduce
 /// to `Prop`-level `Sort`s (interp uniformly 0), i.e. both terms are
@@ -2437,10 +2544,10 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
     x: ExprPtr<'t>,
     y: ExprPtr<'t>,
     fuel: u32,
-    bound: nat,
-    d: nat,
-    bound2: nat,
-    d2: nat,
+    Ghost(bound): Ghost<nat>,
+    Ghost(d): Ghost<nat>,
+    Ghost(bound2): Ghost<nat>,
+    Ghost(d2): Ghost<nat>,
 ) -> (result: Option<DeltaRoundResult<'t>>)
     requires
         nlbv(to_model(x)) <= 0,
@@ -2731,7 +2838,7 @@ pub fn verified_lazy_delta_loop<'t, 'p: 't, 'x>(
     }
     let bound2 = bound + cap;
     let d2 = cap + d + d;
-    match verified_lazy_delta_round(ctx, env, x, y, fuel, bound, d, bound2, d2) {
+    match verified_lazy_delta_round(ctx, env, x, y, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
         Some(DeltaRoundResult::Found(b)) => {
             proof {
                 if b {
