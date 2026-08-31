@@ -49,7 +49,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
+use crate::beta_model::{size, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
@@ -631,6 +631,107 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// itself.
 pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
     (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e) == nat_zero_id())
+}
+
+/// Exec size computation over the real arena, mirroring the model
+/// `size` exactly -- THE opening piece of the chain-carrying
+/// producer-claim surface: producers that materialize their reduction
+/// intermediates can size-GATE each one with this (returning `None`
+/// above 60000, the ceiling headroom the strip/confluence/binder-intro
+/// lemmas need), which is what lets their ensures carry explicit chains
+/// with dischargeable per-element bounds. `None` covers fuel
+/// exhaustion, the gate, and unmodeled shapes -- honest incompleteness,
+/// never a wrong size.
+pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u32>)
+    ensures match result {
+        Some(n) => n as nat == size(to_model(e)) && n <= 60000,
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let el = ctx.read_expr(e);
+    if let Some((f, a)) = expr_as_app(&el) {
+        let nf = match verified_size(ctx, f, fuel - 1) { Some(v) => v, None => return None };
+        let na = match verified_size(ctx, a, fuel - 1) { Some(v) => v, None => return None };
+        let total: u64 = 1u64 + nf as u64 + na as u64;
+        if total > 60000 {
+            return None;
+        }
+        assert(size(to_model(e)) == 1 + size(to_model(f)) + size(to_model(a)));
+        return Some(total as u32);
+    }
+    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
+        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
+        let nb = match verified_size(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let total: u64 = 1u64 + nt as u64 + nb as u64;
+        if total > 60000 {
+            return None;
+        }
+        assert(size(to_model(e)) == 1 + size(to_model(ty)) + size(to_model(body)));
+        return Some(total as u32);
+    }
+    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
+        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
+        let nb = match verified_size(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let total: u64 = 1u64 + nt as u64 + nb as u64;
+        if total > 60000 {
+            return None;
+        }
+        assert(size(to_model(e)) == 1 + size(to_model(ty)) + size(to_model(body)));
+        return Some(total as u32);
+    }
+    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
+        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v2) => v2, None => return None };
+        let nv = match verified_size(ctx, v, fuel - 1) { Some(v2) => v2, None => return None };
+        let nb = match verified_size(ctx, body, fuel - 1) { Some(v2) => v2, None => return None };
+        let total: u64 = 1u64 + nt as u64 + nv as u64 + nb as u64;
+        if total > 60000 {
+            return None;
+        }
+        assert(size(to_model(e)) == 1 + size(to_model(ty)) + size(to_model(v)) + size(to_model(body)));
+        return Some(total as u32);
+    }
+    if let Some((_, _, st)) = expr_as_proj(&el) {
+        let ns = match verified_size(ctx, st, fuel - 1) { Some(v) => v, None => return None };
+        let total: u64 = 1u64 + ns as u64;
+        if total > 60000 {
+            return None;
+        }
+        assert(size(to_model(e)) == 1 + size(to_model(st)));
+        return Some(total as u32);
+    }
+    if expr_as_var(&el).is_some() {
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    if expr_as_sort(&el).is_some() {
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    if expr_as_const(e, &el).is_some() {
+        proof { is_const_shape_model(e); }
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    if expr_as_local(e, &el).is_some() {
+        proof { is_local_shape_model(e); }
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    if expr_as_nat_lit(e, &el).is_some() {
+        proof { is_nat_lit_shape_model(e); }
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    if expr_as_string_lit(e, &el) {
+        proof { is_string_lit_shape_model(e); }
+        assert(size(to_model(e)) == 1);
+        return Some(1);
+    }
+    None
 }
 
 /// `Nat.zero`'s own declared universe-parameter arity is unconditionally
