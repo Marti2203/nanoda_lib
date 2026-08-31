@@ -13259,6 +13259,306 @@ pub proof fn spine_reduce_chain_sized(env: Map<u64, (Seq<u64>, ExprSpec)>, head:
     }
 }
 
+/// A full-conjunct chain becomes a UNIFORM certified `pstep_d` chain:
+/// every link converted via `pstep_to_pstep_d` at its own element's
+/// size, then weakened (`pstep_d_mono`/`growth_mono`) to one shared
+/// `(mlink, dlink) = (bound + growth(cap), cap)` pair -- exactly the
+/// link shape `defeq_trans_certified`/`pstep_d_confluent` consume.
+/// This is the last conversion step between a producer's sized chain
+/// (`spine_reduce_chain_sized_full`) and the certified-confluence
+/// machinery.
+pub proof fn chain_to_pstep_d_links(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, bound: nat, cap: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_chain_valid(env, ch),
+        forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bound),
+        forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0),
+        forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= cap,
+        bound + growth(cap) + cap + 10 <= 0xFFFF_0000,
+    ensures
+        forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap)
+{
+    assert forall |i: int| 0 <= i < ch.len() - 1 implies pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap) by {
+        assert(pstep(env, ch[i], ch[i + 1]));
+        growth_mono(size(ch[i]), cap);
+        pstep_to_pstep_d(env, bound, ch[i], ch[i + 1]);
+        pstep_d_mono(env, ch[i], ch[i + 1], (bound + growth(size(ch[i]))) as nat, size(ch[i]), (bound + growth(cap)) as nat, cap);
+    }
+}
+
+/// `spine_reduce_chain_sized_full` wrapped under a further argument
+/// spine (the partial-application form `verified_whnf_beta_step_sized`
+/// walks): the full-conjunct chain for the CONSUMED arguments with the
+/// REMAINING arguments riding on every element. The remaining arguments
+/// contribute their spine sum to sizes and ride along at the caller's
+/// own `bound`/`scap` (dominated by the chain's uniform mvb bound).
+pub proof fn spine_reduce_chain_sized_full_wrapped(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, cargs: Seq<ExprSpec>, rargs: Seq<ExprSpec>, bound: nat, scap: nat)
+    requires
+        max_var_below(head, bound),
+        forall |i: int| 0 <= i < cargs.len() ==> max_var_below(#[trigger] cargs[i], bound),
+        forall |i: int| 0 <= i < rargs.len() ==> max_var_below(#[trigger] rargs[i], bound),
+        string_lits_ok(head, scap),
+        forall |i: int| 0 <= i < cargs.len() ==> string_lits_ok(#[trigger] cargs[i], scap),
+        forall |i: int| 0 <= i < rargs.len() ==> string_lits_ok(#[trigger] rargs[i], scap),
+        bound + (cargs.len() + 1) * (spine_reduce_size_cap(size(head), cargs) + 1) <= 0xFFFF_0000,
+    ensures exists |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, cargs + rargs)
+        && ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs))
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], (bound + (cargs.len() + 1) * (spine_reduce_size_cap(size(head), cargs) + 1)) as nat))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap))
+{
+    let cap = spine_reduce_size_cap(size(head), cargs);
+    let bigb = (bound + (cargs.len() + 1) * (cap + 1)) as nat;
+    assert((cargs.len() + 1) * (cap + 1) >= cap + 1) by (nonlinear_arith);
+    spine_reduce_chain_sized_full(env, head, cargs, bound, scap);
+    let base = choose |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, cargs)
+        && ch[ch.len() - 1] == spine_reduce(head, cargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs))
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap));
+    let ch = Seq::new(base.len(), |i: int| spine_app(base[i], rargs));
+    assert(ch.len() == base.len());
+    assert(ch[0] == spine_app(base[0], rargs));
+    spine_app_concat(head, cargs, rargs);
+    assert(ch[0] == spine_app(head, cargs + rargs));
+    assert(ch[ch.len() - 1] == spine_app(base[base.len() - 1], rargs));
+    assert(ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs));
+    assert(pstep_chain_valid(env, ch)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+            assert(pstep(env, base[i], base[i + 1]));
+            pstep_spine_app_one(env, base[i], base[i + 1], rargs);
+            assert(ch[i] == spine_app(base[i], rargs));
+            assert(ch[i + 1] == spine_app(base[i + 1], rargs));
+        }
+    }
+    assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs) by {
+        assert(ch[i] == spine_app(base[i], rargs));
+        spine_app_size(base[i], rargs);
+        assert(size(base[i]) <= spine_reduce_size_cap(size(head), cargs));
+    }
+    assert forall |i: int| 0 <= i < ch.len() implies max_var_below(#[trigger] ch[i], bigb) by {
+        assert(ch[i] == spine_app(base[i], rargs));
+        assert(max_var_below(base[i], bigb));
+        assert forall |j: int| 0 <= j < rargs.len() implies max_var_below(#[trigger] rargs[j], bigb) by {
+            max_var_below_mono(rargs[j], bound, bigb);
+        }
+        spine_app_max_var_below(base[i], rargs, bigb);
+    }
+    assert forall |i: int| 0 <= i < ch.len() implies string_lits_ok(#[trigger] ch[i], scap) by {
+        assert(ch[i] == spine_app(base[i], rargs));
+        assert(string_lits_ok(base[i], scap));
+        string_lits_ok_spine_app(base[i], rargs, scap);
+    }
+    assert(ch.len() >= 1
+        && ch[0] == spine_app(head, cargs + rargs)
+        && ch[ch.len() - 1] == spine_app(spine_reduce(head, cargs), rargs)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), cargs) + args_size_sum(rargs))
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap)));
+}
+
+/// THE FULL-CONJUNCT SIZED CHAIN: `spine_reduce_chain_sized` extended
+/// with per-element `max_var_below` and `string_lits_ok` -- exactly the
+/// three per-element facts `pstep_to_pstep_d` needs to convert every
+/// link into a certified `pstep_d` step (its `bound`/`string_lits_ok
+/// (e1, 0)`/size side conditions), so a producer's chain can feed
+/// `defeq_trans_certified` and the binder-intro family.
+///
+/// The uniform mvb bound is `bound + (len+1)*(cap+1)`, hand-derived
+/// from the per-stage budget: each beta stage grows mvb by
+/// `1 + depth(body)` (`subst1_max_var_below`) which is <= `cap + 1`
+/// (the body is a strict subterm of a chain element), and each stage's
+/// remaining cap SHRINKS by at least its consumed argument's
+/// contribution (`C2 + 1 + size(a0) <= C`), so stage k's budget
+/// `bound_k + (rest+1)*(C_k+1)` telescopes under the top-level `B`.
+/// `string_lits_ok` is cap-preserving per stage (`string_lits_ok_
+/// subst1`), no budget needed.
+pub proof fn spine_reduce_chain_sized_full(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>, bound: nat, scap: nat)
+    requires
+        max_var_below(head, bound),
+        forall |i: int| 0 <= i < args.len() ==> max_var_below(#[trigger] args[i], bound),
+        string_lits_ok(head, scap),
+        forall |i: int| 0 <= i < args.len() ==> string_lits_ok(#[trigger] args[i], scap),
+        bound + (args.len() + 1) * (spine_reduce_size_cap(size(head), args) + 1) <= 0xFFFF_0000,
+    ensures exists |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, args)
+        && ch[ch.len() - 1] == spine_reduce(head, args)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args))
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], (bound + (args.len() + 1) * (spine_reduce_size_cap(size(head), args) + 1)) as nat))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap))
+    decreases args.len()
+{
+    let cap = spine_reduce_size_cap(size(head), args);
+    let bigb = (bound + (args.len() + 1) * (cap + 1)) as nat;
+    assert((args.len() + 1) * (cap + 1) >= cap + 1) by (nonlinear_arith);
+    if args.len() == 0 {
+        let ch = seq![head];
+        assert(spine_app(head, args) == head);
+        assert(spine_reduce(head, args) == head);
+        assert(pstep_chain_valid(env, ch));
+        max_var_below_mono(head, bound, bigb);
+        assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+            && pstep_chain_valid(env, ch)
+            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args))
+            && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
+            && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap)));
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        assert(rest.len() + 1 == args.len());
+        assert(max_var_below(a0, bound));
+        assert(string_lits_ok(a0, scap));
+        assert forall |i: int| 0 <= i < rest.len() implies max_var_below(#[trigger] rest[i], bound) && string_lits_ok(#[trigger] rest[i], scap) by {
+            assert(rest[i] == args[i + 1]);
+        }
+        match head {
+            ExprSpec::Bind(bt, b) => {
+                let beta_target = subst1(*b, a0);
+                // Per-stage growth facts.
+                assert(max_var_below(*b, bound));
+                assert(string_lits_ok(*b, scap));
+                depth_le_size(*b);
+                spine_reduce_size_cap_ge(size(head), args);
+                assert(size(head) == 1 + size(*bt) + size(*b));
+                assert(size(*b) < size(head));
+                assert(bound + depth(*b) + 1 <= bound + cap + 1);
+                subst1_max_var_below(bound, *b, a0);
+                let bound2 = ((bound + 1) + depth(*b)) as nat;
+                assert(max_var_below(beta_target, bound2));
+                string_lits_ok_subst1(*b, a0, scap);
+                assert(bound2 <= bound + cap);
+                // The consumed argument SHRINKS the remaining cap.
+                let cap2 = spine_reduce_size_cap(size(beta_target), rest);
+                subst1_size_bound(*b, a0);
+                assert(size(beta_target) <= size(*b) * (size(a0) + 1));
+                assert(size(*b) * (size(a0) + 1) <= size(head) * (1 + size(a0))) by (nonlinear_arith)
+                    requires size(*b) <= size(head);
+                spine_reduce_size_cap_mono(size(beta_target), size(head) * (1 + size(a0)), rest);
+                assert(cap == spine_reduce_size_cap(size(head) * (1 + size(a0)), rest) + 1 + size(a0));
+                assert(cap2 + 1 + size(a0) <= cap);
+                // The recursive budget fits under the top-level one.
+                assert((rest.len() + 1) * (cap2 + 1) <= (rest.len() + 1) * cap) by (nonlinear_arith)
+                    requires cap2 + 1 <= cap;
+                assert((rest.len() + 1) * cap <= (rest.len() + 1) * (cap + 1)) by (nonlinear_arith);
+                assert((args.len() + 1) * (cap + 1) == args.len() * (cap + 1) + (cap + 1)) by (nonlinear_arith);
+                let bigb2 = (bound2 + (rest.len() + 1) * (cap2 + 1)) as nat;
+                assert(bigb2 <= bound + cap + args.len() * (cap + 1));
+                assert(bigb2 <= bigb);
+                assert forall |i: int| 0 <= i < rest.len() implies max_var_below(#[trigger] rest[i], bound2) by {
+                    max_var_below_mono(rest[i], bound, bound2);
+                }
+                spine_reduce_chain_sized_full(env, beta_target, rest, bound2, scap);
+                let ch2 = choose |ch2: Seq<ExprSpec>|
+                    #![trigger ch2.len()]
+                    ch2.len() >= 1
+                    && ch2[0] == spine_app(beta_target, rest)
+                    && ch2[ch2.len() - 1] == spine_reduce(beta_target, rest)
+                    && pstep_chain_valid(env, ch2)
+                    && (forall |i: int| 0 <= i < ch2.len() ==> size(#[trigger] ch2[i]) <= spine_reduce_size_cap(size(beta_target), rest))
+                    && (forall |i: int| 0 <= i < ch2.len() ==> max_var_below(#[trigger] ch2[i], bigb2))
+                    && (forall |i: int| 0 <= i < ch2.len() ==> string_lits_ok(#[trigger] ch2[i], scap));
+                let start = spine_app(head, args);
+                let ch = seq![start] + ch2;
+                // The first link: one beta step under the whole argument spine.
+                assert(pstep(env, ExprSpec::App(Box::new(head), Box::new(a0)), beta_target)) by {
+                    assert(pstep(env, *b, *b));
+                    assert(pstep(env, a0, a0));
+                    assert(beta_target == subst1(*b, a0));
+                }
+                pstep_spine_app_one(env, ExprSpec::App(Box::new(head), Box::new(a0)), beta_target, rest);
+                assert(seq![a0] + rest =~= args);
+                spine_app_compose(head, a0, rest);
+                assert(spine_app(ExprSpec::App(Box::new(head), Box::new(a0)), rest) == spine_app(head, args));
+                assert(pstep(env, start, spine_app(beta_target, rest)));
+                assert(ch.len() == 1 + ch2.len());
+                assert(ch[0] == start);
+                assert(ch[ch.len() - 1] == ch2[ch2.len() - 1]);
+                assert(spine_reduce(head, args) == spine_reduce(beta_target, rest));
+                assert(pstep_chain_valid(env, ch)) by {
+                    assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+                        if i == 0 {
+                            assert(ch[0] == start);
+                            assert(ch[1] == ch2[0]);
+                            assert(ch2[0] == spine_app(beta_target, rest));
+                        } else {
+                            assert(ch[i] == ch2[i - 1]);
+                            assert(ch[i + 1] == ch2[i]);
+                            assert(pstep(env, ch2[i - 1], ch2[i]));
+                        }
+                    }
+                }
+                // Sizes: identical argument to `spine_reduce_chain_sized`'s.
+                spine_reduce_size_cap_mono(size(beta_target), size(head) * (1 + size(a0)), rest);
+                spine_app_size(head, args);
+                spine_reduce_size_cap_ge_spine(head, args);
+                assert(size(start) <= spine_reduce_size_cap(size(head), args));
+                assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args) by {
+                    if i == 0 {
+                    } else {
+                        assert(ch[i] == ch2[i - 1]);
+                        assert(size(ch2[i - 1]) <= spine_reduce_size_cap(size(beta_target), rest));
+                        assert(spine_reduce_size_cap(size(beta_target), rest) <= spine_reduce_size_cap(size(head) * (1 + size(a0)), rest));
+                        assert(spine_reduce_size_cap(size(head), args) == spine_reduce_size_cap(size(head) * (1 + size(a0)), rest) + 1 + size(a0));
+                    }
+                }
+                // mvb: element 0 from the parts at `bound`, later elements
+                // from the IH's bound, both monotoned up to `bigb`.
+                spine_app_max_var_below(head, args, bound);
+                assert forall |i: int| 0 <= i < ch.len() implies max_var_below(#[trigger] ch[i], bigb) by {
+                    if i == 0 {
+                        max_var_below_mono(start, bound, bigb);
+                    } else {
+                        assert(ch[i] == ch2[i - 1]);
+                        assert(max_var_below(ch2[i - 1], bigb2));
+                        max_var_below_mono(ch2[i - 1], bigb2, bigb);
+                    }
+                }
+                // strings: cap-preserving throughout.
+                string_lits_ok_spine_app(head, args, scap);
+                assert forall |i: int| 0 <= i < ch.len() implies string_lits_ok(#[trigger] ch[i], scap) by {
+                    if i == 0 {
+                    } else {
+                        assert(ch[i] == ch2[i - 1]);
+                        assert(string_lits_ok(ch2[i - 1], scap));
+                    }
+                }
+                assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+                    && pstep_chain_valid(env, ch)
+                    && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args))
+                    && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
+                    && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap)));
+            }
+            _ => {
+                let ch = seq![spine_app(head, args)];
+                assert(spine_reduce(head, args) == spine_app(head, args));
+                assert(pstep_chain_valid(env, ch));
+                spine_app_size(head, args);
+                spine_reduce_size_cap_ge_spine(head, args);
+                spine_app_max_var_below(head, args, bound);
+                max_var_below_mono(spine_app(head, args), bound, bigb);
+                string_lits_ok_spine_app(head, args, scap);
+                assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+                    && pstep_chain_valid(env, ch)
+                    && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args))
+                    && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
+                    && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap)));
+            }
+        }
+    }
+}
+
 /// stitched together with `pstep_star_trans`, which (unlike `pstep`
 /// transitivity) is free.
 pub proof fn pstep_star_spine_reduce(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>)
