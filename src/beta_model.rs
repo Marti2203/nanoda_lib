@@ -12900,6 +12900,240 @@ pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x1: ExprSpec,
 /// `Bind` contracted against `args[0]`, both sides taken reflexively via
 /// `pstep`'s own definition) lifted to the whole spine via
 /// `pstep_spine_app_star`, and the IH on the remaining `args[1..]` --
+/// Single-STEP spine congruence: one `pstep` under a whole argument
+/// spine (the arguments ride along reflexively at every `App` layer) --
+/// `pstep_spine_app_star`'s one-step sibling.
+pub proof fn pstep_spine_app_one(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, args: Seq<ExprSpec>)
+    requires pstep(env, x, y)
+    ensures pstep(env, spine_app(x, args), spine_app(y, args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        pstep_spine_app_one(env, x, y, args_init);
+        assert(spine_app(x, args) == ExprSpec::App(Box::new(spine_app(x, args_init)), Box::new(last)));
+        assert(spine_app(y, args) == ExprSpec::App(Box::new(spine_app(y, args_init)), Box::new(last)));
+        assert(pstep(env, last, last));
+        assert(pstep(env, spine_app(x, args_init), spine_app(y, args_init)) && pstep(env, last, last));
+        assert(pstep(env, spine_app(x, args), spine_app(y, args)));
+    }
+}
+
+/// Total size the arguments contribute to an applied spine (one `App`
+/// node plus the argument itself, per argument).
+pub open spec fn args_size_sum(args: Seq<ExprSpec>) -> nat
+    decreases args.len()
+{
+    if args.len() == 0 { 0 } else { 1 + size(args[0]) + args_size_sum(args.subrange(1, args.len() as int)) }
+}
+
+/// `spine_app`'s size, exactly.
+pub proof fn spine_app_size(head: ExprSpec, args: Seq<ExprSpec>)
+    ensures size(spine_app(head, args)) == size(head) + args_size_sum(args)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        spine_app_size(head, args_init);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(last)));
+        assert(size(spine_app(head, args)) == 1 + size(spine_app(head, args_init)) + size(last));
+        args_size_sum_snoc(args_init, last);
+        assert(args_init.push(last) =~= args);
+    }
+}
+
+/// `args_size_sum` over a snoc.
+pub proof fn args_size_sum_snoc(args: Seq<ExprSpec>, last: ExprSpec)
+    ensures args_size_sum(args.push(last)) == args_size_sum(args) + 1 + size(last)
+    decreases args.len()
+{
+    let p2 = args.push(last);
+    if args.len() == 0 {
+        assert(p2.len() == 1);
+        assert(p2[0] == last);
+        assert(p2.subrange(1, p2.len() as int) =~= Seq::<ExprSpec>::empty());
+        assert(args_size_sum(p2.subrange(1, p2.len() as int)) == 0);
+        assert(args_size_sum(p2) == 1 + size(p2[0]) + args_size_sum(p2.subrange(1, p2.len() as int)));
+        assert(args_size_sum(args) == 0);
+    } else {
+        assert(p2[0] == args[0]);
+        let tail = args.subrange(1, args.len() as int);
+        assert(p2.subrange(1, p2.len() as int) =~= tail.push(last));
+        args_size_sum_snoc(tail, last);
+        assert(args_size_sum(p2) == 1 + size(p2[0]) + args_size_sum(p2.subrange(1, p2.len() as int)));
+        assert(args_size_sum(p2.subrange(1, p2.len() as int)) == args_size_sum(tail.push(last)));
+        assert(args_size_sum(tail.push(last)) == args_size_sum(tail) + 1 + size(last));
+        assert(args_size_sum(args) == 1 + size(args[0]) + args_size_sum(tail));
+    }
+}
+
+/// The uniform size cap over EVERY stage of a `spine_reduce` chain:
+/// `head_sz` multiplied by `(1 + size(arg))` per remaining argument
+/// (each beta stage's `subst1_size_bound` growth), plus the arguments'
+/// own spine contribution. Defined recursively so each stage's bound is
+/// the definitional unfolding at its own level.
+pub open spec fn spine_reduce_size_cap(head_sz: nat, args: Seq<ExprSpec>) -> nat
+    decreases args.len()
+{
+    if args.len() == 0 {
+        head_sz
+    } else {
+        spine_reduce_size_cap(head_sz * (1 + size(args[0])), args.subrange(1, args.len() as int)) + 1 + size(args[0])
+    }
+}
+
+/// The cap is monotone in the head size.
+pub proof fn spine_reduce_size_cap_mono(h1: nat, h2: nat, args: Seq<ExprSpec>)
+    requires h1 <= h2
+    ensures spine_reduce_size_cap(h1, args) <= spine_reduce_size_cap(h2, args)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        assert(h1 * (1 + size(args[0])) <= h2 * (1 + size(args[0]))) by (nonlinear_arith)
+            requires h1 <= h2;
+        spine_reduce_size_cap_mono(h1 * (1 + size(args[0])), h2 * (1 + size(args[0])), args.subrange(1, args.len() as int));
+    }
+}
+
+/// The cap dominates the head size itself.
+pub proof fn spine_reduce_size_cap_ge(head_sz: nat, args: Seq<ExprSpec>)
+    ensures spine_reduce_size_cap(head_sz, args) >= head_sz
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        assert(head_sz * (1 + size(args[0])) >= head_sz) by (nonlinear_arith);
+        spine_reduce_size_cap_ge(head_sz * (1 + size(args[0])), args.subrange(1, args.len() as int));
+    }
+}
+
+/// The cap dominates the whole starting spine.
+pub proof fn spine_reduce_size_cap_ge_spine(head: ExprSpec, args: Seq<ExprSpec>)
+    ensures size(head) + args_size_sum(args) <= spine_reduce_size_cap(size(head), args)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let rest = args.subrange(1, args.len() as int);
+        assert(size(head) * (1 + size(args[0])) >= size(head)) by (nonlinear_arith);
+        spine_reduce_size_cap_mono(size(head), size(head) * (1 + size(args[0])), rest);
+        spine_reduce_size_cap_ge_spine(head, rest);
+        spine_reduce_size_cap_mono(size(head), size(head) * (1 + size(args[0])), rest);
+    }
+}
+
+/// THE SIZED CHAIN for `spine_reduce`: the explicit `pstep` chain from
+/// the applied spine to its telescoped reduct, with EVERY element's
+/// size bounded by `spine_reduce_size_cap` -- the piece that lets a
+/// producer expose a chain with dischargeable per-element size bounds
+/// computed from its (exec-measurable) input sizes, closing the gap
+/// that spec-level beta intermediates cannot be measured at run time.
+pub proof fn spine_reduce_chain_sized(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>)
+    ensures exists |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == spine_app(head, args)
+        && ch[ch.len() - 1] == spine_reduce(head, args)
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args))
+    decreases args.len()
+{
+    if args.len() == 0 {
+        let ch = seq![head];
+        assert(spine_app(head, args) == head);
+        assert(spine_reduce(head, args) == head);
+        assert(pstep_chain_valid(env, ch));
+        assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+            && pstep_chain_valid(env, ch)
+            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args)));
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        match head {
+            ExprSpec::Bind(bt, b) => {
+                let beta_target = subst1(*b, a0);
+                spine_reduce_chain_sized(env, beta_target, rest);
+                let ch2 = choose |ch2: Seq<ExprSpec>|
+                    #![trigger ch2.len()]
+                    ch2.len() >= 1
+                    && ch2[0] == spine_app(beta_target, rest)
+                    && ch2[ch2.len() - 1] == spine_reduce(beta_target, rest)
+                    && pstep_chain_valid(env, ch2)
+                    && (forall |i: int| 0 <= i < ch2.len() ==> size(#[trigger] ch2[i]) <= spine_reduce_size_cap(size(beta_target), rest));
+                let start = spine_app(head, args);
+                let ch = seq![start] + ch2;
+                // The first link: one beta step under the whole argument spine.
+                assert(pstep(env, ExprSpec::App(Box::new(head), Box::new(a0)), beta_target)) by {
+                    assert(pstep(env, *b, *b));
+                    assert(pstep(env, a0, a0));
+                    assert(beta_target == subst1(*b, a0));
+                }
+                pstep_spine_app_one(env, ExprSpec::App(Box::new(head), Box::new(a0)), beta_target, rest);
+                assert(seq![a0] + rest =~= args);
+                spine_app_compose(head, a0, rest);
+                assert(spine_app(ExprSpec::App(Box::new(head), Box::new(a0)), rest) == spine_app(head, args));
+                assert(pstep(env, start, spine_app(beta_target, rest)));
+                assert(ch.len() == 1 + ch2.len());
+                assert(ch[0] == start);
+                assert(ch[ch.len() - 1] == ch2[ch2.len() - 1]);
+                assert(spine_reduce(head, args) == spine_reduce(beta_target, rest));
+                assert(pstep_chain_valid(env, ch)) by {
+                    assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+                        if i == 0 {
+                            assert(ch[0] == start);
+                            assert(ch[1] == ch2[0]);
+                            assert(ch2[0] == spine_app(beta_target, rest));
+                        } else {
+                            assert(ch[i] == ch2[i - 1]);
+                            assert(ch[i + 1] == ch2[i]);
+                            assert(pstep(env, ch2[i - 1], ch2[i]));
+                        }
+                    }
+                }
+                // Sizes: start is the whole spine; later elements inherit ch2's cap, monotoned up.
+                subst1_size_bound(*b, a0);
+                assert(size(beta_target) <= size(*b) * (size(a0) + 1));
+                assert(size(head) == 1 + size(*bt) + size(*b));
+                assert(size(*b) <= size(head));
+                assert(size(*b) * (size(a0) + 1) <= size(head) * (1 + size(a0))) by (nonlinear_arith)
+                    requires size(*b) <= size(head);
+                assert(size(beta_target) <= size(head) * (1 + size(a0)));
+                spine_reduce_size_cap_mono(size(beta_target), size(head) * (1 + size(a0)), rest);
+                spine_app_size(head, args);
+                spine_reduce_size_cap_ge_spine(head, args);
+                assert(size(start) <= spine_reduce_size_cap(size(head), args));
+                assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args) by {
+                    if i == 0 {
+                    } else {
+                        assert(ch[i] == ch2[i - 1]);
+                        assert(size(ch2[i - 1]) <= spine_reduce_size_cap(size(beta_target), rest));
+                        assert(spine_reduce_size_cap(size(beta_target), rest) <= spine_reduce_size_cap(size(head) * (1 + size(a0)), rest));
+                        assert(spine_reduce_size_cap(size(head), args) == spine_reduce_size_cap(size(head) * (1 + size(a0)), rest) + 1 + size(a0));
+                    }
+                }
+                assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+                    && pstep_chain_valid(env, ch)
+                    && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args)));
+            }
+            _ => {
+                let ch = seq![spine_app(head, args)];
+                assert(spine_reduce(head, args) == spine_app(head, args));
+                assert(pstep_chain_valid(env, ch));
+                spine_app_size(head, args);
+                spine_reduce_size_cap_ge_spine(head, args);
+                assert(ch.len() >= 1 && ch[0] == spine_app(head, args) && ch[ch.len() - 1] == spine_reduce(head, args)
+                    && pstep_chain_valid(env, ch)
+                    && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(head), args)));
+            }
+        }
+    }
+}
+
 /// stitched together with `pstep_star_trans`, which (unlike `pstep`
 /// transitivity) is free.
 pub proof fn pstep_star_spine_reduce(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>)
