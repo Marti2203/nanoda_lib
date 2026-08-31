@@ -795,7 +795,7 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         None => true,
     }
 {
-    let whnfd = match verified_whnf_no_unfolding_step(ctx, structure, fuel, bound, d) {
+    let whnfd = match verified_whnf_no_unfolding_step(ctx, structure, fuel, Ghost(bound), Ghost(d)) {
         Some(w) => w,
         None => return None,
     };
@@ -958,7 +958,7 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
             None => None,
         }
     } else {
-        verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d)
+        verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d))
     }
 }
 
@@ -4952,7 +4952,7 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
     if expr_as_proj(&fun_el).is_none() {
         return None;
     }
-    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
             if expr_ptr_eq(e, r) {
                 None

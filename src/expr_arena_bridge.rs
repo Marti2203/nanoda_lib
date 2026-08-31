@@ -819,7 +819,7 @@ pub fn verified_whnf_beta_step_sized<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun:
         assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) == acc_hs as nat + acc_sum as nat);
         assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) <= 60000);
     }
-    let r = match verified_whnf_beta_step(ctx, e_fun, args, fuel, bound) { Some(v) => v, None => return None };
+    let r = match verified_whnf_beta_step(ctx, e_fun, args, fuel, Ghost(bound)) { Some(v) => v, None => return None };
     proof {
         let env0 = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
         let n = choose |n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
@@ -2072,7 +2072,7 @@ pub fn verified_replace_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'
 /// peeled body satisfies `spine_reduce_eq_subst_full`'s precondition for
 /// WHATEVER peel count `n` the real code data-dependently computes,
 /// without needing to know `n` in advance.
-pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         args.len() > 0,
         nlbv(to_model(e_fun)) <= 0,
@@ -2175,7 +2175,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
 /// `pstep(Let(t,v,b), subst1(b,v))` was simply false in the model, so
 /// this bridge (and the `pstep_star` conclusion in particular) could not
 /// have been stated, let alone proven.
-pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         exists |t_model: ExprSpec| to_model(e_fun) == ExprSpec::Let(Box::new(t_model), Box::new(to_model(val)), Box::new(to_model(body))),
         nlbv(to_model(body)) <= 1,
@@ -2260,7 +2260,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
 /// thousands, not tens of thousands) for the arithmetic to fit in
 /// `0xFFFF_0000` -- a real, motivated numeric consequence of proving the
 /// fully general (any `args.len()`) statement, not an arbitrary choice.
-pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -2293,7 +2293,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
             let e_fun_el = ctx.read_expr(e_fun);
             if args.len() > 0 {
                 if let Some(_) = expr_as_lambda(&e_fun_el) {
-                    return match verified_whnf_beta_step(ctx, e_fun, &args, fuel, bound) {
+                    return match verified_whnf_beta_step(ctx, e_fun, &args, fuel, Ghost(bound)) {
                         Some(r) => {
                             proof {
                                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
@@ -2380,7 +2380,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
             }
             if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
                 assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
-                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, bound) {
+                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, Ghost(bound)) {
                     Some(r) => {
                         proof {
                             assert(max_var_below(to_model(e_fun), bound));
@@ -2495,7 +2495,7 @@ pub fn verified_whnf_no_unfolding_fixpoint<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, 
         }
         return Some(e);
     }
-    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
             match verified_whnf_no_unfolding_fixpoint(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
                 Some(r2) => {
@@ -2564,7 +2564,7 @@ pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'
         }
         return Some(e);
     }
-    match verified_whnf_no_unfolding_step(ctx, e, fuel, bound, d) {
+    match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
             match verified_whnf_no_unfolding_fixpoint_bounded(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
                 Some(r2) => {

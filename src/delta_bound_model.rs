@@ -553,7 +553,7 @@ pub fn verified_infer_proj_params_loop<'t, 'p: 't>(
         && max_var_below(to_model(struct_ty_args@[idx_here as int]), cap)
         && depth(to_model(struct_ty_args@[idx_here as int])) <= cap);
     let arg = struct_ty_args[idx_here];
-    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, bound, d) {
+    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, Ghost(bound), Ghost(d)) {
         Some(v) => v,
         None => return None,
     };
@@ -745,7 +745,7 @@ pub fn verified_infer_proj_idx_loop<'t, 'p: 't>(
     if remaining == 0 {
         return Some(ctor_ty);
     }
-    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, bound, d) {
+    let ctor_ty_whnfd = match verified_whnf_no_unfolding_step(ctx, ctor_ty, fuel, Ghost(bound), Ghost(d)) {
         Some(v) => v,
         None => return None,
     };
@@ -938,7 +938,7 @@ pub fn verified_infer_proj<'t, 'p: 't, 'x>(
     proof {
         max_var_below_mono(to_model(ctor_ty2), infer_proj_idx_bound_after(bound1, d1, bound_s, d_s, idx as nat), bound2);
     }
-    let reduced = match verified_whnf_no_unfolding_step(ctx, ctor_ty2, fuel, bound2, d2) {
+    let reduced = match verified_whnf_no_unfolding_step(ctx, ctor_ty2, fuel, Ghost(bound2), Ghost(d2)) {
         Some(v) => v,
         None => return None,
     };
@@ -2331,7 +2331,7 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             proof {
                 max_var_below_mono(to_model(unfolded), bound + env_global_cap(*env), bound2);
             }
-            match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, bound2, d2) {
+            match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, Ghost(bound2), Ghost(d2)) {
                 Some(r) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -3405,7 +3405,7 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
         nlbv_bound_implies_max_var_below(to_model(major_ty_raw), 0);
         max_var_below_mono(to_model(major_ty_raw), depth(to_model(major_ty_raw)), dd_pre);
     }
-    let major_ty = match verified_whnf_no_unfolding_step(ctx, major_ty_raw, fuel, dd_pre, dd_pre) {
+    let major_ty = match verified_whnf_no_unfolding_step(ctx, major_ty_raw, fuel, Ghost(dd_pre), Ghost(dd_pre)) {
         Some(v) => v,
         None => return None,
     };
@@ -3527,7 +3527,7 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
         nlbv_bound_implies_max_var_below(to_model(e_type_raw), 0);
         max_var_below_mono(to_model(e_type_raw), depth(to_model(e_type_raw)), dd_pre);
     }
-    let e_type = match verified_whnf_no_unfolding_step(ctx, e_type_raw, fuel, dd_pre, dd_pre) {
+    let e_type = match verified_whnf_no_unfolding_step(ctx, e_type_raw, fuel, Ghost(dd_pre), Ghost(dd_pre)) {
         Some(v) => v,
         None => return e,
     };
@@ -4418,7 +4418,7 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
             nlbv_bound_implies_max_var_below(to_model(yt), 0);
             max_var_below_mono(to_model(yt), depth(to_model(yt)), dd_i);
         }
-        let yt_whnfd_opt = verified_whnf_no_unfolding_step(ctx, yt, fuel, dd_i, dd_i);
+        let yt_whnfd_opt = verified_whnf_no_unfolding_step(ctx, yt, fuel, Ghost(dd_i), Ghost(dd_i));
         if let Some(yt_whnfd) = yt_whnfd_opt {
             assert(depth(to_model(yt_whnfd)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
             let yt_whnfd_el = ctx.read_expr(yt_whnfd);
@@ -4433,7 +4433,7 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
                 }
             }
         }
-        let xt_whnfd_for_eta_opt = verified_whnf_no_unfolding_step(ctx, xt, fuel, dd_i, dd_i);
+        let xt_whnfd_for_eta_opt = verified_whnf_no_unfolding_step(ctx, xt, fuel, Ghost(dd_i), Ghost(dd_i));
         if let Some(xt_whnfd_for_eta) = xt_whnfd_for_eta_opt {
             assert(depth(to_model(xt_whnfd_for_eta)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
             let xt_whnfd_for_eta_el = ctx.read_expr(xt_whnfd_for_eta);
@@ -4448,7 +4448,7 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
                 }
             }
         }
-        match verified_whnf_no_unfolding_step(ctx, xt, fuel, dd_i, dd_i) {
+        match verified_whnf_no_unfolding_step(ctx, xt, fuel, Ghost(dd_i), Ghost(dd_i)) {
             Some(xt_whnfd) => {
                 assert(depth(to_model(xt_whnfd)) <= dd_i * dd_i + dd_i + dd_i + dd_i + dd_i);
                 assert(depth(to_model(xt_whnfd)) <= 60000);
@@ -4544,7 +4544,7 @@ pub fn verified_str_lit_to_ctor_reducing<'t, 'p: 't>(
             to_model(lit),
         ));
     }
-    match verified_whnf_no_unfolding_step(ctx, lit, fuel, d_lit, d_lit) {
+    match verified_whnf_no_unfolding_step(ctx, lit, fuel, Ghost(d_lit), Ghost(d_lit)) {
         Some(r) => {
             proof {
                 pstep_star_one(
@@ -4655,7 +4655,7 @@ pub fn verified_normalize_major_premise<'t, 'p: 't, 'x>(
             assert(major1 == major);
         }
     }
-    let major2 = match verified_whnf_no_unfolding_step(ctx, major1, fuel, dd_new, dd_new) {
+    let major2 = match verified_whnf_no_unfolding_step(ctx, major1, fuel, Ghost(dd_new), Ghost(dd_new)) {
         Some(v) => {
             proof { assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(major1), to_model(v))); }
             v
