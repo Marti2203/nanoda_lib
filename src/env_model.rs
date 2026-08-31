@@ -357,6 +357,38 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
     };
 
+/// COVERAGE of the visible declaration names: every id in either
+/// model-level declaration map's domain appears (as `name_id`) in the
+/// list `visible_declar_names` returns. Trust content: the exec method
+/// iterates exactly the maps the keyed lookups read (temp extension +
+/// persistent-up-to-cutoff), so nothing the models can see is missed --
+/// the iteration-completeness twin of the per-key lookup contracts.
+pub assume_specification<'x, 'a> [Env::<'x, 'a>::visible_declar_names] (env: &Env<'x, 'a>) -> (result: Vec<NamePtr<'a>>) where 'a: 'x
+    ensures
+        forall |id: u64| #[trigger] to_model_of_env(*env).contains_key(id)
+            ==> exists |i: int| 0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
+        forall |id: u64| #[trigger] to_model_of_declar_ty(*env).contains_key(id)
+            ==> exists |i: int| 0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id;
+
+/// LEASTNESS pin for `env_global_cap`: any `k` that bounds every visible
+/// declaration's value and type models (depth AND `max_var_below`)
+/// dominates the cap. The existing trust only asserts facts hold AT the
+/// cap ("some sufficient bound exists"); this adds that the named cap is
+/// no larger than any actually-sufficient bound -- consistent (interpret
+/// the cap as the exact supremum, which satisfies both), and what turns
+/// an exec scan's measurements into a usable `env_global_cap(*env) <= k`
+/// hypothesis for the whnf/delta routes.
+#[verifier::external_body]
+pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    requires
+        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+            ==> depth(to_model_of_env(env)[id].1) <= k && max_var_below(to_model_of_env(env)[id].1, k),
+        forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id)
+            ==> depth(to_model_of_declar_ty(env)[id].1) <= k && max_var_below(to_model_of_declar_ty(env)[id].1, k),
+    ensures env_global_cap(env) <= k
+{
+}
+
 /// A real environment's declaration TYPES, as a name-id-keyed map --
 /// same shape as `to_model_of_env` (uparams + a value), but covering
 /// EVERY declaration kind (see `get_declar_info_ty`'s doc comment), not

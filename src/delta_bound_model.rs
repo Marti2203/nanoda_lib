@@ -105,7 +105,10 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params};
+use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le};
+use crate::expr_arena_bridge::verified_size;
+#[cfg(verus_only)]
+use crate::beta_model::depth_le_size;
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -2106,6 +2109,121 @@ pub fn verified_may_be_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// restate `verified_def_eq`'s own fact about `l_type`/`r_type` (already
 /// fully covered by calling it directly), same "don't re-derive what a
 /// composed call already proved" convention as elsewhere in this arc.
+/// EXEC SCAN establishing a usable `env_global_cap` bound: measures
+/// every visible declaration's value and type via `verified_size`
+/// (depth <= size, `max_var_below` <= depth for closed terms), takes
+/// the max, and converts it through the `env_global_cap_le` leastness
+/// pin. `Some(k)` hands the whnf/delta routes their
+/// `env_global_cap(*env) <= k` hypothesis with `k <= 60000`; `None`
+/// covers any measurement failure or a declaration exceeding the gate
+/// -- honest incompleteness. O(total env size); intended to run ONCE
+/// per environment, its result reused across route calls.
+pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, fuel: u32) -> (result: Option<u32>)
+    ensures match result {
+        Some(k) => k <= 60000 && env_global_cap(*env) <= k as nat,
+        None => true,
+    }
+{
+    let names = env.visible_declar_names();
+    let mut mx: u32 = 0;
+    let mut i: usize = 0;
+    while i < names.len()
+        invariant
+            i <= names@.len(),
+            mx <= 60000,
+            forall |j: int| 0 <= j < i ==> {
+                let id = name_id(#[trigger] names@[j]);
+                &&& (to_model_of_env(*env).contains_key(id)
+                    ==> depth(to_model_of_env(*env)[id].1) <= mx as nat
+                        && max_var_below(to_model_of_env(*env)[id].1, mx as nat))
+                &&& (to_model_of_declar_ty(*env).contains_key(id)
+                    ==> depth(to_model_of_declar_ty(*env)[id].1) <= mx as nat
+                        && max_var_below(to_model_of_declar_ty(*env)[id].1, mx as nat))
+            },
+        decreases names@.len() - i
+    {
+        let n = names[i];
+        let ghost mx0 = mx;
+        match env.get_declar_val(&n) {
+            Some((_, val)) => {
+                let sv = match verified_size(ctx, val, fuel) { Some(v) => v, None => return None };
+                proof {
+                    depth_le_size(to_model(val));
+                    nlbv_bound_implies_max_var_below(to_model(val), 0);
+                    assert(max_var_below(to_model(val), depth(to_model(val)) as nat));
+                }
+                if sv > mx {
+                    mx = sv;
+                }
+            }
+            None => {}
+        }
+        match get_declar_info_ty(env, &n) {
+            Some((_, ty)) => {
+                let st = match verified_size(ctx, ty, fuel) { Some(v) => v, None => return None };
+                proof {
+                    depth_le_size(to_model(ty));
+                    nlbv_bound_implies_max_var_below(to_model(ty), 0);
+                    assert(max_var_below(to_model(ty), depth(to_model(ty)) as nat));
+                }
+                if st > mx {
+                    mx = st;
+                }
+            }
+            None => {}
+        }
+        proof {
+            assert(mx0 <= mx);
+            assert forall |j: int| 0 <= j < i + 1 implies {
+                let id = name_id(#[trigger] names@[j]);
+                &&& (to_model_of_env(*env).contains_key(id)
+                    ==> depth(to_model_of_env(*env)[id].1) <= mx as nat
+                        && max_var_below(to_model_of_env(*env)[id].1, mx as nat))
+                &&& (to_model_of_declar_ty(*env).contains_key(id)
+                    ==> depth(to_model_of_declar_ty(*env)[id].1) <= mx as nat
+                        && max_var_below(to_model_of_declar_ty(*env)[id].1, mx as nat))
+            } by {
+                let id = name_id(names@[j]);
+                if j < i {
+                    if to_model_of_env(*env).contains_key(id) {
+                        assert(max_var_below(to_model_of_env(*env)[id].1, mx0 as nat));
+                        max_var_below_mono(to_model_of_env(*env)[id].1, mx0 as nat, mx as nat);
+                    }
+                    if to_model_of_declar_ty(*env).contains_key(id) {
+                        assert(max_var_below(to_model_of_declar_ty(*env)[id].1, mx0 as nat));
+                        max_var_below_mono(to_model_of_declar_ty(*env)[id].1, mx0 as nat, mx as nat);
+                    }
+                } else {
+                    assert(j == i);
+                    if to_model_of_env(*env).contains_key(id) {
+                        assert(depth(to_model_of_env(*env)[id].1) <= mx as nat);
+                        max_var_below_mono(to_model_of_env(*env)[id].1, depth(to_model_of_env(*env)[id].1), mx as nat);
+                    }
+                    if to_model_of_declar_ty(*env).contains_key(id) {
+                        assert(depth(to_model_of_declar_ty(*env)[id].1) <= mx as nat);
+                        max_var_below_mono(to_model_of_declar_ty(*env)[id].1, depth(to_model_of_declar_ty(*env)[id].1), mx as nat);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    proof {
+        assert forall |id: u64| #[trigger] to_model_of_env(*env).contains_key(id)
+            implies depth(to_model_of_env(*env)[id].1) <= mx as nat && max_var_below(to_model_of_env(*env)[id].1, mx as nat) by {
+            let j = choose |j: int| 0 <= j < names@.len() && name_id(#[trigger] names@[j]) == id;
+            assert(0 <= j < names@.len());
+        }
+        assert forall |id: u64| #[trigger] to_model_of_declar_ty(*env).contains_key(id)
+            implies depth(to_model_of_declar_ty(*env)[id].1) <= mx as nat && max_var_below(to_model_of_declar_ty(*env)[id].1, mx as nat) by {
+            let j = choose |j: int| 0 <= j < names@.len() && name_id(#[trigger] names@[j]) == id;
+            assert(0 <= j < names@.len());
+        }
+        env_global_cap_le(*env, mx as nat);
+    }
+    Some(mx)
+}
+
 /// The claim `verified_proof_irrel_eq_of_types`'s `Some(true)` makes,
 /// NAMED for the top-level `def_eq` claim composition: both types reduce
 /// to `Prop`-level `Sort`s (interp uniformly 0), i.e. both terms are

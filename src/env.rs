@@ -259,6 +259,26 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         self.temp_declars.as_ref().and_then(|ext| ext.get(n)).or_else(|| self.get_old_declar(n))
     }
 
+    /// Every declaration name visible through `get_declar`: the temporary
+    /// extension plus the persistent map up to the visibility cutoff.
+    /// (Duplicates are harmless -- callers use this for coverage, not
+    /// uniqueness.) Trust-bridged in `env_model.rs`: the model-level
+    /// declaration maps' domains are covered by this list.
+    pub fn visible_declar_names(&self) -> Vec<NamePtr<'a>> {
+        let mut out = Vec::new();
+        if let Some(ext) = self.temp_declars.as_ref() {
+            for k in ext.keys() {
+                out.push(*k);
+            }
+        }
+        for (i, k) in self.declars.keys().enumerate() {
+            if i < self.cutoff {
+                out.push(*k);
+            }
+        }
+        out
+    }
+
     /// Get a declaration, only looking in the temporary extension.
     pub fn get_temp_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> {
         self.temp_declars.as_ref().and_then(|ext| ext.get(n))
