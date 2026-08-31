@@ -89,7 +89,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id};
 #[cfg(verus_only)]
@@ -3274,6 +3274,75 @@ pub open spec fn eta_expands_to(lam: ExprSpec, f: ExprSpec) -> bool {
 /// genuine additional equality generator, matching Lean's own defeq).
 pub open spec fn deq_eta(x: ExprSpec, y: ExprSpec) -> bool {
     eta_expands_to(x, y) || eta_expands_to(y, x)
+}
+
+/// The leaf equalities are stable under abstraction -- trivially, since
+/// `Sort`/`Const` are `abstr_full` fixed points. First unconditional
+/// building block of deq-level abstraction stability (the `defeq`
+/// disjunct stays chain-conditional per the standing analysis; these
+/// bank the parts that don't wait on it).
+pub proof fn deq_leaf_abstr(x: ExprSpec, y: ExprSpec, ks: Seq<u32>, o: nat)
+    requires deq_leaf(x, y)
+    ensures deq_leaf(abstr_full(x, ks, o), abstr_full(y, ks, o))
+{
+    assert(abstr_full(x, ks, o) == x);
+    assert(abstr_full(y, ks, o) == y);
+}
+
+/// The eta leaf is stable under abstraction: the eta-expansion shape
+/// transports because `abstr` at `o + 1` commutes with the up-shift
+/// (`shift_abstr_commute`, `d = 1, c = 0`) and fixes `Var(0)`. Second
+/// unconditional building block.
+pub proof fn deq_eta_abstr(x: ExprSpec, y: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        deq_eta(x, y),
+        o + 1 + ks.len() + depth(x) + depth(y) + 2 <= 0xFFFF_FFFF,
+    ensures deq_eta(abstr_full(x, ks, o), abstr_full(y, ks, o))
+{
+    if eta_expands_to(x, y) {
+        match x {
+            ExprSpec::Bind(t, b) => {
+                assert(*b == ExprSpec::App(Box::new(shift(1, 0, y)), Box::new(ExprSpec::Var(0))));
+                shift_abstr_commute(1, 0, y, ks, o);
+                assert(abstr_full(shift(1, 0, y), ks, (o + 1) as nat) == shift(1, 0, abstr_full(y, ks, o)));
+                assert(abstr_full(ExprSpec::Var(0), ks, (o + 1) as nat) == ExprSpec::Var(0));
+                assert(abstr_full(*b, ks, (o + 1) as nat) == ExprSpec::App(
+                    Box::new(shift(1, 0, abstr_full(y, ks, o))),
+                    Box::new(ExprSpec::Var(0)),
+                ));
+                assert(abstr_full(x, ks, o) == ExprSpec::Bind(
+                    Box::new(abstr_full(*t, ks, o)),
+                    Box::new(abstr_full(*b, ks, (o + 1) as nat)),
+                ));
+                assert(eta_expands_to(abstr_full(x, ks, o), abstr_full(y, ks, o)));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    } else {
+        assert(eta_expands_to(y, x));
+        match y {
+            ExprSpec::Bind(t, b) => {
+                assert(*b == ExprSpec::App(Box::new(shift(1, 0, x)), Box::new(ExprSpec::Var(0))));
+                shift_abstr_commute(1, 0, x, ks, o);
+                assert(abstr_full(shift(1, 0, x), ks, (o + 1) as nat) == shift(1, 0, abstr_full(x, ks, o)));
+                assert(abstr_full(ExprSpec::Var(0), ks, (o + 1) as nat) == ExprSpec::Var(0));
+                assert(abstr_full(*b, ks, (o + 1) as nat) == ExprSpec::App(
+                    Box::new(shift(1, 0, abstr_full(x, ks, o))),
+                    Box::new(ExprSpec::Var(0)),
+                ));
+                assert(abstr_full(y, ks, o) == ExprSpec::Bind(
+                    Box::new(abstr_full(*t, ks, o)),
+                    Box::new(abstr_full(*b, ks, (o + 1) as nat)),
+                ));
+                assert(eta_expands_to(abstr_full(y, ks, o), abstr_full(x, ks, o)));
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
 }
 
 /// ONE PARALLEL STEP of the inductive definitional-equality relation:
