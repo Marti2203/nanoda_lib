@@ -959,6 +959,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return easy
         }
 
+        // Verified route (see `tc_model::verified_def_eq_checked`): a
+        // `Some(true)` from the verified core carries a machine-checked
+        // `def_eq_witness && deq_full_claim`; anything else falls through
+        // to the legacy path below, so this costs no completeness -- the
+        // verified route only ever CONFIRMS equality.
+        if let Some(true) = crate::tc_model::verified_def_eq_checked(self.ctx, x, y) {
+            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+            return true
+        }
+
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 

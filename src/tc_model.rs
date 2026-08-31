@@ -89,9 +89,10 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id};
+use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_full};
 
@@ -4339,6 +4340,34 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, Exp
         const_expr_no_levels_canonical(to_model(e), nat_zero_id());
         pstep_star_refl(env, to_model(e));
     }
+}
+
+/// THE ROUTED-INTEGRATION BOUNDARY: a TOTAL (no-requires) entry point
+/// the UNVERIFIED orchestrator (`tc.rs::TypeChecker::def_eq`) may call
+/// safely -- an unverified caller cannot be trusted to discharge
+/// preconditions, so this function has none and establishes
+/// `verified_def_eq`'s depth caps itself at run time (`verified_size`
+/// measurements, `depth <= size`). Returns `Some(true)` ONLY with the
+/// full `def_eq_witness && deq_full_claim` guarantee behind it; the
+/// orchestrator should treat `Some(false)`/`None` as "fall through to
+/// the legacy path" -- the verified route only ever CONFIRMS equality
+/// (the direction that both carries a claim and is the dangerous one to
+/// get wrong), never denies, so routing costs no completeness.
+pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
+        _ => true,
+    }
+{
+    let sx = match verified_size(ctx, x, 100000) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, 100000) { Some(v) => v, None => return None };
+    proof {
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
+        assert(depth(to_model(x)) <= 60000);
+        assert(depth(to_model(y)) <= 60000);
+    }
+    verified_def_eq(ctx, x, y, 100)
 }
 
 pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
