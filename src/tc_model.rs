@@ -89,7 +89,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id};
 use crate::expr_arena_bridge::verified_size;
@@ -685,6 +685,69 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
         }
         None => None,
     }
+}
+
+
+
+/// MEASURED multi-round whnf: re-MEASURE the term with `verified_size`
+/// before every round instead of budgeting all rounds a priori -- the
+/// a-priori form compounds cubically (`whnf_multi_round_ok` at 2
+/// rounds already forces d <= ~23), while measuring resets the budget
+/// each round, so ANY number of rounds works on terms that stay under
+/// the 500-size gate. Best-effort TOTAL: on any gate failure or
+/// exhausted callee it returns the reduct it already holds (a valid
+/// `pstep_star` target), never `None`; stops early on a fixpoint
+/// (pointer-equal round result). Each round is one
+/// `verified_whnf_step_bounded` (beta/zeta fixpoint + one delta) at
+/// the fixed literals (500, 500, 1), dischargeable thanks to the
+/// phantom-round vacuity fix.
+pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        env_global_cap(*env) <= 500,
+    ensures
+        pstep_star(to_model_of_env(*env), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+{
+    let mut cur = e;
+    let mut i: u32 = 0;
+    proof {
+        pstep_star_refl(to_model_of_env(*env), to_model(e));
+    }
+    while i < rounds
+        invariant
+            pstep_star(to_model_of_env(*env), to_model(e), to_model(cur)),
+            nlbv(to_model(cur)) <= 0,
+            env_global_cap(*env) <= 500,
+        decreases rounds - i
+    {
+        let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        if sc > 500 {
+            return cur;
+        }
+        proof {
+            depth_le_size(to_model(cur));
+            nlbv_bound_implies_max_var_below(to_model(cur), 0);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+            reveal_with_fuel(whnf_fixpoint_ok, 2);
+            assert(whnf_fixpoint_ok(500, 500, 1));
+            reveal_with_fuel(whnf_fixpoint_final_bound, 2);
+            reveal_with_fuel(whnf_fixpoint_final_d, 2);
+        }
+        let r = match verified_whnf_step_bounded(ctx, env, cur, fuel, Ghost(500 as nat), Ghost(500 as nat), 1, Ghost(whnf_fixpoint_final_bound(500 as nat, 500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(500 as nat, 1 as nat))) {
+            Some(v) => v,
+            None => return cur,
+        };
+        if expr_ptr_eq(r, cur) {
+            return cur;
+        }
+        proof {
+            pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(cur), to_model(r));
+        }
+        cur = r;
+        i = i + 1;
+    }
+    cur
 }
 
 

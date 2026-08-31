@@ -111,7 +111,7 @@ use crate::expr_arena_bridge::verified_size;
 use crate::beta_model::depth_le_size;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::verified_whnf_multi_round;
+use crate::tc_model::verified_whnf_measured_rounds;
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -2392,16 +2392,17 @@ pub fn verified_lazy_delta_checked_cached<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t
 
 
 /// THE WHNF-JOIN ROUTE BOUNDARY: reduce BOTH sides with the real
-/// verified multi-round whnf (one round: beta/zeta fixpoint + one
-/// delta attempt, `verified_whnf_multi_round`) and confirm on
-/// pointer-equal results. A `Some(true)` carries `defeq` -- genuine
-/// model-level definitional equality by direct JOINABILITY (both sides
-/// `pstep_star`-reach the same term), needing NO confluence machinery
-/// at all. Total (no requires): the same gate stack as
-/// `verified_lazy_delta_checked_cached` (cert cap <= 500, sizes <=
-/// 500, closedness), with the round budget `whnf_multi_round_ok(k,
-/// 500, 500, 1)` dischargeable at these literals precisely BECAUSE of
-/// the phantom-round vacuity fix (the old predicate capped d at ~38).
+/// verified MEASURED multi-round whnf (`verified_whnf_measured_rounds`,
+/// 8 rounds, each one beta/zeta fixpoint + one delta attempt, the term
+/// re-measured and re-gated at 500 before every round so budgets never
+/// compound) and confirm on pointer-equal results. A `Some(true)`
+/// carries `defeq` -- genuine model-level definitional equality by
+/// direct JOINABILITY (both sides `pstep_star`-reach the same term),
+/// needing NO confluence machinery at all. Total (no requires): cert
+/// cap <= 500, entry sizes <= 500, closedness checks; the per-round
+/// budget is dischargeable at the (500, 500, 1) literals precisely
+/// BECAUSE of the phantom-round vacuity fix (the old predicate capped
+/// d at ~38).
 pub fn verified_defeq_whnf_checked<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, cert: &EnvCapCert<'e, 'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     ensures match result {
         Some(true) => defeq(to_model_of_env(cert.spec_env()), to_model(x), to_model(y)),
@@ -2428,20 +2429,8 @@ pub fn verified_defeq_whnf_checked<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     if ctx.num_loose_bvars(y) != 0 {
         return None;
     }
-    proof {
-        depth_le_size(to_model(x));
-        depth_le_size(to_model(y));
-        nlbv_bound_implies_max_var_below(to_model(x), 0);
-        nlbv_bound_implies_max_var_below(to_model(y), 0);
-        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
-        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
-        reveal_with_fuel(whnf_multi_round_ok, 2);
-        reveal_with_fuel(whnf_fixpoint_ok, 2);
-        assert(whnf_fixpoint_ok(500, 500, 1));
-        assert(whnf_multi_round_ok(k as nat, 500, 500, 1));
-    }
-    let rx = match verified_whnf_multi_round(ctx, env, x, fuel, Ghost(k as nat), Ghost(500 as nat), Ghost(500 as nat), 1) { Some(v) => v, None => return None };
-    let ry = match verified_whnf_multi_round(ctx, env, y, fuel, Ghost(k as nat), Ghost(500 as nat), Ghost(500 as nat), 1) { Some(v) => v, None => return None };
+    let rx = verified_whnf_measured_rounds(ctx, env, x, fuel, 8);
+    let ry = verified_whnf_measured_rounds(ctx, env, y, fuel, 8);
     if expr_ptr_eq(rx, ry) {
         proof {
             assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(rx)));
