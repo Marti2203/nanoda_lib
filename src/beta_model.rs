@@ -2419,6 +2419,112 @@ pub open spec fn tak_m(bound: nat, mcap: nat, dcap: nat, e: ExprSpec) -> nat
     }
 }
 
+/// Every term has at least one node.
+pub proof fn size_pos(e: ExprSpec)
+    ensures size(e) >= 1
+{
+    match e {
+        ExprSpec::App(..) | ExprSpec::Bind(..) | ExprSpec::Let(..) | ExprSpec::Proj(..) => {}
+        _ => {}
+    }
+}
+
+/// CLOSED-FORM ceiling for `tak_d`, parametrized by a size ceiling `s0`
+/// so it is computable from exec-measurable quantities: each of the
+/// (at most `size(e)`) tree nodes contributes at most `dcap + s0 + 1`,
+/// so the structural sum is dominated by `size(e) * (dcap + s0 + 1)`.
+/// This (with `tak_m_le` below) is what lets a producer discharge the
+/// Takahashi overflow ceilings numerically -- `tak_d`/`tak_m` are
+/// structural recursions over ghost terms, not runtime-evaluable.
+pub proof fn tak_d_le(dcap: nat, e: ExprSpec, s0: nat)
+    requires size(e) <= s0
+    ensures tak_d(dcap, e) <= size(e) * (dcap + s0 + 1)
+    decreases e
+{
+    let f0 = dcap + s0 + 1;
+    match e {
+        ExprSpec::App(f, a) => {
+            tak_d_le(dcap, *f, s0);
+            tak_d_le(dcap, *a, s0);
+            assert(size(*f) * f0 + size(*a) * f0 + f0 == (size(*f) + size(*a) + 1) * f0) by (nonlinear_arith);
+        }
+        ExprSpec::Bind(t, b) => {
+            tak_d_le(dcap, *t, s0);
+            tak_d_le(dcap, *b, s0);
+            assert(size(*t) * f0 + size(*b) * f0 + f0 == (size(*t) + size(*b) + 1) * f0) by (nonlinear_arith);
+        }
+        ExprSpec::Let(t, v, b) => {
+            tak_d_le(dcap, *t, s0);
+            tak_d_le(dcap, *v, s0);
+            tak_d_le(dcap, *b, s0);
+            assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 + f0 == (size(*t) + size(*v) + size(*b) + 1) * f0) by (nonlinear_arith);
+        }
+        ExprSpec::Proj(s) => {
+            tak_d_le(dcap, *s, s0);
+            assert(size(*s) * f0 + f0 == (size(*s) + 1) * f0) by (nonlinear_arith);
+        }
+        _ => {
+            assert(f0 >= 1);
+            assert(size(e) * f0 >= size(e) * 1) by (nonlinear_arith)
+                requires f0 >= 1;
+        }
+    }
+}
+
+/// CLOSED-FORM ceiling for `tak_m` -- same per-node argument as
+/// `tak_d_le` with the per-node contribution
+/// `K = mcap + bound + growth(s0) + 2*dcap + 7 + 2*s0*(dcap + s0 + 1)`
+/// (the App/Let arms' additive tail plus their `tak_d` side-payload,
+/// the latter bounded by `tak_d_le` across both children at once).
+pub proof fn tak_m_le(bound: nat, mcap: nat, dcap: nat, e: ExprSpec, s0: nat)
+    requires size(e) <= s0
+    ensures tak_m(bound, mcap, dcap, e) <= size(e) * (mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 + 1))
+    decreases e
+{
+    let f0 = dcap + s0 + 1;
+    let k0 = mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * f0;
+    growth_mono(size(e), s0);
+    match e {
+        ExprSpec::App(f, a) => {
+            tak_m_le(bound, mcap, dcap, *f, s0);
+            tak_m_le(bound, mcap, dcap, *a, s0);
+            tak_d_le(dcap, *f, s0);
+            tak_d_le(dcap, *a, s0);
+            assert((size(*f) + size(*a)) * f0 <= 2 * s0 * f0) by (nonlinear_arith)
+                requires size(*f) + size(*a) <= s0;
+            assert(size(*f) * f0 + size(*a) * f0 == (size(*f) + size(*a)) * f0) by (nonlinear_arith);
+            assert(size(*f) * k0 + size(*a) * k0 + k0 == (size(*f) + size(*a) + 1) * k0) by (nonlinear_arith);
+        }
+        ExprSpec::Bind(t, b) => {
+            tak_m_le(bound, mcap, dcap, *t, s0);
+            tak_m_le(bound, mcap, dcap, *b, s0);
+            assert(size(*t) * k0 + size(*b) * k0 + k0 == (size(*t) + size(*b) + 1) * k0) by (nonlinear_arith);
+        }
+        ExprSpec::Let(t, v, b) => {
+            tak_m_le(bound, mcap, dcap, *t, s0);
+            tak_m_le(bound, mcap, dcap, *v, s0);
+            tak_m_le(bound, mcap, dcap, *b, s0);
+            tak_d_le(dcap, *t, s0);
+            tak_d_le(dcap, *v, s0);
+            tak_d_le(dcap, *b, s0);
+            assert((size(*t) + size(*v) + size(*b)) * f0 <= 2 * s0 * f0) by (nonlinear_arith)
+                requires size(*t) + size(*v) + size(*b) <= s0;
+            assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 == (size(*t) + size(*v) + size(*b)) * f0) by (nonlinear_arith);
+            assert(size(*t) * k0 + size(*v) * k0 + size(*b) * k0 + k0 == (size(*t) + size(*v) + size(*b) + 1) * k0) by (nonlinear_arith);
+        }
+        ExprSpec::Proj(s) => {
+            tak_m_le(bound, mcap, dcap, *s, s0);
+            assert(size(*s) * k0 + k0 == (size(*s) + 1) * k0) by (nonlinear_arith);
+        }
+        _ => {
+            assert(k0 >= bound + growth(s0));
+            size_pos(e);
+            assert(size(e) * k0 >= 1 * k0) by (nonlinear_arith)
+                requires size(e) >= 1;
+        }
+    }
+}
+
 /// THE TAKAHASHI LEMMA over the ghost-certified relation -- the theorem
 /// this entire investigation has been building toward: ANY certified
 /// one-step parallel reduct `N` of `M` further reduces (with certified
@@ -3491,6 +3597,150 @@ pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, boun
     assert(qch[qch.len() - 1] == z1);
     assert(rch[rch.len() - 1] == z2);
     defeq_trans_certified(env, bound, a, c, qch, rch, mlink, dlink, ms, ds);
+}
+
+/// Closed-form (size-ceiling-only) versions of the Takahashi caps and
+/// the `join1` ladder level -- everything a producer can compute from
+/// `s0` (a size ceiling on the middle terms) and the link caps alone,
+/// with no structural recursion over ghost terms. `tak_d_le`/`tak_m_le`
+/// connect the real `tak_*` values to these.
+pub open spec fn tak_d_ceil(dcap: nat, s0: nat) -> nat {
+    s0 * (dcap + s0 + 1)
+}
+
+pub open spec fn tak_m_ceil(bound: nat, mcap: nat, dcap: nat, s0: nat) -> nat {
+    s0 * (mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 + 1))
+}
+
+pub open spec fn join1_m_ceil(bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
+    mlink + tak_m_ceil(bound, mlink, dlink, s0)
+}
+
+pub open spec fn join1_d_ceil(dlink: nat, s0: nat) -> nat {
+    dlink + tak_d_ceil(dlink, s0)
+}
+
+/// The ONE numeric ceiling that dominates all four of
+/// `defeq_trans_single_middle`'s takahashi overflow requires (the
+/// level-1 pair is dominated by the level-2 pair since the ladder is
+/// monotone) -- evaluated at the closed-form level-1 caps.
+pub open spec fn single_middle_ceil(bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
+    let m1b = join1_m_ceil(bound, mlink, dlink, s0);
+    let d1b = join1_d_ceil(dlink, s0);
+    bound + m1b + 6 * d1b + tak_m_ceil(bound, m1b, d1b, s0) + 4 * tak_d_ceil(d1b, s0) + growth(s0) + s0 + 40
+}
+
+/// Concrete satisfiability witness for `defeq_trans_single_middle_sized`'s
+/// numeric requires (the discipline from the strip-formulation vacuity
+/// catch): at producer-plausible values -- middle terms of size <= 100,
+/// mvb bound 1000, link caps from `chain_to_pstep_d_links`'s own shape
+/// (`mlink = bound + growth(cap)`, `dlink = cap` at cap 100) -- the one
+/// ceiling fits u32 range with ~4x headroom. (Hand-derived scaling: the
+/// dominant term is ~2*s0^4, so size ceilings up to ~200 fit; beyond
+/// that the single-middle route needs smaller link caps.)
+pub proof fn single_middle_ceil_sat_demo()
+    ensures single_middle_ceil(1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000
+{
+    assert(single_middle_ceil(1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000) by (compute);
+}
+
+/// `tak_d_ceil` is monotone in its cap.
+pub proof fn tak_d_ceil_mono(d1: nat, d2: nat, s0: nat)
+    requires d1 <= d2
+    ensures tak_d_ceil(d1, s0) <= tak_d_ceil(d2, s0)
+{
+    assert(s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1)) by (nonlinear_arith)
+        requires d1 <= d2;
+}
+
+/// `tak_m_ceil` is monotone in both caps.
+pub proof fn tak_m_ceil_mono(bound: nat, m1: nat, d1: nat, m2: nat, d2: nat, s0: nat)
+    requires m1 <= m2, d1 <= d2
+    ensures tak_m_ceil(bound, m1, d1, s0) <= tak_m_ceil(bound, m2, d2, s0)
+{
+    assert(s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1)) by (nonlinear_arith)
+        requires d1 <= d2;
+    assert(s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
+        <= s0 * (m2 + bound + growth(s0) + 2 * d2 + 7 + 2 * s0 * (d2 + s0 + 1))) by (nonlinear_arith)
+        requires m1 <= m2, d1 <= d2, s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1);
+}
+
+/// `defeq_trans_single_middle` with the four structural-recursion
+/// overflow requires replaced by ONE closed-form numeric ceiling over
+/// `(bound, mlink, dlink, s0)` -- the form a PRODUCER can actually
+/// discharge, since `tak_m`/`tak_d` are ghost structural recursions a
+/// runtime gate can never evaluate, while `single_middle_ceil` is plain
+/// polynomial arithmetic in exec-measurable quantities.
+pub proof fn defeq_trans_single_middle_sized(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat, s0: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_star(env, a, z1),
+        pstep_star(env, c, z2),
+        pstep_d(env, b, z1, mlink, dlink),
+        pstep_d(env, b, z2, mlink, dlink),
+        max_var_below(b, bound),
+        max_var_below(z2, bound),
+        string_lits_ok(b, 0),
+        string_lits_ok(z2, 0),
+        size(b) <= s0,
+        size(z2) <= s0,
+        single_middle_ceil(bound, mlink, dlink, s0) <= 0xFFFF_0000,
+    ensures defeq(env, a, c)
+{
+    let m1b = join1_m_ceil(bound, mlink, dlink, s0);
+    let d1b = join1_d_ceil(dlink, s0);
+    // Level-1 tak bounds for both middle terms.
+    tak_m_le(bound, mlink, dlink, b, s0);
+    tak_m_le(bound, mlink, dlink, z2, s0);
+    tak_d_le(dlink, b, s0);
+    tak_d_le(dlink, z2, s0);
+    assert(size(b) * (dlink + s0 + 1) <= s0 * (dlink + s0 + 1)) by (nonlinear_arith)
+        requires size(b) <= s0;
+    assert(size(z2) * (dlink + s0 + 1) <= s0 * (dlink + s0 + 1)) by (nonlinear_arith)
+        requires size(z2) <= s0;
+    assert(size(b) * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))
+        <= s0 * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))) by (nonlinear_arith)
+        requires size(b) <= s0;
+    assert(size(z2) * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))
+        <= s0 * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))) by (nonlinear_arith)
+        requires size(z2) <= s0;
+    assert(tak_m(bound, mlink, dlink, b) <= tak_m_ceil(bound, mlink, dlink, s0));
+    assert(tak_m(bound, mlink, dlink, z2) <= tak_m_ceil(bound, mlink, dlink, s0));
+    assert(tak_d(dlink, b) <= tak_d_ceil(dlink, s0));
+    assert(tak_d(dlink, z2) <= tak_d_ceil(dlink, s0));
+    // The actual join1 level is under its closed-form ceiling.
+    let m1 = join1_m(bound, mlink, dlink, b, z2);
+    let d1 = join1_d(bound, dlink, b, z2);
+    assert(m1 <= m1b);
+    assert(d1 <= d1b);
+    // Level-2 tak bounds at the ACTUAL level-1 caps, monotoned up to
+    // the closed-form level-1 caps.
+    tak_m_le(bound, m1, d1, b, s0);
+    tak_m_le(bound, m1, d1, z2, s0);
+    tak_d_le(d1, b, s0);
+    tak_d_le(d1, z2, s0);
+    assert(size(b) * (d1 + s0 + 1) <= s0 * (d1 + s0 + 1)) by (nonlinear_arith)
+        requires size(b) <= s0;
+    assert(size(z2) * (d1 + s0 + 1) <= s0 * (d1 + s0 + 1)) by (nonlinear_arith)
+        requires size(z2) <= s0;
+    assert(size(b) * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
+        <= s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))) by (nonlinear_arith)
+        requires size(b) <= s0;
+    assert(size(z2) * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
+        <= s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))) by (nonlinear_arith)
+        requires size(z2) <= s0;
+    tak_m_ceil_mono(bound, m1, d1, m1b, d1b, s0);
+    tak_d_ceil_mono(d1, d1b, s0);
+    assert(tak_m(bound, m1, d1, b) <= tak_m_ceil(bound, m1b, d1b, s0));
+    assert(tak_m(bound, m1, d1, z2) <= tak_m_ceil(bound, m1b, d1b, s0));
+    assert(tak_d(d1, b) <= tak_d_ceil(d1b, s0));
+    assert(tak_d(d1, z2) <= tak_d_ceil(d1b, s0));
+    // Everything in sight fits under the one ceiling.
+    growth_mono(size(b), s0);
+    growth_mono(size(z2), s0);
+    tak_m_ceil_mono(bound, mlink, dlink, m1b, d1b, s0);
+    tak_d_ceil_mono(dlink, d1b, s0);
+    defeq_trans_single_middle(env, bound, a, b, c, z1, z2, mlink, dlink);
 }
 
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
