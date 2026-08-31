@@ -49,7 +49,7 @@ use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{size, args_size_sum, spine_reduce_size_cap, spine_reduce_size_cap_prefix_le, spine_reduce_chain_sized_wrapped, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model, string_free, string_lits_ok, string_free_lits_ok, size_pos, nlbv_bound_implies_max_var_below, depth_le_size, spine_reduce_chain_sized_full_wrapped};
+use crate::beta_model::{size, args_size_sum, spine_reduce_size_cap, spine_reduce_size_cap_prefix_le, spine_reduce_chain_sized_wrapped, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model, string_free, string_lits_ok, string_free_lits_ok, size_pos, nlbv_bound_implies_max_var_below, depth_le_size, spine_reduce_chain_sized_full_wrapped, pstep_spine_app_one, spine_app_size, subst1_size_bound, spine_app_max_var_below, string_lits_ok_spine_app, string_lits_ok_subst1};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
@@ -2491,6 +2491,190 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         }
         None => None,
     }
+}
+
+/// ZETA'S FULL-CONJUNCT TWIN of `verified_whnf_beta_step_sized_full`:
+/// the zeta step's chain is exactly TWO elements (the applied `Let` and
+/// its substituted reduct under the same argument spine, one `pstep`
+/// link between them), each carrying the complete
+/// size/`max_var_below`/`string_lits_ok(_, 0)` triple. The uniform mvb
+/// bound is `bound + 2*size_gate + 2`: the substitution grows mvb by
+/// `1 + depth(body)` on top of the joint base `bound + size(body) + 1`
+/// (the closed body's own depth-derived mvb joined with `val`'s), both
+/// body terms gated by `size_gate`. Runtime gates: `verified_string_
+/// free` on the whole `Let` (covering `t`/`val`/`body` structurally)
+/// and every argument; sizes such that BOTH elements fit `size_gate`
+/// (`size(Let) + spine <= gate` and `size(body)*(size(val)+1) + spine
+/// <= gate`, the latter `subst1_size_bound`'s worst case).
+pub fn verified_whnf_zeta_step_sized_full<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, size_gate: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        exists |t_model: ExprSpec| to_model(e_fun) == ExprSpec::Let(Box::new(t_model), Box::new(to_model(val)), Box::new(to_model(body))),
+        nlbv(to_model(e_fun)) <= 0,
+        nlbv(to_model(body)) <= 1,
+        nlbv(to_model(val)) <= 0,
+        max_var_below(to_model(val), bound),
+        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        depth(to_model(body)) <= 60000,
+        size_gate <= 60000,
+        bound + 2 * size_gate as nat + 12 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            &&& to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r))
+            &&& exists |ch: Seq<ExprSpec>|
+                #![trigger ch.len()]
+                ch.len() >= 1
+                && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+                && ch[ch.len() - 1] == to_model(r)
+                && pstep_chain_valid(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ch)
+                && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= size_gate as nat)
+                && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], (bound + 2 * size_gate as nat + 2) as nat))
+                && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0))
+        },
+        None => true,
+    }
+{
+    let ghost full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    let sfree = match verified_string_free(ctx, e_fun, fuel) { Some(b) => b, None => return None };
+    if !sfree {
+        return None;
+    }
+    let s_fun = match verified_size(ctx, e_fun, fuel) { Some(v) => v, None => return None };
+    if s_fun > size_gate {
+        return None;
+    }
+    let sb = match verified_size(ctx, body, fuel) { Some(v) => v, None => return None };
+    let sv = match verified_size(ctx, val, fuel) { Some(v) => v, None => return None };
+    let mut sum: u64 = 0;
+    let mut k: usize = 0;
+    proof {
+        assert(full_model.subrange(0, full_model.len() as int) =~= full_model);
+    }
+    while k < args.len()
+        invariant
+            k <= args@.len(),
+            sum <= size_gate,
+            size_gate <= 60000,
+            full_model == Seq::new(args@.len(), |i: int| to_model(args@[i])),
+            args_size_sum(full_model) == sum as nat + args_size_sum(full_model.subrange(k as int, full_model.len() as int)),
+            forall |j: int| 0 <= j < k ==> string_free(to_model(args@[j])),
+        decreases args@.len() - k
+    {
+        let afree = match verified_string_free(ctx, args[k], fuel) { Some(b) => b, None => return None };
+        if !afree {
+            return None;
+        }
+        let sa = match verified_size(ctx, args[k], fuel) { Some(v) => v, None => return None };
+        let s2: u64 = sum + 1u64 + sa as u64;
+        if s2 > size_gate as u64 {
+            return None;
+        }
+        proof {
+            let suf = full_model.subrange(k as int, full_model.len() as int);
+            assert(suf.len() > 0);
+            assert(suf[0] == to_model(args@[k as int]));
+            assert(sa as nat == size(to_model(args@[k as int])));
+            assert(suf.subrange(1, suf.len() as int) =~= full_model.subrange(k as int + 1, full_model.len() as int));
+            assert(args_size_sum(suf) == 1 + size(suf[0]) + args_size_sum(suf.subrange(1, suf.len() as int)));
+        }
+        sum = s2;
+        k = k + 1;
+    }
+    proof {
+        assert(full_model.subrange(args@.len() as int, full_model.len() as int) =~= Seq::<ExprSpec>::empty());
+        assert(args_size_sum(full_model) == sum as nat);
+    }
+    if s_fun as u64 + sum > size_gate as u64 {
+        return None;
+    }
+    assert(sb as u64 * (sv as u64 + 1u64) <= 60000u64 * 60001u64) by (nonlinear_arith)
+        requires sb <= 60000, sv <= 60000;
+    let ssub: u64 = sb as u64 * (sv as u64 + 1u64);
+    if ssub + sum > size_gate as u64 {
+        return None;
+    }
+    let r = match verified_whnf_zeta_step(ctx, e_fun, val, body, args, fuel, Ghost(bound)) { Some(v) => v, None => return None };
+    proof {
+        let env0 = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+        let fm = to_model(e_fun);
+        let target = subst1(to_model(body), to_model(val));
+        let sg = size_gate as nat;
+        let mb = (bound + 2 * sg + 2) as nat;
+        let ch = seq![spine_app(fm, full_model), spine_app(target, full_model)];
+        assert(ch.len() == 2);
+        assert(ch[0] == spine_app(fm, full_model));
+        assert(ch[1] == to_model(r));
+        // The one link: the zeta step under the whole argument spine.
+        assert(pstep(env0, fm, target)) by {
+            assert(pstep(env0, to_model(body), to_model(body)));
+            assert(pstep(env0, to_model(val), to_model(val)));
+        }
+        pstep_spine_app_one(env0, fm, target, full_model);
+        assert(pstep_chain_valid(env0, ch)) by {
+            assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env0, ch[i], ch[i + 1]) by {
+                assert(i == 0);
+            }
+        }
+        // Sizes: both elements fit the gate by the runtime checks.
+        spine_app_size(fm, full_model);
+        assert(s_fun as nat == size(fm));
+        assert(size(ch[0]) <= sg);
+        subst1_size_bound(to_model(body), to_model(val));
+        assert(sb as nat == size(to_model(body)));
+        assert(sv as nat == size(to_model(val)));
+        assert(size(target) <= (sb as nat) * (sv as nat + 1));
+        assert(ssub as nat == (sb as nat) * (sv as nat + 1));
+        spine_app_size(target, full_model);
+        assert(size(ch[1]) <= sg);
+        // mvb: the whole closed Let via its depth, the reduct via
+        // subst1's growth over the joint base, args monotoned up.
+        nlbv_bound_implies_max_var_below(fm, 0);
+        depth_le_size(fm);
+        assert(depth(fm) <= sg);
+        max_var_below_mono(fm, (depth(fm) + 0) as nat, mb);
+        assert forall |i: int| 0 <= i < full_model.len() implies max_var_below(#[trigger] full_model[i], mb) by {
+            assert(full_model[i] == to_model(args@[i]));
+            max_var_below_mono(full_model[i], bound, mb);
+        }
+        spine_app_max_var_below(fm, full_model, mb);
+        let joint = (bound + sb as nat + 1) as nat;
+        nlbv_bound_implies_max_var_below(to_model(body), 1);
+        depth_le_size(to_model(body));
+        max_var_below_mono(to_model(body), (depth(to_model(body)) + 1) as nat, joint);
+        max_var_below_mono(to_model(val), bound, joint);
+        subst1_max_var_below(joint, to_model(body), to_model(val));
+        assert(joint + 1 + depth(to_model(body)) <= mb);
+        max_var_below_mono(target, ((joint + 1) + depth(to_model(body))) as nat, mb);
+        spine_app_max_var_below(target, full_model, mb);
+        // strings: the whole-Let gate covers val/body structurally; the
+        // per-arg gates cover the spine; subst1 preserves.
+        assert(string_free(fm));
+        assert(string_free(to_model(val)) && string_free(to_model(body)));
+        string_free_lits_ok(fm, 0);
+        string_free_lits_ok(to_model(val), 0);
+        string_free_lits_ok(to_model(body), 0);
+        assert forall |i: int| 0 <= i < full_model.len() implies string_lits_ok(#[trigger] full_model[i], 0) by {
+            assert(full_model[i] == to_model(args@[i]));
+            string_free_lits_ok(full_model[i], 0);
+        }
+        string_lits_ok_spine_app(fm, full_model, 0);
+        string_lits_ok_subst1(to_model(body), to_model(val), 0);
+        string_lits_ok_spine_app(target, full_model, 0);
+        assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= sg && max_var_below(#[trigger] ch[i], mb) && string_lits_ok(#[trigger] ch[i], 0) by {
+            if i == 0 {
+            } else {
+                assert(i == 1);
+            }
+        }
+        assert(ch.len() >= 1
+            && ch[0] == spine_app(fm, Seq::new(args@.len(), |i: int| to_model(args@[i])))
+            && ch[ch.len() - 1] == to_model(r)
+            && pstep_chain_valid(env0, ch)
+            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= size_gate as nat)
+            && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], mb))
+            && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0)));
+    }
+    Some(r)
 }
 
 /// Real-arena counterpart to `tc.rs`'s `whnf_no_unfolding_aux`, ONE pass

@@ -13556,6 +13556,85 @@ pub proof fn spine_reduce_chain_sized(env: Map<u64, (Seq<u64>, ExprSpec)>, head:
     }
 }
 
+/// Two full-conjunct chains sharing an endpoint CONCATENATE, keeping
+/// every per-element fact -- the multi-round composition piece: each
+/// producer round emits its own sized chain, and successive rounds
+/// (whose ends and starts meet on the same intermediate term) fold
+/// into one chain feeding `chain_to_pstep_d_links` once at the shared
+/// caps. Stated with explicit input chains (not existentials) so a
+/// caller can fold any number of rounds by re-choosing.
+pub proof fn full_chain_concat(env: Map<u64, (Seq<u64>, ExprSpec)>, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, sgate: nat, mb: nat, scap: nat)
+    requires
+        ch1.len() >= 1,
+        ch2.len() >= 1,
+        ch1[ch1.len() - 1] == ch2[0],
+        pstep_chain_valid(env, ch1),
+        pstep_chain_valid(env, ch2),
+        forall |i: int| 0 <= i < ch1.len() ==> size(#[trigger] ch1[i]) <= sgate,
+        forall |i: int| 0 <= i < ch2.len() ==> size(#[trigger] ch2[i]) <= sgate,
+        forall |i: int| 0 <= i < ch1.len() ==> max_var_below(#[trigger] ch1[i], mb),
+        forall |i: int| 0 <= i < ch2.len() ==> max_var_below(#[trigger] ch2[i], mb),
+        forall |i: int| 0 <= i < ch1.len() ==> string_lits_ok(#[trigger] ch1[i], scap),
+        forall |i: int| 0 <= i < ch2.len() ==> string_lits_ok(#[trigger] ch2[i], scap),
+    ensures exists |ch: Seq<ExprSpec>|
+        #![trigger ch.len()]
+        ch.len() >= 1
+        && ch[0] == ch1[0]
+        && ch[ch.len() - 1] == ch2[ch2.len() - 1]
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= sgate)
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], mb))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap))
+{
+    let ch = ch1 + ch2.subrange(1, ch2.len() as int);
+    assert(ch.len() == ch1.len() + ch2.len() - 1);
+    assert(ch[0] == ch1[0]);
+    assert forall |i: int| 0 <= i < ch.len() implies #[trigger] ch[i] == (if i < ch1.len() { ch1[i] } else { ch2[i - ch1.len() + 1] }) by {
+        if i < ch1.len() {
+        } else {
+            assert(ch[i] == ch2.subrange(1, ch2.len() as int)[i - ch1.len()]);
+        }
+    }
+    assert(ch[ch.len() - 1] == ch2[ch2.len() - 1]) by {
+        if ch2.len() == 1 {
+            assert(ch[ch.len() - 1] == ch1[ch1.len() - 1]);
+        }
+    }
+    assert(pstep_chain_valid(env, ch)) by {
+        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies pstep(env, ch[i], ch[i + 1]) by {
+            if i + 1 < ch1.len() {
+                assert(ch[i] == ch1[i]);
+                assert(ch[i + 1] == ch1[i + 1]);
+                assert(pstep(env, ch1[i], ch1[i + 1]));
+            } else if i + 1 == ch1.len() {
+                assert(ch[i] == ch1[i]);
+                assert(ch1[i] == ch1[ch1.len() - 1]);
+                assert(ch[i + 1] == ch2[1]);
+                assert(pstep(env, ch2[0], ch2[1]));
+            } else {
+                let j = i - ch1.len() + 1;
+                assert(ch[i] == ch2[j]);
+                assert(ch[i + 1] == ch2[j + 1]);
+                assert(pstep(env, ch2[j], ch2[j + 1]));
+            }
+        }
+    }
+    assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= sgate && max_var_below(#[trigger] ch[i], mb) && string_lits_ok(#[trigger] ch[i], scap) by {
+        if i < ch1.len() {
+            assert(ch[i] == ch1[i]);
+        } else {
+            assert(ch[i] == ch2[i - ch1.len() + 1]);
+        }
+    }
+    assert(ch.len() >= 1
+        && ch[0] == ch1[0]
+        && ch[ch.len() - 1] == ch2[ch2.len() - 1]
+        && pstep_chain_valid(env, ch)
+        && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= sgate)
+        && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], mb))
+        && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], scap)));
+}
+
 /// A full-conjunct chain becomes a UNIFORM certified `pstep_d` chain:
 /// every link converted via `pstep_to_pstep_d` at its own element's
 /// size, then weakened (`pstep_d_mono`/`growth_mono`) to one shared
