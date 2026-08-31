@@ -1517,4 +1517,53 @@ mod routed_tests {
             );
         });
     }
+
+    /// Multi-round exercise of the whnf-join route: with
+    /// `foo := (fun (_ : Sort 1) => Var 0)` in the environment, the pair
+    /// `(Const foo) (Sort 0)` vs `Sort 0` needs TWO whnf rounds (round
+    /// one delta-unfolds `foo` under the application, round two
+    /// beta-reduces) -- exactly what the measured-rounds loop provides
+    /// and the old single-a-priori-round form could not.
+    #[test]
+    fn routed_whnf_join_route_confirms_delta_then_beta() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        let mut dag = crate::util::LeanDag::new(&export.config);
+        let mut ctx = crate::util::TcCtx::new(&export, &mut dag);
+
+        let foo = ctx.str1("foo");
+        let anon = ctx.anonymous();
+        let prop = ctx.prop();
+        let zero = ctx.zero();
+        let one = ctx.succ(zero);
+        let sort1 = ctx.mk_sort(one);
+        let two = ctx.succ(one);
+        let sort2 = ctx.mk_sort(two);
+        let v0 = ctx.mk_var(0);
+        let lam = ctx.mk_lambda(anon, crate::expr::BinderStyle::Default, sort1, v0);
+        let foo_ty = ctx.mk_pi(anon, crate::expr::BinderStyle::Default, sort1, sort2);
+        let uparams = ctx.alloc_levels_slice(&[]);
+        let d = crate::env::Declar::Definition {
+            info: crate::env::DeclarInfo { name: foo, uparams, ty: foo_ty },
+            val: lam,
+            hint: crate::env::ReducibilityHint::Regular(1),
+        };
+        let mut declars = crate::util::new_fx_index_map();
+        declars.insert(foo, d);
+        let notation = crate::util::new_fx_hash_map();
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+
+        let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
+        let c_foo = tc.ctx.mk_const(foo, uparams);
+        let applied = tc.ctx.mk_app(c_foo, prop);
+        assert_ne!(applied, prop, "distinct pointers required to exercise the route");
+        assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
+        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(
+            crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, applied, prop, 100),
+            Some(true),
+            "the whnf-join boundary must confirm the delta-then-beta pair on its own"
+        );
+    }
 }
