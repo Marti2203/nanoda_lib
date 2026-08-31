@@ -10909,6 +10909,90 @@ pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: Ex
     defeq_bind_congr(env, t1, t2, b1, b2);
 }
 
+/// Satisfiability witness for `defeq_bind_intro_chains` (the discipline
+/// adopted after the strip lemma's vacuous first formulation): a
+/// CONCRETE instantiation with every requires discharged by
+/// computation. Body one is a real beta redex `(fun _ => Var 0) Closed`
+/// (closed at level 0, so instantiation is a no-op on it), body two its
+/// reduct `Closed`; the join is one genuine beta step. Concludes a
+/// nontrivial binder equality: `Bind(t, redex) ~ Bind(t, Closed)`.
+pub proof fn defeq_bind_intro_chains_demo(env: Map<u64, (Seq<u64>, ExprSpec)>, t: ExprSpec, k: u32)
+    requires env == Map::<u64, (Seq<u64>, ExprSpec)>::empty()
+    ensures defeq(env,
+        ExprSpec::Bind(Box::new(t), Box::new(ExprSpec::App(
+            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))),
+            Box::new(ExprSpec::Closed)))),
+        ExprSpec::Bind(Box::new(t), Box::new(ExprSpec::Closed)))
+{
+    reveal(shift);
+    reveal(subst);
+    let b1 = ExprSpec::App(
+        Box::new(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))),
+        Box::new(ExprSpec::Closed));
+    let b2 = ExprSpec::Closed;
+    let sub = seq![ExprSpec::Free(k)];
+    // Instantiation is a no-op on both bodies (b1's Var(0) sits under
+    // its own binder, where the substitution offset has moved to 1).
+    assert(subst_full(ExprSpec::Var(0), sub, 1) == ExprSpec::Var(0));
+    assert(subst_full(ExprSpec::Closed, sub, 0) == ExprSpec::Closed);
+    assert(subst_full(ExprSpec::Closed, sub, 1) == ExprSpec::Closed);
+    assert(subst_full(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0))), sub, 0)
+        == ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0))));
+    assert(subst_full(b1, sub, 0) == b1);
+    assert(subst_full(b2, sub, 0) == b2);
+    // The single beta step joining them.
+    assert(subst1(ExprSpec::Var(0), ExprSpec::Closed) == ExprSpec::Closed) by {
+        assert(shift(1, 0, ExprSpec::Closed) == ExprSpec::Closed);
+        assert(subst(0, ExprSpec::Closed, ExprSpec::Var(0)) == ExprSpec::Closed);
+        assert(shift(-1, 0, ExprSpec::Closed) == ExprSpec::Closed);
+    }
+    assert(pstep(env, ExprSpec::Var(0), ExprSpec::Var(0)));
+    assert(pstep(env, ExprSpec::Closed, ExprSpec::Closed));
+    assert(pstep(env, b1, b2)) by {
+        assert(pstep(env, ExprSpec::Var(0), ExprSpec::Var(0))
+            && pstep(env, ExprSpec::Closed, ExprSpec::Closed)
+            && b2 == subst1(ExprSpec::Var(0), ExprSpec::Closed));
+    }
+    let ch1 = seq![b1, b2];
+    let ch2 = seq![b2];
+    assert(pstep_chain_valid(env, ch1)) by {
+        assert forall |i: int| #![trigger ch1[i]] 0 <= i < ch1.len() - 1 implies pstep(env, ch1[i], ch1[i + 1]) by {
+            assert(i == 0);
+        }
+    }
+    assert(pstep_chain_valid(env, ch2));
+    // Per-element conditions: only ch1's source element carries any.
+    assert(max_var_below(ExprSpec::Var(0), 1));
+    assert(max_var_below(ExprSpec::Closed, 1));
+    assert(max_var_below(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0))), 1));
+    assert(max_var_below(b1, 1));
+    assert(string_lits_ok(ExprSpec::Var(0), 0));
+    assert(string_lits_ok(ExprSpec::Closed, 0));
+    assert(string_lits_ok(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0))), 0));
+    assert(string_lits_ok(b1, 0));
+    assert(size(ExprSpec::Var(0)) == 1);
+    assert(size(ExprSpec::Closed) == 1);
+    assert(size(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))) == 3);
+    assert(size(b1) == 5);
+    assert(depth(ExprSpec::Var(0)) == 0);
+    assert(depth(ExprSpec::Closed) == 0);
+    assert(depth(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0)))) == 1);
+    assert(depth(b1) == 2);
+    assert(fv_below(ExprSpec::Var(0), k));
+    assert(fv_below(ExprSpec::Closed, k));
+    assert(fv_below(ExprSpec::Bind(Box::new(ExprSpec::Closed), Box::new(ExprSpec::Var(0))), k));
+    assert(fv_below(b1, k));
+    assert(fv_below(b2, k));
+    assert(ch1[ch1.len() - 1] == ch2[ch2.len() - 1]);
+    assert forall |i: int| 0 <= i < ch1.len() - 1 implies 1 + 1 + growth(size(#[trigger] ch1[i])) + 2 * size(ch1[i]) + depth(ch1[i]) + 30 <= 0xFFFF_0000 by {
+        assert(i == 0);
+        assert(ch1[0] == b1);
+        assert(growth(5) == 30);
+    }
+    defeq_refl(env, t);
+    defeq_bind_intro_chains(env, t, t, b1, b2, k, ch1, ch2, 1);
+}
+
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`
 /// (not just `+1`/`-1`) -- `shift`'s own cutoff comparison never fires.
 pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
