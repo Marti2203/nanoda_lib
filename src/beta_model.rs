@@ -35,7 +35,7 @@ use crate::expr_model::depth;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full;
 #[cfg(verus_only)]
-use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below, has_fv, abstr_full_noop, abstr_subst_roundtrip};
+use crate::expr_model::{abstr_full, find_from_end, find_from_end_bound, fv_below, has_fv, abstr_full_noop, abstr_subst_roundtrip, abstr_subst_roundtrip_n};
 #[cfg(verus_only)]
 use crate::expr_model::nlbv;
 #[cfg(verus_only)]
@@ -10991,6 +10991,88 @@ pub proof fn defeq_bind_intro_chains_demo(env: Map<u64, (Seq<u64>, ExprSpec)>, t
     }
     defeq_refl(env, t);
     defeq_bind_intro_chains(env, t, t, b1, b2, k, ch1, ch2, 1);
+}
+
+/// A telescope of binders: `ts[0]` outermost, `body` innermost.
+pub open spec fn bind_telescope(ts: Seq<ExprSpec>, body: ExprSpec) -> ExprSpec
+    decreases ts.len()
+{
+    if ts.len() == 0 {
+        body
+    } else {
+        ExprSpec::Bind(Box::new(ts[0]), Box::new(bind_telescope(ts.subrange(1, ts.len() as int), body)))
+    }
+}
+
+/// `defeq` congruence over a whole binder telescope: pairwise-`defeq`
+/// binder types and `defeq` bodies give `defeq` telescopes (fold of
+/// `defeq_bind_congr`, outermost-last).
+pub proof fn defeq_bind_telescope_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, ts1: Seq<ExprSpec>, ts2: Seq<ExprSpec>, b1: ExprSpec, b2: ExprSpec)
+    requires
+        ts1.len() == ts2.len(),
+        forall |i: int| 0 <= i < ts1.len() ==> defeq(env, #[trigger] ts1[i], ts2[i]),
+        defeq(env, b1, b2),
+    ensures defeq(env, bind_telescope(ts1, b1), bind_telescope(ts2, b2))
+    decreases ts1.len()
+{
+    if ts1.len() == 0 {
+    } else {
+        let tail1 = ts1.subrange(1, ts1.len() as int);
+        let tail2 = ts2.subrange(1, ts2.len() as int);
+        assert forall |i: int| 0 <= i < tail1.len() implies defeq(env, #[trigger] tail1[i], tail2[i]) by {
+            assert(tail1[i] == ts1[i + 1]);
+            assert(tail2[i] == ts2[i + 1]);
+            assert(defeq(env, ts1[i + 1], ts2[i + 1]));
+        }
+        defeq_bind_telescope_congr(env, tail1, tail2, b1, b2);
+        assert(defeq(env, ts1[0], ts2[0]));
+        defeq_bind_congr(env, ts1[0], ts2[0], bind_telescope(tail1, b1), bind_telescope(tail2, b2));
+    }
+}
+
+/// THE TELESCOPED BINDER INTRO: the n-binder generalization of
+/// `defeq_bind_intro_chains`, matching how the real telescoping loops
+/// compare bodies -- ONE n-local instantiation of the fully-peeled
+/// bodies, joined by explicit chains. Distinct fresh locals (the
+/// counter discipline gives both distinctness and `fv_below`
+/// freshness), pairwise-`defeq` layer types, and the join transport
+/// through `pstep_star_abstr_chain` + the n-ary roundtrip, closed by
+/// telescope congruence.
+pub proof fn defeq_bind_telescope_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, ts1: Seq<ExprSpec>, ts2: Seq<ExprSpec>, b1: ExprSpec, b2: ExprSpec, ks: Seq<u32>, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        ts1.len() == ts2.len(),
+        forall |i: int| 0 <= i < ts1.len() ==> defeq(env, #[trigger] ts1[i], ts2[i]),
+        forall |i: int| 0 <= i < ks.len() ==> fv_below(b1, #[trigger] ks[i]),
+        forall |i: int| 0 <= i < ks.len() ==> fv_below(b2, #[trigger] ks[i]),
+        forall |i: int, j: int| 0 <= i < j < ks.len() ==> ks[i] != ks[j],
+        ch1.len() >= 1,
+        ch2.len() >= 1,
+        ch1[0] == subst_full(b1, Seq::new(ks.len(), |i: int| ExprSpec::Free(ks[i])), 0),
+        ch2[0] == subst_full(b2, Seq::new(ks.len(), |i: int| ExprSpec::Free(ks[i])), 0),
+        ch1[ch1.len() - 1] == ch2[ch2.len() - 1],
+        pstep_chain_valid(env, ch1),
+        pstep_chain_valid(env, ch2),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> max_var_below(#[trigger] ch1[i], bound),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> string_lits_ok(#[trigger] ch1[i], 0),
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch1[i])) + 2 * size(ch1[i]) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> max_var_below(#[trigger] ch2[i], bound),
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> string_lits_ok(#[trigger] ch2[i], 0),
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch2[i])) + 2 * size(ch2[i]) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
+    ensures defeq(env, bind_telescope(ts1, b1), bind_telescope(ts2, b2))
+{
+    pstep_star_abstr_chain(env, ch1, ks, 0, bound);
+    pstep_star_abstr_chain(env, ch2, ks, 0, bound);
+    abstr_subst_roundtrip_n(b1, ks, 0);
+    abstr_subst_roundtrip_n(b2, ks, 0);
+    assert(abstr_full(ch1[0], ks, 0) == b1);
+    assert(abstr_full(ch2[0], ks, 0) == b2);
+    let z = abstr_full(ch1[ch1.len() - 1], ks, 0);
+    assert(pstep_star(env, b1, z));
+    assert(abstr_full(ch2[ch2.len() - 1], ks, 0) == z);
+    assert(pstep_star(env, b2, z));
+    assert(defeq(env, b1, b2));
+    defeq_bind_telescope_congr(env, ts1, ts2, b1, b2);
 }
 
 /// reference at or above `c`, `shift(d, c, e)` is a no-op for ANY `d`

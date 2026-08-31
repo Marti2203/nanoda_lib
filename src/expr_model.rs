@@ -662,6 +662,121 @@ pub open spec fn fv_below(e: ExprSpec, b: u32) -> bool
     }
 }
 
+/// `find_from_end` misses when the id is absent.
+pub proof fn find_from_end_none(ks: Seq<u32>, id: u32)
+    requires forall |i: int| 0 <= i < ks.len() ==> ks[i] != id
+    ensures find_from_end(ks, id) is None
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+    } else {
+        assert(ks[ks.len() - 1] != id);
+        let ks0 = ks.subrange(0, ks.len() - 1);
+        assert forall |i: int| 0 <= i < ks0.len() implies ks0[i] != id by {
+            assert(ks0[i] == ks[i]);
+        }
+        find_from_end_none(ks0, id);
+    }
+}
+
+/// On a DISTINCT id list, `find_from_end` at `ks[q]` returns exactly the
+/// from-the-end position of `q`.
+pub proof fn find_from_end_distinct(ks: Seq<u32>, q: int)
+    requires
+        0 <= q < ks.len(),
+        forall |i: int, j: int| 0 <= i < j < ks.len() ==> ks[i] != ks[j],
+    ensures find_from_end(ks, ks[q]) == Some((ks.len() - 1 - q) as nat)
+    decreases ks.len()
+{
+    if ks[ks.len() - 1] == ks[q] {
+        assert(q == ks.len() - 1);
+    } else {
+        assert(q < ks.len() - 1);
+        let ks0 = ks.subrange(0, ks.len() - 1);
+        assert forall |i: int, j: int| 0 <= i < j < ks0.len() implies ks0[i] != ks0[j] by {
+            assert(ks0[i] == ks[i]);
+            assert(ks0[j] == ks[j]);
+        }
+        assert(ks0[q] == ks[q]);
+        find_from_end_distinct(ks0, q);
+        assert(find_from_end(ks0, ks[q]) == Some((ks0.len() - 1 - q) as nat));
+    }
+}
+
+/// The N-ARY ROUNDTRIP: instantiating `Var(o) .. Var(o + n - 1)` with n
+/// DISTINCT fresh free variables and abstracting them all back at the
+/// same offset is the identity -- the multi-binder generalization of
+/// `abstr_subst_roundtrip`, matching how the real telescoping loops
+/// instantiate every peeled layer with ONE n-local `inst` call. The
+/// orientation conventions agree by construction: `subst_full` sends
+/// `Var(o)` to the LAST substitution entry, and `find_from_end` gives
+/// the last matching id position 0, so `Free(ks[q])` abstracts back to
+/// exactly `Var(o + n - 1 - q)`.
+pub proof fn abstr_subst_roundtrip_n(bdy: ExprSpec, ks: Seq<u32>, o: nat)
+    requires
+        forall |i: int| 0 <= i < ks.len() ==> fv_below(bdy, #[trigger] ks[i]),
+        forall |i: int, j: int| 0 <= i < j < ks.len() ==> ks[i] != ks[j],
+    ensures abstr_full(subst_full(bdy, Seq::new(ks.len(), |i: int| ExprSpec::Free(ks[i])), o), ks, o) == bdy
+    decreases bdy
+{
+    let substs = Seq::new(ks.len(), |i: int| ExprSpec::Free(ks[i]));
+    let n = ks.len();
+    match bdy {
+        ExprSpec::Var(i) => {
+            if (i as nat) < o {
+            } else if (i as nat - o) < n {
+                let q = (n - 1 - (i as nat - o)) as int;
+                assert(subst_full(bdy, substs, o) == substs[q]);
+                assert(substs[q] == ExprSpec::Free(ks[q]));
+                find_from_end_distinct(ks, q);
+                assert(find_from_end(ks, ks[q]) == Some((n - 1 - q) as nat));
+                assert(abstr_full(ExprSpec::Free(ks[q]), ks, o) == ExprSpec::Var((o + (n - 1 - q)) as u32));
+                assert(o + (n - 1 - q) == i as nat);
+                assert((o + (n - 1 - q)) as u32 == i);
+            } else {
+            }
+        }
+        ExprSpec::Free(id) => {
+            assert(subst_full(bdy, substs, o) == bdy);
+            assert forall |i: int| 0 <= i < ks.len() implies ks[i] != id by {
+                assert(fv_below(bdy, ks[i]));
+                assert(id < ks[i]);
+            }
+            find_from_end_none(ks, id);
+        }
+        ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {
+        }
+        ExprSpec::App(f, a) => {
+            assert forall |i: int| 0 <= i < ks.len() implies fv_below(*f, #[trigger] ks[i]) && fv_below(*a, ks[i]) by {
+                assert(fv_below(bdy, ks[i]));
+            }
+            abstr_subst_roundtrip_n(*f, ks, o);
+            abstr_subst_roundtrip_n(*a, ks, o);
+        }
+        ExprSpec::Bind(t, b2) => {
+            assert forall |i: int| 0 <= i < ks.len() implies fv_below(*t, #[trigger] ks[i]) && fv_below(*b2, ks[i]) by {
+                assert(fv_below(bdy, ks[i]));
+            }
+            abstr_subst_roundtrip_n(*t, ks, o);
+            abstr_subst_roundtrip_n(*b2, ks, o + 1);
+        }
+        ExprSpec::Let(t, v, b2) => {
+            assert forall |i: int| 0 <= i < ks.len() implies fv_below(*t, #[trigger] ks[i]) && fv_below(*v, ks[i]) && fv_below(*b2, ks[i]) by {
+                assert(fv_below(bdy, ks[i]));
+            }
+            abstr_subst_roundtrip_n(*t, ks, o);
+            abstr_subst_roundtrip_n(*v, ks, o);
+            abstr_subst_roundtrip_n(*b2, ks, o + 1);
+        }
+        ExprSpec::Proj(s2) => {
+            assert forall |i: int| 0 <= i < ks.len() implies fv_below(*s2, #[trigger] ks[i]) by {
+                assert(fv_below(bdy, ks[i]));
+            }
+            abstr_subst_roundtrip_n(*s2, ks, o);
+        }
+    }
+}
+
 /// THE ROUNDTRIP: instantiating `Var(o)` with a FRESH free variable
 /// `Free(k)` and then abstracting `k` back at the same offset is the
 /// identity. The engine of the binder anti-substitution arc: it lets a
