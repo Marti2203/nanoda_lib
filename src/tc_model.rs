@@ -694,7 +694,9 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
 /// a-priori form compounds cubically (`whnf_multi_round_ok` at 2
 /// rounds already forces d <= ~23), while measuring resets the budget
 /// each round, so ANY number of rounds works on terms that stay under
-/// the 500-size gate. Best-effort TOTAL: on any gate failure or
+/// the 500-size gate (the ENV cap only needs to fit one delta round's
+/// budget, <= 60000 -- i.e. anything `EnvCapCert` can certify).
+/// Best-effort TOTAL: on any gate failure or
 /// exhausted callee it returns the reduct it already holds (a valid
 /// `pstep_star` target), never `None`; stops early on a fixpoint
 /// (pointer-equal round result). Each round is one
@@ -704,7 +706,7 @@ pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>
 pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32) -> (result: ExprPtr<'t>)
     requires
         nlbv(to_model(e)) <= 0,
-        env_global_cap(*env) <= 500,
+        env_global_cap(*env) <= 60000,
     ensures
         pstep_star(to_model_of_env(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
@@ -718,7 +720,7 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         invariant
             pstep_star(to_model_of_env(*env), to_model(e), to_model(cur)),
             nlbv(to_model(cur)) <= 0,
-            env_global_cap(*env) <= 500,
+            env_global_cap(*env) <= 60000,
         decreases rounds - i
     {
         let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };

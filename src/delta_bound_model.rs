@@ -2398,8 +2398,11 @@ pub fn verified_lazy_delta_checked_cached<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t
 /// compound) and confirm on pointer-equal results. A `Some(true)`
 /// carries `defeq` -- genuine model-level definitional equality by
 /// direct JOINABILITY (both sides `pstep_star`-reach the same term),
-/// needing NO confluence machinery at all. Total (no requires): cert
-/// cap <= 500, entry sizes <= 500, closedness checks; the per-round
+/// needing NO confluence machinery at all. Total (no requires): entry
+/// sizes <= 500 and closedness checks -- the ENV cap needs no gate at
+/// all (any EnvCapCert-certifiable cap <= 60000 fits one delta round's
+/// budget), so this route works under REAL-scale environments where
+/// the delta route's k <= 500 gate stays off; the per-round
 /// budget is dischargeable at the (500, 500, 1) literals precisely
 /// BECAUSE of the phantom-round vacuity fix (the old predicate capped
 /// d at ~38).
@@ -2410,13 +2413,9 @@ pub fn verified_defeq_whnf_checked<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     }
 {
     let env = cert.env_ref();
-    let k = cert.cap();
     proof {
         use_type_invariant(&*cert);
-        assert(env_global_cap(*env) <= k as nat);
-    }
-    if k > 500 {
-        return None;
+        assert(env_global_cap(*env) <= 60000);
     }
     let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
     let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
