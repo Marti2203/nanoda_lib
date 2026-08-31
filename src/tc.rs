@@ -68,6 +68,12 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// of different struct fields are exclusive, but it can't analyze what fields of a given
     /// field's type are being exclusively borrowed.
     pub(crate) env: &'x Env<'x, 't>,
+    /// Lazily-initialized environment-cap certificate for the verified
+    /// delta route (`delta_bound_model::EnvCapCert`). Outer `None` means
+    /// the scan has not been attempted yet; inner `None` means the scan
+    /// declined (a declaration too large, or fuel ran out), so the route
+    /// stays off for this checker.
+    pub(crate) verified_env_cert: Option<Option<crate::delta_bound_model::EnvCapCert<'x, 'x, 't>>>,
     /// The caches for things like inference, reduction, and equality checking.
     pub(crate) tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
@@ -189,7 +195,7 @@ impl<'p> ExportFile<'p> {
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
         assert_eq!(dag.dbj_level_counter, 0);
-        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info } 
+        Self { ctx: dag, env, verified_env_cert: None, tc_cache: TcCache::new(), declar_info }
     }
 
     /// Conduct the preliminary checks done on all declarations; a declaration
@@ -969,6 +975,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return true
         }
 
+        // Verified delta route (see `delta_bound_model::verified_lazy_delta_checked_cached`):
+        // the environment-cap certificate is scanned once per checker and
+        // reused across calls; a `Some(true)` carries machine-checked
+        // pstep_star reductions of both sides to a related pair. Like the
+        // core route above, this only ever CONFIRMS equality.
+        if self.verified_env_cert.is_none() {
+            self.verified_env_cert =
+                Some(crate::delta_bound_model::EnvCapCert::make(self.ctx, self.env, 100_000));
+        }
+        if let Some(Some(cert)) = self.verified_env_cert.as_ref() {
+            if let Some(true) =
+                crate::delta_bound_model::verified_lazy_delta_checked_cached(self.ctx, cert, x, y, 100)
+            {
+                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+                return true
+            }
+        }
+
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 
@@ -1396,5 +1420,57 @@ mod routed_tests {
             assert_ne!(c1, c2, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(c1, c2), "consts with interp-equal levels must be def_eq via the verified route");
         });
+    }
+
+    /// End-to-end smoke test exercising the verified DELTA route in
+    /// `def_eq`: with `foo := Sort 0` in the environment, the pair
+    /// `Const(foo, [])` vs `Sort 0` is unanswerable by the quick check
+    /// (not ptr-equal, not cached, not a sort/sort pair, not binders)
+    /// and by the env-free verified core (no unfolding there), so the
+    /// delta route is the first responder: it builds the env-cap
+    /// certificate (`EnvCapCert::make`), unfolds `foo`, and confirms
+    /// via the round's Continue + core close. The legacy pipeline's own
+    /// `lazy_delta_step` sits later and would also answer, so this
+    /// asserts behavior plus route placement, not exclusive attribution.
+    #[test]
+    fn routed_delta_route_confirms_definition_unfolding() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        let mut dag = crate::util::LeanDag::new(&export.config);
+        let mut ctx = crate::util::TcCtx::new(&export, &mut dag);
+
+        let foo = ctx.str1("foo");
+        let prop = ctx.prop();
+        let zero = ctx.zero();
+        let one = ctx.succ(zero);
+        let ty = ctx.mk_sort(one);
+        let uparams = ctx.alloc_levels_slice(&[]);
+        let d = crate::env::Declar::Definition {
+            info: crate::env::DeclarInfo { name: foo, uparams, ty },
+            val: prop,
+            hint: crate::env::ReducibilityHint::Regular(1),
+        };
+        let mut declars = crate::util::new_fx_index_map();
+        declars.insert(foo, d);
+        let notation = crate::util::new_fx_hash_map();
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+
+        let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
+        let c_foo = tc.ctx.mk_const(foo, uparams);
+        assert_ne!(c_foo, prop, "distinct pointers required to exercise the route");
+        assert!(tc.def_eq(c_foo, prop), "Const(foo) with foo := Sort 0 must be def_eq to Sort 0 via the delta route");
+        assert!(
+            matches!(tc.verified_env_cert, Some(Some(_))),
+            "the env-cap certificate must have been built for this one-definition environment"
+        );
+        // Direct attribution: the verified boundary itself confirms the
+        // pair (so the routed `true` above did not need the legacy path).
+        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(
+            crate::delta_bound_model::verified_lazy_delta_checked_cached(tc.ctx, cert, c_foo, prop, 100),
+            Some(true),
+            "the delta boundary must confirm Const(foo) == Sort 0 on its own"
+        );
     }
 }
