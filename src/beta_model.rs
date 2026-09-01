@@ -12810,6 +12810,175 @@ pub proof fn spine_app_size(head: ExprSpec, args: Seq<ExprSpec>)
     }
 }
 
+/// Every spine argument is strictly smaller than the argument sum --
+/// the size side of the ELEMENT-DECOMPOSE family the iota (structure
+/// projection) rule's target needs: iota extracts `args[np + i]`, so
+/// every pstep-family bound lemma must recover that element's own
+/// size/mvb/strings/escaping facts from the SPINE's.
+pub proof fn args_size_sum_elem(args: Seq<ExprSpec>, j: int)
+    requires 0 <= j < args.len()
+    ensures size(args[j]) < args_size_sum(args)
+    decreases args.len()
+{
+    if j == 0 {
+    } else {
+        let rest = args.subrange(1, args.len() as int);
+        args_size_sum_elem(rest, j - 1);
+        assert(rest[j - 1] == args[j]);
+    }
+}
+
+/// Element size from the whole applied spine's size.
+pub proof fn spine_app_size_elem(head: ExprSpec, args: Seq<ExprSpec>, j: int)
+    requires 0 <= j < args.len()
+    ensures size(args[j]) < size(spine_app(head, args))
+{
+    spine_app_size(head, args);
+    args_size_sum_elem(args, j);
+}
+
+/// `max_var_below` element-decompose (no closedness requirement,
+/// unlike `spine_app_decompose`'s nlbv-gated variant).
+pub proof fn spine_app_mvb_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat)
+    requires max_var_below(spine_app(base, args), bound)
+    ensures
+        max_var_below(base, bound),
+        forall |i: int| 0 <= i < args.len() ==> max_var_below(#[trigger] args[i], bound),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, args_init)), Box::new(args[args.len() - 1])));
+        spine_app_mvb_decompose(base, args_init, bound);
+        assert forall |i: int| 0 <= i < args.len() implies max_var_below(#[trigger] args[i], bound) by {
+            if i < args.len() - 1 {
+                assert(args[i] == args_init[i]);
+            }
+        }
+    }
+}
+
+/// `string_lits_ok` element-decompose.
+pub proof fn spine_app_strings_decompose(base: ExprSpec, args: Seq<ExprSpec>, cap: nat)
+    requires string_lits_ok(spine_app(base, args), cap)
+    ensures
+        string_lits_ok(base, cap),
+        forall |i: int| 0 <= i < args.len() ==> string_lits_ok(#[trigger] args[i], cap),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, args_init)), Box::new(args[args.len() - 1])));
+        spine_app_strings_decompose(base, args_init, cap);
+        assert forall |i: int| 0 <= i < args.len() implies string_lits_ok(#[trigger] args[i], cap) by {
+            if i < args.len() - 1 {
+                assert(args[i] == args_init[i]);
+            }
+        }
+    }
+}
+
+/// `!has_escaping_ref` element-decompose.
+pub proof fn spine_app_no_escaping_decompose(base: ExprSpec, args: Seq<ExprSpec>, k: nat)
+    requires !has_escaping_ref(spine_app(base, args), k)
+    ensures
+        !has_escaping_ref(base, k),
+        forall |i: int| 0 <= i < args.len() ==> !has_escaping_ref(#[trigger] args[i], k),
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        assert(spine_app(base, args) == ExprSpec::App(Box::new(spine_app(base, args_init)), Box::new(args[args.len() - 1])));
+        spine_app_no_escaping_decompose(base, args_init, k);
+        assert forall |i: int| 0 <= i < args.len() implies !has_escaping_ref(#[trigger] args[i], k) by {
+            if i < args.len() - 1 {
+                assert(args[i] == args_init[i]);
+            }
+        }
+    }
+}
+
+/// `shift` commutes with `spine_app` elementwise -- the map-commutation
+/// side of the element-decompose family (`pstep_shift`/`pstep_shift_
+/// down`'s iota cases rewrite the shifted spine as a spine of shifted
+/// pieces so the rule can re-fire).
+pub proof fn shift_spine_app(d: int, c: nat, head: ExprSpec, args: Seq<ExprSpec>)
+    ensures shift(d, c, spine_app(head, args)) == spine_app(shift(d, c, head), Seq::new(args.len(), |i: int| shift(d, c, args[i])))
+    decreases args.len()
+{
+    reveal(shift);
+    let mapped = Seq::new(args.len(), |i: int| shift(d, c, args[i]));
+    if args.len() == 0 {
+        assert(mapped =~= Seq::<ExprSpec>::empty());
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let mapped_init = Seq::new(args_init.len(), |i: int| shift(d, c, args_init[i]));
+        shift_spine_app(d, c, head, args_init);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(shift(d, c, spine_app(head, args)) == ExprSpec::App(
+            Box::new(shift(d, c, spine_app(head, args_init))),
+            Box::new(shift(d, c, args[args.len() - 1]))));
+        assert(mapped.subrange(0, mapped.len() - 1) =~= mapped_init);
+        assert(spine_app(shift(d, c, head), mapped) == ExprSpec::App(
+            Box::new(spine_app(shift(d, c, head), mapped.subrange(0, mapped.len() - 1))),
+            Box::new(mapped[mapped.len() - 1])));
+        assert(mapped[mapped.len() - 1] == shift(d, c, args[args.len() - 1]));
+    }
+}
+
+/// `subst` commutes with `spine_app` elementwise (see `shift_spine_app`).
+pub proof fn subst_spine_app(j: nat, s: ExprSpec, head: ExprSpec, args: Seq<ExprSpec>)
+    ensures subst(j, s, spine_app(head, args)) == spine_app(subst(j, s, head), Seq::new(args.len(), |i: int| subst(j, s, args[i])))
+    decreases args.len()
+{
+    reveal(subst);
+    let mapped = Seq::new(args.len(), |i: int| subst(j, s, args[i]));
+    if args.len() == 0 {
+        assert(mapped =~= Seq::<ExprSpec>::empty());
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let mapped_init = Seq::new(args_init.len(), |i: int| subst(j, s, args_init[i]));
+        subst_spine_app(j, s, head, args_init);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(subst(j, s, spine_app(head, args)) == ExprSpec::App(
+            Box::new(subst(j, s, spine_app(head, args_init))),
+            Box::new(subst(j, s, args[args.len() - 1]))));
+        assert(mapped.subrange(0, mapped.len() - 1) =~= mapped_init);
+        assert(spine_app(subst(j, s, head), mapped) == ExprSpec::App(
+            Box::new(spine_app(subst(j, s, head), mapped.subrange(0, mapped.len() - 1))),
+            Box::new(mapped[mapped.len() - 1])));
+        assert(mapped[mapped.len() - 1] == subst(j, s, args[args.len() - 1]));
+    }
+}
+
+/// `abstr_full` commutes with `spine_app` elementwise (see
+/// `shift_spine_app`).
+pub proof fn abstr_full_spine_app(head: ExprSpec, args: Seq<ExprSpec>, ks: Seq<u32>, o: nat)
+    ensures abstr_full(spine_app(head, args), ks, o) == spine_app(abstr_full(head, ks, o), Seq::new(args.len(), |i: int| abstr_full(args[i], ks, o)))
+    decreases args.len()
+{
+    let mapped = Seq::new(args.len(), |i: int| abstr_full(args[i], ks, o));
+    if args.len() == 0 {
+        assert(mapped =~= Seq::<ExprSpec>::empty());
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        let mapped_init = Seq::new(args_init.len(), |i: int| abstr_full(args_init[i], ks, o));
+        abstr_full_spine_app(head, args_init, ks, o);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(abstr_full(spine_app(head, args), ks, o) == ExprSpec::App(
+            Box::new(abstr_full(spine_app(head, args_init), ks, o)),
+            Box::new(abstr_full(args[args.len() - 1], ks, o))));
+        assert(mapped.subrange(0, mapped.len() - 1) =~= mapped_init);
+        assert(spine_app(abstr_full(head, ks, o), mapped) == ExprSpec::App(
+            Box::new(spine_app(abstr_full(head, ks, o), mapped.subrange(0, mapped.len() - 1))),
+            Box::new(mapped[mapped.len() - 1])));
+        assert(mapped[mapped.len() - 1] == abstr_full(args[args.len() - 1], ks, o));
+    }
+}
+
 /// `args_size_sum` over a snoc.
 pub proof fn args_size_sum_snoc(args: Seq<ExprSpec>, last: ExprSpec)
     ensures args_size_sum(args.push(last)) == args_size_sum(args) + 1 + size(last)
