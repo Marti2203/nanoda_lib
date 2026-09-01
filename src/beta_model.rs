@@ -64,7 +64,7 @@ pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
         ExprSpec::Let(t, v, b) => ExprSpec::Let(
             Box::new(shift(d, cutoff, *t)), Box::new(shift(d, cutoff, *v)), Box::new(shift(d, (cutoff + 1) as nat, *b)),
         ),
-        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(shift(d, cutoff, *s))),
+        ExprSpec::Proj(pidx, s) => ExprSpec::Proj(pidx, Box::new(shift(d, cutoff, *s))),
     }
 }
 
@@ -85,7 +85,7 @@ pub open spec fn subst(j: nat, s: ExprSpec, e: ExprSpec) -> ExprSpec
         ExprSpec::Let(t, v, b) => ExprSpec::Let(
             Box::new(subst(j, s, *t)), Box::new(subst(j, s, *v)), Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
         ),
-        ExprSpec::Proj(st) => ExprSpec::Proj(Box::new(subst(j, s, *st))),
+        ExprSpec::Proj(pidx, st) => ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))),
     }
 }
 
@@ -386,8 +386,8 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
             ||| (exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                 pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)))
         }
-        ExprSpec::Proj(inner) => match e2 {
-            ExprSpec::Proj(inner2) => pstep(env, *inner, *inner2),
+        ExprSpec::Proj(pidx, inner) => match e2 {
+            ExprSpec::Proj(pidx2, inner2) => pidx == pidx2 && pstep(env, *inner, *inner2),
             _ => false,
         },
         ExprSpec::Const(id, levels) =>
@@ -453,7 +453,7 @@ pub open spec fn complete(e: ExprSpec) -> ExprSpec
         },
         ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))),
         ExprSpec::Let(t, v, b) => subst1(complete(*b), complete(*v)),
-        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(complete(*s))),
+        ExprSpec::Proj(pidx, s) => ExprSpec::Proj(pidx, Box::new(complete(*s))),
     }
 }
 
@@ -514,7 +514,7 @@ pub proof fn pstep_complete_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpe
             pstep_complete_refl(env, *b);
             assert(complete(e) == subst1(complete(*b), complete(*v)));
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             pstep_complete_refl(env, *s);
         }
     }
@@ -586,8 +586,8 @@ pub open spec fn pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: 
             ||| (exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                 pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)))
         }
-        ExprSpec::Proj(inner) => match e2 {
-            ExprSpec::Proj(inner2) => pstep_d(env, *inner, *inner2, mcap, dcap),
+        ExprSpec::Proj(pidx, inner) => match e2 {
+            ExprSpec::Proj(pidx2, inner2) => pidx == pidx2 && pstep_d(env, *inner, *inner2, mcap, dcap),
             _ => false,
         },
         ExprSpec::Const(id, levels) =>
@@ -700,9 +700,9 @@ pub proof fn pstep_d_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2:
                     assert(pstep_d(env, *t, t2, m2, d2) && pstep_d(env, *v, v2, m2, d2) && pstep_d(env, *b, b2, m2, d2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                 }
             }
-            ExprSpec::Proj(inner) => {
+            ExprSpec::Proj(pidx, inner) => {
                 match e2 {
-                    ExprSpec::Proj(inner2) => {
+                    ExprSpec::Proj(pidx2, inner2) => {
                         pstep_d_mono(env, *inner, *inner2, m1, d1, m2, d2);
                     }
                     _ => {
@@ -797,9 +797,9 @@ pub proof fn pstep_d_implies_pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: Expr
                     assert(pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                 }
             }
-            ExprSpec::Proj(inner) => {
+            ExprSpec::Proj(pidx, inner) => {
                 match e2 {
-                    ExprSpec::Proj(inner2) => {
+                    ExprSpec::Proj(pidx2, inner2) => {
                         pstep_d_implies_pstep(env, *inner, *inner2, mcap, dcap);
                     }
                     _ => {
@@ -897,10 +897,10 @@ pub proof fn complete_depth_bound(e: ExprSpec)
             assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
             assert(size(*t) >= 1);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             assert(string_lits_ok(*s, 0));
             complete_depth_bound(*s);
-            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
             assert(size(e) == 1 + size(*s));
         }
     }
@@ -1058,14 +1058,14 @@ pub proof fn complete_max_var_below(bound: nat, e: ExprSpec)
             {}
             max_var_below_mono(complete(e), (((bound + m) as nat + 1) + depth(complete(*b))) as nat, (bound + growth(se)) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             assert(string_lits_ok(*s, 0));
             assert(max_var_below(*s, bound));
             assert(size(e) == 1 + size(*s));
             growth_mono(size(*s), size(e));
             complete_max_var_below(bound, *s);
             max_var_below_mono(complete(*s), (bound + growth(size(*s))) as nat, (bound + growth(size(e))) as nat);
-            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
             assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
         }
     }
@@ -1186,14 +1186,14 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
                 && complete(e) == subst1(complete(*b), complete(*v)));
             assert(pstep_d(env, e, complete(e), m, d));
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             assert(string_lits_ok(*s, 0));
             assert(max_var_below(*s, bound));
             assert(size(e) == 1 + size(*s));
             growth_mono(size(*s), size(e));
             pstep_complete_refl_d(env, bound, *s);
             pstep_d_mono(env, *s, complete(*s), (bound + growth(size(*s))) as nat, size(*s), m, d);
-            assert(complete(e) == ExprSpec::Proj(Box::new(complete(*s))));
+            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
             assert(pstep_d(env, e, complete(e), m, d));
         }
     }
@@ -1338,13 +1338,13 @@ pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: Expr
                     assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep_d(env, *s, *s2, mcap, dcap));
                         pstep_d_shift(env, c, *s, *s2, mcap, dcap);
-                        assert(shift(1, c, e1) == ExprSpec::Proj(Box::new(shift(1, c, *s))));
-                        assert(shift(1, c, e2) == ExprSpec::Proj(Box::new(shift(1, c, *s2))));
+                        assert(shift(1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s))));
+                        assert(shift(1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s2))));
                         assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap));
                     }
                     _ => {
@@ -1474,9 +1474,9 @@ pub proof fn pstep_d_subst_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1:
                 ));
             assert(pstep_d(env, subst(j, s1, e), subst(j, s2, e), (ms + depth(e)) as nat, ds));
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s1, e) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
-            assert(subst(j, s2, e) == ExprSpec::Proj(Box::new(subst(j, s2, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s1, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+            assert(subst(j, s2, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st))));
             pstep_d_subst_refl(env, j, s1, s2, *st, ms, ds);
             pstep_d_mono(env, subst(j, s1, *st), subst(j, s2, *st), (ms + depth(*st)) as nat, ds, (ms + depth(e)) as nat, ds);
             assert(pstep_d(env, subst(j, s1, e), subst(j, s2, e), (ms + depth(e)) as nat, ds));
@@ -1587,11 +1587,11 @@ pub proof fn pstep_d_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e
                     pstep_d_bounds(env, *b, b2, mcap, dcap, bound);
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(string_lits_ok(*s, 0));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep_d(env, *s, *s2, mcap, dcap));
                         pstep_d_bounds(env, *s, *s2, mcap, dcap, bound);
                     }
@@ -1853,14 +1853,14 @@ pub proof fn pstep_d_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1: Expr
                     assert(pstep_d(env, subst(j, s1, e1), subst(j, s2, e2), wm, wd));
                 }
             }
-            ExprSpec::Proj(st) => {
+            ExprSpec::Proj(pidx, st) => {
                 assert(depth(*st) < depth(e1));
                 match e2 {
-                    ExprSpec::Proj(st2) => {
+                    ExprSpec::Proj(pidx2, st2) => {
                         assert(pstep_d(env, *st, *st2, me, de));
                         pstep_d_subst(env, j, s1, s2, *st, *st2, ms, ds, me, de, ms1, ds1);
-                        assert(subst(j, s1, e1) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
-                        assert(subst(j, s2, e2) == ExprSpec::Proj(Box::new(subst(j, s2, *st2))));
+                        assert(subst(j, s1, e1) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+                        assert(subst(j, s2, e2) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st2))));
                         pstep_d_mono(env, subst(j, s1, *st), subst(j, s2, *st2), (ms + ms1 + me + de + ds + 2 * depth(*st) + 4) as nat, (de + ds + ds1 + 1) as nat, wm, wd);
                         assert(pstep_d(env, subst(j, s1, e1), subst(j, s2, e2), wm, wd));
                     }
@@ -1968,7 +1968,7 @@ pub proof fn shift_down_max_var_below_href(c0: nat, bound: nat, y: ExprSpec)
             shift_down_max_var_below_href(c0, bound, *v);
             shift_down_max_var_below_href((c0 + 1) as nat, bound, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             if c0 == 0 {
                 assert(!has_escaping_ref(*s, 0));
             }
@@ -2065,10 +2065,10 @@ pub proof fn pstep_d_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec
                     pstep_d_preserves_no_escaping_ref(env, (k + 1) as nat, *b, b2, mcap, dcap);
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(!has_escaping_ref(*s, k));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep_d(env, *s, *s2, mcap, dcap));
                         pstep_d_preserves_no_escaping_ref(env, k, *s, *s2, mcap, dcap);
                     }
@@ -2264,14 +2264,14 @@ pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1:
                     assert(pstep_d(env, shift(-1, c, e1), shift(-1, c, e2), mcap, dcap));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(!has_escaping_ref(*s, c));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep_d(env, *s, *s2, mcap, dcap));
                         pstep_d_shift_down(env, c, *s, *s2, mcap, dcap);
-                        assert(shift(-1, c, e1) == ExprSpec::Proj(Box::new(shift(-1, c, *s))));
-                        assert(shift(-1, c, e2) == ExprSpec::Proj(Box::new(shift(-1, c, *s2))));
+                        assert(shift(-1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s))));
+                        assert(shift(-1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s2))));
                         assert(pstep_d(env, shift(-1, c, e1), shift(-1, c, e2), mcap, dcap));
                     }
                     _ => {
@@ -2398,7 +2398,7 @@ pub open spec fn tak_d(dcap: nat, e: ExprSpec) -> nat
         ExprSpec::App(f, a) => tak_d(dcap, *f) + tak_d(dcap, *a) + dcap + size(e) + 1,
         ExprSpec::Bind(t, b) => tak_d(dcap, *t) + tak_d(dcap, *b) + size(e) + 1,
         ExprSpec::Let(t, v, b) => tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + dcap + size(e) + 1,
-        ExprSpec::Proj(s) => tak_d(dcap, *s) + size(e) + 1,
+        ExprSpec::Proj(pidx, s) => tak_d(dcap, *s) + size(e) + 1,
         _ => size(e),
     }
 }
@@ -2414,7 +2414,7 @@ pub open spec fn tak_m(bound: nat, mcap: nat, dcap: nat, e: ExprSpec) -> nat
         ExprSpec::App(f, a) => tak_m(bound, mcap, dcap, *f) + tak_m(bound, mcap, dcap, *a) + tak_d(dcap, *f) + tak_d(dcap, *a) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
         ExprSpec::Bind(t, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *b) + bound + growth(size(e)) + 1,
         ExprSpec::Let(t, v, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *v) + tak_m(bound, mcap, dcap, *b) + tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
-        ExprSpec::Proj(s) => tak_m(bound, mcap, dcap, *s) + bound + growth(size(e)) + 1,
+        ExprSpec::Proj(pidx, s) => tak_m(bound, mcap, dcap, *s) + bound + growth(size(e)) + 1,
         _ => bound + growth(size(e)),
     }
 }
@@ -2459,7 +2459,7 @@ pub proof fn tak_d_le(dcap: nat, e: ExprSpec, s0: nat)
             tak_d_le(dcap, *b, s0);
             assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 + f0 == (size(*t) + size(*v) + size(*b) + 1) * f0) by (nonlinear_arith);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             tak_d_le(dcap, *s, s0);
             assert(size(*s) * f0 + f0 == (size(*s) + 1) * f0) by (nonlinear_arith);
         }
@@ -2512,7 +2512,7 @@ pub proof fn tak_m_le(bound: nat, mcap: nat, dcap: nat, e: ExprSpec, s0: nat)
             assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 == (size(*t) + size(*v) + size(*b)) * f0) by (nonlinear_arith);
             assert(size(*t) * k0 + size(*v) * k0 + size(*b) * k0 + k0 == (size(*t) + size(*v) + size(*b) + 1) * k0) by (nonlinear_arith);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             tak_m_le(bound, mcap, dcap, *s, s0);
             assert(size(*s) * k0 + k0 == (size(*s) + 1) * k0) by (nonlinear_arith);
         }
@@ -2736,17 +2736,17 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                     assert(pstep_d(env, e2, complete(e1), wm, wd));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(string_lits_ok(*s, 0));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep_d(env, *s, *s2, mcap, dcap));
                         assert(size(e1) == 1 + size(*s));
                         growth_mono(size(*s), size(e1));
                         pstep_d_takahashi(env, bound, *s, *s2, mcap, dcap);
                         pstep_d_mono(env, *s2, complete(*s), tak_m(bound, mcap, dcap, *s), tak_d(dcap, *s), wm, wd);
-                        assert(complete(e1) == ExprSpec::Proj(Box::new(complete(*s))));
+                        assert(complete(e1) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
                         assert(pstep_d(env, e2, complete(e1), wm, wd));
                     }
                     _ => {
@@ -2975,13 +2975,13 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                     assert(pstep_d(env, e1, e2, mcap, dcap));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(string_lits_ok(*s, 0));
                 assert(size(e1) == 1 + size(*s));
                 growth_mono(size(*s), size(e1));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep(env, *s, *s2));
                         pstep_to_pstep_d(env, bound, *s, *s2);
                         pstep_d_mono(env, *s, *s2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
@@ -3769,7 +3769,7 @@ pub open spec fn string_lits_ok(e: ExprSpec, cap: nat) -> bool
         ExprSpec::App(f, a) => string_lits_ok(*f, cap) && string_lits_ok(*a, cap),
         ExprSpec::Bind(t, b) => string_lits_ok(*t, cap) && string_lits_ok(*b, cap),
         ExprSpec::Let(t, v, b) => string_lits_ok(*t, cap) && string_lits_ok(*v, cap) && string_lits_ok(*b, cap),
-        ExprSpec::Proj(s) => string_lits_ok(*s, cap),
+        ExprSpec::Proj(pidx, s) => string_lits_ok(*s, cap),
         _ => true,
     }
 }
@@ -3789,7 +3789,7 @@ pub open spec fn string_free(e: ExprSpec) -> bool
         ExprSpec::App(f, a) => string_free(*f) && string_free(*a),
         ExprSpec::Bind(t, b) => string_free(*t) && string_free(*b),
         ExprSpec::Let(t, v, b) => string_free(*t) && string_free(*v) && string_free(*b),
-        ExprSpec::Proj(s) => string_free(*s),
+        ExprSpec::Proj(pidx, s) => string_free(*s),
         _ => true,
     }
 }
@@ -3814,7 +3814,7 @@ pub proof fn string_free_lits_ok(e: ExprSpec, cap: nat)
             string_free_lits_ok(*v, cap);
             string_free_lits_ok(*b, cap);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             string_free_lits_ok(*s, cap);
         }
         _ => {}
@@ -3848,7 +3848,7 @@ pub proof fn string_lits_ok_shift(e: ExprSpec, d: int, c: nat, cap: nat)
             string_lits_ok_shift(*v, d, c, cap);
             string_lits_ok_shift(*b, d, (c + 1) as nat, cap);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             string_lits_ok_shift(*s, d, c, cap);
         }
         _ => {}
@@ -3881,7 +3881,7 @@ pub proof fn string_lits_ok_subst(e: ExprSpec, j: nat, s: ExprSpec, cap: nat)
             string_lits_ok_shift(s, 1, 0, cap);
             string_lits_ok_subst(*b, (j + 1) as nat, shift(1, 0, s), cap);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             string_lits_ok_subst(*st, j, s, cap);
         }
         _ => {}
@@ -3987,10 +3987,10 @@ pub proof fn pstep_preserves_string_lits_ok(env: Map<u64, (Seq<u64>, ExprSpec)>,
                     assert(string_lits_ok(e2, cap));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(string_lits_ok(*s, cap));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         pstep_preserves_string_lits_ok(env, cap, *s, *s2);
                         assert(string_lits_ok(e2, cap));
                     }
@@ -4109,9 +4109,9 @@ pub proof fn pstep_env_weaken(env1: Map<u64, (Seq<u64>, ExprSpec)>, env2: Map<u6
                     pstep_env_weaken(env1, env2, *b, b2);
                 }
             }
-            ExprSpec::Proj(inner) => {
+            ExprSpec::Proj(pidx, inner) => {
                 match e2 {
-                    ExprSpec::Proj(inner2) => pstep_env_weaken(env1, env2, *inner, *inner2),
+                    ExprSpec::Proj(pidx2, inner2) => pstep_env_weaken(env1, env2, *inner, *inner2),
                     _ => { assert(false); }
                 }
             }
@@ -4426,7 +4426,7 @@ pub proof fn pstep_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                     assert(pstep(env, shift(1, c, e1), shift(1, c, e2)));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(size(e1) == 1 + size(*s));
                 assert(size(*s) < size(e1));
@@ -4442,11 +4442,11 @@ pub proof fn pstep_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                         bound + growth(size(e1)) + 1 + cap * size_growth(size(e1)) <= 0xFFFF_0000,
                 {}
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep(env, *s, *s2));
                         pstep_shift(env, cap, bound, c, *s, *s2);
-                        assert(shift(1, c, e1) == ExprSpec::Proj(Box::new(shift(1, c, *s))));
-                        assert(shift(1, c, e2) == ExprSpec::Proj(Box::new(shift(1, c, *s2))));
+                        assert(shift(1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s))));
+                        assert(shift(1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s2))));
                         assert(pstep(env, shift(1, c, e1), shift(1, c, e2)));
                     }
                     _ => { assert(false); }
@@ -4902,7 +4902,7 @@ pub proof fn pstep_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bou
                     assert(pstep(env, shift(-1, c, e1), shift(-1, c, e2)));
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(size(e1) == 1 + size(*s));
                 assert(size(*s) < size(e1));
@@ -4922,11 +4922,11 @@ pub proof fn pstep_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bou
                 assert(has_escaping_ref(e1, c) == has_escaping_ref(*s, c));
                 assert(!has_escaping_ref(*s, c));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep(env, *s, *s2));
                         pstep_shift_down(env, cap, bound, c, *s, *s2);
-                        assert(shift(-1, c, e1) == ExprSpec::Proj(Box::new(shift(-1, c, *s))));
-                        assert(shift(-1, c, e2) == ExprSpec::Proj(Box::new(shift(-1, c, *s2))));
+                        assert(shift(-1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s))));
+                        assert(shift(-1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s2))));
                         assert(pstep(env, shift(-1, c, e1), shift(-1, c, e2)));
                     }
                     _ => { assert(false); }
@@ -4993,7 +4993,7 @@ pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
         ExprSpec::App(f, a) => max_var_below(*f, bound) && max_var_below(*a, bound),
         ExprSpec::Bind(t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
         ExprSpec::Let(t, v, b) => max_var_below(*t, bound) && max_var_below(*v, bound) && max_var_below(*b, bound),
-        ExprSpec::Proj(s) => max_var_below(*s, bound),
+        ExprSpec::Proj(pidx, s) => max_var_below(*s, bound),
     }
 }
 
@@ -5050,7 +5050,7 @@ pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
             shift_up_max_var_below(c, bound, *v);
             shift_up_max_var_below((c + 1) as nat, bound, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_up_max_var_below(c, bound, *s);
         }
     }
@@ -5078,7 +5078,7 @@ pub proof fn max_var_below_mono(e: ExprSpec, b1: nat, b2: nat)
             max_var_below_mono(*v, b1, b2);
             max_var_below_mono(*b, b1, b2);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             max_var_below_mono(*s, b1, b2);
         }
     }
@@ -5127,7 +5127,7 @@ pub proof fn nlbv_bound_implies_max_var_below(e: ExprSpec, k: nat)
             max_var_below_mono(*v, (depth(*v) + k) as nat, (depth(e) + k) as nat);
             max_var_below_mono(*b, (depth(*b) + (k + 1)) as nat, (depth(e) + k) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             nlbv_bound_implies_max_var_below(*s, k);
             max_var_below_mono(*s, (depth(*s) + k) as nat, (depth(e) + k) as nat);
         }
@@ -5196,8 +5196,8 @@ pub proof fn subst_max_var_below(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
                 (bound + depth(e)) as nat,
             );
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_max_var_below(bound, j, s, *st);
             max_var_below_mono(subst(j, s, *st), (bound + depth(*st)) as nat, (bound + depth(e)) as nat);
         }
@@ -5244,7 +5244,7 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
             shift_cancel(c, *v);
             shift_cancel((c + 1) as nat, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_cancel(c, *s);
         }
     }
@@ -5294,7 +5294,7 @@ pub open spec fn min_escaping(e: ExprSpec) -> Option<nat>
             };
             opt_min(opt_min(min_escaping(*t), min_escaping(*v)), bb)
         }
-        ExprSpec::Proj(s) => min_escaping(*s),
+        ExprSpec::Proj(pidx, s) => min_escaping(*s),
     }
 }
 
@@ -5382,7 +5382,7 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
             shift_down_max_var_below(c0, bound, *v);
             shift_down_max_var_below((c0 + 1) as nat, bound, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_down_max_var_below(c0, bound, *s);
         }
     }
@@ -5480,7 +5480,7 @@ pub proof fn shift_shift_past_down(c_top: nat, c0: nat, d: int, x: ExprSpec)
             shift_shift_past_down(c_top, c0, d, *v);
             shift_shift_past_down(c_top, (c0 + 1) as nat, d, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_shift_past_down(c_top, c0, d, *s);
         }
     }
@@ -5537,7 +5537,7 @@ pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
             shift_up_min_escaping(bound, c0, *v);
             shift_up_min_escaping(bound, (c0 + 1) as nat, *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             shift_up_min_escaping(bound, c0, *st);
         }
     }
@@ -5581,7 +5581,7 @@ pub open spec fn has_escaping_ref(e: ExprSpec, k: nat) -> bool
         ExprSpec::App(f, a) => has_escaping_ref(*f, k) || has_escaping_ref(*a, k),
         ExprSpec::Bind(t, b) => has_escaping_ref(*t, k) || has_escaping_ref(*b, (k + 1) as nat),
         ExprSpec::Let(t, v, b) => has_escaping_ref(*t, k) || has_escaping_ref(*v, k) || has_escaping_ref(*b, (k + 1) as nat),
-        ExprSpec::Proj(s) => has_escaping_ref(*s, k),
+        ExprSpec::Proj(pidx, s) => has_escaping_ref(*s, k),
     }
 }
 
@@ -5621,8 +5621,8 @@ pub proof fn shift_up_has_escaping_ref(bound: nat, x: ExprSpec, k: nat)
             shift_up_has_escaping_ref(bound, *v, k);
             shift_up_has_escaping_ref_c0(bound, *b, (k + 1) as nat, 1);
         }
-        ExprSpec::Proj(st) => {
-            assert(shift(1, 0, x) == ExprSpec::Proj(Box::new(shift(1, 0, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(shift(1, 0, x) == ExprSpec::Proj(pidx, Box::new(shift(1, 0, *st))));
             shift_up_has_escaping_ref(bound, *st, k);
         }
     }
@@ -5663,8 +5663,8 @@ pub proof fn shift_up_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0: n
             shift_up_has_escaping_ref_c0(bound, *v, k, c0);
             shift_up_has_escaping_ref_c0(bound, *b, (k + 1) as nat, (c0 + 1) as nat);
         }
-        ExprSpec::Proj(st) => {
-            assert(shift(1, c0, x) == ExprSpec::Proj(Box::new(shift(1, c0, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(shift(1, c0, x) == ExprSpec::Proj(pidx, Box::new(shift(1, c0, *st))));
             shift_up_has_escaping_ref_c0(bound, *st, k, c0);
         }
     }
@@ -5736,11 +5736,11 @@ pub proof fn shift_down_has_escaping_ref_c0(bound: nat, x: ExprSpec, k: nat, c0:
             shift_down_has_escaping_ref_c0(bound, *v, k, c0);
             shift_down_has_escaping_ref_c0(bound, *b, (k + 1) as nat, (c0 + 1) as nat);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             if c0 == 0 {
                 assert(!has_escaping_ref(*st, 0));
             }
-            assert(shift(-1, c0, x) == ExprSpec::Proj(Box::new(shift(-1, c0, *st))));
+            assert(shift(-1, c0, x) == ExprSpec::Proj(pidx, Box::new(shift(-1, c0, *st))));
             shift_down_has_escaping_ref_c0(bound, *st, k, c0);
         }
     }
@@ -5788,10 +5788,10 @@ pub proof fn no_escaping_ref_subst_identity(k: nat, s: ExprSpec, e: ExprSpec)
                 Box::new(subst(k, s, *t)), Box::new(subst(k, s, *v)), Box::new(subst((k + 1) as nat, shift(1, 0, s), *b)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             assert(!has_escaping_ref(*st, k));
             no_escaping_ref_subst_identity(k, s, *st);
-            assert(subst(k, s, e) == ExprSpec::Proj(Box::new(subst(k, s, *st))));
+            assert(subst(k, s, e) == ExprSpec::Proj(pidx, Box::new(subst(k, s, *st))));
         }
     }
 }
@@ -5856,8 +5856,8 @@ pub proof fn subst_no_escaping_ref_at(bound: nat, j: nat, s: ExprSpec, e: ExprSp
             assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
             subst_no_escaping_ref_at((bound + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_no_escaping_ref_at(bound, j, s, *st);
         }
     }
@@ -5931,9 +5931,9 @@ pub proof fn subst_no_escaping_ref_shifted(bound: nat, j: nat, diff: nat, s: Exp
             assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
             subst_no_escaping_ref_shifted((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             assert(!has_escaping_ref(*st, (j + diff) as nat));
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_no_escaping_ref_shifted(bound, j, diff, s, *st);
         }
     }
@@ -6079,8 +6079,8 @@ pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
                 }
             }
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_no_escape_at(bound, j, s, *st);
         }
     }
@@ -6158,7 +6158,7 @@ pub proof fn shift_shift_aligned(c_top: nat, c0: nat, d: int, s: ExprSpec)
             shift_shift_aligned(c_top, c0, d, *v);
             shift_shift_aligned(c_top, (c0 + 1) as nat, d, *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             shift_shift_aligned(c_top, c0, d, *st);
         }
     }
@@ -6257,7 +6257,7 @@ pub proof fn shift_shift_aligned_mixed(bound: nat, c_top: nat, c0: nat, s: ExprS
             shift_shift_aligned_mixed(bound, c_top, c0, *v);
             shift_shift_aligned_mixed(bound, c_top, (c0 + 1) as nat, *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             if c_top == 0 {
                 assert(!has_escaping_ref(*st, c0));
             }
@@ -6310,7 +6310,7 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
             shift_shift_aligned_up(c_top, c0, *v);
             shift_shift_aligned_up(c_top, (c0 + 1) as nat, *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             shift_shift_aligned_up(c_top, c0, *st);
         }
     }
@@ -6454,12 +6454,12 @@ pub proof fn shift_subst_commute_down(bound: nat, j: nat, diff: nat, s: ExprSpec
             assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
             shift_subst_commute_down((bound + 1) as nat, (j + 1) as nat, diff, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             if diff == 1 {
                 assert(!has_escaping_ref(*st, (j + 1) as nat));
             }
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
-            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Proj(Box::new(shift(-1, (j + diff) as nat, *st))));
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
+            assert(shift(-1, (j + diff) as nat, e) == ExprSpec::Proj(pidx, Box::new(shift(-1, (j + diff) as nat, *st))));
             shift_subst_commute_down(bound, j, diff, s, *st);
         }
     }
@@ -6532,9 +6532,9 @@ pub proof fn shift_subst_commute_below(bound: nat, c0: nat, j: nat, s: ExprSpec,
             assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
             shift_subst_commute_below((bound + 1) as nat, (c0 + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
-            assert(shift(1, c0, e) == ExprSpec::Proj(Box::new(shift(1, c0, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
+            assert(shift(1, c0, e) == ExprSpec::Proj(pidx, Box::new(shift(1, c0, *st))));
             shift_subst_commute_below(bound, c0, j, s, *st);
         }
     }
@@ -6677,9 +6677,9 @@ pub proof fn subst_subst_commute(bound: nat, j0: nat, diff: nat, s_inner: ExprSp
             assert(subst((j0 + 1 + diff) as nat, shift(1, 0, s_outer), subst((j0 + 1) as nat, shift(1, 0, s_inner), *b))
                 == subst((j0 + 1) as nat, subst((j0 + 1 + diff) as nat, shift(1, 0, s_outer), shift(1, 0, s_inner)), subst((j0 + 1 + diff) as nat, shift(1, 0, s_outer), *b)));
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j0, s_inner, e) == ExprSpec::Proj(Box::new(subst(j0, s_inner, *st))));
-            assert(subst((j0 + diff) as nat, s_outer, e) == ExprSpec::Proj(Box::new(subst((j0 + diff) as nat, s_outer, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j0, s_inner, e) == ExprSpec::Proj(pidx, Box::new(subst(j0, s_inner, *st))));
+            assert(subst((j0 + diff) as nat, s_outer, e) == ExprSpec::Proj(pidx, Box::new(subst((j0 + diff) as nat, s_outer, *st))));
             subst_subst_commute(bound, j0, diff, s_inner, s_outer, *st);
         }
     }
@@ -6825,9 +6825,9 @@ pub proof fn shift_subst_commute(bound: nat, j: nat, diff: nat, s: ExprSpec, e: 
             assert(shift(1, ((j + 1) + diff) as nat, subst((j + 1) as nat, shift(1, 0, s), *b))
                 == subst((j + 1) as nat, shift(1, ((j + 1) + diff) as nat, shift(1, 0, s)), shift(1, ((j + 1) + diff) as nat, *b)));
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
-            assert(shift(1, (j + diff) as nat, e) == ExprSpec::Proj(Box::new(shift(1, (j + diff) as nat, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
+            assert(shift(1, (j + diff) as nat, e) == ExprSpec::Proj(pidx, Box::new(shift(1, (j + diff) as nat, *st))));
             shift_subst_commute(bound, j, diff, s, *st);
         }
     }
@@ -6891,7 +6891,7 @@ pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
             shift_preserves_depth(d, c, *v);
             shift_preserves_depth(d, (c + 1) as nat, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_preserves_depth(d, c, *s);
         }
     }
@@ -6919,7 +6919,7 @@ pub proof fn shift_preserves_size(d: int, c: nat, e: ExprSpec)
             shift_preserves_size(d, c, *v);
             shift_preserves_size(d, (c + 1) as nat, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             shift_preserves_size(d, c, *s);
         }
     }
@@ -6989,8 +6989,8 @@ pub proof fn subst_size_bound(j: nat, s: ExprSpec, e: ExprSpec)
                 requires size(e) == 1 + size(*t) + size(*v) + size(*b)
             {}
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_size_bound(j, s, *st);
             assert(size(*st) * (size(s) + 1) + 1 <= size(e) * (size(s) + 1)) by (nonlinear_arith)
                 requires size(e) == 1 + size(*st)
@@ -7048,8 +7048,8 @@ pub proof fn subst_size_ge(j: nat, s: ExprSpec, e: ExprSpec)
             subst_size_ge(j, s, *v);
             subst_size_ge((j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_size_ge(j, s, *st);
         }
     }
@@ -7127,8 +7127,8 @@ pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
             shift_preserves_depth(1, 0, s);
             subst_depth_bound((j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s, e) == ExprSpec::Proj(Box::new(subst(j, s, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s, *st))));
             subst_depth_bound(j, s, *st);
         }
     }
@@ -7160,7 +7160,7 @@ pub open spec fn size(e: ExprSpec) -> nat
         ExprSpec::App(f, a) => 1 + size(*f) + size(*a),
         ExprSpec::Bind(t, b) => 1 + size(*t) + size(*b),
         ExprSpec::Let(t, v, b) => 1 + size(*t) + size(*v) + size(*b),
-        ExprSpec::Proj(s) => 1 + size(*s),
+        ExprSpec::Proj(pidx, s) => 1 + size(*s),
     }
 }
 
@@ -7185,7 +7185,7 @@ pub proof fn depth_le_size(e: ExprSpec)
             depth_le_size(*v);
             depth_le_size(*b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             depth_le_size(*s);
         }
     }
@@ -7692,8 +7692,8 @@ pub proof fn subst_expr_levels_rel_size(e: ExprSpec, ks: Seq<u64>, vs: Seq<Level
             }
             _ => {}
         },
-        ExprSpec::Proj(s) => match e2 {
-            ExprSpec::Proj(s2) => subst_expr_levels_rel_size(*s, ks, vs, *s2),
+        ExprSpec::Proj(pidx, s) => match e2 {
+            ExprSpec::Proj(pidx2, s2) => subst_expr_levels_rel_size(*s, ks, vs, *s2),
             _ => {}
         },
     }
@@ -7730,8 +7730,8 @@ pub proof fn subst_expr_levels_rel_max_var_below(e: ExprSpec, ks: Seq<u64>, vs: 
             }
             _ => {}
         },
-        ExprSpec::Proj(s) => match e2 {
-            ExprSpec::Proj(s2) => subst_expr_levels_rel_max_var_below(*s, ks, vs, *s2, bound),
+        ExprSpec::Proj(pidx, s) => match e2 {
+            ExprSpec::Proj(pidx2, s2) => subst_expr_levels_rel_max_var_below(*s, ks, vs, *s2, bound),
             _ => {}
         },
     }
@@ -7773,8 +7773,8 @@ pub proof fn subst_expr_levels_rel_nlbv(e: ExprSpec, ks: Seq<u64>, vs: Seq<Level
             }
             _ => {}
         },
-        ExprSpec::Proj(s) => match e2 {
-            ExprSpec::Proj(s2) => subst_expr_levels_rel_nlbv(*s, ks, vs, *s2),
+        ExprSpec::Proj(pidx, s) => match e2 {
+            ExprSpec::Proj(pidx2, s2) => subst_expr_levels_rel_nlbv(*s, ks, vs, *s2),
             _ => {}
         },
     }
@@ -7813,8 +7813,8 @@ pub proof fn subst_expr_levels_rel_depth(e: ExprSpec, ks: Seq<u64>, vs: Seq<Leve
             }
             _ => {}
         },
-        ExprSpec::Proj(s) => match e2 {
-            ExprSpec::Proj(s2) => subst_expr_levels_rel_depth(*s, ks, vs, *s2),
+        ExprSpec::Proj(pidx, s) => match e2 {
+            ExprSpec::Proj(pidx2, s2) => subst_expr_levels_rel_depth(*s, ks, vs, *s2),
             _ => {}
         },
     }
@@ -7984,11 +7984,11 @@ pub proof fn pstep_size_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e1:
                     (1 + tsize + vsize + bsize) as nat
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(size(e1) == 1 + size(*s));
                 assert(string_lits_ok(*s, cap));
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep(env, *s, *s2));
                         let ssize = pstep_size_bound(env, cap, *s, *s2);
                         assert(size(e2) == 1 + size(*s2));
@@ -8498,7 +8498,7 @@ pub proof fn pstep_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: 
                     (common, d2 as nat)
                 }
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(size(e1) == 1 + size(*s));
                 assert(size(*s) < size(e1));
@@ -8514,7 +8514,7 @@ pub proof fn pstep_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: 
                         bound + growth(size(e1)) + cap * size_growth(size(e1)) <= 0xFFFF_0000,
                 {}
                 match e2 {
-                    ExprSpec::Proj(s2) => {
+                    ExprSpec::Proj(pidx2, s2) => {
                         assert(pstep(env, *s, *s2));
                         let (smvb, sdepth) = pstep_bounds(env, cap, bound, *s, *s2);
                         assert(sdepth <= size(*s) + cap * size_growth(size(*s)));
@@ -8869,7 +8869,7 @@ pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec)>
                     assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                 }
             }
-            ExprSpec::Proj(st) => {
+            ExprSpec::Proj(pidx, st) => {
                 assert(max_var_below(*st, bound));
                 assert(size(*st) < size(e1));
                 assert(string_lits_ok(*st, cap));
@@ -8885,7 +8885,7 @@ pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec)>
                         bound + growth(size(e1)) + 4 * size(e1) + 20 + cap * size_growth(size(e1)) <= 0xFFFF_0000,
                 {}
                 match e2 {
-                    ExprSpec::Proj(st2) => {
+                    ExprSpec::Proj(pidx2, st2) => {
                         assert(!has_escaping_ref(*st, k));
                         assert(pstep(env, *st, *st2));
                         pstep_preserves_no_escaping_ref(env, cap, bound, k, *st, *st2);
@@ -9143,7 +9143,7 @@ pub proof fn subst_shift_down_commute(bound: nat, c0: nat, j: nat, s: ExprSpec, 
             assert((bound + 1) + depth(*b) <= 0xFFFF_0000);
             subst_shift_down_commute((bound + 1) as nat, (c0 + 1) as nat, (j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_shift_down_commute(bound, c0, j, s, *st);
         }
     }
@@ -9218,9 +9218,9 @@ pub proof fn pstep_subst_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bou
             string_lits_ok_shift(s1, 1, 0, cap);
             pstep_subst_refl(env, cap, (bound + 1) as nat, (j + 1) as nat, shift(1, 0, s1), shift(1, 0, s2), *b);
         }
-        ExprSpec::Proj(st) => {
-            assert(subst(j, s1, e) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
-            assert(subst(j, s2, e) == ExprSpec::Proj(Box::new(subst(j, s2, *st))));
+        ExprSpec::Proj(pidx, st) => {
+            assert(subst(j, s1, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+            assert(subst(j, s2, e) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st))));
             pstep_subst_refl(env, cap, bound, j, s1, s2, *st);
         }
     }
@@ -9755,7 +9755,7 @@ pub proof fn pstep_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                     assert(pstep(env, subst(j, s1, e1), subst(j, s2, e2)));
                 }
             }
-            ExprSpec::Proj(st) => {
+            ExprSpec::Proj(pidx, st) => {
                 assert(max_var_below(*st, bound));
                 assert(size(e1) == 1 + size(*st));
                 assert(size(*st) < size(e1));
@@ -9774,11 +9774,11 @@ pub proof fn pstep_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                             + 5 * cap * size_growth(size(e1)) + 5 * cap * size_growth(size(s1)) <= 0xFFFF_0000,
                 {}
                 match e2 {
-                    ExprSpec::Proj(st2) => {
+                    ExprSpec::Proj(pidx2, st2) => {
                         assert(pstep(env, *st, *st2));
                         pstep_subst(env, cap, bound, j, s1, s2, *st, *st2);
-                        assert(subst(j, s1, e1) == ExprSpec::Proj(Box::new(subst(j, s1, *st))));
-                        assert(subst(j, s2, e2) == ExprSpec::Proj(Box::new(subst(j, s2, *st2))));
+                        assert(subst(j, s1, e1) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+                        assert(subst(j, s2, e2) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st2))));
                         assert(pstep(env, subst(j, s1, e1), subst(j, s2, e2)));
                     }
                     _ => { assert(false); }
@@ -9969,565 +9969,7 @@ pub proof fn pstep_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: 
     assert(subst1(body3, a3) == shift(-1, 0, t3));
 }
 
-/// One-call wrapper bundling `pstep_size_bound` + `pstep_subst1_size_headroom`
-/// + `pstep_subst1` itself, for `pstep_diamond`'s beta cases. `bdepth` and
-/// `c`'s `max_var_below` facts are exactly what
-/// `pstep_diamond` already computes via `pstep_bounds` at each call site;
-/// this only adds the two `pstep_size_bound` calls and the arithmetic
-/// chaining into `pstep_subst1`'s own (size-based) headroom.
-///
-/// The `size_e` precondition below is what actually costs something: it's
-/// only satisfiable when `size_e` is small (`beta_size_headroom` is
-/// exponential in it) -- see that spec fn's doc comment.
-/// Restricted to `env == Map::empty()` -- see `pstep_diamond`'s doc
-/// comment for why: threading a general (non-empty) `env` through this
-/// specific proof path would need `pstep_subst1_size_headroom` (and hence
-/// `beta_size_headroom`) rescaled by `(cap + 1)` the same way
-/// `pstep_size_bound` was, compounding with `beta_size_headroom`'s
-/// already-exponential-in-`size_e` blowup and shrinking the usable
-/// `size_e` further as `cap` grows. Since `env` is forced empty here,
-/// every cap-bearing call below passes a literal `0` (not the `cap`
-/// parameter, which stays only for calling-convention uniformity with the
-/// rest of the `pstep` family) -- `env_wf(env, 0)` is trivially true for
-/// an empty `env`, and with `cap = 0` every cap-scaled contract collapses
-/// back to EXACTLY its pre-delta form (`size_growth(size_fb * (0 + 1)) ==
-/// size_growth(size_fb)`, `... + 10 * 0 * size_growth(...) == ...`), so
-/// none of this function's own arithmetic needed to change at all.
-#[verifier::spinoff_prover]
-pub proof fn pstep_diamond_beta_step(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, c: nat, size_e: nat, bdepth: nat, fb: ExprSpec, a: ExprSpec, body: ExprSpec, arg: ExprSpec, body3: ExprSpec, arg3: ExprSpec)
-    requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-        pstep(env, fb, body),
-        pstep(env, a, arg),
-        pstep(env, body, body3),
-        pstep(env, arg, arg3),
-        max_var_below(body, c),
-        max_var_below(arg, c),
-        depth(body) <= bdepth,
-        bdepth <= size(fb),
-        size(fb) + size(a) + 2 <= size_e,
-        c + growth(size_e) + 4 * size_e + 20 + beta_size_headroom(size_e) <= 0xFFFF_0000,
-        string_lits_ok(fb, 0),
-        string_lits_ok(a, 0),
-    ensures pstep(env, subst1(body, arg), subst1(body3, arg3))
-{
-    let bsize = pstep_size_bound(env, 0, fb, body);
-    let asize = pstep_size_bound(env, 0, a, arg);
-    assert(size(fb) * (0 + 1) == size(fb)) by (nonlinear_arith) {}
-    assert(size(a) * (0 + 1) == size(a)) by (nonlinear_arith) {}
-    assert(bsize <= size_growth(size(fb)));
-    assert(asize <= size_growth(size(a)));
-    pstep_subst1_size_headroom(c, size(fb), size(a), size_e, bsize, asize);
-    assert(size(body) * (size(arg) + 1) <= bsize * (asize + 1)) by (nonlinear_arith)
-        requires size(body) <= bsize, size(arg) <= asize
-    {}
-    growth_mono(size(body) * (size(arg) + 1), bsize * (asize + 1));
-    growth_mono(size(arg), asize);
-    growth_mono(size(body), bsize);
-    assert(c + growth(size(body) * (size(arg) + 1)) + 4 * size(body) * (size(arg) + 1)
-        + growth(size(arg)) + growth(size(body)) + 4 * size(arg) + 4 * size(body)
-        + depth(body) + 100 <= 0xFFFF_0000) by (nonlinear_arith)
-        requires
-            growth(size(body) * (size(arg) + 1)) <= growth(bsize * (asize + 1)),
-            size(body) * (size(arg) + 1) <= bsize * (asize + 1),
-            growth(size(arg)) <= growth(asize),
-            size(arg) <= asize,
-            growth(size(body)) <= growth(bsize),
-            size(body) <= bsize,
-            depth(body) <= bdepth,
-            bdepth <= size(fb),
-            size(fb) <= size_e,
-            c + growth(bsize * (asize + 1)) + 4 * bsize * (asize + 1)
-                + growth(asize) + growth(bsize) + 4 * asize + 4 * bsize
-                + size_e + 100 <= 0xFFFF_0000,
-    {}
-    assert(c + growth(size(body) * (size(arg) + 1)) + 4 * size(body) * (size(arg) + 1)
-        + growth(size(arg)) + growth(size(body)) + 4 * size(arg) + 4 * size(body)
-        + depth(body) + 100 + 10 * 0 * size_growth(size(body) * (size(arg) + 1)) <= 0xFFFF_0000)
-        by (nonlinear_arith)
-        requires
-            c + growth(size(body) * (size(arg) + 1)) + 4 * size(body) * (size(arg) + 1)
-                + growth(size(arg)) + growth(size(body)) + 4 * size(arg) + 4 * size(body)
-                + depth(body) + 100 <= 0xFFFF_0000,
-    {}
-    pstep_preserves_string_lits_ok(env, 0, fb, body);
-    pstep_preserves_string_lits_ok(env, 0, a, arg);
-    pstep_subst1(env, 0, c, body, body3, arg, arg3);
-}
 
-/// The diamond property: `pstep(env, e,e1) && pstep(env, e,e2)` implies some `e3`
-/// with `pstep(env, e1,e3) && pstep(env, e2,e3)`. Everywhere `e1` or `e2` arises
-/// via reflexivity, `e3` is just the OTHER one (`pstep(env, e,e2)` restated
-/// as `pstep(env, e1,e3)` when `e1 == e`, etc.) -- no induction needed there.
-/// Everywhere BOTH sides arise via plain congruence (including when
-/// `e`'s head is a `Bind` but neither `e1` nor `e2` actually took the
-/// beta option), recursing the diamond property onto each child and
-/// recombining is enough. The only place this genuinely needs
-/// `pstep_subst1` is when AT LEAST ONE side is an actual beta step on `e
-/// = App(Bind(ft, fb), a)`: beta/beta needs it on both reassembled
-/// sides; beta/congruence needs it on the beta side only (the
-/// congruence side's `f2` is forced `Bind`-shaped by `pstep`'s own
-/// `Bind` case, since `pstep(env, f, f2)` for `f` already `Bind`-shaped can
-/// only produce another `Bind`-shaped `f2` -- so it can ALSO beta-reduce
-/// directly to the same target, no extra lemma needed for that side).
-///
-/// **Fully proven -- no admission left.** Earlier attempts at this beta
-/// case hit a real wall: `pstep_subst1`'s own headroom, once proven, is
-/// necessarily size-based (via `pstep_subst`'s own size(e1)-based
-/// headroom, which it inherits from needing `pstep_bounds`'s own size-
-/// scaled growth tracking), but the beta case's `body1`/`a1` here are
-/// `pstep`'s own existentially-quantified witnesses, not structural
-/// subterms of `e` -- and witness size can grow EXPONENTIALLY under a
-/// single `pstep` step (`pstep_size_bound`'s doc comment has the
-/// duplicator-chain example and the confirmation that this is a genuine
-/// property of `pstep`'s own recursive definition, not a proof
-/// artifact). The resolution: `pstep_size_bound` proves a genuine,
-/// unconditional (`size` isn't `u32`-typed, so no overflow ceiling is
-/// needed for it) closed-form EXPONENTIAL bound on witness size in terms
-/// of the ORIGINAL subterm's size, and `pstep_subst1_size_headroom` /
-/// `beta_size_headroom` show that bound is generous enough to still fit
-/// under `pstep_subst1`'s own headroom -- PROVIDED `size(e)` itself is
-/// small enough for `size_growth`'s exponential to fit under the shared
-/// `0xFFFF_0000` u32-overflow-safety ceiling (concretely, around `size(e)
-/// <= 9`; see `beta_size_headroom`'s and `pstep_subst1_size_headroom`'s
-/// doc comments for the derivation). So this is a real, closed proof of
-/// the diamond property -- not vacuously true, but restricted to terms
-/// small enough that the worst-case duplication blowup still can't
-/// overflow a `u32` index. Larger terms are simply outside what this
-/// particular (index-magnitude-tracking) formalization can certify;
-/// closing that would need a fundamentally different technique for
-/// tracking `u32`-overflow-safety that doesn't route through a single
-/// fixed headroom ceiling on term size.
-/// Restricted to `env == Map::empty()` -- delta reduction genuinely
-/// cannot be threaded through this specific proof (the confluence
-/// diamond property) without shrinking its usable `size(e)` domain
-/// further for every `cap > 0` (see `pstep_diamond_beta_step`'s doc
-/// comment for the exact mechanism: `pstep_subst1_size_headroom`'s
-/// rescaling would compound with `beta_size_headroom`'s already-
-/// exponential blowup). Every `pstep_bounds`/`pstep_size_bound`/
-/// `pstep_diamond_beta_step` call below passes a literal `0` (not the
-/// `cap` parameter, kept only so this still fits the rest of the `pstep`
-/// family's calling convention) -- with `env` forced empty, `cap = 0`
-/// makes every one of those contracts collapse back to EXACTLY its
-/// pre-delta form, so this proof's own arithmetic is completely
-/// unchanged from before delta reduction existed. What DOES change: the
-/// `Const` case, previously unreachable (`ExprSpec` had no `Const`
-/// variant), is now reachable but trivial -- `env.contains_key(id)` is
-/// always false for an empty `env`, so `pstep`'s `Const` disjunct is
-/// always false too, forcing `e1 == e` (pure reflexivity) whenever
-/// `e == ExprSpec::Const(id)`, which is exactly the `if e == e1 { e2 }`
-/// case already handled above -- this branch is unreachable, matching
-/// the pre-delta catch-all.
-#[verifier::spinoff_prover]
-pub proof fn pstep_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec) -> (e3: ExprSpec)
-    requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-        pstep(env, e, e1),
-        pstep(env, e, e2),
-        max_var_below(e, bound),
-        bound + 2 * growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000,
-        // Every internal `pstep_bounds`/`pstep_size_bound` call below uses
-        // a LITERAL `cap = 0` (matching `env == Map::empty()`'s own "delta
-        // never fires, so no headroom needed" reasoning -- see this
-        // function's own established `Const` case), so the hypothesis
-        // those calls need is stated at `0`, not this function's own
-        // `cap` (which plays no role in the internal calls at all).
-        // Trivially true whenever `e` has no `StringLit` anywhere, same as
-        // every other `string_lits_ok` use -- this is a genuine, narrow
-        // restriction ONLY for terms containing a `StringLit` whose
-        // expansion doesn't fit under zero headroom, in the same spirit
-        // as this function's own permanent `env == Map::empty()` choice.
-        string_lits_ok(e, 0),
-    ensures pstep(env, e1, e3), pstep(env, e2, e3)
-    decreases e
-{
-    if e == e1 {
-        e2
-    } else if e == e2 {
-        e1
-    } else {
-        match e {
-            ExprSpec::App(f, a) => {
-                assert(max_var_below(*f, bound));
-                assert(max_var_below(*a, bound));
-                assert(size(e) == 1 + size(*f) + size(*a));
-                assert(size(*f) < size(e));
-                assert(size(*a) < size(e));
-                assert(string_lits_ok(*f, 0));
-                assert(string_lits_ok(*a, 0));
-                growth_mono(size(*f), size(e));
-                growth_mono(size(*a), size(e));
-                beta_size_headroom_mono(size(*f), size(e));
-                beta_size_headroom_mono(size(*a), size(e));
-                match *f {
-                    ExprSpec::Bind(ft, fb) => {
-                        assert(max_var_below(*fb, bound));
-                        assert(size(*f) == 1 + size(*ft) + size(*fb));
-                        assert(size(*fb) + 2 <= size(e));
-                        assert(string_lits_ok(*fb, 0));
-                        assert(size(*fb) + size(*a) + 2 <= size(e));
-                        growth_mono(size(*fb), size(e));
-                        beta_size_headroom_mono(size(*fb), size(e));
-                        assert(bound + growth(size(*fb)) + 4 * size(*fb) + 20 + beta_size_headroom(size(*fb)) <= 0xFFFF_0000);
-                        assert(bound + growth(size(*a)) + 4 * size(*a) + 20 + beta_size_headroom(size(*a)) <= 0xFFFF_0000);
-                        assert(bound + growth(size(e)) + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-
-                        if exists |body1: ExprSpec, a1: ExprSpec| #![trigger subst1(body1, a1)]
-                            pstep(env, *fb, body1) && pstep(env, *a, a1) && e1 == subst1(body1, a1)
-                        {
-                            let (body1, a1) = choose |body1: ExprSpec, a1: ExprSpec| #![trigger subst1(body1, a1)]
-                                pstep(env, *fb, body1) && pstep(env, *a, a1) && e1 == subst1(body1, a1);
-                            if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
-                                pstep(env, *fb, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
-                            {
-                                // beta / beta
-                                let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
-                                    pstep(env, *fb, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
-                                let body3 = pstep_diamond(env, cap, bound, *fb, body1, body2);
-                                let a3 = pstep_diamond(env, cap, bound, *a, a1, a2);
-                                assert(pstep(env, body1, body3) && pstep(env, body2, body3));
-                                assert(pstep(env, a1, a3) && pstep(env, a2, a3));
-
-                                let (b1mvb, b1depth) = pstep_bounds(env, 0, bound, *fb, body1);
-                                let (a1mvb, a1depth) = pstep_bounds(env, 0, bound, *a, a1);
-                                let (b2mvb, b2depth) = pstep_bounds(env, 0, bound, *fb, body2);
-                                let (a2mvb, a2depth) = pstep_bounds(env, 0, bound, *a, a2);
-
-                                let c1 = if b1mvb >= a1mvb { b1mvb } else { a1mvb };
-                                max_var_below_mono(body1, b1mvb, c1);
-                                max_var_below_mono(a1, a1mvb, c1);
-                                assert(b1depth <= size(*fb));
-                                assert(a1depth <= size(*a));
-                                assert(b1mvb <= bound + growth(size(*fb)));
-                                assert(a1mvb <= bound + growth(size(*a)));
-                                assert(c1 <= bound + growth(size(e)));
-                                assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                                pstep_diamond_beta_step(env, 0, c1, size(e), b1depth, *fb, *a, body1, a1, body3, a3);
-
-                                let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
-                                max_var_below_mono(body2, b2mvb, c2);
-                                max_var_below_mono(a2, a2mvb, c2);
-                                assert(b2depth <= size(*fb));
-                                assert(a2depth <= size(*a));
-                                assert(b2mvb <= bound + growth(size(*fb)));
-                                assert(a2mvb <= bound + growth(size(*a)));
-                                assert(c2 <= bound + growth(size(e)));
-                                assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                                pstep_diamond_beta_step(env, 0, c2, size(e), b2depth, *fb, *a, body2, a2, body3, a3);
-
-                                subst1(body3, a3)
-                            } else {
-                                // beta / congruence
-                                assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
-                                let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                                match f2 {
-                                    ExprSpec::Bind(t2, b2) => {
-                                        assert(pstep(env, *fb, *b2));
-                                        let body3 = pstep_diamond(env, cap, bound, *fb, body1, *b2);
-                                        let a3 = pstep_diamond(env, cap, bound, *a, a1, a2);
-                                        assert(pstep(env, body1, body3) && pstep(env, *b2, body3));
-                                        assert(pstep(env, a1, a3) && pstep(env, a2, a3));
-
-                                        let (b1mvb, b1depth) = pstep_bounds(env, 0, bound, *fb, body1);
-                                        let (a1mvb, a1depth) = pstep_bounds(env, 0, bound, *a, a1);
-                                        let c1 = if b1mvb >= a1mvb { b1mvb } else { a1mvb };
-                                        max_var_below_mono(body1, b1mvb, c1);
-                                        max_var_below_mono(a1, a1mvb, c1);
-                                        assert(b1depth <= size(*fb));
-                                        assert(a1depth <= size(*a));
-                                        assert(b1mvb <= bound + growth(size(*fb)));
-                                        assert(a1mvb <= bound + growth(size(*a)));
-                                        assert(c1 <= bound + growth(size(e)));
-                                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                                        pstep_diamond_beta_step(env, 0, c1, size(e), b1depth, *fb, *a, body1, a1, body3, a3);
-
-                                        let e3v = subst1(body3, a3);
-                                        assert(e2 == ExprSpec::App(Box::new(ExprSpec::Bind(t2, Box::new(*b2))), Box::new(a2)));
-                                        assert(pstep(env, e2, e3v));
-                                        e3v
-                                    }
-                                    _ => { assert(false); e1 }
-                                }
-                            }
-                        } else {
-                            assert(exists |f1: ExprSpec, a1: ExprSpec| pstep(env, *f, f1) && pstep(env, *a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1)));
-                            let (f1, a1) = choose |f1: ExprSpec, a1: ExprSpec| pstep(env, *f, f1) && pstep(env, *a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1));
-                            if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
-                                pstep(env, *fb, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
-                            {
-                                // congruence / beta
-                                let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
-                                    pstep(env, *fb, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
-                                match f1 {
-                                    ExprSpec::Bind(t1, b1) => {
-                                        assert(pstep(env, *fb, *b1));
-                                        let body3 = pstep_diamond(env, cap, bound, *fb, *b1, body2);
-                                        let a3 = pstep_diamond(env, cap, bound, *a, a1, a2);
-                                        assert(pstep(env, *b1, body3) && pstep(env, body2, body3));
-                                        assert(pstep(env, a1, a3) && pstep(env, a2, a3));
-
-                                        let (b2mvb, b2depth) = pstep_bounds(env, 0, bound, *fb, body2);
-                                        let (a2mvb, a2depth) = pstep_bounds(env, 0, bound, *a, a2);
-                                        let c2 = if b2mvb >= a2mvb { b2mvb } else { a2mvb };
-                                        max_var_below_mono(body2, b2mvb, c2);
-                                        max_var_below_mono(a2, a2mvb, c2);
-                                        assert(b2depth <= size(*fb));
-                                        assert(a2depth <= size(*a));
-                                        assert(b2mvb <= bound + growth(size(*fb)));
-                                        assert(a2mvb <= bound + growth(size(*a)));
-                                        assert(c2 <= bound + growth(size(e)));
-                                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                                        pstep_diamond_beta_step(env, 0, c2, size(e), b2depth, *fb, *a, body2, a2, body3, a3);
-
-                                        let e3v = subst1(body3, a3);
-                                        assert(e1 == ExprSpec::App(Box::new(ExprSpec::Bind(t1, Box::new(*b1))), Box::new(a1)));
-                                        assert(pstep(env, e1, e3v));
-                                        e3v
-                                    }
-                                    _ => { assert(false); e2 }
-                                }
-                            } else {
-                                // congruence / congruence
-                                assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
-                                let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                                let f3 = pstep_diamond(env, cap, bound, *f, f1, f2);
-                                let a3 = pstep_diamond(env, cap, bound, *a, a1, a2);
-                                assert(pstep(env, e1, ExprSpec::App(Box::new(f3), Box::new(a3))));
-                                assert(pstep(env, e2, ExprSpec::App(Box::new(f3), Box::new(a3))));
-                                ExprSpec::App(Box::new(f3), Box::new(a3))
-                            }
-                        }
-                    }
-                    _ => {
-                        assert(exists |f1: ExprSpec, a1: ExprSpec| pstep(env, *f, f1) && pstep(env, *a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1)));
-                        assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
-                        let (f1, a1) = choose |f1: ExprSpec, a1: ExprSpec| pstep(env, *f, f1) && pstep(env, *a, a1) && e1 == ExprSpec::App(Box::new(f1), Box::new(a1));
-                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                        let f3 = pstep_diamond(env, cap, bound, *f, f1, f2);
-                        let a3 = pstep_diamond(env, cap, bound, *a, a1, a2);
-                        assert(pstep(env, e1, ExprSpec::App(Box::new(f3), Box::new(a3))));
-                        assert(pstep(env, e2, ExprSpec::App(Box::new(f3), Box::new(a3))));
-                        ExprSpec::App(Box::new(f3), Box::new(a3))
-                    }
-                }
-            }
-            ExprSpec::Bind(t, b) => {
-                assert(max_var_below(*t, bound));
-                assert(max_var_below(*b, bound));
-                assert(size(e) == 1 + size(*t) + size(*b));
-                assert(size(*t) < size(e));
-                assert(size(*b) < size(e));
-                assert(string_lits_ok(*t, 0));
-                assert(string_lits_ok(*b, 0));
-                growth_mono(size(*t), size(e));
-                growth_mono(size(*b), size(e));
-                beta_size_headroom_mono(size(*t), size(e));
-                beta_size_headroom_mono(size(*b), size(e));
-                let (t1, b1) = choose |t1: ExprSpec, b1: ExprSpec| pstep(env, *t, t1) && pstep(env, *b, b1) && e1 == ExprSpec::Bind(Box::new(t1), Box::new(b1));
-                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
-                let t3 = pstep_diamond(env, cap, bound, *t, t1, t2);
-                let b3 = pstep_diamond(env, cap, bound, *b, b1, b2);
-                assert(pstep(env, e1, ExprSpec::Bind(Box::new(t3), Box::new(b3))));
-                assert(pstep(env, e2, ExprSpec::Bind(Box::new(t3), Box::new(b3))));
-                ExprSpec::Bind(Box::new(t3), Box::new(b3))
-            }
-            ExprSpec::Let(t, v, b) => {
-                assert(max_var_below(*t, bound));
-                assert(max_var_below(*v, bound));
-                assert(max_var_below(*b, bound));
-                assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
-                assert(size(*t) < size(e));
-                assert(size(*v) < size(e));
-                assert(size(*b) < size(e));
-                assert(string_lits_ok(*t, 0));
-                assert(string_lits_ok(*v, 0));
-                assert(string_lits_ok(*b, 0));
-                assert(size(*v) + size(*b) + 2 <= size(e));
-                growth_mono(size(*t), size(e));
-                growth_mono(size(*v), size(e));
-                growth_mono(size(*b), size(e));
-                beta_size_headroom_mono(size(*t), size(e));
-                beta_size_headroom_mono(size(*v), size(e));
-                beta_size_headroom_mono(size(*b), size(e));
-                assert(bound + growth(size(*b)) + 4 * size(*b) + 20 + beta_size_headroom(size(*b)) <= 0xFFFF_0000);
-                assert(bound + growth(size(*v)) + 4 * size(*v) + 20 + beta_size_headroom(size(*v)) <= 0xFFFF_0000);
-                assert(bound + growth(size(e)) + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-
-                if exists |b1: ExprSpec, v1: ExprSpec| #![trigger subst1(b1, v1)]
-                    pstep(env, *b, b1) && pstep(env, *v, v1) && e1 == subst1(b1, v1)
-                {
-                    let (b1, v1) = choose |b1: ExprSpec, v1: ExprSpec| #![trigger subst1(b1, v1)]
-                        pstep(env, *b, b1) && pstep(env, *v, v1) && e1 == subst1(b1, v1);
-                    if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
-                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
-                    {
-                        // zeta / zeta
-                        let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
-                            pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
-                        let b3 = pstep_diamond(env, cap, bound, *b, b1, b2);
-                        let v3 = pstep_diamond(env, cap, bound, *v, v1, v2);
-                        assert(pstep(env, b1, b3) && pstep(env, b2, b3));
-                        assert(pstep(env, v1, v3) && pstep(env, v2, v3));
-
-                        let (b1mvb, b1depth) = pstep_bounds(env, 0, bound, *b, b1);
-                        let (v1mvb, v1depth) = pstep_bounds(env, 0, bound, *v, v1);
-                        let (b2mvb, b2depth) = pstep_bounds(env, 0, bound, *b, b2);
-                        let (v2mvb, v2depth) = pstep_bounds(env, 0, bound, *v, v2);
-
-                        let c1 = if b1mvb >= v1mvb { b1mvb } else { v1mvb };
-                        max_var_below_mono(b1, b1mvb, c1);
-                        max_var_below_mono(v1, v1mvb, c1);
-                        assert(b1depth <= size(*b));
-                        assert(v1depth <= size(*v));
-                        assert(b1mvb <= bound + growth(size(*b)));
-                        assert(v1mvb <= bound + growth(size(*v)));
-                        assert(c1 <= bound + growth(size(e)));
-                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                        pstep_diamond_beta_step(env, 0, c1, size(e), b1depth, *b, *v, b1, v1, b3, v3);
-
-                        let c2 = if b2mvb >= v2mvb { b2mvb } else { v2mvb };
-                        max_var_below_mono(b2, b2mvb, c2);
-                        max_var_below_mono(v2, v2mvb, c2);
-                        assert(b2depth <= size(*b));
-                        assert(v2depth <= size(*v));
-                        assert(b2mvb <= bound + growth(size(*b)));
-                        assert(v2mvb <= bound + growth(size(*v)));
-                        assert(c2 <= bound + growth(size(e)));
-                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                        pstep_diamond_beta_step(env, 0, c2, size(e), b2depth, *b, *v, b2, v2, b3, v3);
-
-                        subst1(b3, v3)
-                    } else {
-                        // zeta / congruence
-                        let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                            pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                        let b3 = pstep_diamond(env, cap, bound, *b, b1, b2);
-                        let v3 = pstep_diamond(env, cap, bound, *v, v1, v2);
-                        assert(pstep(env, b1, b3) && pstep(env, b2, b3));
-                        assert(pstep(env, v1, v3) && pstep(env, v2, v3));
-
-                        let (b1mvb, b1depth) = pstep_bounds(env, 0, bound, *b, b1);
-                        let (v1mvb, v1depth) = pstep_bounds(env, 0, bound, *v, v1);
-                        let c1 = if b1mvb >= v1mvb { b1mvb } else { v1mvb };
-                        max_var_below_mono(b1, b1mvb, c1);
-                        max_var_below_mono(v1, v1mvb, c1);
-                        assert(b1depth <= size(*b));
-                        assert(v1depth <= size(*v));
-                        assert(b1mvb <= bound + growth(size(*b)));
-                        assert(v1mvb <= bound + growth(size(*v)));
-                        assert(c1 <= bound + growth(size(e)));
-                        assert(c1 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                        pstep_diamond_beta_step(env, 0, c1, size(e), b1depth, *b, *v, b1, v1, b3, v3);
-
-                        let e3v = subst1(b3, v3);
-                        assert(e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
-                        assert(pstep(env, e2, e3v));
-                        e3v
-                    }
-                } else {
-                    let (t1, v1, b1) = choose |t1: ExprSpec, v1: ExprSpec, b1: ExprSpec|
-                        pstep(env, *t, t1) && pstep(env, *v, v1) && pstep(env, *b, b1) && e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1));
-                    if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
-                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
-                    {
-                        // congruence / zeta
-                        let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
-                            pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
-                        let b3 = pstep_diamond(env, cap, bound, *b, b1, b2);
-                        let v3 = pstep_diamond(env, cap, bound, *v, v1, v2);
-                        assert(pstep(env, b1, b3) && pstep(env, b2, b3));
-                        assert(pstep(env, v1, v3) && pstep(env, v2, v3));
-
-                        let (b2mvb, b2depth) = pstep_bounds(env, 0, bound, *b, b2);
-                        let (v2mvb, v2depth) = pstep_bounds(env, 0, bound, *v, v2);
-                        let c2 = if b2mvb >= v2mvb { b2mvb } else { v2mvb };
-                        max_var_below_mono(b2, b2mvb, c2);
-                        max_var_below_mono(v2, v2mvb, c2);
-                        assert(b2depth <= size(*b));
-                        assert(v2depth <= size(*v));
-                        assert(b2mvb <= bound + growth(size(*b)));
-                        assert(v2mvb <= bound + growth(size(*v)));
-                        assert(c2 <= bound + growth(size(e)));
-                        assert(c2 + growth(size(e)) + 4 * size(e) + 20 + beta_size_headroom(size(e)) <= 0xFFFF_0000);
-                        pstep_diamond_beta_step(env, 0, c2, size(e), b2depth, *b, *v, b2, v2, b3, v3);
-
-                        let e3v = subst1(b3, v3);
-                        assert(e1 == ExprSpec::Let(Box::new(t1), Box::new(v1), Box::new(b1)));
-                        assert(pstep(env, e1, e3v));
-                        e3v
-                    } else {
-                        // congruence / congruence
-                        let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-                            pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                        let t3 = pstep_diamond(env, cap, bound, *t, t1, t2);
-                        let v3 = pstep_diamond(env, cap, bound, *v, v1, v2);
-                        let b3 = pstep_diamond(env, cap, bound, *b, b1, b2);
-                        assert(pstep(env, e1, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
-                        assert(pstep(env, e2, ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))));
-                        ExprSpec::Let(Box::new(t3), Box::new(v3), Box::new(b3))
-                    }
-                }
-            }
-            ExprSpec::Proj(s) => {
-                assert(max_var_below(*s, bound));
-                assert(size(e) == 1 + size(*s));
-                assert(size(*s) < size(e));
-                assert(string_lits_ok(*s, 0));
-                growth_mono(size(*s), size(e));
-                beta_size_headroom_mono(size(*s), size(e));
-                match e1 {
-                    ExprSpec::Proj(s1) => match e2 {
-                        ExprSpec::Proj(s2) => {
-                            assert(pstep(env, *s, *s1) && pstep(env, *s, *s2));
-                            let s3 = pstep_diamond(env, cap, bound, *s, *s1, *s2);
-                            assert(pstep(env, e1, ExprSpec::Proj(Box::new(s3))));
-                            assert(pstep(env, e2, ExprSpec::Proj(Box::new(s3))));
-                            ExprSpec::Proj(Box::new(s3))
-                        }
-                        _ => { assert(false); e1 }
-                    }
-                    _ => { assert(false); e1 }
-                }
-            }
-            // `NatLit`'s unfolding rule is deterministic (no existential
-            // choice, unlike beta/zeta) and doesn't depend on `env` at all
-            // (unlike `Const`'s delta rule, whose case here stays vacuous
-            // under `env == Map::empty()`) -- so both `e1` and `e2`, having
-            // stepped from the SAME `e`, are forced to equal the exact same
-            // constructed value, giving `e1 == e2` directly and closing the
-            // diamond trivially with `e3 = e1`.
-            ExprSpec::NatLit(n) => {
-                if n.0@ == 0 {
-                    assert(e1 == const_expr_no_levels(nat_zero_id()));
-                    assert(e2 == const_expr_no_levels(nat_zero_id()));
-                } else {
-                    let a = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
-                    assert(e1 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a)));
-                    assert(e2 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a)));
-                }
-                assert(e1 == e2);
-                assert(pstep(env, e1, e1));
-                assert(pstep(env, e2, e1));
-                e1
-            }
-            // Same determinism argument as `NatLit`, simpler still: no
-            // case split at all, since the rule's target is the SAME
-            // opaque call (`string_lit_expand_model(len.0@)`) regardless.
-            ExprSpec::StringLit(len) => {
-                assert(e1 == string_lit_expand_model(len.0@));
-                assert(e2 == string_lit_expand_model(len.0@));
-                assert(e1 == e2);
-                assert(pstep(env, e1, e1));
-                assert(pstep(env, e2, e1));
-                e1
-            }
-            _ => {
-                assert(false);
-                e1
-            }
-        }
-    }
-}
 
 /// Telescopic substitution against an EMPTY list is always a no-op --
 /// unconditionally (unlike `subst_full_noop`, which needs `nlbv(e) <=
@@ -10553,7 +9995,7 @@ pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
             subst_full_empty(*v, offset);
             subst_full_empty(*b, (offset + 1) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             subst_full_empty(*s, offset);
         }
     }
@@ -10591,7 +10033,7 @@ pub proof fn nlbv_subst_noop(j: nat, s: ExprSpec, e: ExprSpec)
             nlbv_subst_noop(j, s, *v);
             nlbv_subst_noop((j + 1) as nat, shift(1, 0, s), *b);
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             nlbv_subst_noop(j, s, *st);
         }
     }
@@ -10677,7 +10119,7 @@ pub proof fn shift_abstr_commute(d: int, c: nat, e: ExprSpec, ks: Seq<u32>, o: n
             shift_abstr_commute(d, (c + 1) as nat, *b, ks, (o + 1) as nat);
             assert(((o + 1) + d) as nat == ((o + d) as nat + 1) as nat);
         }
-        ExprSpec::Proj(s2) => {
+        ExprSpec::Proj(pidx2, s2) => {
             assert(depth(*s2) < depth(e));
             shift_abstr_commute(d, c, *s2, ks, o);
         }
@@ -10757,7 +10199,7 @@ pub proof fn subst_abstr_commute(j: nat, s: ExprSpec, e: ExprSpec, ks: Seq<u32>,
             shift_abstr_commute(1, 0, s, ks, o);
             assert(abstr_full(shift(1, 0, s), ks, (o + 1) as nat) == shift(1, 0, abstr_full(s, ks, o)));
         }
-        ExprSpec::Proj(s2) => {
+        ExprSpec::Proj(pidx2, s2) => {
             assert(depth(*s2) < depth(e));
             subst_abstr_commute(j, s, *s2, ks, o);
         }
@@ -10840,7 +10282,7 @@ pub proof fn shift_down_abstr_commute(c: nat, u: ExprSpec, ks: Seq<u32>, o: nat)
             shift_down_abstr_commute(c, *v, ks, o);
             shift_down_abstr_commute((c + 1) as nat, *b, ks, (o + 1) as nat);
         }
-        ExprSpec::Proj(s2) => {
+        ExprSpec::Proj(pidx2, s2) => {
             assert(depth(*s2) < depth(u));
             shift_down_abstr_commute(c, *s2, ks, o);
         }
@@ -11064,18 +10506,18 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                     assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
                 }
             }
-            ExprSpec::Proj(sx) => {
+            ExprSpec::Proj(pidx1, sx) => {
                 assert(max_var_below(*sx, bound));
                 assert(string_lits_ok(*sx, 0));
                 assert(size(e1) == 1 + size(*sx));
                 assert(depth(*sx) < depth(e1));
                 growth_mono(size(*sx), size(e1));
                 match e2 {
-                    ExprSpec::Proj(sx2) => {
+                    ExprSpec::Proj(pidx2, sx2) => {
                         assert(pstep(env, *sx, *sx2));
                         pstep_abstr(env, bound, *sx, *sx2, ks, o);
-                        assert(abstr_full(e1, ks, o) == ExprSpec::Proj(Box::new(abstr_full(*sx, ks, o))));
-                        assert(abstr_full(e2, ks, o) == ExprSpec::Proj(Box::new(abstr_full(*sx2, ks, o))));
+                        assert(abstr_full(e1, ks, o) == ExprSpec::Proj(pidx1, Box::new(abstr_full(*sx, ks, o))));
+                        assert(abstr_full(e2, ks, o) == ExprSpec::Proj(pidx2, Box::new(abstr_full(*sx2, ks, o))));
                         assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
                     }
                     _ => {
@@ -11399,7 +10841,7 @@ pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
             nlbv_shift_noop(d, c, *v);
             nlbv_shift_noop(d, (c + 1) as nat, *b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             nlbv_shift_noop(d, c, *s);
         }
     }
@@ -11433,7 +10875,7 @@ pub proof fn nlbv_no_escaping_ref(e: ExprSpec, k: nat)
             nlbv_no_escaping_ref(*v, k);
             nlbv_no_escaping_ref(*b, (k + 1) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             nlbv_no_escaping_ref(*s, k);
         }
     }
@@ -11566,10 +11008,10 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
                 Box::new(subst_c(*b, a, (c + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_c_eq_subst_full(*st, a, c, bound);
-            assert(subst(c, shift(1, c, a), e) == ExprSpec::Proj(Box::new(subst(c, shift(1, c, a), *st))));
-            assert(subst_c(e, a, c) == ExprSpec::Proj(Box::new(subst_c(*st, a, c))));
+            assert(subst(c, shift(1, c, a), e) == ExprSpec::Proj(pidx, Box::new(subst(c, shift(1, c, a), *st))));
+            assert(subst_c(e, a, c) == ExprSpec::Proj(pidx, Box::new(subst_c(*st, a, c))));
         }
     }
 }
@@ -11781,9 +11223,9 @@ pub proof fn subst_full_nlbv_bound(e: ExprSpec, s: ExprSpec, offset: nat)
                 Box::new(subst_full(*b, seq![s], (offset + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_full_nlbv_bound(*st, s, offset);
-            assert(subst_full(e, seq![s], offset) == ExprSpec::Proj(Box::new(subst_full(*st, seq![s], offset))));
+            assert(subst_full(e, seq![s], offset) == ExprSpec::Proj(pidx, Box::new(subst_full(*st, seq![s], offset))));
         }
     }
 }
@@ -11843,9 +11285,9 @@ pub proof fn subst_full_nlbv_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset:
                 Box::new(subst_full(*b, substs, (offset + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_full_nlbv_bound_n(*st, substs, offset);
-            assert(subst_full(e, substs, offset) == ExprSpec::Proj(Box::new(subst_full(*st, substs, offset))));
+            assert(subst_full(e, substs, offset) == ExprSpec::Proj(pidx, Box::new(subst_full(*st, substs, offset))));
         }
     }
 }
@@ -11912,9 +11354,9 @@ pub proof fn subst_full_depth_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset
                 Box::new(subst_full(*b, substs, (offset + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_full_depth_bound_n(*st, substs, offset, m);
-            assert(subst_full(e, substs, offset) == ExprSpec::Proj(Box::new(subst_full(*st, substs, offset))));
+            assert(subst_full(e, substs, offset) == ExprSpec::Proj(pidx, Box::new(subst_full(*st, substs, offset))));
         }
     }
 }
@@ -11977,9 +11419,9 @@ pub proof fn subst_full_max_var_below_bound_n(e: ExprSpec, substs: Seq<ExprSpec>
                 Box::new(subst_full(*b, substs, (offset + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_full_max_var_below_bound_n(*st, substs, offset, bound);
-            assert(subst_full(e, substs, offset) == ExprSpec::Proj(Box::new(subst_full(*st, substs, offset))));
+            assert(subst_full(e, substs, offset) == ExprSpec::Proj(pidx, Box::new(subst_full(*st, substs, offset))));
         }
     }
 }
@@ -12136,20 +11578,20 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
                 Box::new(subst_full(*b, seq![s] + rest, (offset + 1) as nat)),
             ));
         }
-        ExprSpec::Proj(st) => {
+        ExprSpec::Proj(pidx, st) => {
             subst_full_compose(*st, s, rest, k, offset);
 
             let sx = subst_full(*st, seq![s], (offset + k) as nat);
-            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Proj(Box::new(sx)));
+            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Proj(pidx, Box::new(sx)));
 
             assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
-                == subst_full(ExprSpec::Proj(Box::new(sx)), rest, offset));
-            assert(subst_full(ExprSpec::Proj(Box::new(sx)), rest, offset)
-                == ExprSpec::Proj(Box::new(subst_full(sx, rest, offset))));
+                == subst_full(ExprSpec::Proj(pidx, Box::new(sx)), rest, offset));
+            assert(subst_full(ExprSpec::Proj(pidx, Box::new(sx)), rest, offset)
+                == ExprSpec::Proj(pidx, Box::new(subst_full(sx, rest, offset))));
             assert(subst_full(sx, rest, offset) == subst_full(*st, seq![s] + rest, offset));
 
             assert(subst_full(e, seq![s] + rest, offset)
-                == ExprSpec::Proj(Box::new(subst_full(*st, seq![s] + rest, offset))));
+                == ExprSpec::Proj(pidx, Box::new(subst_full(*st, seq![s] + rest, offset))));
         }
     }
 }
@@ -13079,22 +12521,22 @@ pub proof fn pstep_star_let_body_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t: E
 
 /// `Proj` congruence for `pstep_star` (`pstep`'s `Proj` arm is already
 /// exactly inner-position congruence).
-pub proof fn pstep_star_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn pstep_star_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, x: ExprSpec, y: ExprSpec)
     requires pstep_star(env, x, y)
-    ensures pstep_star(env, ExprSpec::Proj(Box::new(x)), ExprSpec::Proj(Box::new(y)))
+    ensures pstep_star(env, ExprSpec::Proj(pidx, Box::new(x)), ExprSpec::Proj(pidx, Box::new(y)))
 {
     let chain = choose |c: Seq<ExprSpec>| c.len() >= 1 && c[0] == x && c[c.len() - 1] == y && pstep_chain_valid(env, c);
-    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Proj(Box::new(chain[i])));
+    let mapped = Seq::new(chain.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chain[i])));
     assert(mapped.len() == chain.len());
-    assert(mapped[0] == ExprSpec::Proj(Box::new(chain[0])));
+    assert(mapped[0] == ExprSpec::Proj(pidx, Box::new(chain[0])));
     assert(chain[0] == x);
-    assert(mapped[mapped.len() - 1] == ExprSpec::Proj(Box::new(chain[chain.len() - 1])));
+    assert(mapped[mapped.len() - 1] == ExprSpec::Proj(pidx, Box::new(chain[chain.len() - 1])));
     assert(chain[chain.len() - 1] == y);
     assert(pstep_chain_valid(env, mapped)) by {
         assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
             assert(pstep(env, chain[i], chain[i + 1]));
-            assert(mapped[i] == ExprSpec::Proj(Box::new(chain[i])));
-            assert(mapped[i + 1] == ExprSpec::Proj(Box::new(chain[i + 1])));
+            assert(mapped[i] == ExprSpec::Proj(pidx, Box::new(chain[i])));
+            assert(mapped[i + 1] == ExprSpec::Proj(pidx, Box::new(chain[i + 1])));
             assert(pstep(env, mapped[i], mapped[i + 1]));
         }
     }
@@ -13166,15 +12608,15 @@ pub proof fn defeq_let_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, 
 }
 
 /// `defeq` congruence at `Proj`.
-pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, x1: ExprSpec, x2: ExprSpec)
+pub proof fn defeq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, x1: ExprSpec, x2: ExprSpec)
     requires defeq(env, x1, x2)
-    ensures defeq(env, ExprSpec::Proj(Box::new(x1)), ExprSpec::Proj(Box::new(x2)))
+    ensures defeq(env, ExprSpec::Proj(pidx, Box::new(x1)), ExprSpec::Proj(pidx, Box::new(x2)))
 {
     let z = choose |z: ExprSpec| #[trigger] pstep_star(env, x1, z) && #[trigger] pstep_star(env, x2, z);
-    pstep_star_proj_congr(env, x1, z);
-    pstep_star_proj_congr(env, x2, z);
-    assert(pstep_star(env, ExprSpec::Proj(Box::new(x1)), ExprSpec::Proj(Box::new(z)))
-        && pstep_star(env, ExprSpec::Proj(Box::new(x2)), ExprSpec::Proj(Box::new(z))));
+    pstep_star_proj_congr(env, pidx, x1, z);
+    pstep_star_proj_congr(env, pidx, x2, z);
+    assert(pstep_star(env, ExprSpec::Proj(pidx, Box::new(x1)), ExprSpec::Proj(pidx, Box::new(z)))
+        && pstep_star(env, ExprSpec::Proj(pidx, Box::new(x2)), ExprSpec::Proj(pidx, Box::new(z))));
 }
 
 /// The telescopic-reduction bridge to `pstep`/confluence this whole file
@@ -14027,9 +13469,9 @@ pub open spec fn one_whnf_no_unfolding_with_proj_step(
     r: ExprSpec,
 ) -> bool {
     ||| pstep_star(env, e, r)
-    ||| (exists |structure: ExprSpec, idx: nat, reduced: ExprSpec, args: Seq<ExprSpec>|
-            e == spine_app(ExprSpec::Proj(Box::new(structure)), args)
-            && pstep_star_proj(env, ctor_env, structure, idx, reduced)
+    ||| (exists |structure: ExprSpec, pidx: usize, reduced: ExprSpec, args: Seq<ExprSpec>|
+            e == spine_app(ExprSpec::Proj(pidx, Box::new(structure)), args)
+            && pstep_star_proj(env, ctor_env, structure, pidx as nat, reduced)
             && r == spine_app(reduced, args))
 }
 

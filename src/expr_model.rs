@@ -201,7 +201,7 @@ pub enum ExprSpec {
     App(Box<ExprSpec>, Box<ExprSpec>),
     Bind(Box<ExprSpec>, Box<ExprSpec>),
     Let(Box<ExprSpec>, Box<ExprSpec>, Box<ExprSpec>),
-    Proj(Box<ExprSpec>),
+    Proj(usize, Box<ExprSpec>),
 }
 
 /// Mirrors the cached `num_loose_bvars` field's defining formula (see
@@ -223,7 +223,7 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
             let tv = if nlbv(*t) >= nlbv(*v) { nlbv(*t) } else { nlbv(*v) };
             if tv >= bb { tv } else { bb }
         }
-        ExprSpec::Proj(s) => nlbv(*s),
+        ExprSpec::Proj(pidx, s) => nlbv(*s),
     }
 }
 
@@ -237,7 +237,7 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
         ExprSpec::Let(t, v, b) => has_fv(*t) || has_fv(*v) || has_fv(*b),
-        ExprSpec::Proj(s) => has_fv(*s),
+        ExprSpec::Proj(pidx, s) => has_fv(*s),
     }
 }
 
@@ -259,7 +259,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
             let tv = if depth(*t) >= depth(*v) { depth(*t) } else { depth(*v) };
             1 + if tv >= depth(*b) { tv } else { depth(*b) }
         }
-        ExprSpec::Proj(s) => 1 + depth(*s),
+        ExprSpec::Proj(pidx, s) => 1 + depth(*s),
     }
 }
 
@@ -297,7 +297,7 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
             Box::new(subst_full(*v, substs, offset)),
             Box::new(subst_full(*b, substs, offset + 1)),
         ),
-        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(subst_full(*s, substs, offset))),
+        ExprSpec::Proj(pidx, s) => ExprSpec::Proj(pidx, Box::new(subst_full(*s, substs, offset))),
     }
 }
 
@@ -327,7 +327,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
             subst_full_noop(*v, substs, offset);
             subst_full_noop(*b, substs, (offset + 1) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             subst_full_noop(*s, substs, offset);
         }
     }
@@ -380,7 +380,7 @@ pub open spec fn expr_spec_eq(a: ExprSpec, b: ExprSpec) -> bool
             expr_spec_eq(*t1, *t2) && expr_spec_eq(*b1, *b2),
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
             expr_spec_eq(*t1, *t2) && expr_spec_eq(*v1, *v2) && expr_spec_eq(*b1, *b2),
-        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => expr_spec_eq(*s1, *s2),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && expr_spec_eq(*s1, *s2),
         _ => false,
     }
 }
@@ -405,7 +405,7 @@ pub proof fn expr_spec_eq_refl(e: ExprSpec)
             expr_spec_eq_refl(*v);
             expr_spec_eq_refl(*b);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             expr_spec_eq_refl(*s);
         }
     }
@@ -458,10 +458,10 @@ pub fn dup(e: &ExprSpec) -> (result: ExprSpec)
             assert(expr_spec_eq(sb, **b));
             ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             let ss = dup(s);
             assert(expr_spec_eq(ss, **s));
-            ExprSpec::Proj(Box::new(ss))
+            ExprSpec::Proj(*pidx, Box::new(ss))
         }
     }
 }
@@ -511,7 +511,7 @@ pub fn nlbv_exec(e: &ExprSpec) -> (result: u32)
             let tv = if nt >= nv { nt } else { nv };
             if tv >= bb { tv } else { bb }
         }
-        ExprSpec::Proj(s) => nlbv_exec(s),
+        ExprSpec::Proj(pidx, s) => nlbv_exec(s),
     }
 }
 
@@ -568,10 +568,10 @@ pub fn inst_model(e: ExprSpec, substs: &Vec<ExprSpec>, offset: u32) -> (result: 
                 assert(expr_spec_eq(sb, subst_full(*b, substs@, (offset + 1) as nat)));
                 ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 let ss = inst_model(*s, substs, offset);
                 assert(expr_spec_eq(ss, subst_full(*s, substs@, offset as nat)));
-                ExprSpec::Proj(Box::new(ss))
+                ExprSpec::Proj(pidx, Box::new(ss))
             }
         }
     }
@@ -622,7 +622,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
             Box::new(abstr_full(*v, locals, offset)),
             Box::new(abstr_full(*b, locals, offset + 1)),
         ),
-        ExprSpec::Proj(s) => ExprSpec::Proj(Box::new(abstr_full(*s, locals, offset))),
+        ExprSpec::Proj(pidx, s) => ExprSpec::Proj(pidx, Box::new(abstr_full(*s, locals, offset))),
     }
 }
 
@@ -658,7 +658,7 @@ pub open spec fn fv_below(e: ExprSpec, b: u32) -> bool
         ExprSpec::App(f, a) => fv_below(*f, b) && fv_below(*a, b),
         ExprSpec::Bind(t, bd) => fv_below(*t, b) && fv_below(*bd, b),
         ExprSpec::Let(t, v, bd) => fv_below(*t, b) && fv_below(*v, b) && fv_below(*bd, b),
-        ExprSpec::Proj(s) => fv_below(*s, b),
+        ExprSpec::Proj(pidx, s) => fv_below(*s, b),
     }
 }
 
@@ -768,7 +768,7 @@ pub proof fn abstr_subst_roundtrip_n(bdy: ExprSpec, ks: Seq<u32>, o: nat)
             abstr_subst_roundtrip_n(*v, ks, o);
             abstr_subst_roundtrip_n(*b2, ks, o + 1);
         }
-        ExprSpec::Proj(s2) => {
+        ExprSpec::Proj(pidx, s2) => {
             assert forall |i: int| 0 <= i < ks.len() implies fv_below(*s2, #[trigger] ks[i]) by {
                 assert(fv_below(bdy, ks[i]));
             }
@@ -827,7 +827,7 @@ pub proof fn abstr_subst_roundtrip(bdy: ExprSpec, k: u32, o: nat)
             abstr_subst_roundtrip(*v, k, o);
             abstr_subst_roundtrip(*b2, k, o + 1);
         }
-        ExprSpec::Proj(s2) => {
+        ExprSpec::Proj(pidx, s2) => {
             abstr_subst_roundtrip(*s2, k, o);
         }
     }
@@ -856,7 +856,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
             abstr_full_noop(*v, locals, offset);
             abstr_full_noop(*b, locals, (offset + 1) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             abstr_full_noop(*s, locals, offset);
         }
     }
@@ -891,7 +891,7 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
             abstr_full_depth(*v, locals, offset);
             abstr_full_depth(*b, locals, (offset + 1) as nat);
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             abstr_full_depth(*s, locals, offset);
         }
     }
@@ -921,7 +921,7 @@ pub fn has_fv_exec(e: &ExprSpec) -> (result: bool)
             let rb = has_fv_exec(b);
             rt || rv || rb
         }
-        ExprSpec::Proj(s) => has_fv_exec(s),
+        ExprSpec::Proj(pidx, s) => has_fv_exec(s),
     }
 }
 
@@ -966,9 +966,9 @@ pub fn abstr_model(e: ExprSpec, locals: &[u32], offset: u32) -> (result: ExprSpe
                 let sb = abstr_model(*b, locals, offset + 1);
                 ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
             }
-            ExprSpec::Proj(s) => {
+            ExprSpec::Proj(pidx, s) => {
                 let ss = abstr_model(*s, locals, offset);
-                ExprSpec::Proj(Box::new(ss))
+                ExprSpec::Proj(pidx, Box::new(ss))
             }
         }
     }
@@ -1043,7 +1043,7 @@ pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
             subst_expr_levels_rel(*t1, ks, vs, *t2) && subst_expr_levels_rel(*v1, ks, vs, *v2)
                 && subst_expr_levels_rel(*b1, ks, vs, *b2),
-        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => subst_expr_levels_rel(*s1, ks, vs, *s2),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && subst_expr_levels_rel(*s1, ks, vs, *s2),
         _ => false,
     }
 }
@@ -1121,9 +1121,9 @@ pub fn subst_expr_levels_model(e: ExprSpec, ks: &[u64], vs: &[LevelSpec]) -> (re
             let sb = subst_expr_levels_model(*b, ks, vs);
             ExprSpec::Let(Box::new(st), Box::new(sv), Box::new(sb))
         }
-        ExprSpec::Proj(s) => {
+        ExprSpec::Proj(pidx, s) => {
             let ss = subst_expr_levels_model(*s, ks, vs);
-            ExprSpec::Proj(Box::new(ss))
+            ExprSpec::Proj(pidx, Box::new(ss))
         }
     }
 }
@@ -1137,7 +1137,7 @@ mod tests {
     fn app(f: ExprSpec, a: ExprSpec) -> ExprSpec { ExprSpec::App(Box::new(f), Box::new(a)) }
     fn bind(t: ExprSpec, b: ExprSpec) -> ExprSpec { ExprSpec::Bind(Box::new(t), Box::new(b)) }
     fn let_(t: ExprSpec, v: ExprSpec, b: ExprSpec) -> ExprSpec { ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)) }
-    fn proj(s: ExprSpec) -> ExprSpec { ExprSpec::Proj(Box::new(s)) }
+    fn proj(s: ExprSpec) -> ExprSpec { ExprSpec::Proj(0, Box::new(s)) }
 
     // Sanity checks that inst_model/abstr_model are real (non-vacuous)
     // implementations, not just stubs that always short-circuit. Formal

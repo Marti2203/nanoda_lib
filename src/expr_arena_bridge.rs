@@ -1495,8 +1495,8 @@ pub assume_specification<'t> [expr_as_let] (e: &Expr<'t>) -> (result: Option<(Na
 
 pub assume_specification<'t> [expr_as_proj] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, ExprPtr<'t>)>)
     ensures match result {
-        Some((_, _, s)) => to_model_of_expr(*e) == ExprSpec::Proj(Box::new(to_model(s))),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_)),
+        Some((_, idx, s)) => to_model_of_expr(*e) == ExprSpec::Proj(idx, Box::new(to_model(s))),
+        None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_, _)),
     };
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num_loose_bvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: u16) where 'p: 't
@@ -1521,7 +1521,7 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_let] (ctx: &mut TcCtx<'t, 
     ensures to_model(result) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body)));
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_proj] (ctx: &mut TcCtx<'t, 'p>, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Proj(Box::new(to_model(structure)));
+    ensures to_model(result) == ExprSpec::Proj(idx, Box::new(to_model(structure)));
 
 /// Real-arena counterpart to `expr_model::find_pos_from_end`: recursion on
 /// the slice directly (structural `decreases`, no fuel needed -- unlike
@@ -1674,7 +1674,7 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
         };
     }
     if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
         assert(depth(to_model(structure)) < depth(to_model(e)));
         return match verified_inst(ctx, structure, substs, offset, fuel1) {
             Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
@@ -1787,7 +1787,7 @@ pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         };
     }
     if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
         assert(depth(to_model(structure)) < depth(to_model(e)));
         return match verified_abstr(ctx, structure, locals, offset, fuel1) {
             Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
@@ -2031,7 +2031,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
         };
     }
     if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
         return match verified_subst_expr_levels(ctx, structure, ks, vs, fuel1) {
             Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
             None => None,

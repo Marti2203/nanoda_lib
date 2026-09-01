@@ -935,7 +935,7 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
             &&& {
                 ||| pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
                 ||| (exists |structure: ExprPtr<'t>, idx: usize, reduced: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
-                        to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args))
+                        to_model(e) == spine_app(ExprSpec::Proj(idx, Box::new(to_model(structure))), args_model_of(args))
                         && pstep_star_proj(
                             Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
                             to_model_of_ctor_num_params(*env),
@@ -958,7 +958,7 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
         if idx > 0xFFFF_0000 {
             return None;
         }
-        assert(to_model(e_fun) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(to_model(e_fun) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
         proof {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             spine_app_decompose(to_model(e_fun), args_model, bound);
@@ -973,7 +973,7 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
                 proof {
                     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                     assert(args_model =~= args_model_of(args@));
-                    assert(to_model(e) == spine_app(ExprSpec::Proj(Box::new(to_model(structure))), args_model_of(args@)));
+                    assert(to_model(e) == spine_app(ExprSpec::Proj(idx, Box::new(to_model(structure))), args_model_of(args@)));
                     assert(to_model(r) == spine_app(to_model(reduced), args_model_of(args@)));
                     // `reduced`'s bound (from `verified_reduce_proj_step`) is already at
                     // exactly the SAME (bound, d) formula as this function's own target
@@ -2747,13 +2747,13 @@ pub proof fn deq_any_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpe
     assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
 }
 
-pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, s1: ExprSpec, s2: ExprSpec)
+pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, s1: ExprSpec, s2: ExprSpec)
     requires deq_any(env, s1, s2)
-    ensures deq_any(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)))
+    ensures deq_any(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)))
 {
     let h = choose |h: nat| deq(env, s1, s2, h);
-    deq_proj_congr(env, s1, s2, h);
-    assert(deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
+    deq_proj_congr(env, pidx, s1, s2, h);
+    assert(deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1));
 }
 
 /// The claim `verified_def_eq`'s `Some(true)` can honestly make, one
@@ -2771,9 +2771,9 @@ pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, s1: ExprSpe
 pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
     (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))
     || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
     || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
         to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
         && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
@@ -2795,9 +2795,9 @@ pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
     (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), h))
     || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
 }
 
 /// The `Some(true)` ensures carries TWO conjuncts: the original four-way
@@ -2827,9 +2827,9 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
                 && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
             || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
             || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-            || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-                to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-                && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy)))))
+            || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+                to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
+                && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy)))))
             && deq_core_claim(x, y, fuel as nat),
         _ => true,
     }
@@ -2892,12 +2892,12 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
                 }
                 if let Some(true) = verified_def_eq_core(ctx, x_struct, y_struct, fuel - 1) {
                     proof {
-                        assert(to_model(x) == ExprSpec::Proj(Box::new(to_model(x_struct))));
-                        assert(to_model(y) == ExprSpec::Proj(Box::new(to_model(y_struct))));
+                        assert(to_model(x) == ExprSpec::Proj(x_idx, Box::new(to_model(x_struct))));
+                        assert(to_model(y) == ExprSpec::Proj(x_idx, Box::new(to_model(y_struct))));
                         if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat) {
                             assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
                                 assert(deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat));
-                                deq_proj_congr(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat);
+                                deq_proj_congr(env, x_idx, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat);
                                 assert((fuel - 1) as nat + 1 == fuel as nat);
                             }
                         }
@@ -3032,9 +3032,9 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
     || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
     || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(Box::new(to_model(sy))))
+    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
+        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
     || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
         to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
         && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
@@ -3423,8 +3423,8 @@ pub open spec fn deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Expr
             deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
             deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
-        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) =>
-            deq_c(env, *s1, *s2, (h - 1) as nat),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) =>
+            pidx1 == pidx2 && deq_c(env, *s1, *s2, (h - 1) as nat),
         _ => false,
     })
 }
@@ -3481,7 +3481,7 @@ pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
                 assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(env, *v1, *v2, (h2 - 1) as nat) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
                 assert(deq_c(env, x, y, h2));
             }
-            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+            (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_c(env, *s1, *s2, (h1 - 1) as nat));
                 deq_c_mono(env, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
                 assert(h2 > 0 && deq_c(env, *s1, *s2, (h2 - 1) as nat));
@@ -3533,7 +3533,7 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
                 assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(env, *v2, *v1, (h - 1) as nat) && deq_c(env, *b2, *b1, (h - 1) as nat));
                 assert(deq_c(env, y, x, h));
             }
-            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+            (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_c(env, *s1, *s2, (h - 1) as nat));
                 deq_c_symm(env, *s1, *s2, (h - 1) as nat);
                 assert(h > 0 && deq_c(env, *s2, *s1, (h - 1) as nat));
@@ -3848,25 +3848,25 @@ pub proof fn deq_let_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2
 }
 
 /// `deq` congruence at `Proj` (single mapped chain).
-pub proof fn deq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, s1: ExprSpec, s2: ExprSpec, h: nat)
+pub proof fn deq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, s1: ExprSpec, s2: ExprSpec, h: nat)
     requires deq(env, s1, s2, h)
-    ensures deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1)
+    ensures deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1)
 {
     let chs = choose |ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_chain_valid(env, ch, h);
-    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(Box::new(chs[i])));
+    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chs[i])));
     assert(deq_chain_valid(env, ms, h + 1)) by {
         assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_c(env, ms[i], ms[i + 1], h + 1) by {
             assert(deq_c(env, chs[i], chs[i + 1], h));
-            assert(ms[i] == ExprSpec::Proj(Box::new(chs[i])));
-            assert(ms[i + 1] == ExprSpec::Proj(Box::new(chs[i + 1])));
+            assert(ms[i] == ExprSpec::Proj(pidx, Box::new(chs[i])));
+            assert(ms[i + 1] == ExprSpec::Proj(pidx, Box::new(chs[i + 1])));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_c(env, ms[i], ms[i + 1], h + 1));
         }
     }
-    assert(ms[0] == ExprSpec::Proj(Box::new(s1)));
-    assert(ms[ms.len() - 1] == ExprSpec::Proj(Box::new(s2)));
-    assert(deq(env, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
+    assert(ms[0] == ExprSpec::Proj(pidx, Box::new(s1)));
+    assert(ms[ms.len() - 1] == ExprSpec::Proj(pidx, Box::new(s2)));
+    assert(deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1));
 }
 
 /// ONE PARALLEL STEP of TYPED definitional equality (v1, STRATIFIED):
@@ -3895,8 +3895,8 @@ pub open spec fn deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
             deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat),
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
             deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat),
-        (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) =>
-            deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) =>
+            pidx1 == pidx2 && deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat),
         _ => false,
     })
 }
@@ -3968,7 +3968,7 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
                 assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h2 - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, x, y, h2));
             }
-            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+            (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_p_c(dty, env, lctx, *s1, *s2, (h1 - 1) as nat));
                 deq_p_c_mono(dty, env, lctx, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
                 assert(h2 > 0 && deq_p_c(dty, env, lctx, *s1, *s2, (h2 - 1) as nat));
@@ -4035,7 +4035,7 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
                 assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *v2, *v1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b2, *b1, (h - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, y, x, h));
             }
-            (ExprSpec::Proj(s1), ExprSpec::Proj(s2)) => {
+            (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat));
                 deq_p_c_symm(dty, env, lctx, *s1, *s2, (h - 1) as nat);
                 assert(h > 0 && deq_p_c(dty, env, lctx, *s2, *s1, (h - 1) as nat));
@@ -4274,25 +4274,25 @@ pub proof fn deq_p_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
 }
 
 /// `deq_p` congruence at `Proj`.
-pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, s1: ExprSpec, s2: ExprSpec, h: nat)
+pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, pidx: usize, s1: ExprSpec, s2: ExprSpec, h: nat)
     requires deq_p(dty, env, lctx, s1, s2, h)
-    ensures deq_p(dty, env, lctx, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1)
+    ensures deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1)
 {
     let chs = choose |ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_p_chain_valid(dty, env, lctx, ch, h);
-    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(Box::new(chs[i])));
+    let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chs[i])));
     assert(deq_p_chain_valid(dty, env, lctx, ms, h + 1)) by {
         assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1) by {
             assert(deq_p_c(dty, env, lctx, chs[i], chs[i + 1], h));
-            assert(ms[i] == ExprSpec::Proj(Box::new(chs[i])));
-            assert(ms[i + 1] == ExprSpec::Proj(Box::new(chs[i + 1])));
+            assert(ms[i] == ExprSpec::Proj(pidx, Box::new(chs[i])));
+            assert(ms[i + 1] == ExprSpec::Proj(pidx, Box::new(chs[i + 1])));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1));
         }
     }
-    assert(ms[0] == ExprSpec::Proj(Box::new(s1)));
-    assert(ms[ms.len() - 1] == ExprSpec::Proj(Box::new(s2)));
-    assert(deq_p(dty, env, lctx, ExprSpec::Proj(Box::new(s1)), ExprSpec::Proj(Box::new(s2)), h + 1));
+    assert(ms[0] == ExprSpec::Proj(pidx, Box::new(s1)));
+    assert(ms[ms.len() - 1] == ExprSpec::Proj(pidx, Box::new(s2)));
+    assert(deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1));
 }
 
 /// `deq_p_any` API -- height-erased typed equality, mirroring `deq_any`'s.

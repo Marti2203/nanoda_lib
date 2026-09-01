@@ -768,7 +768,7 @@ pub fn verified_infer_proj_idx_loop<'t, 'p: 't>(
     let nlbv_body = ctx.num_loose_bvars(pi_body);
     if nlbv_body != 0 {
         let proj_arg = ctx.mk_proj(inductive_name, idx_so_far, structure);
-        assert(to_model(proj_arg) == ExprSpec::Proj(Box::new(to_model(structure))));
+        assert(to_model(proj_arg) == ExprSpec::Proj(idx_so_far, Box::new(to_model(structure))));
         assert(nlbv(to_model(proj_arg)) <= 0);
         assert(depth(to_model(proj_arg)) <= d_s);
         proof {
@@ -2009,7 +2009,8 @@ pub open spec fn proj_idx_peel_spec(env: Env, ctor_ty: ExprSpec, structure: Expr
             && (match whnfd {
                     ExprSpec::Bind(_, bd) =>
                         (nlbv(*bd) == 0 && next == *bd)
-                        || (nlbv(*bd) != 0 && next == subst_full(*bd, seq![ExprSpec::Proj(Box::new(structure))], 0)),
+                        || (nlbv(*bd) != 0 && exists |pidx: usize|
+                            next == #[trigger] subst_full(*bd, seq![ExprSpec::Proj(pidx, Box::new(structure))], 0)),
                     _ => false,
                 })
             && #[trigger] proj_idx_peel_spec(env, next, structure, (k - 1) as nat, result)
@@ -3445,11 +3446,11 @@ pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         invariant
             j <= num_fields as usize,
             projs@.len() == j,
-            forall |k: int| 0 <= k < projs@.len() ==> to_model(#[trigger] projs@[k]) == ExprSpec::Proj(Box::new(to_model(e))),
+            forall |k: int| 0 <= k < projs@.len() ==> to_model(#[trigger] projs@[k]) == ExprSpec::Proj(k as usize, Box::new(to_model(e))),
         decreases num_fields as usize - j
     {
         let proj = ctx.mk_proj(c_name, j, e);
-        assert(to_model(proj) == ExprSpec::Proj(Box::new(to_model(e))));
+        assert(to_model(proj) == ExprSpec::Proj(j, Box::new(to_model(e))));
         projs.push(proj);
         j += 1;
     }
@@ -3458,7 +3459,7 @@ pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         assert forall |k: int| 0 <= k < projs_model.len() implies
             nlbv(#[trigger] projs_model[k]) <= 0 && max_var_below(projs_model[k], d_e) && depth(projs_model[k]) <= d_e + 1
         by {
-            assert(projs_model[k] == ExprSpec::Proj(Box::new(to_model(e))));
+            assert(projs_model[k] == ExprSpec::Proj(k as usize, Box::new(to_model(e))));
             nlbv_bound_implies_max_var_below(to_model(e), 0);
             max_var_below_mono(to_model(e), depth(to_model(e)), d_e);
         }
@@ -3472,7 +3473,7 @@ pub fn verified_expand_eta_struct_aux<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         assert forall |k: int| 0 <= k < projs_model.len() implies
             max_var_below(#[trigger] projs_model[k], out_bound)
         by {
-            assert(projs_model[k] == ExprSpec::Proj(Box::new(to_model(e))));
+            assert(projs_model[k] == ExprSpec::Proj(k as usize, Box::new(to_model(e))));
             nlbv_bound_implies_max_var_below(to_model(e), 0);
             max_var_below_mono(to_model(e), depth(to_model(e)), out_bound);
         }

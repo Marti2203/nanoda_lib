@@ -211,7 +211,7 @@ pub open spec fn contains_const_named(e: ExprSpec, target_ids: Seq<u64>) -> bool
         ExprSpec::App(f, a) => contains_const_named(*f, target_ids) || contains_const_named(*a, target_ids),
         ExprSpec::Bind(t, b) => contains_const_named(*t, target_ids) || contains_const_named(*b, target_ids),
         ExprSpec::Let(t, v, b) => contains_const_named(*t, target_ids) || contains_const_named(*v, target_ids) || contains_const_named(*b, target_ids),
-        ExprSpec::Proj(s) => contains_const_named(*s, target_ids),
+        ExprSpec::Proj(pidx, s) => contains_const_named(*s, target_ids),
         _ => false,
     }
 }
@@ -312,13 +312,13 @@ pub fn verified_find_const_named<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>
             _ => None,
         };
     }
-    if let Some((_ty_name, _idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(Box::new(to_model(structure))));
+    if let Some((_ty_name, p_idx, structure)) = expr_as_proj(&el) {
+        assert(to_model(e) == ExprSpec::Proj(p_idx, Box::new(to_model(structure))));
         return verified_find_const_named(ctx, structure, target_names, fuel1);
     }
     assert(!matches!(to_model(e), ExprSpec::App(_, _)));
     assert(!matches!(to_model(e), ExprSpec::Let(_, _, _)));
-    assert(!matches!(to_model(e), ExprSpec::Proj(_)));
+    assert(!matches!(to_model(e), ExprSpec::Proj(_, _)));
     assert(contains_const_named(to_model(e), Seq::new(target_names@.len(), |i: int| name_id(target_names@[i]))) == false);
     Some(false)
 }

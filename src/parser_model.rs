@@ -110,12 +110,12 @@ pub proof fn let_fields_correct(
 
 /// `Proj`'s combining formula: just passes the single child's fields
 /// through unchanged.
-pub proof fn proj_fields_correct(model_structure: ExprSpec, nb_structure: u16, fv_structure: bool)
+pub proof fn proj_fields_correct(pidx: usize, model_structure: ExprSpec, nb_structure: u16, fv_structure: bool)
     requires
         nb_structure as nat == nlbv(model_structure),
         fv_structure == has_fv(model_structure),
     ensures ({
-        let e = ExprSpec::Proj(Box::new(model_structure));
+        let e = ExprSpec::Proj(pidx, Box::new(model_structure));
         &&& nb_structure as nat == nlbv(e)
         &&& fv_structure == has_fv(e)
     })
