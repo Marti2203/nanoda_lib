@@ -402,9 +402,15 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
                 _ => false,
             }) || (exists |inner2: ExprSpec|
                 (#[trigger] iota_reduct(inner2)) && pstep(env, *inner, inner2) && iota_extract(pidx, inner2, e2)),
+        // Delta is now FUNCTIONAL (delta-lift L2): the target is the syntactic
+        // level substitution of the definition body, pinned by `==`, so two
+        // unfoldings of the same constant are equal outright (the diamond's
+        // delta-vs-delta case). Length agreement is the real unfold_def's own
+        // guard, restated.
         ExprSpec::Const(id, levels) =>
             env.contains_key(id)
-            && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2),
+            && env[id].0.len() == levels.len()
+            && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels),
         // A `NatLit(n)`'s own unfolding target: `Nat.zero` when `n == 0`,
         // `Nat.succ(NatLit(n - 1))` otherwise -- unlike delta, this rule
         // needs no `env` lookup at all (a numeral's unfolding is fully
@@ -1052,9 +1058,15 @@ pub open spec fn pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: 
             (#[trigger] iota_reduct(inner2)) && pstep_d(env, *inner, inner2, mcap, dcap)
             && depth(inner2) <= dcap && max_var_below(inner2, mcap)
             && iota_extract(pidx, inner2, e2)),
+        // Delta is now FUNCTIONAL (delta-lift L2): the target is the syntactic
+        // level substitution of the definition body, pinned by `==`, so two
+        // unfoldings of the same constant are equal outright (the diamond's
+        // delta-vs-delta case). Length agreement is the real unfold_def's own
+        // guard, restated.
         ExprSpec::Const(id, levels) =>
             env.contains_key(id)
-            && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2),
+            && env[id].0.len() == levels.len()
+            && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels),
         ExprSpec::NatLit(n) => if n.0@ == 0 {
             e2 == const_expr_no_levels(nat_zero_id())
         } else {
@@ -1283,6 +1295,7 @@ pub proof fn pstep_d_implies_pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: Expr
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
             }
             ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
@@ -5096,6 +5109,7 @@ pub proof fn pstep_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
                 assert(nlbv(e2) == 0);
@@ -5588,6 +5602,7 @@ pub proof fn pstep_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bou
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
                 assert(nlbv(e2) == 0);
@@ -8685,6 +8700,7 @@ pub proof fn pstep_size_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e1:
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_size(env[id].1, env[id].0, levels, e2);
                 assert(size(e2) <= cap);
@@ -9207,6 +9223,7 @@ pub proof fn pstep_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: 
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_max_var_below(env[id].1, env[id].0, levels, e2, cap);
                 subst_expr_levels_rel_depth(env[id].1, env[id].0, levels, e2);
@@ -9578,6 +9595,7 @@ pub proof fn pstep_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec)>
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
                 assert(nlbv(e2) == 0);
@@ -10481,6 +10499,7 @@ pub proof fn pstep_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: n
                 }
             }
             ExprSpec::Const(id, levels) => {
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
                 assert(env.contains_key(id) && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels, e2));
                 subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
                 assert(subst(j, s1, e1) == e1);

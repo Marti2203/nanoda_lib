@@ -663,9 +663,9 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
     ensures match result {
         Some(r) =>
             to_model_of_levels(r).len() == to_model_of_levels(uparams).len()
-            && forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
+            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
                 #[trigger] interp(to_model_of_levels(r)[i], rho)
-                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)))
+                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))))
             && to_model_of_levels(r) =~= subst_levels_spec(to_model_of_levels(uparams), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
         None => true,
     }

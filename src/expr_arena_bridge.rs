@@ -44,7 +44,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, abstr_full_depth, find_from_end, subst_expr_levels_rel};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, abstr_full_depth, find_from_end, subst_expr_levels_rel, subst_expr_levels};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
@@ -1926,7 +1926,9 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures match result {
-        Some(r) => subst_expr_levels_rel(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs), to_model(r)),
+        Some(r) => subst_expr_levels_rel(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs), to_model(r))
+            // SYNTACTIC pin (delta-lift L2): the real result IS the spec function's output.
+            && to_model(r) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
         None => true,
     }
     decreases fuel
@@ -1950,6 +1952,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             Some(new_level) => {
                 let result = ctx.mk_sort(new_level);
                 assert(to_model(result) == ExprSpec::Sort(level_to_model(new_level)));
+                assert(to_model(result) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
                 Some(result)
             }
             None => None,
@@ -1982,6 +1985,11 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
                 assert forall |j: int, rho: Map<nat, nat>| 0 <= j < const_levels_vec(e).len() implies
                     #[trigger] interp(const_levels_vec(result)[j], rho)
                         == interp(const_levels_vec(e)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                // Syntactic pin: the Seq extensional equality from the level
+                // bridge lifts to the Const node.
+                assert(to_model_of_levels(new_levels) =~= crate::level_model::subst_levels_spec(to_model_of_levels(levels), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
+                assert(to_model(result) == ExprSpec::Const(const_id(e), crate::level_model::subst_levels_spec(const_levels_vec(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
+                assert(to_model(result) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
                 Some(result)
             }
             None => None,

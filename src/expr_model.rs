@@ -716,6 +716,58 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
 
 
 
+/// SYNTACTIC level substitution over an expression -- the spec FUNCTION
+/// delta-unfolding's model target is now pinned to (delta-lift L2):
+/// `Sort`/`Const` levels go through `level_model::subst_level_spec`,
+/// every other node is rebuilt structurally. `subst_expr_levels_rel`
+/// below is its semantic characterization; `subst_expr_levels_sat_rel`
+/// ties them.
+pub open spec fn subst_expr_levels(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>) -> ExprSpec
+    decreases e
+{
+    match e {
+        ExprSpec::Sort(l) => ExprSpec::Sort(crate::level_model::subst_level_spec(l, ks, vs)),
+        ExprSpec::Const(id, ls) => ExprSpec::Const(id, crate::level_model::subst_levels_spec(ls, ks, vs)),
+        ExprSpec::App(f, a) => ExprSpec::App(Box::new(subst_expr_levels(*f, ks, vs)), Box::new(subst_expr_levels(*a, ks, vs))),
+        ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(subst_expr_levels(*t, ks, vs)), Box::new(subst_expr_levels(*b, ks, vs))),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(Box::new(subst_expr_levels(*t, ks, vs)), Box::new(subst_expr_levels(*v, ks, vs)), Box::new(subst_expr_levels(*b, ks, vs))),
+        ExprSpec::Proj(pidx, st) => ExprSpec::Proj(pidx, Box::new(subst_expr_levels(*st, ks, vs))),
+        _ => e,
+    }
+}
+
+/// The function satisfies the relation (so every `subst_expr_levels_rel_*`
+/// preservation lemma applies to its output for free).
+pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires ks.len() == vs.len()
+    ensures subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs))
+    decreases e
+{
+    match e {
+        ExprSpec::Sort(l) => {
+            assert forall |rho: Map<nat, nat>| #[trigger] crate::level_model::interp(crate::level_model::subst_level_spec(l, ks, vs), rho)
+                == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vs)) by {
+                crate::level_model::subst_level_spec_interp(l, ks, vs, rho);
+            }
+        }
+        ExprSpec::Const(id, ls) => {
+            let ls2 = crate::level_model::subst_levels_spec(ls, ks, vs);
+            assert(ls2.len() == ls.len());
+            assert forall |j: int, rho: Map<nat, nat>| 0 <= j < ls.len() implies
+                #[trigger] crate::level_model::interp(ls2[j], rho)
+                    == crate::level_model::interp(ls[j], crate::level_model::subst_env(rho, ks, vs)) by {
+                assert(ls2[j] == crate::level_model::subst_level_spec(ls[j], ks, vs));
+                crate::level_model::subst_level_spec_interp(ls[j], ks, vs, rho);
+            }
+        }
+        ExprSpec::App(f, a) => { subst_expr_levels_sat_rel(*f, ks, vs); subst_expr_levels_sat_rel(*a, ks, vs); }
+        ExprSpec::Bind(t, b) => { subst_expr_levels_sat_rel(*t, ks, vs); subst_expr_levels_sat_rel(*b, ks, vs); }
+        ExprSpec::Let(t, v, b) => { subst_expr_levels_sat_rel(*t, ks, vs); subst_expr_levels_sat_rel(*v, ks, vs); subst_expr_levels_sat_rel(*b, ks, vs); }
+        ExprSpec::Proj(pidx, st) => { subst_expr_levels_sat_rel(*st, ks, vs); }
+        _ => {}
+    }
+}
+
 /// Relational (not functional) characterization of "`result` is `e` with
 /// level parameters `ks` substituted by `vs` throughout" -- a RELATION,
 /// deliberately, rather than a `fn e -> ExprSpec` reference definition
