@@ -1566,4 +1566,54 @@ mod routed_tests {
             "the whnf-join boundary must confirm the delta-then-beta pair on its own"
         );
     }
+
+    /// STRUCTURE-PROJECTION exercise of the whnf-join route (proj-iota
+    /// P4): with a two-field constructor `S.mk` in the environment, the
+    /// pair `Proj(S, 1, S.mk (Sort 1) (Sort 0))` vs `Sort 0` is
+    /// unanswerable by the quick check (Proj vs Sort), the structural
+    /// core, and the delta route (Proj head, nothing to unfold) -- the
+    /// measured whnf's projection-aware sub-step fires the iota rule
+    /// (now a first-class `pstep` rule) and joins. Asserts routed
+    /// def_eq true AND direct attribution.
+    #[test]
+    fn routed_whnf_join_route_confirms_projection_iota() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        let mut dag = crate::util::LeanDag::new(&export.config);
+        let mut ctx = crate::util::TcCtx::new(&export, &mut dag);
+
+        let s_name = ctx.str1("S");
+        let mk_name = ctx.str2("S", "mk");
+        let prop = ctx.prop();
+        let zero = ctx.zero();
+        let one = ctx.succ(zero);
+        let sort1 = ctx.mk_sort(one);
+        let uparams = ctx.alloc_levels_slice(&[]);
+        let ctor = crate::env::Declar::Constructor(crate::env::ConstructorData {
+            info: crate::env::DeclarInfo { name: mk_name, uparams, ty: sort1 },
+            inductive_name: s_name,
+            ctor_idx: 0,
+            num_params: 0,
+            num_fields: 2,
+        });
+        let mut declars = crate::util::new_fx_index_map();
+        declars.insert(mk_name, ctor);
+        let notation = crate::util::new_fx_hash_map();
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+
+        let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
+        let c_mk = tc.ctx.mk_const(mk_name, uparams);
+        let mk_a = tc.ctx.mk_app(c_mk, sort1);
+        let mk_ab = tc.ctx.mk_app(mk_a, prop);
+        let proj = tc.ctx.mk_proj(s_name, 1, mk_ab);
+        assert_ne!(proj, prop, "distinct pointers required to exercise the route");
+        assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
+        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(
+            crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, proj, prop, 100),
+            Some(true),
+            "the whnf-join boundary must confirm the projection pair on its own"
+        );
+    }
 }

@@ -4089,7 +4089,7 @@ pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     if n == 0 {
         return Some(e);
     }
-    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, bound, d) {
+    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
             proof {
                 assert(one_whnf_no_unfolding_with_proj_step(

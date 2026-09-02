@@ -733,6 +733,32 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
             depth_le_size(to_model(cur));
             nlbv_bound_implies_max_var_below(to_model(cur), 0);
             max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+        }
+        // P4: a measured PROJECTION-aware no-unfolding sub-step first
+        // (beta/zeta/iota, `verified_whnf_no_unfolding_step_with_proj`
+        // -- a genuine pstep_star now that iota is a first-class rule),
+        // then the beta/zeta+delta round on the RE-MEASURED result.
+        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(500 as nat), Ghost(500 as nat)) {
+            Some(v) => v,
+            None => return cur,
+        };
+        proof {
+            assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                to_model_of_env(*env).contains_key(k)
+                && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
+            by {}
+            pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(cur), to_model(rp));
+            pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(cur), to_model(rp));
+        }
+        cur = rp;
+        let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        if sc2 > 500 {
+            return cur;
+        }
+        proof {
+            depth_le_size(to_model(cur));
+            nlbv_bound_implies_max_var_below(to_model(cur), 0);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
             reveal_with_fuel(whnf_fixpoint_ok, 2);
             assert(whnf_fixpoint_ok(500, 500, 1));
             reveal_with_fuel(whnf_fixpoint_final_bound, 2);
@@ -815,7 +841,7 @@ pub fn verified_ensure_sort<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 /// vec_model`/`const_id`/`const_levels_vec` connect the peeled `Const`
 /// node's `to_model` to `pstep_star_proj`'s existential witness the same
 /// way `verified_unfold_def_step` already does for delta.
-pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, structure: ExprPtr<'t>, idx: usize, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(structure)) <= 0,
         max_var_below(to_model(structure), bound),
@@ -939,7 +965,7 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 /// other via any existing lemma, so a genuine multi-round version would
 /// need its own new "mixed-kind chain" bookkeeping, not just `pstep_star_
 /// trans`.
-pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -978,7 +1004,7 @@ pub fn verified_whnf_no_unfolding_step_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx
             assert(depth(to_model(structure)) <= depth(to_model(e_fun)));
             assert(depth(to_model(structure)) <= d);
         }
-        match verified_reduce_proj_step(ctx, env, structure, idx, fuel, bound, d) {
+        match verified_reduce_proj_step(ctx, env, structure, idx, fuel, Ghost(bound), Ghost(d)) {
             Some(reduced) => {
                 let r = verified_foldl_apps(ctx, reduced, args.as_slice());
                 proof {
@@ -1083,7 +1109,7 @@ pub open spec fn whnf_proj_loop_d_after(bound: nat, d: nat, n: nat) -> nat
 /// reaches`'s own `n == 0` base case, `e == r`, trivially) -- same
 /// "identity fixpoint, not `None`" precedent as `verified_whnf_no_
 /// unfolding_fixpoint`/`verified_lazy_delta_loop`'s own `n == 0` cases.
-pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -1109,7 +1135,7 @@ pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut T
     if n == 0 {
         return Some(e);
     }
-    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, bound, d) {
+    match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, Ghost(bound), Ghost(d)) {
         Some(r) => {
             proof {
                 assert(one_whnf_no_unfolding_with_proj_step(
@@ -1119,7 +1145,7 @@ pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut T
                     to_model(r),
                 ));
             }
-            verified_whnf_no_unfolding_fixpoint_with_proj(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1)
+            verified_whnf_no_unfolding_fixpoint_with_proj(ctx, env, r, fuel, Ghost(bound + d * d * d + d * d), Ghost(d * d + d + d + d + d + d + d), n - 1)
         }
         None => None,
     }
