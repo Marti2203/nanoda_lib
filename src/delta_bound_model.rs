@@ -4087,6 +4087,9 @@ pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     decreases n
 {
     if n == 0 {
+        proof {
+            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+        }
         return Some(e);
     }
     match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, Ghost(bound), Ghost(d)) {
@@ -4099,7 +4102,15 @@ pub fn verified_whnf_recheck_loop_local<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
                     to_model(r),
                 ));
             }
-            verified_whnf_recheck_loop_local(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1)
+            match verified_whnf_recheck_loop_local(ctx, env, r, fuel, bound + d * d * d + d * d, d * d + d + d + d + d + d + d, n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
+            }
         }
         None => None,
     }

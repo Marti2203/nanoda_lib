@@ -91,7 +91,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, pstep_star_proj, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id};
 use crate::expr_arena_bridge::verified_size;
@@ -851,13 +851,6 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         idx <= 0xFFFF_0000,
     ensures match result {
         Some(r) => {
-            &&& pstep_star_proj(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-                    to_model_of_ctor_num_params(*env),
-                    to_model(structure),
-                    idx as nat,
-                    to_model(r),
-                )
             &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ExprSpec::Proj(idx, Box::new(to_model(structure))), to_model(r))
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), bound + d * d * d + d * d)
@@ -897,15 +890,7 @@ pub fn verified_reduce_proj_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                 assert(args_model[i as int] == to_model(r));
                 assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(structure), to_model(whnfd)));
                 assert((num_params as nat) + (idx as nat) < args_model.len());
-                assert(pstep_star_proj(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
-                    to_model_of_ctor_num_params(*env),
-                    to_model(structure),
-                    idx as nat,
-                    to_model(r),
-                )) by {
-                    assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
-                }
+                assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
                 proof {
                     // The GENUINE pstep_star fact (P4): the iota rule
                     // fires on the whnf'd ctor spine; the arity premise
@@ -1133,6 +1118,9 @@ pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut T
     decreases n
 {
     if n == 0 {
+        proof {
+            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+        }
         return Some(e);
     }
     match verified_whnf_no_unfolding_step_with_proj(ctx, env, e, fuel, Ghost(bound), Ghost(d)) {
@@ -1145,7 +1133,15 @@ pub fn verified_whnf_no_unfolding_fixpoint_with_proj<'t, 'p: 't, 'x>(ctx: &mut T
                     to_model(r),
                 ));
             }
-            verified_whnf_no_unfolding_fixpoint_with_proj(ctx, env, r, fuel, Ghost(bound + d * d * d + d * d), Ghost(d * d + d + d + d + d + d + d), n - 1)
+            match verified_whnf_no_unfolding_fixpoint_with_proj(ctx, env, r, fuel, Ghost(bound + d * d * d + d * d), Ghost(d * d + d + d + d + d + d + d), n - 1) {
+                Some(r2) => {
+                    proof {
+                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
+                    }
+                    Some(r2)
+                }
+                None => None,
+            }
         }
         None => None,
     }
@@ -1244,13 +1240,7 @@ pub fn verified_reduce_proj_step_full<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         whnf_fixpoint_ok(bound, d, n as nat),
         idx <= 0xFFFF_0000,
     ensures match result {
-        Some(r) => pstep_star_proj(
-            to_model_of_env(*env),
-            to_model_of_ctor_num_params(*env),
-            to_model(structure),
-            idx as nat,
-            to_model(r),
-        ) && pstep_star(to_model_of_env(*env), ExprSpec::Proj(idx, Box::new(to_model(structure))), to_model(r)),
+        Some(r) => pstep_star(to_model_of_env(*env), ExprSpec::Proj(idx, Box::new(to_model(structure))), to_model(r)),
         None => true,
     }
 {
@@ -1285,15 +1275,7 @@ pub fn verified_reduce_proj_step_full<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
                 assert(args_model[i as int] == to_model(r));
                 assert(pstep_star(to_model_of_env(*env), to_model(structure), to_model(whnfd)));
                 assert((num_params as nat) + (idx as nat) < args_model.len());
-                assert(pstep_star_proj(
-                    to_model_of_env(*env),
-                    to_model_of_ctor_num_params(*env),
-                    to_model(structure),
-                    idx as nat,
-                    to_model(r),
-                )) by {
-                    assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
-                }
+                assert(to_model(whnfd) == spine_app(ExprSpec::Const(const_id(fun), const_levels_vec(fun)), args_model));
                 proof {
                     ctor_num_params_of_agrees(*env, name_id(name));
                     pstep_star_iota(
