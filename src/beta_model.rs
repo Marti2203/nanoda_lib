@@ -833,6 +833,29 @@ pub proof fn pstep_d_const_spine(env: Map<u64, (Seq<u64>, ExprSpec)>, cid: u64, 
     }
 }
 
+/// THE P4 BRIDGE: a `Proj` whose structure `pstep_star`-reaches an
+/// applied constructor spine reduces (genuinely, in `pstep_star`) to
+/// the extracted field -- congruence-star down to the spine, then ONE
+/// iota step with a reflexive inner derivation. This is what lets the
+/// real `reduce_proj` producer's verdict become a first-class
+/// `pstep_star` fact instead of the old one-shot `pstep_star_proj`
+/// side relation.
+pub proof fn pstep_star_iota(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, structure: ExprSpec, cid: u64, lv: Vec<LevelSpec>, args: Seq<ExprSpec>, np: u16)
+    requires
+        pstep_star(env, structure, spine_app(ExprSpec::Const(cid, lv), args)),
+        ctor_num_params_of(cid) == Some(np),
+        (np as nat + pidx as nat) < args.len(),
+    ensures pstep_star(env, ExprSpec::Proj(pidx, Box::new(structure)), args[(np as nat + pidx as nat) as int])
+{
+    let reduced = spine_app(ExprSpec::Const(cid, lv), args);
+    pstep_star_proj_congr(env, pidx, structure, reduced);
+    let target = args[(np as nat + pidx as nat) as int];
+    assert(pstep(env, reduced, reduced));
+    pstep_iota_intro_pieces(env, pidx, Box::new(reduced), target, reduced, cid, lv, args, np);
+    pstep_star_one(env, ExprSpec::Proj(pidx, Box::new(reduced)), target);
+    pstep_star_trans(env, ExprSpec::Proj(pidx, Box::new(structure)), ExprSpec::Proj(pidx, Box::new(reduced)), target);
+}
+
 /// Takahashi's "complete development": contracts EVERY redex in `e`
 /// simultaneously (matching exactly which shapes `pstep` itself gives a
 /// real reduction rule for -- `App` headed by `Bind` contracts; `Let`
