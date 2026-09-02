@@ -4782,6 +4782,39 @@ pub open spec fn env_wf(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat) -> bool {
     }
 }
 
+/// The CAP-FREE half of environment well-formedness (delta-lift L3(b)):
+/// every definition body is closed (no loose bound variables, no
+/// locals -- the export format has no free-variable nodes, and the
+/// certificate scan CHECKS `has_fvars` at run time) and no definition
+/// id is also a constructor id (a name has one declaration). The
+/// certified family's lemmas that need only closedness require this
+/// instead of `env == Map::empty()`.
+pub open spec fn env_closed(env: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
+    forall |id: u64| #[trigger] env.contains_key(id) ==> {
+        &&& nlbv(env[id].1) == 0
+        &&& !has_fv(env[id].1)
+        &&& ctor_num_params_of(id) is None
+    }
+}
+
+/// The empty environment is closed (vacuously).
+pub proof fn env_closed_empty()
+    ensures env_closed(Map::<u64, (Seq<u64>, ExprSpec)>::empty())
+{
+    assert forall |id: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(id) implies false by {}
+}
+
+/// `env_wf` is monotone in the cap.
+pub proof fn env_wf_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, c1: nat, c2: nat)
+    requires env_wf(env, c1), c1 <= c2
+    ensures env_wf(env, c2)
+{
+    assert forall |id: u64| #[trigger] env.contains_key(id) implies
+        nlbv(env[id].1) == 0 && size(env[id].1) <= c2 && max_var_below(env[id].1, c2) && depth(env[id].1) <= c2 by {
+        max_var_below_mono(env[id].1, c1, c2);
+    }
+}
+
 /// The empty environment is well-formed at every cap (vacuously) -- the
 /// bridge every still-empty-env lemma uses to call the lifted `complete`
 /// bounds at `cap == 0`.

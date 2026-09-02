@@ -105,10 +105,12 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le};
+use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
 use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
-use crate::beta_model::depth_le_size;
+use crate::beta_model::{depth_le_size, size};
+#[cfg(verus_only)]
+use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
 use crate::tc_model::verified_whnf_measured_rounds;
@@ -2124,7 +2126,8 @@ pub fn verified_may_be_prop_of_type<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// per environment, its result reused across route calls.
 pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, fuel: u32) -> (result: Option<u32>)
     ensures match result {
-        Some(k) => k <= 60000 && env_global_cap(*env) <= k as nat,
+        Some(k) => k <= 60000 && env_global_cap(*env) <= k as nat
+            && env_global_size_cap(*env) <= k as nat && env_global_closed(*env),
         None => true,
     }
 {
@@ -2135,6 +2138,12 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
         invariant
             i <= names@.len(),
             mx <= 60000,
+            forall |j: int| 0 <= j < i ==> {
+                let id = name_id(#[trigger] names@[j]);
+                to_model_of_env(*env).contains_key(id)
+                    ==> size(to_model_of_env(*env)[id].1) <= mx as nat
+                        && !has_fv(to_model_of_env(*env)[id].1)
+            },
             forall |j: int| 0 <= j < i ==> {
                 let id = name_id(#[trigger] names@[j]);
                 &&& (to_model_of_env(*env).contains_key(id)
@@ -2151,6 +2160,9 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
         match env.get_declar_val(&n) {
             Some((_, val)) => {
                 let sv = match verified_size(ctx, val, fuel) { Some(v) => v, None => return None };
+                if ctx.has_fvars(val) {
+                    return None;
+                }
                 proof {
                     depth_le_size(to_model(val));
                     nlbv_bound_implies_max_var_below(to_model(val), 0);
@@ -2178,6 +2190,18 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
         }
         proof {
             assert(mx0 <= mx);
+            assert forall |j: int| 0 <= j < i + 1 implies {
+                let id = name_id(#[trigger] names@[j]);
+                to_model_of_env(*env).contains_key(id)
+                    ==> size(to_model_of_env(*env)[id].1) <= mx as nat
+                        && !has_fv(to_model_of_env(*env)[id].1)
+            } by {
+                let id = name_id(names@[j]);
+                if j < i {
+                } else {
+                    assert(j == i);
+                }
+            }
             assert forall |j: int| 0 <= j < i + 1 implies {
                 let id = name_id(#[trigger] names@[j]);
                 &&& (to_model_of_env(*env).contains_key(id)
@@ -2224,6 +2248,13 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
             assert(0 <= j < names@.len());
         }
         env_global_cap_le(*env, mx as nat);
+        assert forall |id: u64| #[trigger] to_model_of_env(*env).contains_key(id)
+            implies size(to_model_of_env(*env)[id].1) <= mx as nat && !has_fv(to_model_of_env(*env)[id].1) by {
+            let j = choose |j: int| 0 <= j < names@.len() && name_id(#[trigger] names@[j]) == id;
+            assert(0 <= j < names@.len());
+        }
+        env_global_size_cap_le(*env, mx as nat);
+        env_global_closed_pin(*env);
     }
     Some(mx)
 }
@@ -2245,6 +2276,7 @@ impl<'e, 'x, 't> EnvCapCert<'e, 'x, 't> {
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
         self.k <= 60000 && env_global_cap(*self.env) <= self.k as nat
+            && env_global_size_cap(*self.env) <= self.k as nat && env_global_closed(*self.env)
     }
 
     pub closed spec fn spec_env(self) -> Env<'x, 't> {

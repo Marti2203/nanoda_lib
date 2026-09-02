@@ -36,7 +36,7 @@ use crate::util::{NamePtr, LevelsPtr, ExprPtr};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth};
+use crate::expr_model::{nlbv, depth, has_fv};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model as expr_to_model;
 #[cfg(verus_only)]
@@ -378,6 +378,81 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::visible_declar_names] (env: &En
 /// the cap as the exact supremum, which satisfies both), and what turns
 /// an exec scan's measurements into a usable `env_global_cap(*env) <= k`
 /// hypothesis for the whnf/delta routes.
+/// SIZE twin of `env_global_cap` (delta-lift L3(b)): the certified
+/// family's `env_wf` demands `size <= cap`, which depth/mvb caps cannot
+/// give (wide terms), so the certificate scan -- which measures SIZES
+/// via `verified_size` -- pins this separately, with the same
+/// leastness/iteration-completeness character as `env_global_cap_le`.
+pub uninterp spec fn env_global_size_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
+
+#[verifier::external_body]
+pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    requires
+        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+            ==> size(to_model_of_env(env)[id].1) <= k,
+    ensures env_global_size_cap(env) <= k
+{
+}
+
+#[verifier::external_body]
+pub proof fn env_global_size_wf<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+        ==> size(to_model_of_env(env)[id].1) <= env_global_size_cap(env)
+{
+}
+
+/// Closedness of every definition body (no locals) -- CHECKED by the
+/// certificate scan via the real `has_fvars` flag, then pinned here --
+/// bundled with "no definition id is a constructor id" (a name has one
+/// declaration per export: `get_declar_val` only ever returns
+/// Definition/Theorem values and `get_constructor` only Constructor
+/// data, so their key sets are disjoint; disclosed trust of the same
+/// character as `ctor_num_params_of_agrees`).
+pub uninterp spec fn env_global_closed<'x, 'a>(env: Env<'x, 'a>) -> bool;
+
+#[verifier::external_body]
+pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
+    requires
+        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+            ==> !has_fv(to_model_of_env(env)[id].1),
+    ensures env_global_closed(env)
+{
+}
+
+#[verifier::external_body]
+pub proof fn env_global_closed_wf<'x, 'a>(env: Env<'x, 'a>)
+    requires env_global_closed(env)
+    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+        ==> !has_fv(to_model_of_env(env)[id].1)
+            && crate::expr_arena_bridge::ctor_num_params_of(id) is None
+{
+}
+
+/// The model-level `env_wf` of the real environment, from the two caps.
+pub proof fn env_wf_of_global<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    requires env_global_cap(env) <= k, env_global_size_cap(env) <= k
+    ensures crate::beta_model::env_wf(to_model_of_env(env), k)
+{
+    env_global_wf(env);
+    env_global_size_wf(env);
+    assert forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id) implies
+        nlbv(to_model_of_env(env)[id].1) == 0
+        && size(to_model_of_env(env)[id].1) <= k
+        && max_var_below(to_model_of_env(env)[id].1, k)
+        && depth(to_model_of_env(env)[id].1) <= k by {
+        crate::beta_model::max_var_below_mono(to_model_of_env(env)[id].1, env_global_cap(env), k);
+    }
+}
+
+/// The model-level `env_closed` of the real environment.
+pub proof fn env_closed_of_global<'x, 'a>(env: Env<'x, 'a>)
+    requires env_global_closed(env)
+    ensures crate::beta_model::env_closed(to_model_of_env(env))
+{
+    env_global_wf(env);
+    env_global_closed_wf(env);
+}
+
 #[verifier::external_body]
 pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
     requires
