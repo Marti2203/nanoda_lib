@@ -35,7 +35,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib};
+use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib, subst_level_spec, subst_levels_spec, find_level_idx_in_range};
 #[cfg(verus_only)]
 use crate::level_model::{is_never_zero_spec, may_be_prop_spec, is_never_zero_spec_sound};
 #[cfg(verus_only)]
@@ -486,8 +486,11 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures match result {
-        Some(r) => forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
-            == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+        Some(r) => (forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
+            == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))))
+            // SYNTACTIC pin (delta-lift L0): the real result IS the spec
+            // mirror's output, not just interp-equal to it.
+            && to_model(r) == subst_level_spec(to_model(level), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
         None => true,
     }
     decreases fuel
@@ -561,6 +564,7 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
                         assert(j < i);
                     }
                     find_level_idx_first_match(level_names(to_model_of_levels(ks)), name_id(n), found_idx as nat);
+                    assert(to_model(r) == subst_level_spec(to_model(level), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
                     assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
                         == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {
                         subst_env_param(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs), name_id(n));
@@ -575,6 +579,7 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
                         assert(j < i);
                     }
                     find_level_idx_no_match(level_names(to_model_of_levels(ks)), name_id(n));
+                    assert(to_model(level) == subst_level_spec(to_model(level), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
                     assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho)
                         == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {
                         subst_env_param(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs), name_id(n));
@@ -660,7 +665,8 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
             to_model_of_levels(r).len() == to_model_of_levels(uparams).len()
             && forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
                 #[trigger] interp(to_model_of_levels(r)[i], rho)
-                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)))
+            && to_model_of_levels(r) =~= subst_levels_spec(to_model_of_levels(uparams), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
         None => true,
     }
 {
@@ -678,6 +684,7 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
             forall |j: int, rho: Map<nat, nat>| 0 <= j < i ==>
                 #[trigger] interp(to_model(out@[j]), rho)
                     == interp(to_model_of_levels(uparams)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))),
+            forall |j: int| 0 <= j < i ==> #[trigger] to_model(out@[j]) == subst_level_spec(to_model_of_levels(uparams)[j], level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
         decreases uparams_vec.len() - i
     {
         match verified_subst_level(ctx, uparams_vec[i], ks, vs, fuel) {
@@ -691,6 +698,9 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
         }
     }
     let result = ctx.alloc_levels_slice(&out);
+    proof {
+        assert(to_model_of_levels(result) =~= subst_levels_spec(to_model_of_levels(uparams), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
+    }
     Some(result)
 }
 

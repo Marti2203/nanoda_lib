@@ -496,6 +496,69 @@ pub open spec fn subst_env(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>)
     }
 }
 
+/// SYNTACTIC level substitution -- the spec mirror of the real
+/// `level.rs::subst_level` (zero/succ/max/imax rebuilt structurally, a
+/// `Param` looked up in `ks` and replaced by the matching `vs` entry,
+/// else left alone). Exists so delta-unfolding's model target can be a
+/// FUNCTION of the definition body and the constant's levels (the
+/// delta-lift arc): `subst_env` below is the SEMANTIC view of the same
+/// operation, and `subst_level_spec_interp` ties the two.
+pub open spec fn subst_level_spec(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>) -> LevelSpec
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => LevelSpec::Zero,
+        LevelSpec::Succ(a) => LevelSpec::Succ(Box::new(subst_level_spec(*a, ks, vs))),
+        LevelSpec::Max(a, b) => LevelSpec::Max(Box::new(subst_level_spec(*a, ks, vs)), Box::new(subst_level_spec(*b, ks, vs))),
+        LevelSpec::IMax(a, b) => LevelSpec::IMax(Box::new(subst_level_spec(*a, ks, vs)), Box::new(subst_level_spec(*b, ks, vs))),
+        LevelSpec::Param(q) => match find_level_idx(ks, q) {
+            Some(i) => if i < vs.len() { vs[i as int] } else { l },
+            None => l,
+        },
+    }
+}
+
+/// Elementwise `subst_level_spec` over a level list.
+pub open spec fn subst_levels_spec(ls: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Seq<LevelSpec> {
+    Seq::new(ls.len(), |i: int| subst_level_spec(ls[i], ks, vs))
+}
+
+/// `find_level_idx` never indexes past `ks`.
+pub proof fn find_level_idx_in_range(ks: Seq<u64>, q: u64)
+    ensures find_level_idx(ks, q) matches Some(i) ==> i < ks.len()
+    decreases ks.len()
+{
+    if ks.len() == 0 {
+    } else if ks[0] == q {
+    } else {
+        find_level_idx_in_range(ks.subrange(1, ks.len() as int), q);
+    }
+}
+
+/// The syntactic mirror agrees with the semantic environment view.
+pub proof fn subst_level_spec_interp(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, rho: Map<nat, nat>)
+    requires ks.len() == vs.len()
+    ensures interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs))
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Succ(a) => { subst_level_spec_interp(*a, ks, vs, rho); }
+        LevelSpec::Max(a, b) => {
+            subst_level_spec_interp(*a, ks, vs, rho);
+            subst_level_spec_interp(*b, ks, vs, rho);
+        }
+        LevelSpec::IMax(a, b) => {
+            subst_level_spec_interp(*a, ks, vs, rho);
+            subst_level_spec_interp(*b, ks, vs, rho);
+        }
+        LevelSpec::Param(q) => {
+            subst_env_param(rho, ks, vs, q);
+            find_level_idx_in_range(ks, q);
+        }
+    }
+}
+
 /// `subst_env`'s defining correctness property, for exactly the query
 /// `interp` itself performs at a `Param` node: substituted param `q`
 /// denotes whatever `vs` says at `find_level_idx`'s matching index
