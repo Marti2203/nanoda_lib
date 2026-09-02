@@ -303,7 +303,7 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
             }
             assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
             assert(const_id(fun) == id);
-            assert(const_levels_vec(fun)@ =~= to_model_of_levels(levels));
+            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
             proof {
                 assert(pstep(
                     Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
@@ -406,7 +406,7 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
             }
             assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
             assert(const_id(fun) == id);
-            assert(const_levels_vec(fun)@ =~= to_model_of_levels(levels));
+            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
             proof {
                 assert(pstep(
                     Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
@@ -1646,7 +1646,7 @@ pub fn verified_reduce_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         d <= 60000,
         whnf_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(r) => exists |reduced: ExprSpec, levels: Vec<LevelSpec>, qmk_args: Seq<ExprSpec>|
+        Some(r) => exists |reduced: ExprSpec, levels: Seq<LevelSpec>, qmk_args: Seq<ExprSpec>|
             pstep_star(to_model_of_env(*env), to_model(qmk_arg), reduced)
             && reduced == spine_app(ExprSpec::Const(name_id(quot_mk_name), levels), qmk_args)
             && qmk_args.len() == 3
@@ -1821,7 +1821,7 @@ pub fn verified_reduce_rec_step<'t, 'p: 't, 'x>(
         d <= 60000,
         whnf_fixpoint_ok(bound, d, n as nat),
     ensures match result {
-        Some(r) => exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Vec<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
+        Some(r) => exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Seq<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
             #![trigger pstep_star(to_model_of_env(*env), to_model(args@[major_idx as int]), reduced_major), spine_app(ExprSpec::Const(ctor_id, levels), ctor_args), subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val), ctor_args.subrange(num_extra as int, ctor_args.len() as int), args_model_of(args@).subrange(0, prefix_len as int)]
             major_idx < args@.len()
             && pstep_star(to_model_of_env(*env), to_model(args@[major_idx as int]), reduced_major)
@@ -2692,7 +2692,7 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(env: Map<u64, (Seq<u64>, ExprSpe
         nat_succ_arity_is_zero(fun);
         const_levels_vec_model(fun);
         is_const_shape_model(fun);
-        assert(const_levels_vec(fun)@.len() == 0);
+        assert(const_levels_vec(fun).len() == 0);
         assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
         const_expr_no_levels_canonical(to_model(fun), nat_succ_id());
         assert(to_model(e) == target);
@@ -2892,10 +2892,10 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
             const_levels_vec_model(y);
             assert(to_model(x) == ExprSpec::Const(const_id(x), const_levels_vec(x)));
             assert(to_model(y) == ExprSpec::Const(const_id(y), const_levels_vec(y)));
-            assert(const_levels_vec(x)@.len() == const_levels_vec(y)@.len());
-            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < const_levels_vec(x)@.len() implies #[trigger] interp(const_levels_vec(x)@[i], rho) == interp(const_levels_vec(y)@[i], rho) by {
-                assert(const_levels_vec(x)@[i] == to_model_of_levels(const_levels_of(x))[i]);
-                assert(const_levels_vec(y)@[i] == to_model_of_levels(const_levels_of(y))[i]);
+            assert(const_levels_vec(x).len() == const_levels_vec(y).len());
+            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < const_levels_vec(x).len() implies #[trigger] interp(const_levels_vec(x)[i], rho) == interp(const_levels_vec(y)[i], rho) by {
+                assert(const_levels_vec(x)[i] == to_model_of_levels(const_levels_of(x))[i]);
+                assert(const_levels_vec(y)[i] == to_model_of_levels(const_levels_of(y))[i]);
                 assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho));
             }
             assert(deq_leaf(to_model(x), to_model(y)));
@@ -3171,10 +3171,10 @@ pub open spec fn types_to(
     })
     ||| (match e {
         ExprSpec::Const(cid, clevels) =>
-            dty.contains_key(cid) && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels@, t),
+            dty.contains_key(cid) && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
         _ => false,
     })
-    ||| (exists |fid: u64, flevels: Vec<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec|
+    ||| (exists |fid: u64, flevels: Seq<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec|
             #![trigger spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0)]
             e == spine_app(ExprSpec::Const(fid, flevels), args_model)
             && t == subst_full(body, args_model, 0))
@@ -3245,15 +3245,15 @@ pub proof fn types_to_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (
 {
 }
 
-pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, cid: u64, clevels: Vec<LevelSpec>, t: ExprSpec, fuel: nat)
+pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, cid: u64, clevels: Seq<LevelSpec>, t: ExprSpec, fuel: nat)
     requires
         dty.contains_key(cid),
-        subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels@, t),
+        subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
     ensures types_to(dty, denv, lctx, ExprSpec::Const(cid, clevels), t, fuel)
 {
 }
 
-pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, fid: u64, flevels: Vec<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
+pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, fid: u64, flevels: Seq<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
     ensures types_to(dty, denv, lctx, spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0), fuel)
 {
     assert(spine_app(ExprSpec::Const(fid, flevels), args_model) == spine_app(ExprSpec::Const(fid, flevels), args_model)
@@ -3328,8 +3328,8 @@ pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
         (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) =>
             forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(l2, rho),
         (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) =>
-            id1 == id2 && ls1@.len() == ls2@.len()
-            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1@.len() ==> #[trigger] interp(ls1@[i], rho) == interp(ls2@[i], rho)),
+            id1 == id2 && ls1.len() == ls2.len()
+            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1.len() ==> #[trigger] interp(ls1[i], rho) == interp(ls2[i], rho)),
         _ => false,
     }
 }
@@ -4415,7 +4415,7 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, Exp
         is_const_shape_model(e);
         const_levels_vec_model(e);
         nat_zero_arity_is_zero(e);
-        assert(const_levels_vec(e)@.len() == 0);
+        assert(const_levels_vec(e).len() == 0);
         assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
         const_expr_no_levels_canonical(to_model(e), nat_zero_id());
         pstep_star_refl(env, to_model(e));
@@ -4956,10 +4956,10 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
         const_levels_vec_model(r_fun);
         assert(to_model(l_fun) == ExprSpec::Const(const_id(l_fun), const_levels_vec(l_fun)));
         assert(to_model(r_fun) == ExprSpec::Const(const_id(r_fun), const_levels_vec(r_fun)));
-        assert(const_levels_vec(l_fun)@.len() == const_levels_vec(r_fun)@.len());
-        assert forall |i2: int, rho: Map<nat, nat>| 0 <= i2 < const_levels_vec(l_fun)@.len() implies #[trigger] interp(const_levels_vec(l_fun)@[i2], rho) == interp(const_levels_vec(r_fun)@[i2], rho) by {
-            assert(const_levels_vec(l_fun)@[i2] == to_model_of_levels(const_levels_of(l_fun))[i2]);
-            assert(const_levels_vec(r_fun)@[i2] == to_model_of_levels(const_levels_of(r_fun))[i2]);
+        assert(const_levels_vec(l_fun).len() == const_levels_vec(r_fun).len());
+        assert forall |i2: int, rho: Map<nat, nat>| 0 <= i2 < const_levels_vec(l_fun).len() implies #[trigger] interp(const_levels_vec(l_fun)[i2], rho) == interp(const_levels_vec(r_fun)[i2], rho) by {
+            assert(const_levels_vec(l_fun)[i2] == to_model_of_levels(const_levels_of(l_fun))[i2]);
+            assert(const_levels_vec(r_fun)[i2] == to_model_of_levels(const_levels_of(r_fun))[i2]);
             assert(interp(to_model_of_levels(const_levels_of(l_fun))[i2], rho) == interp(to_model_of_levels(const_levels_of(r_fun))[i2], rho));
         }
         assert(deq_leaf(to_model(l_fun), to_model(r_fun)));

@@ -184,7 +184,7 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
             assert(to_model_of_env(*env)[id] == (ks, val));
             assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
             assert(const_id(fun) == id);
-            assert(const_levels_vec(fun)@ =~= to_model_of_levels(levels));
+            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
             proof {
                 assert(pstep(
                     Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
@@ -1301,12 +1301,12 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                     const_levels_vec_model(e);
                     assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
                     assert(const_id(e) == name_id(c_name));
-                    assert(const_levels_vec(e)@ =~= to_model_of_levels(const_levels_of(e)));
+                    assert(const_levels_vec(e) =~= to_model_of_levels(const_levels_of(e)));
                     assert(const_levels_of(e) == c_uparams);
-                    assert(const_levels_vec(e)@ == to_model_of_levels(c_uparams));
+                    assert(const_levels_vec(e) == to_model_of_levels(c_uparams));
                     assert(to_model_of_declar_ty(*env)[const_id(e)].1 == to_model(ty));
                     assert(to_model_of_declar_ty(*env)[const_id(e)].0 == level_names(to_model_of_levels(uparams)));
-                    assert(subst_expr_levels_rel(to_model_of_declar_ty(*env)[const_id(e)].1, to_model_of_declar_ty(*env)[const_id(e)].0, const_levels_vec(e)@, to_model(r)));
+                    assert(subst_expr_levels_rel(to_model_of_declar_ty(*env)[const_id(e)].1, to_model_of_declar_ty(*env)[const_id(e)].0, const_levels_vec(e), to_model(r)));
                     types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(e), const_levels_vec(e), to_model(r), fuel as nat);
                     assert(infer_types_to(*env, e, r, fuel as nat));
                 }
@@ -5036,7 +5036,7 @@ pub fn verified_reduce_rec_step_normalized<'t, 'p: 't, 'x>(
         },
     ensures match result {
         Some((r, reached)) => reached@ ==>
-            exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Vec<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
+            exists |major_idx: nat, reduced_major: ExprSpec, ctor_id: u64, levels: Seq<LevelSpec>, ctor_args: Seq<ExprSpec>, rec_rule_val: ExprSpec, ks: Seq<u64>, subst_val: ExprSpec, num_extra: nat, prefix_len: nat|
                 #![trigger pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(args@[major_idx as int]), reduced_major), spine_app(ExprSpec::Const(ctor_id, levels), ctor_args), subst_expr_levels_rel(rec_rule_val, ks, to_model_of_levels(const_levels), subst_val), ctor_args.subrange(num_extra as int, ctor_args.len() as int), args_model_of(args@).subrange(0, prefix_len as int)]
                 major_idx < args@.len()
                 && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(args@[major_idx as int]), reduced_major)
@@ -5321,13 +5321,13 @@ pub proof fn bool_true_claim_lift<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: E
     bool_true_arity_is_zero(x_nn);
     const_levels_vec_model(x_nn);
     is_const_shape_model(x_nn);
-    assert(const_levels_vec(x_nn)@.len() == 0);
+    assert(const_levels_vec(x_nn).len() == 0);
     assert(to_model(x_nn) == ExprSpec::Const(const_id(x_nn), const_levels_vec(x_nn)));
     const_expr_no_levels_canonical(to_model(x_nn), bool_true_id());
     bool_true_arity_is_zero(y);
     const_levels_vec_model(y);
     is_const_shape_model(y);
-    assert(const_levels_vec(y)@.len() == 0);
+    assert(const_levels_vec(y).len() == 0);
     assert(to_model(y) == ExprSpec::Const(const_id(y), const_levels_vec(y)));
     const_expr_no_levels_canonical(to_model(y), bool_true_id());
     assert(to_model(x_nn) == to_model(y));

@@ -395,7 +395,7 @@ pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(Ex
 /// `Const`'s name/levels, keyed by the pointer (like `expr_id`) --
 /// `const_name_of`/`const_levels_of` are a separate side channel from
 /// `to_model`, carrying the real `NamePtr`/`LevelsPtr` that `to_model`'s
-/// `ExprSpec::Const(u64, Vec<LevelSpec>)` payload is derived from.
+/// `ExprSpec::Const(u64, Seq<LevelSpec>)` payload is derived from.
 /// `const_id` is NOT a fresh axiomatized identity -- it's DERIVED from
 /// `name_id` (the pre-existing NAME-identity bridge in
 /// `level_arena_bridge.rs`), so "same name implies same id" falls out of
@@ -411,11 +411,15 @@ pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
 pub open spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u64 {
     name_id(const_name_of(ptr))
 }
-pub uninterp spec fn const_levels_vec<'a>(ptr: ExprPtr<'a>) -> Vec<LevelSpec>;
+/// (Delta-lift L1: no longer an uninterpreted Vec side channel -- `ExprSpec::Const`
+/// carries a `Seq<LevelSpec>` now, so this is simply the level bridge itself.)
+pub open spec fn const_levels_vec<'a>(ptr: ExprPtr<'a>) -> Seq<LevelSpec> {
+    to_model_of_levels(const_levels_of(ptr))
+}
 
-#[verifier::external_body]
+/// Now definitional (kept so the ~50 existing call sites read unchanged).
 pub proof fn const_levels_vec_model<'a>(ptr: ExprPtr<'a>)
-    ensures const_levels_vec(ptr)@ =~= to_model_of_levels(const_levels_of(ptr))
+    ensures const_levels_vec(ptr) =~= to_model_of_levels(const_levels_of(ptr))
 {
 }
 
@@ -1214,13 +1218,13 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
 /// composition (`expr.rs:523-533`).
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_zero] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id() && const_levels_vec(e)@.len() == 0,
+        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id() && const_levels_vec(e).len() == 0,
         None => true,
     };
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id() && const_levels_vec(e)@.len() == 0,
+        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id() && const_levels_vec(e).len() == 0,
         None => true,
     };
 
@@ -1958,7 +1962,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             const_levels_vec_model(e);
         }
         assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-        assert(const_levels_vec(e)@ =~= to_model_of_levels(levels));
+        assert(const_levels_vec(e) =~= to_model_of_levels(levels));
         return match verified_subst_levels(ctx, levels, ks, vs, fuel1) {
             Some(new_levels) => {
                 let result = ctx.mk_const(name, new_levels);
@@ -1968,16 +1972,16 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
                     const_levels_vec_model(result);
                 }
                 assert(to_model(result) == ExprSpec::Const(const_id(result), const_levels_vec(result)));
-                assert(const_levels_vec(result)@ =~= to_model_of_levels(new_levels));
+                assert(const_levels_vec(result) =~= to_model_of_levels(new_levels));
                 assert(const_id(result) == const_id(e));
                 assert(to_model_of_levels(new_levels).len() == to_model_of_levels(levels).len());
                 assert forall |j: int, rho: Map<nat, nat>| 0 <= j < to_model_of_levels(levels).len() implies
                     #[trigger] interp(to_model_of_levels(new_levels)[j], rho)
                         == interp(to_model_of_levels(levels)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
-                assert(const_levels_vec(result)@.len() == const_levels_vec(e)@.len());
-                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < const_levels_vec(e)@.len() implies
-                    #[trigger] interp(const_levels_vec(result)@[j], rho)
-                        == interp(const_levels_vec(e)@[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                assert(const_levels_vec(result).len() == const_levels_vec(e).len());
+                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < const_levels_vec(e).len() implies
+                    #[trigger] interp(const_levels_vec(result)[j], rho)
+                        == interp(const_levels_vec(e)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
                 Some(result)
             }
             None => None,
