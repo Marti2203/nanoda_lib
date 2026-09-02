@@ -736,6 +736,20 @@ pub open spec fn subst_expr_levels(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>
     }
 }
 
+/// Level substitution touches no `Free` node: `has_fv` is preserved exactly.
+pub proof fn subst_expr_levels_has_fv(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures has_fv(subst_expr_levels(e, ks, vs)) == has_fv(e)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => { subst_expr_levels_has_fv(*f, ks, vs); subst_expr_levels_has_fv(*a, ks, vs); }
+        ExprSpec::Bind(t, b) => { subst_expr_levels_has_fv(*t, ks, vs); subst_expr_levels_has_fv(*b, ks, vs); }
+        ExprSpec::Let(t, v, b) => { subst_expr_levels_has_fv(*t, ks, vs); subst_expr_levels_has_fv(*v, ks, vs); subst_expr_levels_has_fv(*b, ks, vs); }
+        ExprSpec::Proj(pidx, st) => { subst_expr_levels_has_fv(*st, ks, vs); }
+        _ => {}
+    }
+}
+
 /// The function satisfies the relation (so every `subst_expr_levels_rel_*`
 /// preservation lemma applies to its output for free).
 pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)

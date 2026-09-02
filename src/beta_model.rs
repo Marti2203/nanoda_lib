@@ -779,7 +779,8 @@ pub proof fn pstep_d_iota_intro_pieces(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx
 /// congruence and the arguments step independently.
 pub proof fn pstep_d_const_spine(env: Map<u64, (Seq<u64>, ExprSpec)>, cid: u64, lv: Seq<LevelSpec>, args2: Seq<ExprSpec>, target: ExprSpec, m: nat, d: nat) -> (args3: Seq<ExprSpec>)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
+        ctor_num_params_of(cid) is Some,
         pstep_d(env, spine_app(ExprSpec::Const(cid, lv), args2), target, m, d),
     ensures
         target == spine_app(ExprSpec::Const(cid, lv), args3),
@@ -792,7 +793,7 @@ pub proof fn pstep_d_const_spine(env: Map<u64, (Seq<u64>, ExprSpec)>, cid: u64, 
         assert(e1 == ExprSpec::Const(cid, lv));
         if e1 == target {
         } else {
-            assert(!env.contains_key(cid));
+            assert(env.contains_key(cid) ==> ctor_num_params_of(cid) is None);
             assert(false);
         }
         let args3 = Seq::<ExprSpec>::empty();
@@ -1685,6 +1686,8 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
     ensures pstep_d(env, e, complete(env, e), (bound + growth(size(e))) as nat, size(e))
     decreases e
 {
+    env_wf_empty_all();
+    env_closed_empty();
     env_wf_empty(0);
     let m: nat = (bound + growth(size(e))) as nat;
     let d: nat = size(e);
@@ -1829,7 +1832,7 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
 /// `shift` is the identity on them (`nlbv_shift_noop`).
 pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, e1, e2, mcap, dcap),
         mcap + dcap + 2 <= 0xFFFF_0000,
     ensures pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap)
@@ -1979,9 +1982,16 @@ pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: Expr
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
+                assert(nlbv(e2) == 0);
+                nlbv_shift_noop(1, c, e2);
+                assert(shift(1, c, e1) == e1);
+                assert(shift(1, c, e2) == e2);
+                assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap));
             }
             ExprSpec::NatLit(n) => {
                 if n.0@ == 0 {
@@ -2031,7 +2041,7 @@ pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: Expr
 /// `+ depth(e)`).
 pub proof fn pstep_d_subst_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1: ExprSpec, s2: ExprSpec, e: ExprSpec, ms: nat, ds: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, s1, s2, ms, ds),
         (ms + depth(e)) + ds + 2 <= 0xFFFF_0000,
     ensures pstep_d(env, subst(j, s1, e), subst(j, s2, e), (ms + depth(e)) as nat, ds)
@@ -2124,7 +2134,7 @@ pub proof fn pstep_d_subst_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1:
 /// add at most the structure `e1` itself already had.
 pub proof fn pstep_d_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat, bound: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, dcap),
         pstep_d(env, e1, e2, mcap, dcap),
         max_var_below(e1, bound),
         string_lits_ok(e1, 0),
@@ -2236,9 +2246,16 @@ pub proof fn pstep_d_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
+                assert(nlbv(e2) == 0);
+                subst_expr_levels_rel_depth(env[id].1, env[id].0, levels, e2);
+                subst_expr_levels_rel_max_var_below(env[id].1, env[id].0, levels, e2, dcap);
+                assert(depth(e2) <= dcap);
+                max_var_below_mono(e2, dcap, (bound + mcap + dcap + 1) as nat);
             }
             ExprSpec::NatLit(n) => {
                 if n.0@ == 0 {
@@ -2287,7 +2304,7 @@ pub proof fn pstep_d_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e
 /// size formulas).
 pub proof fn pstep_d_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1: ExprSpec, s2: ExprSpec, e1: ExprSpec, e2: ExprSpec, ms: nat, ds: nat, me: nat, de: nat, ms1: nat, ds1: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, e1, e2, me, de),
         pstep_d(env, s1, s2, ms, ds),
         depth(s1) <= ds1,
@@ -2525,9 +2542,16 @@ pub proof fn pstep_d_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1: Expr
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
+                assert(nlbv(e2) == 0);
+                nlbv_subst_noop(j, s2, e2);
+                assert(subst(j, s1, e1) == e1);
+                assert(subst(j, s2, e2) == e2);
+                assert(pstep_d(env, subst(j, s1, e1), subst(j, s2, e2), wm, wd));
             }
             ExprSpec::NatLit(n) => {
                 if n.0@ == 0 {
@@ -2640,7 +2664,7 @@ pub proof fn shift_down_max_var_below_href(c0: nat, bound: nat, y: ExprSpec)
 /// requires are fed straight from the certificates.
 pub proof fn pstep_d_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec)>, k: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, e1, e2, mcap, dcap),
         !has_escaping_ref(e1, k),
         mcap + dcap + 2 <= 0xFFFF_0000,
@@ -2739,9 +2763,13 @@ pub proof fn pstep_d_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
+                assert(nlbv(e2) == 0);
+                nlbv_no_escaping_ref(e2, k);
             }
             ExprSpec::NatLit(n) => {
                 if n.0@ == 0 {
@@ -2783,7 +2811,7 @@ pub proof fn pstep_d_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec
 /// original's own use of its size-based counterpart.
 pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, e1, e2, mcap, dcap),
         !has_escaping_ref(e1, c),
         mcap + 3 * dcap + 4 <= 0xFFFF_0000,
@@ -2956,9 +2984,16 @@ pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1:
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_nlbv(env[id].1, env[id].0, levels, e2);
+                assert(nlbv(e2) == 0);
+                nlbv_shift_noop(-1, c, e2);
+                assert(shift(-1, c, e1) == e1);
+                assert(shift(-1, c, e2) == e2);
+                assert(pstep_d(env, shift(-1, c, e1), shift(-1, c, e2), mcap, dcap));
             }
             ExprSpec::NatLit(n) => {
                 if n.0@ == 0 {
@@ -3012,7 +3047,7 @@ pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1:
 /// requires is fed from certificates or the three explicit `a1` bounds.
 pub proof fn pstep_d_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, body1: ExprSpec, body3: ExprSpec, a1: ExprSpec, a3: ExprSpec, mb: nat, db: nat, ma: nat, da: nat, ma1: nat, da1: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_closed(env),
         pstep_d(env, body1, body3, mb, db),
         pstep_d(env, a1, a3, ma, da),
         depth(a1) <= da1,
@@ -3234,6 +3269,8 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
     ensures pstep_d(env, e2, complete(env, e1), tak_m(bound, mcap, dcap, e1), tak_d(dcap, e1))
     decreases e1
 {
+    env_wf_empty_all();
+    env_closed_empty();
     env_wf_empty(0);
     reveal(shift);
     reveal(subst);
@@ -3531,6 +3568,8 @@ pub proof fn pstep_d_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e:
         pstep_d(env, e1, complete(env, e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
         pstep_d(env, e2, complete(env, e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
 {
+    env_wf_empty_all();
+    env_closed_empty();
     pstep_d_takahashi(env, bound, e, e1, mcap, dcap);
     pstep_d_takahashi(env, bound, e, e2, mcap, dcap);
 }
@@ -3561,6 +3600,8 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
     ensures pstep_d(env, e1, e2, (bound + growth(size(e1))) as nat, size(e1))
     decreases e1
 {
+    env_wf_empty_all();
+    env_closed_empty();
     reveal(shift);
     let mcap: nat = (bound + growth(size(e1))) as nat;
     let dcap: nat = size(e1);
@@ -3792,6 +3833,8 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
         && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2)
     decreases chain.len()
 {
+    env_wf_empty_all();
+    env_closed_empty();
     if chain.len() == 1 {
         let zch = seq![y];
         assert(zch.len() == chain.len());
@@ -4020,6 +4063,8 @@ pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
         && wa[wa.len() - 1] == wb[wb.len() - 1]
     decreases ach.len()
 {
+    env_wf_empty_all();
+    env_closed_empty();
     if ach.len() == 1 {
         let wa = bch;
         let wb = seq![bch[bch.len() - 1]];
@@ -4191,6 +4236,8 @@ pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
         conf_ok(env, bound, qch, rch, mlink, dlink, ms, ds),
     ensures defeq(env, a, c)
 {
+    env_wf_empty_all();
+    env_closed_empty();
     pstep_d_confluent(env, bound, qch, rch, mlink, dlink, ms, ds);
     let mf = ladder_last(mlink, ms);
     let df = ladder_last(dlink, ds);
@@ -4274,6 +4321,8 @@ pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, boun
         bound + join1_m(bound, mlink, dlink, b, z2) + 6 * join1_d(bound, dlink, b, z2) + tak_m(bound, join1_m(bound, mlink, dlink, b, z2), join1_d(bound, dlink, b, z2), z2) + 4 * tak_d(join1_d(bound, dlink, b, z2), z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
+    env_wf_empty_all();
+    env_closed_empty();
     let qch = seq![b, z1];
     let rch = seq![b, z2];
     let m1 = join1_m(bound, mlink, dlink, b, z2);
@@ -4417,6 +4466,8 @@ pub proof fn defeq_trans_single_middle_sized(env: Map<u64, (Seq<u64>, ExprSpec)>
         single_middle_ceil(bound, mlink, dlink, s0) <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
+    env_wf_empty_all();
+    env_closed_empty();
     let m1b = join1_m_ceil(bound, mlink, dlink, s0);
     let d1b = join1_d_ceil(dlink, s0);
     // Level-1 tak bounds for both middle terms.
@@ -4654,6 +4705,8 @@ pub proof fn pstep_preserves_string_lits_ok(env: Map<u64, (Seq<u64>, ExprSpec)>,
     ensures string_lits_ok(e2, cap)
     decreases e1
 {
+    env_wf_empty_all();
+    env_closed_empty();
     if e1 == e2 {
     } else {
         match e1 {
@@ -4794,6 +4847,16 @@ pub open spec fn env_closed(env: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
         &&& nlbv(env[id].1) == 0
         &&& !has_fv(env[id].1)
         &&& ctor_num_params_of(id) is None
+    }
+}
+
+/// Broadcast form of `env_wf_empty`: every cap at once (one seed call
+/// at the top of a still-empty-env lemma covers every callee cap).
+pub proof fn env_wf_empty_all()
+    ensures forall |c: nat| #[trigger] env_wf(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), c)
+{
+    assert forall |c: nat| #[trigger] env_wf(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), c) by {
+        env_wf_empty(c);
     }
 }
 
@@ -11453,6 +11516,8 @@ pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: 
         forall |i: int| 0 <= i < chain.len() - 1 ==> o + ks.len() + bound + growth(size(#[trigger] chain[i])) + 2 * size(chain[i]) + depth(chain[i]) + 30 <= 0xFFFF_0000,
     ensures pstep_star(env, abstr_full(chain[0], ks, o), abstr_full(chain[chain.len() - 1], ks, o))
 {
+    env_wf_empty_all();
+    env_closed_empty();
     let mapped = Seq::new(chain.len(), |i: int| abstr_full(chain[i], ks, o));
     assert(mapped.len() == chain.len());
     assert(mapped[0] == abstr_full(chain[0], ks, o));
@@ -11500,6 +11565,8 @@ pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: Ex
         defeq(env, t1, t2),
     ensures defeq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
 {
+    env_wf_empty_all();
+    env_closed_empty();
     let ks = seq![k];
     assert(ks.len() == 1);
     pstep_star_abstr_chain(env, ch1, ks, 0, bound);
@@ -11668,6 +11735,8 @@ pub proof fn defeq_bind_telescope_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec
         forall |i: int| 0 <= i < ch2.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch2[i])) + 2 * size(ch2[i]) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
     ensures defeq(env, bind_telescope(ts1, b1), bind_telescope(ts2, b2))
 {
+    env_wf_empty_all();
+    env_closed_empty();
     pstep_star_abstr_chain(env, ch1, ks, 0, bound);
     pstep_star_abstr_chain(env, ch2, ks, 0, bound);
     abstr_subst_roundtrip_n(b1, ks, 0);
@@ -14133,6 +14202,8 @@ pub proof fn chain_to_pstep_d_links(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq
     ensures
         forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap)
 {
+    env_wf_empty_all();
+    env_closed_empty();
     assert forall |i: int| 0 <= i < ch.len() - 1 implies pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap) by {
         assert(pstep(env, ch[i], ch[i + 1]));
         growth_mono(size(ch[i]), cap);
