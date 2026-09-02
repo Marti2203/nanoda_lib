@@ -442,6 +442,128 @@ pub open spec fn pstep_iota(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, in
     exists |inner2: ExprSpec| (#[trigger] iota_reduct(inner2)) && pstep(env, inner, inner2) && iota_extract(pidx, inner2, e2)
 }
 
+/// Canonical spine DESTRUCTORS: the head under all `App` layers and
+/// the argument list, so `complete`'s iota-contraction can DECIDE
+/// "is this a sufficiently-applied constructor spine" on a concrete
+/// term (the rule's existential form cannot be evaluated by a
+/// recursive spec fn).
+pub open spec fn spine_head(e: ExprSpec) -> ExprSpec
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => spine_head(*f),
+        _ => e,
+    }
+}
+
+pub open spec fn spine_args(e: ExprSpec) -> Seq<ExprSpec>
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => spine_args(*f).push(*a),
+        _ => Seq::empty(),
+    }
+}
+
+/// The destructors invert `spine_app` at any non-`App` head.
+pub proof fn spine_destruct_app(head: ExprSpec, args: Seq<ExprSpec>)
+    requires !(head is App)
+    ensures
+        spine_head(spine_app(head, args)) == head,
+        spine_args(spine_app(head, args)) =~= args,
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let args_init = args.subrange(0, args.len() - 1);
+        spine_destruct_app(head, args_init);
+        assert(spine_app(head, args) == ExprSpec::App(Box::new(spine_app(head, args_init)), Box::new(args[args.len() - 1])));
+        assert(spine_args(spine_app(head, args)) =~= spine_args(spine_app(head, args_init)).push(args[args.len() - 1]));
+        assert(args_init.push(args[args.len() - 1]) =~= args);
+    }
+}
+
+/// And recomposition: every term IS the spine of its own destructors.
+pub proof fn spine_recompose(e: ExprSpec)
+    ensures e == spine_app(spine_head(e), spine_args(e))
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            spine_recompose(*f);
+            assert(spine_args(*f).push(*a).subrange(0, spine_args(*f).push(*a).len() - 1) =~= spine_args(*f));
+        }
+        _ => {
+            assert(spine_args(e) =~= Seq::<ExprSpec>::empty());
+        }
+    }
+}
+
+/// DECISION predicate for `complete`'s iota-contraction: `e` is an
+/// applied constructor spine with enough arguments for projection
+/// `pidx`.
+pub open spec fn iota_ready(pidx: usize, e: ExprSpec) -> bool {
+    match spine_head(e) {
+        ExprSpec::Const(cid, lv) => match ctor_num_params_of(cid) {
+            Some(np) => (np as nat + pidx as nat) < spine_args(e).len(),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// The extracted field when `iota_ready` (garbage `e` otherwise).
+pub open spec fn iota_result(pidx: usize, e: ExprSpec) -> ExprSpec {
+    match spine_head(e) {
+        ExprSpec::Const(cid, lv) => match ctor_num_params_of(cid) {
+            Some(np) => spine_args(e)[(np as nat + pidx as nat) as int],
+            None => e,
+        },
+        _ => e,
+    }
+}
+
+/// `iota_ready`/`iota_result` agree with the rule's existential form.
+pub proof fn iota_ready_extract(pidx: usize, inner2: ExprSpec, e2: ExprSpec)
+    requires iota_ready(pidx, inner2), e2 == iota_result(pidx, inner2)
+    ensures iota_extract(pidx, inner2, e2)
+{
+    spine_recompose(inner2);
+    match spine_head(inner2) {
+        ExprSpec::Const(cid, lv) => {
+            match ctor_num_params_of(cid) {
+                Some(np) => {
+                    let args2 = spine_args(inner2);
+                    assert(inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+                        && ctor_num_params_of(cid) == Some(np)
+                        && ((np as nat + pidx as nat) < args2.len())
+                        && (e2 == args2[(np as nat + pidx as nat) as int]));
+                }
+                None => { assert(false); }
+            }
+        }
+        _ => { assert(false); }
+    }
+}
+
+/// Converse: the existential form implies readiness with the exact result.
+pub proof fn iota_extract_ready(pidx: usize, inner2: ExprSpec, e2: ExprSpec)
+    requires iota_extract(pidx, inner2, e2)
+    ensures iota_ready(pidx, inner2), e2 == iota_result(pidx, inner2)
+{
+    let (cid, lv, args2, np) = choose |cid: u64, lv: Vec<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
+        #![trigger spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + pidx as nat) as int]]
+        inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+        && ctor_num_params_of(cid) == Some(np)
+        && ((np as nat + pidx as nat) < args2.len())
+        && (e2 == args2[(np as nat + pidx as nat) as int]);
+    assert(inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+        && ctor_num_params_of(cid) == Some(np)
+        && ((np as nat + pidx as nat) < args2.len())
+        && (e2 == args2[(np as nat + pidx as nat) as int]));
+    spine_destruct_app(ExprSpec::Const(cid, lv), args2);
+}
+
 /// Pure MARKER predicate for the iota rule's reduct binder: an exists
 /// nested in a MATCH ARM may not mention match-bound variables in its
 /// trigger (they compile to unreduced selector terms e-matching cannot
@@ -551,6 +673,166 @@ pub proof fn pstep_iota_intro(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, 
     assert(iota_reduct(inner2) && pstep(env, *inner, inner2) && iota_extract(pidx, inner2, e2));
 }
 
+/// `pstep_d`'s iota disjunct, named (see `pstep_iota`).
+pub open spec fn pstep_d_iota(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, inner: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat) -> bool {
+    exists |inner2: ExprSpec|
+        (#[trigger] iota_reduct(inner2)) && pstep_d(env, inner, inner2, mcap, dcap)
+        && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+        && iota_extract(pidx, inner2, e2)
+}
+
+/// INVERSION for a certified `Proj` step (see `pstep_proj_cases`).
+pub proof fn pstep_d_proj_cases(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, inner: Box<ExprSpec>, e2: ExprSpec, mcap: nat, dcap: nat)
+    requires pstep_d(env, ExprSpec::Proj(pidx, inner), e2, mcap, dcap)
+    ensures
+        (exists |inner2: ExprSpec| e2 == ExprSpec::Proj(pidx, Box::new(inner2)) && #[trigger] pstep_d(env, *inner, inner2, mcap, dcap))
+        || pstep_d_iota(env, pidx, *inner, e2, mcap, dcap)
+{
+    let e1 = ExprSpec::Proj(pidx, inner);
+    if e1 == e2 {
+        assert(e2 == ExprSpec::Proj(pidx, Box::new(*inner)) && pstep_d(env, *inner, *inner, mcap, dcap));
+    } else if (match e2 {
+        ExprSpec::Proj(pidx2, inner2) => pidx == pidx2 && pstep_d(env, *inner, *inner2, mcap, dcap),
+        _ => false,
+    }) {
+        match e2 {
+            ExprSpec::Proj(pidx2, inner2) => {
+                assert(e2 == ExprSpec::Proj(pidx, Box::new(*inner2)) && pstep_d(env, *inner, *inner2, mcap, dcap));
+            }
+            _ => { assert(false); }
+        }
+    } else {
+        let inner2 = choose |inner2: ExprSpec|
+            (#[trigger] iota_reduct(inner2)) && pstep_d(env, *inner, inner2, mcap, dcap)
+            && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+            && iota_extract(pidx, inner2, e2);
+        assert(iota_reduct(inner2) && pstep_d(env, *inner, inner2, mcap, dcap)
+            && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+            && iota_extract(pidx, inner2, e2));
+        assert(pstep_d_iota(env, pidx, *inner, e2, mcap, dcap));
+    }
+}
+
+/// DESTRUCTOR for the certified iota disjunct (see `pstep_iota_destruct`).
+pub proof fn pstep_d_iota_destruct(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, inner: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat) -> (r: (ExprSpec, u64, Vec<LevelSpec>, Seq<ExprSpec>, u16))
+    requires pstep_d_iota(env, pidx, inner, e2, mcap, dcap)
+    ensures ({
+        let (inner2, cid, lv, args2, np) = r;
+        pstep_d(env, inner, inner2, mcap, dcap)
+        && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+        && inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+        && ctor_num_params_of(cid) == Some(np)
+        && ((np as nat + pidx as nat) < args2.len())
+        && (e2 == args2[(np as nat + pidx as nat) as int])
+    })
+{
+    let inner2 = choose |inner2: ExprSpec|
+        (#[trigger] iota_reduct(inner2)) && pstep_d(env, inner, inner2, mcap, dcap)
+        && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+        && iota_extract(pidx, inner2, e2);
+    assert(pstep_d(env, inner, inner2, mcap, dcap) && iota_extract(pidx, inner2, e2));
+    let (cid, lv, args2, np) = choose |cid: u64, lv: Vec<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
+        #![trigger spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + pidx as nat) as int]]
+        inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+        && ctor_num_params_of(cid) == Some(np)
+        && ((np as nat + pidx as nat) < args2.len())
+        && (e2 == args2[(np as nat + pidx as nat) as int]);
+    (inner2, cid, lv, args2, np)
+}
+
+/// INTRO for the certified iota disjunct from pieces (see
+/// `pstep_iota_intro_pieces`).
+pub proof fn pstep_d_iota_intro_pieces(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, inner: Box<ExprSpec>, e2: ExprSpec, inner2: ExprSpec, cid: u64, lv: Vec<LevelSpec>, args2: Seq<ExprSpec>, np: u16, mcap: nat, dcap: nat)
+    requires
+        pstep_d(env, *inner, inner2, mcap, dcap),
+        depth(inner2) <= dcap,
+        max_var_below(inner2, mcap),
+        inner2 == spine_app(ExprSpec::Const(cid, lv), args2),
+        ctor_num_params_of(cid) == Some(np),
+        (np as nat + pidx as nat) < args2.len(),
+        e2 == args2[(np as nat + pidx as nat) as int],
+    ensures pstep_d(env, ExprSpec::Proj(pidx, inner), e2, mcap, dcap)
+{
+    assert(iota_reduct(inner2));
+    assert(iota_extract(pidx, inner2, e2)) by {
+        assert(inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
+            && ctor_num_params_of(cid) == Some(np)
+            && ((np as nat + pidx as nat) < args2.len())
+            && (e2 == args2[(np as nat + pidx as nat) as int]));
+    };
+    assert(iota_reduct(inner2) && pstep_d(env, *inner, inner2, mcap, dcap)
+        && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+        && iota_extract(pidx, inner2, e2));
+}
+
+/// A certified step OUT OF a `Const`-headed spine stays a
+/// `Const`-headed spine, POINTWISE -- the derivation-decomposition the
+/// Takahashi iota case needs: under an empty env the head can only
+/// step by reflexivity (no delta, and a `Const` head is never a
+/// `Bind`, so no beta), so every layer of the derivation is App
+/// congruence and the arguments step independently.
+pub proof fn pstep_d_const_spine(env: Map<u64, (Seq<u64>, ExprSpec)>, cid: u64, lv: Vec<LevelSpec>, args2: Seq<ExprSpec>, target: ExprSpec, m: nat, d: nat) -> (args3: Seq<ExprSpec>)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep_d(env, spine_app(ExprSpec::Const(cid, lv), args2), target, m, d),
+    ensures
+        target == spine_app(ExprSpec::Const(cid, lv), args3),
+        args3.len() == args2.len(),
+        forall |i: int| 0 <= i < args2.len() ==> pstep_d(env, args2[i], #[trigger] args3[i], m, d),
+    decreases args2.len()
+{
+    let e1 = spine_app(ExprSpec::Const(cid, lv), args2);
+    if args2.len() == 0 {
+        assert(e1 == ExprSpec::Const(cid, lv));
+        if e1 == target {
+        } else {
+            assert(!env.contains_key(cid));
+            assert(false);
+        }
+        let args3 = Seq::<ExprSpec>::empty();
+        assert(target == spine_app(ExprSpec::Const(cid, lv), args3));
+        args3
+    } else {
+        let init = args2.subrange(0, args2.len() - 1);
+        let last = args2[args2.len() - 1];
+        let fpart = spine_app(ExprSpec::Const(cid, lv), init);
+        assert(e1 == ExprSpec::App(Box::new(fpart), Box::new(last)));
+        if e1 == target {
+            let args3 = args2;
+            assert(forall |i: int| 0 <= i < args2.len() ==> pstep_d(env, args2[i], #[trigger] args3[i], m, d));
+            args3
+        } else {
+            // The head is a spine of a Const: an `App` when `init` is
+            // nonempty, the `Const` itself otherwise -- never a `Bind`,
+            // so the beta disjunct is impossible and the step is App
+            // congruence.
+            assert(!(fpart is Bind)) by {
+                if init.len() == 0 {
+                } else {
+                    let init2 = init.subrange(0, init.len() - 1);
+                    assert(fpart == ExprSpec::App(Box::new(spine_app(ExprSpec::Const(cid, lv), init2)), Box::new(init[init.len() - 1])));
+                }
+            };
+            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, fpart, f2, m, d) && pstep_d(env, last, a2, m, d) && target == ExprSpec::App(Box::new(f2), Box::new(a2));
+            assert(pstep_d(env, fpart, f2, m, d) && pstep_d(env, last, a2, m, d) && target == ExprSpec::App(Box::new(f2), Box::new(a2)));
+            let args3i = pstep_d_const_spine(env, cid, lv, init, f2, m, d);
+            let args3 = args3i.push(a2);
+            assert(args3.subrange(0, args3.len() - 1) =~= args3i);
+            assert(target == spine_app(ExprSpec::Const(cid, lv), args3));
+            assert forall |i: int| 0 <= i < args2.len() implies pstep_d(env, args2[i], #[trigger] args3[i], m, d) by {
+                if i < args2.len() - 1 {
+                    assert(args3[i] == args3i[i]);
+                    assert(args2[i] == init[i]);
+                } else {
+                    assert(args3[i] == a2);
+                    assert(args2[i] == last);
+                }
+            }
+            args3
+        }
+    }
+}
+
 /// Takahashi's "complete development": contracts EVERY redex in `e`
 /// simultaneously (matching exactly which shapes `pstep` itself gives a
 /// real reduction rule for -- `App` headed by `Bind` contracts; `Let`
@@ -584,7 +866,19 @@ pub open spec fn complete(e: ExprSpec) -> ExprSpec
         },
         ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(complete(*t)), Box::new(complete(*b))),
         ExprSpec::Let(t, v, b) => subst1(complete(*b), complete(*v)),
-        ExprSpec::Proj(pidx, s) => ExprSpec::Proj(pidx, Box::new(complete(*s))),
+        // Proj: complete the structure, then IOTA-CONTRACT when the
+        // completed structure is a sufficiently-applied constructor
+        // spine (Takahashi's complete development must contract every
+        // redex the rule can fire on, or the iota-vs-congruence
+        // critical pair cannot rejoin at one certified step).
+        ExprSpec::Proj(pidx, s) => {
+            let cs = complete(*s);
+            if iota_ready(pidx, cs) {
+                iota_result(pidx, cs)
+            } else {
+                ExprSpec::Proj(pidx, Box::new(cs))
+            }
+        },
     }
 }
 
@@ -647,6 +941,14 @@ pub proof fn pstep_complete_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpe
         }
         ExprSpec::Proj(pidx, s) => {
             pstep_complete_refl(env, *s);
+            let cs = complete(*s);
+            if iota_ready(pidx, cs) {
+                assert(complete(e) == iota_result(pidx, cs));
+                iota_ready_extract(pidx, cs, complete(e));
+                assert(iota_reduct(cs) && pstep(env, *s, cs) && iota_extract(pidx, cs, complete(e)));
+            } else {
+                assert(complete(e) == ExprSpec::Proj(pidx, Box::new(cs)));
+            }
         }
     }
 }
@@ -717,10 +1019,16 @@ pub open spec fn pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: 
             ||| (exists |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                 pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)))
         }
-        ExprSpec::Proj(pidx, inner) => match e2 {
+        // Congruence OR parallel iota, mirroring `pstep`'s Proj arm
+        // (same marker-trigger law, same `iota_extract`), with the
+        // family's witness-cap discipline on the reduct.
+        ExprSpec::Proj(pidx, inner) => (match e2 {
             ExprSpec::Proj(pidx2, inner2) => pidx == pidx2 && pstep_d(env, *inner, *inner2, mcap, dcap),
             _ => false,
-        },
+        }) || (exists |inner2: ExprSpec|
+            (#[trigger] iota_reduct(inner2)) && pstep_d(env, *inner, inner2, mcap, dcap)
+            && depth(inner2) <= dcap && max_var_below(inner2, mcap)
+            && iota_extract(pidx, inner2, e2)),
         ExprSpec::Const(id, levels) =>
             env.contains_key(id)
             && crate::expr_model::subst_expr_levels_rel(env[id].1, env[id].0, levels@, e2),
@@ -832,12 +1140,19 @@ pub proof fn pstep_d_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2:
                 }
             }
             ExprSpec::Proj(pidx, inner) => {
-                match e2 {
-                    ExprSpec::Proj(pidx2, inner2) => {
-                        pstep_d_mono(env, *inner, *inner2, m1, d1, m2, d2);
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *inner, e2, m1, d1) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *inner, e2, m1, d1);
+                    pstep_d_mono(env, *inner, inner2, m1, d1, m2, d2);
+                    max_var_below_mono(inner2, m1, m2);
+                    pstep_d_iota_intro_pieces(env, pidx, inner, e2, inner2, cid, lv, args2, np, m2, d2);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, inner2) => {
+                            pstep_d_mono(env, *inner, *inner2, m1, d1, m2, d2);
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -929,12 +1244,18 @@ pub proof fn pstep_d_implies_pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: Expr
                 }
             }
             ExprSpec::Proj(pidx, inner) => {
-                match e2 {
-                    ExprSpec::Proj(pidx2, inner2) => {
-                        pstep_d_implies_pstep(env, *inner, *inner2, mcap, dcap);
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *inner, e2, mcap, dcap) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *inner, e2, mcap, dcap);
+                    pstep_d_implies_pstep(env, *inner, inner2, mcap, dcap);
+                    pstep_iota_intro_pieces(env, pidx, inner, e2, inner2, cid, lv, args2, np);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, inner2) => {
+                            pstep_d_implies_pstep(env, *inner, *inner2, mcap, dcap);
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -1031,7 +1352,15 @@ pub proof fn complete_depth_bound(e: ExprSpec)
         ExprSpec::Proj(pidx, s) => {
             assert(string_lits_ok(*s, 0));
             complete_depth_bound(*s);
-            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
+            let cs = complete(*s);
+            if iota_ready(pidx, cs) {
+                assert(complete(e) == iota_result(pidx, cs));
+                spine_recompose(cs);
+                spine_app_depth_decompose(spine_head(cs), spine_args(cs));
+                assert(depth(complete(e)) <= depth(cs));
+            } else {
+                assert(complete(e) == ExprSpec::Proj(pidx, Box::new(cs)));
+            }
             assert(size(e) == 1 + size(*s));
         }
     }
@@ -1195,8 +1524,15 @@ pub proof fn complete_max_var_below(bound: nat, e: ExprSpec)
             assert(size(e) == 1 + size(*s));
             growth_mono(size(*s), size(e));
             complete_max_var_below(bound, *s);
-            max_var_below_mono(complete(*s), (bound + growth(size(*s))) as nat, (bound + growth(size(e))) as nat);
-            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
+            let cs = complete(*s);
+            max_var_below_mono(cs, (bound + growth(size(*s))) as nat, (bound + growth(size(e))) as nat);
+            if iota_ready(pidx, cs) {
+                assert(complete(e) == iota_result(pidx, cs));
+                spine_recompose(cs);
+                spine_app_mvb_decompose(spine_head(cs), spine_args(cs), (bound + growth(size(e))) as nat);
+            } else {
+                assert(complete(e) == ExprSpec::Proj(pidx, Box::new(cs)));
+            }
             assert(max_var_below(complete(e), (bound + growth(size(e))) as nat));
         }
     }
@@ -1324,8 +1660,20 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
             growth_mono(size(*s), size(e));
             pstep_complete_refl_d(env, bound, *s);
             pstep_d_mono(env, *s, complete(*s), (bound + growth(size(*s))) as nat, size(*s), m, d);
-            assert(complete(e) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
-            assert(pstep_d(env, e, complete(e), m, d));
+            let cs = complete(*s);
+            complete_depth_bound(*s);
+            complete_max_var_below(bound, *s);
+            max_var_below_mono(cs, (bound + growth(size(*s))) as nat, m);
+            if iota_ready(pidx, cs) {
+                assert(complete(e) == iota_result(pidx, cs));
+                iota_ready_extract(pidx, cs, complete(e));
+                assert(iota_reduct(cs) && pstep_d(env, *s, cs, m, d)
+                    && depth(cs) <= d && max_var_below(cs, m)
+                    && iota_extract(pidx, cs, complete(e)));
+            } else {
+                assert(complete(e) == ExprSpec::Proj(pidx, Box::new(cs)));
+                assert(pstep_d(env, e, complete(e), m, d));
+            }
         }
     }
 }
@@ -1470,16 +1818,30 @@ pub proof fn pstep_d_shift(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1: Expr
                 }
             }
             ExprSpec::Proj(pidx, s) => {
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep_d(env, *s, *s2, mcap, dcap));
-                        pstep_d_shift(env, c, *s, *s2, mcap, dcap);
-                        assert(shift(1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s))));
-                        assert(shift(1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s2))));
-                        assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap));
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
+                    pstep_d_shift(env, c, *s, inner2, mcap, dcap);
+                    shift_spine_app(1, c, ExprSpec::Const(cid, lv), args2);
+                    let mapped = Seq::new(args2.len(), |i: int| shift(1, c, args2[i]));
+                    assert(shift(1, c, ExprSpec::Const(cid, lv)) == ExprSpec::Const(cid, lv));
+                    assert(shift(1, c, inner2) == spine_app(ExprSpec::Const(cid, lv), mapped));
+                    assert(mapped[(np as nat + pidx as nat) as int] == shift(1, c, e2));
+                    shift_preserves_depth(1, c, inner2);
+                    shift_up_max_var_below(c, mcap, inner2);
+                    pstep_d_iota_intro_pieces(env, pidx, Box::new(shift(1, c, *s)), shift(1, c, e2), shift(1, c, inner2), cid, lv, mapped, np, (mcap + 1) as nat, dcap);
+                    assert(shift(1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s))));
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep_d(env, *s, *s2, mcap, dcap));
+                            pstep_d_shift(env, c, *s, *s2, mcap, dcap);
+                            assert(shift(1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s))));
+                            assert(shift(1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(1, c, *s2))));
+                            assert(pstep_d(env, shift(1, c, e1), shift(1, c, e2), (mcap + 1) as nat, dcap));
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -1721,13 +2083,22 @@ pub proof fn pstep_d_bounds(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e
             ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(string_lits_ok(*s, 0));
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep_d(env, *s, *s2, mcap, dcap));
-                        pstep_d_bounds(env, *s, *s2, mcap, dcap, bound);
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
+                    pstep_d_bounds(env, *s, inner2, mcap, dcap, bound);
+                    spine_app_mvb_decompose(ExprSpec::Const(cid, lv), args2, (bound + mcap + dcap + 1) as nat);
+                    spine_app_depth_decompose(ExprSpec::Const(cid, lv), args2);
+                    assert(depth(e2) <= depth(inner2));
+                    assert(max_var_below(e2, (bound + mcap + dcap + 1) as nat));
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep_d(env, *s, *s2, mcap, dcap));
+                            pstep_d_bounds(env, *s, *s2, mcap, dcap, bound);
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -1986,17 +2357,37 @@ pub proof fn pstep_d_subst(env: Map<u64, (Seq<u64>, ExprSpec)>, j: nat, s1: Expr
             }
             ExprSpec::Proj(pidx, st) => {
                 assert(depth(*st) < depth(e1));
-                match e2 {
-                    ExprSpec::Proj(pidx2, st2) => {
-                        assert(pstep_d(env, *st, *st2, me, de));
-                        pstep_d_subst(env, j, s1, s2, *st, *st2, ms, ds, me, de, ms1, ds1);
-                        assert(subst(j, s1, e1) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
-                        assert(subst(j, s2, e2) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st2))));
-                        pstep_d_mono(env, subst(j, s1, *st), subst(j, s2, *st2), (ms + ms1 + me + de + ds + 2 * depth(*st) + 4) as nat, (de + ds + ds1 + 1) as nat, wm, wd);
-                        assert(pstep_d(env, subst(j, s1, e1), subst(j, s2, e2), wm, wd));
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *st, e2, me, de) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *st, e2, me, de);
+                    pstep_d_subst(env, j, s1, s2, *st, inner2, ms, ds, me, de, ms1, ds1);
+                    pstep_d_mono(env, subst(j, s1, *st), subst(j, s2, inner2), (ms + ms1 + me + de + ds + 2 * depth(*st) + 4) as nat, (de + ds + ds1 + 1) as nat, wm, wd);
+                    subst_spine_app(j, s2, ExprSpec::Const(cid, lv), args2);
+                    let mapped = Seq::new(args2.len(), |i: int| subst(j, s2, args2[i]));
+                    assert(subst(j, s2, ExprSpec::Const(cid, lv)) == ExprSpec::Const(cid, lv));
+                    assert(subst(j, s2, inner2) == spine_app(ExprSpec::Const(cid, lv), mapped));
+                    assert(mapped[(np as nat + pidx as nat) as int] == subst(j, s2, e2));
+                    subst_depth_bound(j, s2, inner2);
+                    assert(depth(subst(j, s2, inner2)) <= wd);
+                    let bound0 = if me >= ms1 { me } else { ms1 };
+                    max_var_below_mono(inner2, me, bound0);
+                    max_var_below_mono(s2, ms1, bound0);
+                    subst_max_var_below(bound0, j, s2, inner2);
+                    max_var_below_mono(subst(j, s2, inner2), (bound0 + depth(inner2)) as nat, wm);
+                    pstep_d_iota_intro_pieces(env, pidx, Box::new(subst(j, s1, *st)), subst(j, s2, e2), subst(j, s2, inner2), cid, lv, mapped, np, wm, wd);
+                    assert(subst(j, s1, e1) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, st2) => {
+                            assert(pstep_d(env, *st, *st2, me, de));
+                            pstep_d_subst(env, j, s1, s2, *st, *st2, ms, ds, me, de, ms1, ds1);
+                            assert(subst(j, s1, e1) == ExprSpec::Proj(pidx, Box::new(subst(j, s1, *st))));
+                            assert(subst(j, s2, e2) == ExprSpec::Proj(pidx, Box::new(subst(j, s2, *st2))));
+                            pstep_d_mono(env, subst(j, s1, *st), subst(j, s2, *st2), (ms + ms1 + me + de + ds + 2 * depth(*st) + 4) as nat, (de + ds + ds1 + 1) as nat, wm, wd);
+                            assert(pstep_d(env, subst(j, s1, e1), subst(j, s2, e2), wm, wd));
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -2198,13 +2589,19 @@ pub proof fn pstep_d_preserves_no_escaping_ref(env: Map<u64, (Seq<u64>, ExprSpec
             }
             ExprSpec::Proj(pidx, s) => {
                 assert(!has_escaping_ref(*s, k));
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep_d(env, *s, *s2, mcap, dcap));
-                        pstep_d_preserves_no_escaping_ref(env, k, *s, *s2, mcap, dcap);
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
+                    pstep_d_preserves_no_escaping_ref(env, k, *s, inner2, mcap, dcap);
+                    spine_app_no_escaping_decompose(ExprSpec::Const(cid, lv), args2, k);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep_d(env, *s, *s2, mcap, dcap));
+                            pstep_d_preserves_no_escaping_ref(env, k, *s, *s2, mcap, dcap);
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -2397,16 +2794,31 @@ pub proof fn pstep_d_shift_down(env: Map<u64, (Seq<u64>, ExprSpec)>, c: nat, e1:
             }
             ExprSpec::Proj(pidx, s) => {
                 assert(!has_escaping_ref(*s, c));
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep_d(env, *s, *s2, mcap, dcap));
-                        pstep_d_shift_down(env, c, *s, *s2, mcap, dcap);
-                        assert(shift(-1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s))));
-                        assert(shift(-1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s2))));
-                        assert(pstep_d(env, shift(-1, c, e1), shift(-1, c, e2), mcap, dcap));
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
+                    pstep_d_shift_down(env, c, *s, inner2, mcap, dcap);
+                    pstep_d_preserves_no_escaping_ref(env, c, *s, inner2, mcap, dcap);
+                    shift_spine_app(-1, c, ExprSpec::Const(cid, lv), args2);
+                    let mapped = Seq::new(args2.len(), |i: int| shift(-1, c, args2[i]));
+                    assert(shift(-1, c, ExprSpec::Const(cid, lv)) == ExprSpec::Const(cid, lv));
+                    assert(shift(-1, c, inner2) == spine_app(ExprSpec::Const(cid, lv), mapped));
+                    assert(mapped[(np as nat + pidx as nat) as int] == shift(-1, c, e2));
+                    shift_preserves_depth(-1, c, inner2);
+                    shift_down_max_var_below_href(c, mcap, inner2);
+                    pstep_d_iota_intro_pieces(env, pidx, Box::new(shift(-1, c, *s)), shift(-1, c, e2), shift(-1, c, inner2), cid, lv, mapped, np, mcap, dcap);
+                    assert(shift(-1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s))));
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep_d(env, *s, *s2, mcap, dcap));
+                            pstep_d_shift_down(env, c, *s, *s2, mcap, dcap);
+                            assert(shift(-1, c, e1) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s))));
+                            assert(shift(-1, c, e2) == ExprSpec::Proj(pidx, Box::new(shift(-1, c, *s2))));
+                            assert(pstep_d(env, shift(-1, c, e1), shift(-1, c, e2), mcap, dcap));
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -2870,18 +3282,60 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
             ExprSpec::Proj(pidx, s) => {
                 assert(max_var_below(*s, bound));
                 assert(string_lits_ok(*s, 0));
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep_d(env, *s, *s2, mcap, dcap));
-                        assert(size(e1) == 1 + size(*s));
-                        growth_mono(size(*s), size(e1));
-                        pstep_d_takahashi(env, bound, *s, *s2, mcap, dcap);
-                        pstep_d_mono(env, *s2, complete(*s), tak_m(bound, mcap, dcap, *s), tak_d(dcap, *s), wm, wd);
-                        assert(complete(e1) == ExprSpec::Proj(pidx, Box::new(complete(*s))));
-                        assert(pstep_d(env, e2, complete(e1), wm, wd));
-                    }
-                    _ => {
-                        assert(false);
+                assert(size(e1) == 1 + size(*s));
+                growth_mono(size(*s), size(e1));
+                let cs = complete(*s);
+                let tm_s = tak_m(bound, mcap, dcap, *s);
+                let td_s = tak_d(dcap, *s);
+                complete_depth_bound(*s);
+                complete_max_var_below(bound, *s);
+                if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
+                    // IOTA side of the critical pair: the given step
+                    // extracted from SOME ctor-spine reduct of `s`; the
+                    // complete development extracted from `complete(s)`.
+                    // Decompose the IH derivation over the spine and
+                    // join POINTWISE at the extracted index.
+                    let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
+                    pstep_d_takahashi(env, bound, *s, inner2, mcap, dcap);
+                    let args3 = pstep_d_const_spine(env, cid, lv, args2, cs, tm_s, td_s);
+                    spine_destruct_app(ExprSpec::Const(cid, lv), args3);
+                    let k = (np as nat + pidx as nat) as int;
+                    assert(iota_ready(pidx, cs));
+                    assert(complete(e1) == iota_result(pidx, cs));
+                    assert(spine_args(cs) =~= args3);
+                    assert(iota_result(pidx, cs) == args3[k]);
+                    assert(pstep_d(env, args2[k], args3[k], tm_s, td_s));
+                    assert(e2 == args2[k]);
+                    pstep_d_mono(env, e2, complete(e1), tm_s, td_s, wm, wd);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep_d(env, *s, *s2, mcap, dcap));
+                            pstep_d_takahashi(env, bound, *s, *s2, mcap, dcap);
+                            if iota_ready(pidx, cs) {
+                                // CONGRUENCE-vs-iota: the complete
+                                // development contracted the projection;
+                                // rejoin by firing the iota rule on the
+                                // congruence reduct, with `complete(s)`
+                                // (the IH target) as the rule's reduct.
+                                iota_ready_extract(pidx, cs, complete(e1));
+                                pstep_d_mono(env, *s2, cs, tm_s, td_s, wm, wd);
+                                max_var_below_mono(cs, (bound + growth(size(*s))) as nat, wm);
+                                assert(complete(e1) == iota_result(pidx, cs));
+                                assert(iota_reduct(cs) && pstep_d(env, *s2, cs, wm, wd)
+                                    && depth(cs) <= wd && max_var_below(cs, wm)
+                                    && iota_extract(pidx, cs, complete(e1)));
+                                assert(e2 == ExprSpec::Proj(pidx, Box::new(*s2)));
+                                assert(pstep_d(env, e2, complete(e1), wm, wd));
+                            } else {
+                                pstep_d_mono(env, *s2, cs, tm_s, td_s, wm, wd);
+                                assert(complete(e1) == ExprSpec::Proj(pidx, Box::new(cs)));
+                                assert(pstep_d(env, e2, complete(e1), wm, wd));
+                            }
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
@@ -3111,15 +3565,25 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                 assert(string_lits_ok(*s, 0));
                 assert(size(e1) == 1 + size(*s));
                 growth_mono(size(*s), size(e1));
-                match e2 {
-                    ExprSpec::Proj(pidx2, s2) => {
-                        assert(pstep(env, *s, *s2));
-                        pstep_to_pstep_d(env, bound, *s, *s2);
-                        pstep_d_mono(env, *s, *s2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
-                        assert(pstep_d(env, e1, e2, mcap, dcap));
-                    }
-                    _ => {
-                        assert(false);
+                if pstep_iota(env, pidx, *s, e2) {
+                    let (inner2, cid, lv, args2, np) = pstep_iota_destruct(env, pidx, *s, e2);
+                    pstep_to_pstep_d(env, bound, *s, inner2);
+                    pstep_d_mono(env, *s, inner2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
+                    let (imvb, idepth) = pstep_bounds(env, 0, bound, *s, inner2);
+                    max_var_below_mono(inner2, imvb, mcap);
+                    assert(depth(inner2) <= dcap);
+                    pstep_d_iota_intro_pieces(env, pidx, s, e2, inner2, cid, lv, args2, np, mcap, dcap);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep(env, *s, *s2));
+                            pstep_to_pstep_d(env, bound, *s, *s2);
+                            pstep_d_mono(env, *s, *s2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
+                            assert(pstep_d(env, e1, e2, mcap, dcap));
+                        }
+                        _ => {
+                            assert(false);
+                        }
                     }
                 }
             }
