@@ -1435,6 +1435,393 @@ pub proof fn complete_depth_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat,
     }
 }
 
+/// POLYNOMIAL depth bound for ONE `pstep` step under a real environment
+/// (delta-lift, Takahashi phase): the reduct's depth is at most
+/// `size(e1) * (cap + 1)` -- the same induction as `complete_depth_bound`
+/// (a delta target is a body of depth <= cap; substitution compounds the
+/// excess multiplicatively). This replaces `pstep_bounds` (whose
+/// `cap * size_growth` term is EXPONENTIAL) wherever a certified-witness
+/// cap must stay polynomial.
+pub proof fn pstep_depth_poly(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e1: ExprSpec, e2: ExprSpec)
+    requires env_wf(env, cap), pstep(env, e1, e2), string_lits_ok(e1, 0)
+    ensures depth(e2) <= size(e1) * (cap + 1)
+    decreases e1
+{
+    let k: nat = cap + 1;
+    depth_le_size(e1);
+    assert(size(e1) * k >= size(e1)) by (nonlinear_arith)
+        requires k >= 1;
+    if e1 == e2 {
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(string_lits_ok(*f, 0));
+                assert(string_lits_ok(*a, 0));
+                let se = size(e1); let sf = size(*f); let sa = size(*a);
+                assert(se == 1 + sf + sa);
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(string_lits_ok(*body, 0));
+                        let sb = size(*body);
+                        assert(sf == 1 + size(*t) + sb);
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
+                            pstep_depth_poly(env, cap, *body, body2);
+                            pstep_depth_poly(env, cap, *a, a2);
+                            subst1_depth_bound(body2, a2);
+                            assert(depth(e2) <= depth(body2) + depth(a2) + 1);
+                            assert(sb * k + sa * k + 1 <= se * k) by (nonlinear_arith)
+                                requires sb + sa + 2 <= se, k >= 1;
+                        } else {
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_depth_poly(env, cap, *f, f2);
+                            pstep_depth_poly(env, cap, *a, a2);
+                            assert(sf * k + 1 <= se * k && sa * k + 1 <= se * k) by (nonlinear_arith)
+                                requires se == 1 + sf + sa, k >= 1;
+                        }
+                    }
+                    _ => {
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_depth_poly(env, cap, *f, f2);
+                        pstep_depth_poly(env, cap, *a, a2);
+                        assert(sf * k + 1 <= se * k && sa * k + 1 <= se * k) by (nonlinear_arith)
+                            requires se == 1 + sf + sa, k >= 1;
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*b, 0));
+                let se = size(e1); let st = size(*t); let sb = size(*b);
+                assert(se == 1 + st + sb);
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_depth_poly(env, cap, *t, t2);
+                pstep_depth_poly(env, cap, *b, b2);
+                assert(st * k + 1 <= se * k && sb * k + 1 <= se * k) by (nonlinear_arith)
+                    requires se == 1 + st + sb, k >= 1;
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*v, 0));
+                assert(string_lits_ok(*b, 0));
+                let se = size(e1); let st = size(*t); let sv = size(*v); let sb = size(*b);
+                assert(se == 1 + st + sv + sb);
+                assert(st >= 1);
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
+                    pstep_depth_poly(env, cap, *b, b2);
+                    pstep_depth_poly(env, cap, *v, v2);
+                    subst1_depth_bound(b2, v2);
+                    assert(depth(e2) <= depth(b2) + depth(v2) + 1);
+                    assert(sb * k + sv * k + 1 <= se * k) by (nonlinear_arith)
+                        requires sb + sv + 2 <= se, k >= 1;
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_depth_poly(env, cap, *t, t2);
+                    pstep_depth_poly(env, cap, *v, v2);
+                    pstep_depth_poly(env, cap, *b, b2);
+                    assert(st * k + 1 <= se * k && sv * k + 1 <= se * k && sb * k + 1 <= se * k) by (nonlinear_arith)
+                        requires se == 1 + st + sv + sb, k >= 1;
+                }
+            }
+            ExprSpec::Proj(pidx, s) => {
+                assert(string_lits_ok(*s, 0));
+                let se = size(e1); let ss = size(*s);
+                assert(se == 1 + ss);
+                assert(ss * k + 1 <= se * k) by (nonlinear_arith)
+                    requires se == 1 + ss, k >= 1;
+                if pstep_iota(env, pidx, *s, e2) {
+                    let (inner2, cid, lv, args2, np) = pstep_iota_destruct(env, pidx, *s, e2);
+                    pstep_depth_poly(env, cap, *s, inner2);
+                    spine_app_depth_decompose(ExprSpec::Const(cid, lv), args2);
+                    assert(depth(e2) <= depth(inner2));
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep(env, *s, *s2));
+                            pstep_depth_poly(env, cap, *s, *s2);
+                        }
+                        _ => { assert(false); }
+                    }
+                }
+            }
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_depth(env[id].1, env[id].0, levels, e2);
+                assert(depth(e2) == depth(env[id].1));
+                assert(depth(e2) <= cap);
+                assert(size(e1) == 1);
+            }
+            ExprSpec::NatLit(n) => {
+                assert(size(e1) == 1);
+                if n.0@ == 0 {
+                    const_expr_no_levels_shape(nat_zero_id());
+                    assert(depth(e2) == 0);
+                } else {
+                    const_expr_no_levels_shape(nat_succ_id());
+                    let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                    assert(e2 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                    assert(depth(const_expr_no_levels(nat_succ_id())) == 0);
+                    assert(depth(a2) == 0);
+                    assert(depth(e2) == 1);
+                }
+            }
+            ExprSpec::StringLit(len) => {
+                assert(size(e1) == 1);
+                assert(e2 == string_lit_expand_model(len.0@));
+                assert(depth(string_lit_expand_model(len.0@)) <= 1 + 0 * 3);
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
+/// POLYNOMIAL `max_var_below` bound for ONE `pstep` step under a real
+/// environment (see `pstep_depth_poly`): the reduct stays below
+/// `bound + growth(size(e1)) * (cap + 1)` -- `complete_max_var_below`'s
+/// argument over an arbitrary reduct instead of the complete development.
+pub proof fn pstep_mvb_poly(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec)
+    requires
+        env_wf(env, cap),
+        pstep(env, e1, e2),
+        max_var_below(e1, bound),
+        string_lits_ok(e1, 0),
+        bound + growth(size(e1)) * (cap + 1) + size(e1) * (cap + 1) + 2 <= 0xFFFF_0000,
+    ensures max_var_below(e2, (bound + growth(size(e1)) * (cap + 1)) as nat)
+    decreases e1
+{
+    let k: nat = cap + 1;
+    let target: nat = (bound + growth(size(e1)) * k) as nat;
+    assert(growth(size(e1)) * k >= 0);
+    if e1 == e2 {
+        max_var_below_mono(e1, bound, target);
+    } else {
+        match e1 {
+            ExprSpec::App(f, a) => {
+                assert(string_lits_ok(*f, 0));
+                assert(string_lits_ok(*a, 0));
+                assert(max_var_below(*f, bound));
+                assert(max_var_below(*a, bound));
+                let se = size(e1); let sf = size(*f); let sa = size(*a);
+                assert(se == 1 + sf + sa);
+                growth_mono(sf, se);
+                growth_mono(sa, se);
+                assert(growth(sf) * k + sf * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(sf) <= growth(se), sf <= se;
+                assert(growth(sa) * k + sa * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(sa) <= growth(se), sa <= se;
+                assert(growth(sf) * k <= growth(se) * k && growth(sa) * k <= growth(se) * k) by (nonlinear_arith)
+                    requires growth(sf) <= growth(se), growth(sa) <= growth(se);
+                match *f {
+                    ExprSpec::Bind(t, body) => {
+                        assert(string_lits_ok(*body, 0));
+                        assert(max_var_below(*body, bound));
+                        let sb = size(*body);
+                        assert(sf == 1 + size(*t) + sb);
+                        assert(size(*t) >= 1);
+                        growth_mono(sb, se);
+                        assert(growth(sb) * k + sb * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                            requires growth(sb) <= growth(se), sb <= se;
+                        if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                            pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2)
+                        {
+                            let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
+                                pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
+                            pstep_mvb_poly(env, cap, bound, *body, body2);
+                            pstep_mvb_poly(env, cap, bound, *a, a2);
+                            pstep_depth_poly(env, cap, *body, body2);
+                            let gb = growth(sb); let ga = growth(sa);
+                            let m: nat = if gb >= ga { gb } else { ga };
+                            assert(gb * k <= m * k && ga * k <= m * k) by (nonlinear_arith)
+                                requires gb <= m, ga <= m;
+                            max_var_below_mono(body2, (bound + gb * k) as nat, (bound + m * k) as nat);
+                            max_var_below_mono(a2, (bound + ga * k) as nat, (bound + m * k) as nat);
+                            assert(m + sb + 1 <= growth(se)) by (nonlinear_arith)
+                                requires
+                                    m <= gb + ga,
+                                    gb == sb * sb + sb,
+                                    ga == sa * sa + sa,
+                                    growth(se) == se * se + se,
+                                    sb + sa + 3 <= se,
+                            {}
+                            assert(m * k + 1 + sb * k <= growth(se) * k) by (nonlinear_arith)
+                                requires m + sb + 1 <= growth(se), k >= 1;
+                            assert(depth(body2) <= sb * k);
+                            assert((bound + m * k) + depth(body2) + 1 <= 0xFFFF_0000);
+                            subst1_max_var_below((bound + m * k) as nat, body2, a2);
+                            max_var_below_mono(e2, (((bound + m * k) as nat + 1) + depth(body2)) as nat, target);
+                        } else {
+                            let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                            pstep_mvb_poly(env, cap, bound, *f, f2);
+                            pstep_mvb_poly(env, cap, bound, *a, a2);
+                            max_var_below_mono(f2, (bound + growth(sf) * k) as nat, target);
+                            max_var_below_mono(a2, (bound + growth(sa) * k) as nat, target);
+                        }
+                    }
+                    _ => {
+                        let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+                        pstep_mvb_poly(env, cap, bound, *f, f2);
+                        pstep_mvb_poly(env, cap, bound, *a, a2);
+                        max_var_below_mono(f2, (bound + growth(sf) * k) as nat, target);
+                        max_var_below_mono(a2, (bound + growth(sa) * k) as nat, target);
+                    }
+                }
+            }
+            ExprSpec::Bind(t, b) => {
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*b, bound));
+                let se = size(e1); let st = size(*t); let sb = size(*b);
+                assert(se == 1 + st + sb);
+                growth_mono(st, se);
+                growth_mono(sb, se);
+                assert(growth(st) * k + st * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(st) <= growth(se), st <= se;
+                assert(growth(sb) * k + sb * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(sb) <= growth(se), sb <= se;
+                assert(growth(st) * k <= growth(se) * k && growth(sb) * k <= growth(se) * k) by (nonlinear_arith)
+                    requires growth(st) <= growth(se), growth(sb) <= growth(se);
+                let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
+                pstep_mvb_poly(env, cap, bound, *t, t2);
+                pstep_mvb_poly(env, cap, bound, *b, b2);
+                max_var_below_mono(t2, (bound + growth(st) * k) as nat, target);
+                max_var_below_mono(b2, (bound + growth(sb) * k) as nat, target);
+            }
+            ExprSpec::Let(t, v, b) => {
+                assert(string_lits_ok(*t, 0));
+                assert(string_lits_ok(*v, 0));
+                assert(string_lits_ok(*b, 0));
+                assert(max_var_below(*t, bound));
+                assert(max_var_below(*v, bound));
+                assert(max_var_below(*b, bound));
+                let se = size(e1); let st = size(*t); let sv = size(*v); let sb = size(*b);
+                assert(se == 1 + st + sv + sb);
+                assert(st >= 1);
+                growth_mono(st, se);
+                growth_mono(sv, se);
+                growth_mono(sb, se);
+                assert(growth(st) * k + st * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(st) <= growth(se), st <= se;
+                assert(growth(sv) * k + sv * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(sv) <= growth(se), sv <= se;
+                assert(growth(sb) * k + sb * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(sb) <= growth(se), sb <= se;
+                assert(growth(st) * k <= growth(se) * k && growth(sv) * k <= growth(se) * k && growth(sb) * k <= growth(se) * k) by (nonlinear_arith)
+                    requires growth(st) <= growth(se), growth(sv) <= growth(se), growth(sb) <= growth(se);
+                if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                    pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2)
+                {
+                    let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
+                        pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
+                    pstep_mvb_poly(env, cap, bound, *b, b2);
+                    pstep_mvb_poly(env, cap, bound, *v, v2);
+                    pstep_depth_poly(env, cap, *b, b2);
+                    let gb = growth(sb); let gv = growth(sv);
+                    let m: nat = if gb >= gv { gb } else { gv };
+                    assert(gb * k <= m * k && gv * k <= m * k) by (nonlinear_arith)
+                        requires gb <= m, gv <= m;
+                    max_var_below_mono(b2, (bound + gb * k) as nat, (bound + m * k) as nat);
+                    max_var_below_mono(v2, (bound + gv * k) as nat, (bound + m * k) as nat);
+                    assert(m + sb + 1 <= growth(se)) by (nonlinear_arith)
+                        requires
+                            m <= gb + gv,
+                            gb == sb * sb + sb,
+                            gv == sv * sv + sv,
+                            growth(se) == se * se + se,
+                            sb + sv + 2 <= se,
+                    {}
+                    assert(m * k + 1 + sb * k <= growth(se) * k) by (nonlinear_arith)
+                        requires m + sb + 1 <= growth(se), k >= 1;
+                    assert(depth(b2) <= sb * k);
+                    assert((bound + m * k) + depth(b2) + 1 <= 0xFFFF_0000);
+                    subst1_max_var_below((bound + m * k) as nat, b2, v2);
+                    max_var_below_mono(e2, (((bound + m * k) as nat + 1) + depth(b2)) as nat, target);
+                } else {
+                    let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
+                        pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+                    pstep_mvb_poly(env, cap, bound, *t, t2);
+                    pstep_mvb_poly(env, cap, bound, *v, v2);
+                    pstep_mvb_poly(env, cap, bound, *b, b2);
+                    max_var_below_mono(t2, (bound + growth(st) * k) as nat, target);
+                    max_var_below_mono(v2, (bound + growth(sv) * k) as nat, target);
+                    max_var_below_mono(b2, (bound + growth(sb) * k) as nat, target);
+                }
+            }
+            ExprSpec::Proj(pidx, s) => {
+                assert(string_lits_ok(*s, 0));
+                assert(max_var_below(*s, bound));
+                let se = size(e1); let ss = size(*s);
+                assert(se == 1 + ss);
+                growth_mono(ss, se);
+                assert(growth(ss) * k + ss * k <= growth(se) * k + se * k) by (nonlinear_arith)
+                    requires growth(ss) <= growth(se), ss <= se;
+                assert(growth(ss) * k <= growth(se) * k) by (nonlinear_arith)
+                    requires growth(ss) <= growth(se);
+                if pstep_iota(env, pidx, *s, e2) {
+                    let (inner2, cid, lv, args2, np) = pstep_iota_destruct(env, pidx, *s, e2);
+                    pstep_mvb_poly(env, cap, bound, *s, inner2);
+                    max_var_below_mono(inner2, (bound + growth(ss) * k) as nat, target);
+                    spine_app_mvb_decompose(ExprSpec::Const(cid, lv), args2, target);
+                } else {
+                    match e2 {
+                        ExprSpec::Proj(pidx2, s2) => {
+                            assert(pstep(env, *s, *s2));
+                            pstep_mvb_poly(env, cap, bound, *s, *s2);
+                            max_var_below_mono(*s2, (bound + growth(ss) * k) as nat, target);
+                        }
+                        _ => { assert(false); }
+                    }
+                }
+            }
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, levels);
+                subst_expr_levels_rel_max_var_below(env[id].1, env[id].0, levels, e2, cap);
+                assert(max_var_below(e2, cap));
+                assert(size(e1) == 1);
+                assert(growth(1) == 2);
+                assert(growth(size(e1)) * k == 2 * k) by (nonlinear_arith)
+                    requires growth(size(e1)) == 2;
+                max_var_below_mono(e2, cap, target);
+            }
+            ExprSpec::NatLit(n) => {
+                if n.0@ == 0 {
+                    const_expr_no_levels_shape(nat_zero_id());
+                    assert(max_var_below(e2, target));
+                } else {
+                    const_expr_no_levels_shape(nat_succ_id());
+                    let a2 = ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)));
+                    assert(e2 == ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(a2)));
+                    assert(max_var_below(const_expr_no_levels(nat_succ_id()), target));
+                    assert(max_var_below(a2, target));
+                    assert(max_var_below(e2, target));
+                }
+            }
+            ExprSpec::StringLit(len) => {
+                assert(e2 == string_lit_expand_model(len.0@));
+                string_lit_expand_model_bounds(len.0@);
+                max_var_below_mono(e2, 0, target);
+            }
+            _ => {
+                assert(false);
+            }
+        }
+    }
+}
+
 /// Cap-0 corollary of `complete_depth_bound` with the OLD bound shape
 /// (`size(e)`), for the (currently all) callers that still work under
 /// `env == Map::empty()` -- keeps their arithmetic verbatim.
@@ -1677,28 +2064,35 @@ pub proof fn complete_max_var_below(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: na
 /// witness ever needs bounding "from the outside" via worst-case growth
 /// formulas, because the construction is deterministic and we know
 /// exactly what each witness IS.
-pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec)
+pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e: ExprSpec)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
         max_var_below(e, bound),
         string_lits_ok(e, 0),
-        bound + growth(size(e)) + size(e) + 2 <= 0xFFFF_0000,
-    ensures pstep_d(env, e, complete(env, e), (bound + growth(size(e))) as nat, size(e))
+        bound + growth(size(e)) * (cap + 1) + size(e) * (cap + 1) + 2 <= 0xFFFF_0000,
+    ensures pstep_d(env, e, complete(env, e), (bound + growth(size(e)) * (cap + 1)) as nat, size(e) * (cap + 1))
     decreases e
 {
-    env_wf_empty_all();
-    env_closed_empty();
-    env_wf_empty(0);
-    let m: nat = (bound + growth(size(e))) as nat;
-    let d: nat = size(e);
+    let k: nat = cap + 1;
+    let m: nat = (bound + growth(size(e)) * k) as nat;
+    let d: nat = size(e) * k;
+    assert(size(e) * k >= size(e)) by (nonlinear_arith) requires k >= 1;
+    assert forall |x: ExprSpec| size(x) <= size(e) implies bound + growth(size(x)) * k + size(x) * k + 2 <= 0xFFFF_0000 by {
+        growth_mono(size(x), size(e));
+        assert(growth(size(x)) * k <= growth(size(e)) * k && size(x) * k <= size(e) * k) by (nonlinear_arith)
+            requires growth(size(x)) <= growth(size(e)), size(x) <= size(e);
+    }
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) => {
             assert(complete(env, e) == e);
         }
         ExprSpec::Const(id, ls) => {
-            // Empty env (this lemma's current restriction): no development.
-            assert(!env.contains_key(id));
-            assert(complete(env, e) == e);
+            if env.contains_key(id) && env[id].0.len() == ls.len() {
+                assert(complete(env, e) == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, ls));
+                assert(pstep_d(env, e, complete(env, e), m, d));
+            } else {
+                assert(complete(env, e) == e);
+            }
         }
         ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
             // `complete(e)` is verbatim the arm's own fixed target;
@@ -1718,16 +2112,18 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
                     assert(max_var_below(*body, bound));
                     assert(size(*f) == 1 + size(*t) + size(*body));
                     growth_mono(size(*body), size(e));
-                    pstep_complete_refl_d(env, bound, *body);
-                    pstep_complete_refl_d(env, bound, *a);
-                    pstep_d_mono(env, *body, complete(env, *body), (bound + growth(size(*body))) as nat, size(*body), m, d);
-                    pstep_d_mono(env, *a, complete(env, *a), (bound + growth(size(*a))) as nat, size(*a), m, d);
-                    complete_depth_bound_0(env, *body);
-                    complete_depth_bound_0(env, *a);
-                    complete_max_var_below_0(env, bound, *body);
-                    complete_max_var_below_0(env, bound, *a);
-                    max_var_below_mono(complete(env, *body), (bound + growth(size(*body))) as nat, m);
-                    max_var_below_mono(complete(env, *a), (bound + growth(size(*a))) as nat, m);
+                    pstep_complete_refl_d(env, cap, bound, *body);
+                    pstep_complete_refl_d(env, cap, bound, *a);
+                    assert(growth(size(*body)) * k <= growth(size(e)) * k && size(*body) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*body)) <= growth(size(e)), size(*body) <= size(e);
+                    pstep_d_mono(env, *body, complete(env, *body), (bound + growth(size(*body)) * k) as nat, size(*body) * k, m, d);
+                    assert(growth(size(*a)) * k <= growth(size(e)) * k && size(*a) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*a)) <= growth(size(e)), size(*a) <= size(e);
+                    pstep_d_mono(env, *a, complete(env, *a), (bound + growth(size(*a)) * k) as nat, size(*a) * k, m, d);
+                    complete_depth_bound(env, cap, *body);
+                    complete_depth_bound(env, cap, *a);
+                    complete_max_var_below(env, cap, bound, *body);
+                    complete_max_var_below(env, cap, bound, *a);
+                    max_var_below_mono(complete(env, *body), (bound + growth(size(*body)) * k) as nat, m);
+                    max_var_below_mono(complete(env, *a), (bound + growth(size(*a)) * k) as nat, m);
                     assert(complete(env, e) == subst1(complete(env, *body), complete(env, *a)));
                     assert(pstep_d(env, *body, complete(env, *body), m, d) && pstep_d(env, *a, complete(env, *a), m, d)
                         && depth(complete(env, *body)) <= d && depth(complete(env, *a)) <= d
@@ -1737,10 +2133,12 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
                 }
                 _ => {
                     growth_mono(size(*f), size(e));
-                    pstep_complete_refl_d(env, bound, *f);
-                    pstep_complete_refl_d(env, bound, *a);
-                    pstep_d_mono(env, *f, complete(env, *f), (bound + growth(size(*f))) as nat, size(*f), m, d);
-                    pstep_d_mono(env, *a, complete(env, *a), (bound + growth(size(*a))) as nat, size(*a), m, d);
+                    pstep_complete_refl_d(env, cap, bound, *f);
+                    pstep_complete_refl_d(env, cap, bound, *a);
+                    assert(growth(size(*f)) * k <= growth(size(e)) * k && size(*f) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*f)) <= growth(size(e)), size(*f) <= size(e);
+                    pstep_d_mono(env, *f, complete(env, *f), (bound + growth(size(*f)) * k) as nat, size(*f) * k, m, d);
+                    assert(growth(size(*a)) * k <= growth(size(e)) * k && size(*a) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*a)) <= growth(size(e)), size(*a) <= size(e);
+                    pstep_d_mono(env, *a, complete(env, *a), (bound + growth(size(*a)) * k) as nat, size(*a) * k, m, d);
                     assert(complete(env, e) == ExprSpec::App(Box::new(complete(env, *f)), Box::new(complete(env, *a))));
                     assert(pstep_d(env, *f, complete(env, *f), m, d) && pstep_d(env, *a, complete(env, *a), m, d)
                         && complete(env, e) == ExprSpec::App(Box::new(complete(env, *f)), Box::new(complete(env, *a))));
@@ -1756,10 +2154,12 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
             assert(size(e) == 1 + size(*t) + size(*b));
             growth_mono(size(*t), size(e));
             growth_mono(size(*b), size(e));
-            pstep_complete_refl_d(env, bound, *t);
-            pstep_complete_refl_d(env, bound, *b);
-            pstep_d_mono(env, *t, complete(env, *t), (bound + growth(size(*t))) as nat, size(*t), m, d);
-            pstep_d_mono(env, *b, complete(env, *b), (bound + growth(size(*b))) as nat, size(*b), m, d);
+            pstep_complete_refl_d(env, cap, bound, *t);
+            pstep_complete_refl_d(env, cap, bound, *b);
+            assert(growth(size(*t)) * k <= growth(size(e)) * k && size(*t) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*t)) <= growth(size(e)), size(*t) <= size(e);
+                    pstep_d_mono(env, *t, complete(env, *t), (bound + growth(size(*t)) * k) as nat, size(*t) * k, m, d);
+            assert(growth(size(*b)) * k <= growth(size(e)) * k && size(*b) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e)), size(*b) <= size(e);
+                    pstep_d_mono(env, *b, complete(env, *b), (bound + growth(size(*b)) * k) as nat, size(*b) * k, m, d);
             assert(complete(env, e) == ExprSpec::Bind(Box::new(complete(env, *t)), Box::new(complete(env, *b))));
             assert(pstep_d(env, *t, complete(env, *t), m, d) && pstep_d(env, *b, complete(env, *b), m, d)
                 && complete(env, e) == ExprSpec::Bind(Box::new(complete(env, *t)), Box::new(complete(env, *b))));
@@ -1773,16 +2173,18 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
             assert(size(e) == 1 + size(*t) + size(*v) + size(*b));
             growth_mono(size(*v), size(e));
             growth_mono(size(*b), size(e));
-            pstep_complete_refl_d(env, bound, *b);
-            pstep_complete_refl_d(env, bound, *v);
-            pstep_d_mono(env, *b, complete(env, *b), (bound + growth(size(*b))) as nat, size(*b), m, d);
-            pstep_d_mono(env, *v, complete(env, *v), (bound + growth(size(*v))) as nat, size(*v), m, d);
-            complete_depth_bound_0(env, *b);
-            complete_depth_bound_0(env, *v);
-            complete_max_var_below_0(env, bound, *b);
-            complete_max_var_below_0(env, bound, *v);
-            max_var_below_mono(complete(env, *b), (bound + growth(size(*b))) as nat, m);
-            max_var_below_mono(complete(env, *v), (bound + growth(size(*v))) as nat, m);
+            pstep_complete_refl_d(env, cap, bound, *b);
+            pstep_complete_refl_d(env, cap, bound, *v);
+            assert(growth(size(*b)) * k <= growth(size(e)) * k && size(*b) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e)), size(*b) <= size(e);
+                    pstep_d_mono(env, *b, complete(env, *b), (bound + growth(size(*b)) * k) as nat, size(*b) * k, m, d);
+            assert(growth(size(*v)) * k <= growth(size(e)) * k && size(*v) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*v)) <= growth(size(e)), size(*v) <= size(e);
+                    pstep_d_mono(env, *v, complete(env, *v), (bound + growth(size(*v)) * k) as nat, size(*v) * k, m, d);
+            complete_depth_bound(env, cap, *b);
+            complete_depth_bound(env, cap, *v);
+            complete_max_var_below(env, cap, bound, *b);
+            complete_max_var_below(env, cap, bound, *v);
+            max_var_below_mono(complete(env, *b), (bound + growth(size(*b)) * k) as nat, m);
+            max_var_below_mono(complete(env, *v), (bound + growth(size(*v)) * k) as nat, m);
             assert(complete(env, e) == subst1(complete(env, *b), complete(env, *v)));
             assert(pstep_d(env, *b, complete(env, *b), m, d) && pstep_d(env, *v, complete(env, *v), m, d)
                 && depth(complete(env, *b)) <= d && depth(complete(env, *v)) <= d
@@ -1795,12 +2197,13 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
             assert(max_var_below(*s, bound));
             assert(size(e) == 1 + size(*s));
             growth_mono(size(*s), size(e));
-            pstep_complete_refl_d(env, bound, *s);
-            pstep_d_mono(env, *s, complete(env, *s), (bound + growth(size(*s))) as nat, size(*s), m, d);
+            pstep_complete_refl_d(env, cap, bound, *s);
+            assert(growth(size(*s)) * k <= growth(size(e)) * k && size(*s) * k <= size(e) * k) by (nonlinear_arith) requires growth(size(*s)) <= growth(size(e)), size(*s) <= size(e);
+                    pstep_d_mono(env, *s, complete(env, *s), (bound + growth(size(*s)) * k) as nat, size(*s) * k, m, d);
             let cs = complete(env, *s);
-            complete_depth_bound_0(env, *s);
-            complete_max_var_below_0(env, bound, *s);
-            max_var_below_mono(cs, (bound + growth(size(*s))) as nat, m);
+            complete_depth_bound(env, cap, *s);
+            complete_max_var_below(env, cap, bound, *s);
+            max_var_below_mono(cs, (bound + growth(size(*s)) * k) as nat, m);
             if iota_ready(pidx, cs) {
                 assert(complete(env, e) == iota_result(pidx, cs));
                 iota_ready_extract(pidx, cs, complete(env, e));
@@ -1813,6 +2216,21 @@ pub proof fn pstep_complete_refl_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
             }
         }
     }
+}
+
+/// Cap-0 corollary of `pstep_complete_refl_d` with the OLD cap shapes.
+pub proof fn pstep_complete_refl_d_0(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        max_var_below(e, bound),
+        string_lits_ok(e, 0),
+        bound + growth(size(e)) + size(e) + 2 <= 0xFFFF_0000,
+    ensures pstep_d(env, e, complete(env, e), (bound + growth(size(e))) as nat, size(e))
+{
+    env_wf_empty(0);
+    assert(growth(size(e)) * (0 + 1) == growth(size(e))) by (nonlinear_arith);
+    assert(size(e) * (0 + 1) == size(e)) by (nonlinear_arith);
+    pstep_complete_refl_d(env, 0, bound, e);
 }
 
 /// `pstep_shift` over the ghost-certified relation -- and the payoff is
@@ -3277,7 +3695,7 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
     let wm: nat = tak_m(bound, mcap, dcap, e1);
     let wd: nat = tak_d(dcap, e1);
     if e1 == e2 {
-        pstep_complete_refl_d(env, bound, e1);
+        pstep_complete_refl_d_0(env, bound, e1);
         pstep_d_mono(env, e1, complete(env, e1), (bound + growth(size(e1))) as nat, size(e1), wm, wd);
     } else {
         match e1 {
@@ -3590,22 +4008,28 @@ pub proof fn pstep_d_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e:
 /// upgraded into the certified world and fed to `pstep_d_diamond`, for
 /// any term of size up to ~65000 (where `growth(size)` meets the
 /// ceiling) -- vs. the old `pstep_diamond`'s hard `size <= ~9` cliff.
-pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
+        env_closed(env),
         pstep(env, e1, e2),
         max_var_below(e1, bound),
         string_lits_ok(e1, 0),
-        bound + growth(size(e1)) + size(e1) + 10 <= 0xFFFF_0000,
-    ensures pstep_d(env, e1, e2, (bound + growth(size(e1))) as nat, size(e1))
+        bound + growth(size(e1)) * (cap + 1) + size(e1) * (cap + 1) + 10 <= 0xFFFF_0000,
+    ensures pstep_d(env, e1, e2, (bound + growth(size(e1)) * (cap + 1)) as nat, size(e1) * (cap + 1))
     decreases e1
 {
-    env_wf_empty_all();
-    env_closed_empty();
     reveal(shift);
-    let mcap: nat = (bound + growth(size(e1))) as nat;
-    let dcap: nat = size(e1);
-    assert(env_wf(env, 0));
+    let k: nat = cap + 1;
+    let mcap: nat = (bound + growth(size(e1)) * k) as nat;
+    let dcap: nat = size(e1) * k;
+    assert(size(e1) * k >= size(e1)) by (nonlinear_arith) requires k >= 1;
+    // Every subterm's ceiling follows from ours (growth and size are monotone, k >= 1).
+    assert forall |x: ExprSpec| size(x) <= size(e1) implies bound + growth(size(x)) * k + size(x) * k + 10 <= 0xFFFF_0000 by {
+        growth_mono(size(x), size(e1));
+        assert(growth(size(x)) * k <= growth(size(e1)) * k && size(x) * k <= size(e1) * k) by (nonlinear_arith)
+            requires growth(size(x)) <= growth(size(e1)), size(x) <= size(e1);
+    }
     if e1 == e2 {
     } else {
         match e1 {
@@ -3628,20 +4052,22 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                         {
                             let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
                                 pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
-                            pstep_to_pstep_d(env, bound, *body, body2);
-                            pstep_to_pstep_d(env, bound, *a, a2);
-                            pstep_d_mono(env, *body, body2, (bound + growth(size(*body))) as nat, size(*body), mcap, dcap);
-                            pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
-                            let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *body, body2);
-                            let (amvb, adepth) = pstep_bounds(env, 0, bound, *a, a2);
-                            assert(bdepth <= size(*body) + 0 * size_growth(size(*body)));
-                            assert(adepth <= size(*a) + 0 * size_growth(size(*a)));
+                            pstep_to_pstep_d(env, cap, bound, *body, body2);
+                            pstep_to_pstep_d(env, cap, bound, *a, a2);
+                            assert(growth(size(*body)) * k <= growth(size(e1)) * k && size(*body) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*body)) <= growth(size(e1)), size(*body) <= size(e1);
+                        pstep_d_mono(env, *body, body2, (bound + growth(size(*body)) * k) as nat, size(*body) * k, mcap, dcap);
+                            assert(growth(size(*a)) * k <= growth(size(e1)) * k && size(*a) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*a)) <= growth(size(e1)), size(*a) <= size(e1);
+                        pstep_d_mono(env, *a, a2, (bound + growth(size(*a)) * k) as nat, size(*a) * k, mcap, dcap);
+                            pstep_depth_poly(env, cap, *body, body2);
+                            pstep_depth_poly(env, cap, *a, a2);
+                            pstep_mvb_poly(env, cap, bound, *body, body2);
+                            pstep_mvb_poly(env, cap, bound, *a, a2);
+                            assert(size(*body) * k <= size(e1) * k && size(*a) * k <= size(e1) * k) by (nonlinear_arith) requires size(*body) <= size(e1), size(*a) <= size(e1);
+                            assert(growth(size(*body)) * k <= growth(size(e1)) * k && growth(size(*a)) * k <= growth(size(e1)) * k) by (nonlinear_arith) requires growth(size(*body)) <= growth(size(e1)), growth(size(*a)) <= growth(size(e1));
                             assert(depth(body2) <= dcap);
                             assert(depth(a2) <= dcap);
-                            assert(bmvb <= bound + growth(size(*body)) + 0 * size_growth(size(*body)));
-                            assert(amvb <= bound + growth(size(*a)) + 0 * size_growth(size(*a)));
-                            max_var_below_mono(body2, bmvb, mcap);
-                            max_var_below_mono(a2, amvb, mcap);
+                            max_var_below_mono(body2, (bound + growth(size(*body)) * k) as nat, mcap);
+                            max_var_below_mono(a2, (bound + growth(size(*a)) * k) as nat, mcap);
                             assert(pstep_d(env, *body, body2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap)
                                 && depth(body2) <= dcap && depth(a2) <= dcap
                                 && max_var_below(body2, mcap) && max_var_below(a2, mcap)
@@ -3650,10 +4076,12 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                         } else {
                             assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                             let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                            pstep_to_pstep_d(env, bound, *f, f2);
-                            pstep_to_pstep_d(env, bound, *a, a2);
-                            pstep_d_mono(env, *f, f2, (bound + growth(size(*f))) as nat, size(*f), mcap, dcap);
-                            pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
+                            pstep_to_pstep_d(env, cap, bound, *f, f2);
+                            pstep_to_pstep_d(env, cap, bound, *a, a2);
+                            assert(growth(size(*f)) * k <= growth(size(e1)) * k && size(*f) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*f)) <= growth(size(e1)), size(*f) <= size(e1);
+                        pstep_d_mono(env, *f, f2, (bound + growth(size(*f)) * k) as nat, size(*f) * k, mcap, dcap);
+                            assert(growth(size(*a)) * k <= growth(size(e1)) * k && size(*a) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*a)) <= growth(size(e1)), size(*a) <= size(e1);
+                        pstep_d_mono(env, *a, a2, (bound + growth(size(*a)) * k) as nat, size(*a) * k, mcap, dcap);
                             assert(pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                             assert(pstep_d(env, e1, e2, mcap, dcap));
                         }
@@ -3661,10 +4089,12 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                     _ => {
                         assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                         let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                        pstep_to_pstep_d(env, bound, *f, f2);
-                        pstep_to_pstep_d(env, bound, *a, a2);
-                        pstep_d_mono(env, *f, f2, (bound + growth(size(*f))) as nat, size(*f), mcap, dcap);
-                        pstep_d_mono(env, *a, a2, (bound + growth(size(*a))) as nat, size(*a), mcap, dcap);
+                        pstep_to_pstep_d(env, cap, bound, *f, f2);
+                        pstep_to_pstep_d(env, cap, bound, *a, a2);
+                        assert(growth(size(*f)) * k <= growth(size(e1)) * k && size(*f) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*f)) <= growth(size(e1)), size(*f) <= size(e1);
+                        pstep_d_mono(env, *f, f2, (bound + growth(size(*f)) * k) as nat, size(*f) * k, mcap, dcap);
+                        assert(growth(size(*a)) * k <= growth(size(e1)) * k && size(*a) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*a)) <= growth(size(e1)), size(*a) <= size(e1);
+                        pstep_d_mono(env, *a, a2, (bound + growth(size(*a)) * k) as nat, size(*a) * k, mcap, dcap);
                         assert(pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                         assert(pstep_d(env, e1, e2, mcap, dcap));
                     }
@@ -3679,10 +4109,12 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*b), size(e1));
                 let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
-                pstep_to_pstep_d(env, bound, *t, t2);
-                pstep_to_pstep_d(env, bound, *b, b2);
-                pstep_d_mono(env, *t, t2, (bound + growth(size(*t))) as nat, size(*t), mcap, dcap);
-                pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
+                pstep_to_pstep_d(env, cap, bound, *t, t2);
+                pstep_to_pstep_d(env, cap, bound, *b, b2);
+                assert(growth(size(*t)) * k <= growth(size(e1)) * k && size(*t) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*t)) <= growth(size(e1)), size(*t) <= size(e1);
+                        pstep_d_mono(env, *t, t2, (bound + growth(size(*t)) * k) as nat, size(*t) * k, mcap, dcap);
+                assert(growth(size(*b)) * k <= growth(size(e1)) * k && size(*b) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e1)), size(*b) <= size(e1);
+                        pstep_d_mono(env, *b, b2, (bound + growth(size(*b)) * k) as nat, size(*b) * k, mcap, dcap);
                 assert(pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
                 assert(pstep_d(env, e1, e2, mcap, dcap));
             }
@@ -3702,20 +4134,22 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                 {
                     let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
                         pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
-                    pstep_to_pstep_d(env, bound, *b, b2);
-                    pstep_to_pstep_d(env, bound, *v, v2);
-                    pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
-                    pstep_d_mono(env, *v, v2, (bound + growth(size(*v))) as nat, size(*v), mcap, dcap);
-                    let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *b, b2);
-                    let (vmvb, vdepth) = pstep_bounds(env, 0, bound, *v, v2);
-                    assert(bdepth <= size(*b) + 0 * size_growth(size(*b)));
-                    assert(vdepth <= size(*v) + 0 * size_growth(size(*v)));
-                    assert(depth(b2) <= dcap);
-                    assert(depth(v2) <= dcap);
-                    assert(bmvb <= bound + growth(size(*b)) + 0 * size_growth(size(*b)));
-                    assert(vmvb <= bound + growth(size(*v)) + 0 * size_growth(size(*v)));
-                    max_var_below_mono(b2, bmvb, mcap);
-                    max_var_below_mono(v2, vmvb, mcap);
+                    pstep_to_pstep_d(env, cap, bound, *b, b2);
+                    pstep_to_pstep_d(env, cap, bound, *v, v2);
+                    assert(growth(size(*b)) * k <= growth(size(e1)) * k && size(*b) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e1)), size(*b) <= size(e1);
+                        pstep_d_mono(env, *b, b2, (bound + growth(size(*b)) * k) as nat, size(*b) * k, mcap, dcap);
+                    assert(growth(size(*v)) * k <= growth(size(e1)) * k && size(*v) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*v)) <= growth(size(e1)), size(*v) <= size(e1);
+                        pstep_d_mono(env, *v, v2, (bound + growth(size(*v)) * k) as nat, size(*v) * k, mcap, dcap);
+                    pstep_depth_poly(env, cap, *b, b2);
+                            pstep_depth_poly(env, cap, *v, v2);
+                            pstep_mvb_poly(env, cap, bound, *b, b2);
+                            pstep_mvb_poly(env, cap, bound, *v, v2);
+                            assert(size(*b) * k <= size(e1) * k && size(*v) * k <= size(e1) * k) by (nonlinear_arith) requires size(*b) <= size(e1), size(*v) <= size(e1);
+                            assert(growth(size(*b)) * k <= growth(size(e1)) * k && growth(size(*v)) * k <= growth(size(e1)) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e1)), growth(size(*v)) <= growth(size(e1));
+                            assert(depth(b2) <= dcap);
+                            assert(depth(v2) <= dcap);
+                            max_var_below_mono(b2, (bound + growth(size(*b)) * k) as nat, mcap);
+                            max_var_below_mono(v2, (bound + growth(size(*v)) * k) as nat, mcap);
                     assert(pstep_d(env, *b, b2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap)
                         && depth(b2) <= dcap && depth(v2) <= dcap
                         && max_var_below(b2, mcap) && max_var_below(v2, mcap)
@@ -3726,12 +4160,15 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                         pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                     let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                         pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                    pstep_to_pstep_d(env, bound, *t, t2);
-                    pstep_to_pstep_d(env, bound, *v, v2);
-                    pstep_to_pstep_d(env, bound, *b, b2);
-                    pstep_d_mono(env, *t, t2, (bound + growth(size(*t))) as nat, size(*t), mcap, dcap);
-                    pstep_d_mono(env, *v, v2, (bound + growth(size(*v))) as nat, size(*v), mcap, dcap);
-                    pstep_d_mono(env, *b, b2, (bound + growth(size(*b))) as nat, size(*b), mcap, dcap);
+                    pstep_to_pstep_d(env, cap, bound, *t, t2);
+                    pstep_to_pstep_d(env, cap, bound, *v, v2);
+                    pstep_to_pstep_d(env, cap, bound, *b, b2);
+                    assert(growth(size(*t)) * k <= growth(size(e1)) * k && size(*t) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*t)) <= growth(size(e1)), size(*t) <= size(e1);
+                        pstep_d_mono(env, *t, t2, (bound + growth(size(*t)) * k) as nat, size(*t) * k, mcap, dcap);
+                    assert(growth(size(*v)) * k <= growth(size(e1)) * k && size(*v) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*v)) <= growth(size(e1)), size(*v) <= size(e1);
+                        pstep_d_mono(env, *v, v2, (bound + growth(size(*v)) * k) as nat, size(*v) * k, mcap, dcap);
+                    assert(growth(size(*b)) * k <= growth(size(e1)) * k && size(*b) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*b)) <= growth(size(e1)), size(*b) <= size(e1);
+                        pstep_d_mono(env, *b, b2, (bound + growth(size(*b)) * k) as nat, size(*b) * k, mcap, dcap);
                     assert(pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                     assert(pstep_d(env, e1, e2, mcap, dcap));
                 }
@@ -3743,18 +4180,22 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                 growth_mono(size(*s), size(e1));
                 if pstep_iota(env, pidx, *s, e2) {
                     let (inner2, cid, lv, args2, np) = pstep_iota_destruct(env, pidx, *s, e2);
-                    pstep_to_pstep_d(env, bound, *s, inner2);
-                    pstep_d_mono(env, *s, inner2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
-                    let (imvb, idepth) = pstep_bounds(env, 0, bound, *s, inner2);
-                    max_var_below_mono(inner2, imvb, mcap);
+                    pstep_to_pstep_d(env, cap, bound, *s, inner2);
+                    assert(growth(size(*s)) * k <= growth(size(e1)) * k && size(*s) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*s)) <= growth(size(e1)), size(*s) <= size(e1);
+                        pstep_d_mono(env, *s, inner2, (bound + growth(size(*s)) * k) as nat, size(*s) * k, mcap, dcap);
+                    pstep_depth_poly(env, cap, *s, inner2);
+                    pstep_mvb_poly(env, cap, bound, *s, inner2);
+                    assert(growth(size(*s)) * k <= growth(size(e1)) * k && size(*s) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*s)) <= growth(size(e1)), size(*s) <= size(e1);
+                    max_var_below_mono(inner2, (bound + growth(size(*s)) * k) as nat, mcap);
                     assert(depth(inner2) <= dcap);
                     pstep_d_iota_intro_pieces(env, pidx, s, e2, inner2, cid, lv, args2, np, mcap, dcap);
                 } else {
                     match e2 {
                         ExprSpec::Proj(pidx2, s2) => {
                             assert(pstep(env, *s, *s2));
-                            pstep_to_pstep_d(env, bound, *s, *s2);
-                            pstep_d_mono(env, *s, *s2, (bound + growth(size(*s))) as nat, size(*s), mcap, dcap);
+                            pstep_to_pstep_d(env, cap, bound, *s, *s2);
+                            assert(growth(size(*s)) * k <= growth(size(e1)) * k && size(*s) * k <= size(e1) * k) by (nonlinear_arith) requires growth(size(*s)) <= growth(size(e1)), size(*s) <= size(e1);
+                            pstep_d_mono(env, *s, *s2, (bound + growth(size(*s)) * k) as nat, size(*s) * k, mcap, dcap);
                             assert(pstep_d(env, e1, e2, mcap, dcap));
                         }
                         _ => {
@@ -3763,9 +4204,10 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, levels) => {
+                assert(env.contains_key(id) && env[id].0.len() == levels.len()
+                    && e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, levels));
+                assert(pstep_d(env, e1, e2, mcap, dcap));
             }
             ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
                 // arms are verbatim identical between `pstep` and `pstep_d`.
@@ -3776,6 +4218,24 @@ pub proof fn pstep_to_pstep_d(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e
             }
         }
     }
+}
+
+/// Cap-0 corollary of `pstep_to_pstep_d` with the OLD cap shapes, for the
+/// callers still under `env == Map::empty()`.
+pub proof fn pstep_to_pstep_d_0(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec)
+    requires
+        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        pstep(env, e1, e2),
+        max_var_below(e1, bound),
+        string_lits_ok(e1, 0),
+        bound + growth(size(e1)) + size(e1) + 10 <= 0xFFFF_0000,
+    ensures pstep_d(env, e1, e2, (bound + growth(size(e1))) as nat, size(e1))
+{
+    env_wf_empty(0);
+    env_closed_empty();
+    assert(growth(size(e1)) * (0 + 1) == growth(size(e1))) by (nonlinear_arith);
+    assert(size(e1) * (0 + 1) == size(e1)) by (nonlinear_arith);
+    pstep_to_pstep_d(env, 0, bound, e1, e2);
 }
 
 /// THE STRIP LEMMA over the ghost-certified relation: a single certified
@@ -14207,7 +14667,7 @@ pub proof fn chain_to_pstep_d_links(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq
     assert forall |i: int| 0 <= i < ch.len() - 1 implies pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap) by {
         assert(pstep(env, ch[i], ch[i + 1]));
         growth_mono(size(ch[i]), cap);
-        pstep_to_pstep_d(env, bound, ch[i], ch[i + 1]);
+        pstep_to_pstep_d_0(env, bound, ch[i], ch[i + 1]);
         pstep_d_mono(env, ch[i], ch[i + 1], (bound + growth(size(ch[i]))) as nat, size(ch[i]), (bound + growth(cap)) as nat, cap);
     }
 }
