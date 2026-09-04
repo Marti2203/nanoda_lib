@@ -105,6 +105,8 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
+use crate::env_model::{env_model_capped, env_model_capped_sub};
+#[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
 use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
@@ -113,7 +115,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::verified_whnf_measured_rounds;
+use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_measured_rounds_capped};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -2467,6 +2469,49 @@ pub fn verified_defeq_whnf_checked<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         proof {
             assert(pstep_star(to_model_of_env(*env), to_model(x), to_model(rx)));
             assert(pstep_star(to_model_of_env(*env), to_model(y), to_model(rx)));
+            assert(defeq(to_model_of_env(*env), to_model(x), to_model(y)));
+        }
+        Some(true)
+    } else {
+        Some(false)
+    }
+}
+
+/// Delta-lift CM: THE WHNF-JOIN ROUTE WITHOUT A CERTIFICATE -- the same
+/// procedure as `verified_defeq_whnf_checked` over the capped model
+/// (`env_model_capped(env, k)`, definitions certified at unfold time),
+/// with the result weakened to the full model. Never fails to be
+/// available: on the full `Init` corpus the global certificate failed for
+/// 44235 of 44684 checkers, leaving 2.16M non-trivial def_eq calls with no
+/// verified route at all.
+pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+    requires k <= 60000,
+    ensures match result {
+        Some(true) => defeq(to_model_of_env(*env), to_model(x), to_model(y)),
+        _ => true,
+    }
+{
+    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
+    if sx > 500 || sy > 500 {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, 8, k);
+    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, 8, k);
+    if expr_ptr_eq(rx, ry) {
+        proof {
+            let cm = env_model_capped(*env, k as nat);
+            env_model_capped_sub(*env, k as nat);
+            assert(pstep_star(cm, to_model(x), to_model(rx)));
+            assert(pstep_star(cm, to_model(y), to_model(rx)));
+            pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(rx));
+            pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(y), to_model(rx));
             assert(defeq(to_model_of_env(*env), to_model(x), to_model(y)));
         }
         Some(true)

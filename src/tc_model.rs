@@ -76,6 +76,12 @@ use crate::level_arena_bridge::read_levels_vec;
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
+#[cfg(verus_only)]
+use crate::env_model::{env_model_capped, env_model_capped_has};
+#[cfg(verus_only)]
+use crate::beta_model::size;
+#[cfg(verus_only)]
+use crate::expr_model::has_fv;
 use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular, get_declar_info_ty};
 #[cfg(verus_only)]
 use crate::env_model::ctor_num_params_of_agrees;
@@ -451,6 +457,115 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     }
 }
 
+/// Delta-lift CM (capped model): `verified_unfold_def_step_bounded` with
+/// the definition CERTIFIED AT UNFOLD TIME instead of by a global env
+/// scan -- the body's size (`verified_size <= k`) and closedness
+/// (`!has_fvars`) are checked right here, which puts `id` in
+/// `env_model_capped(env, k)`'s domain, so the step holds under the
+/// capped model with `k` in the role `env_global_cap` used to play (and
+/// the singleton -> capped weakening done here, not by the caller).
+/// Cost: one size walk of the body per unfold (the level substitution
+/// already copies it).
+pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        k as nat <= bound,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound)
+            &&& depth(to_model(r)) <= k + d + d
+        },
+        None => true,
+    }
+{
+    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+    proof {
+        spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
+    }
+    assert(args@.len() <= d);
+    let fun_el = ctx.read_expr(fun);
+    let (name, levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let (def_uparams, def_value) = match env.get_declar_val(&name) {
+        Some(p) => p,
+        None => return None,
+    };
+    // Per-definition certification (the capped model's membership test).
+    let sv = match verified_size(ctx, def_value, fuel) { Some(v) => v, None => return None };
+    if sv > k {
+        return None;
+    }
+    if ctx.has_fvars(def_value) {
+        return None;
+    }
+    let levels_vec = read_levels_vec(ctx, levels);
+    let uparams_vec = read_levels_vec(ctx, def_uparams);
+    if levels_vec.len() != uparams_vec.len() {
+        return None;
+    }
+    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+        Some(def_val) => {
+            let ghost id = name_id(name);
+            let ghost ks = level_names(to_model_of_levels(def_uparams));
+            let ghost val = to_model(def_value);
+            let ghost cm = env_model_capped(*env, k as nat);
+            assert(to_model_of_env(*env).contains_key(id));
+            assert(to_model_of_env(*env)[id] == (ks, val));
+            proof {
+                is_const_shape_model(fun);
+                const_levels_vec_model(fun);
+            }
+            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+            assert(const_id(fun) == id);
+            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
+            proof {
+                assert(size(val) <= k as nat);
+                assert(!has_fv(val));
+                env_model_capped_has(*env, k as nat, id);
+                assert(cm.contains_key(id) && cm[id] == (ks, val));
+                assert(pstep(cm, to_model(fun), to_model(def_val)));
+                pstep_star_one(cm, to_model(fun), to_model(def_val));
+                pstep_spine_app_star(cm, to_model(fun), to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+            }
+            proof {
+                depth_le_size(val);
+                nlbv_bound_implies_max_var_below(val, 0);
+                max_var_below_mono(val, (depth(val) + 0) as nat, k as nat);
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
+                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(levels), to_model(def_val));
+                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(levels), to_model(def_val), k as nat);
+                max_var_below_mono(to_model(def_val), k as nat, bound);
+            }
+            assert(nlbv(to_model(def_val)) == 0);
+            assert(depth(to_model(def_val)) <= k as nat);
+            assert(max_var_below(to_model(def_val), bound));
+            let result = verified_foldl_apps(ctx, def_val, &args);
+            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            proof {
+                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+                spine_app_bounds(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound, k as nat, d);
+            }
+            assert(nlbv(to_model(result)) <= 0);
+            assert(max_var_below(to_model(result), bound));
+            assert(depth(to_model(result)) <= k + d + args@.len());
+            Some(result)
+        }
+        None => None,
+    }
+}
+
 /// `verified_whnf_step`'s own stronger sibling, composing `verified_whnf_
 /// no_unfolding_fixpoint_bounded` (`n` rounds of beta/zeta, WITH forward
 /// bounds) and `verified_unfold_def_step_bounded` (one delta attempt,
@@ -515,6 +630,54 @@ pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
                 }
                 None => {
                     assert(d2 <= env_global_cap(*env) + d2 + d2);
+                    Some(whnfd)
+                }
+            }
+        }
+        None => None,
+    }
+}
+
+/// Delta-lift CM: `verified_whnf_step_bounded` over the capped model --
+/// beta/zeta fixpoint (empty env, weakened) then one delta attempt via
+/// `verified_unfold_def_step_capped`. `k` replaces `env_global_cap`.
+pub fn verified_whnf_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        whnf_fixpoint_ok(bound, d, n as nat),
+        bound2 == whnf_fixpoint_final_bound(bound, d, n as nat),
+        d2 == whnf_fixpoint_final_d(d, n as nat),
+        k as nat <= bound2,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound2)
+            &&& depth(to_model(r)) <= k + d2 + d2
+        },
+        None => true,
+    }
+{
+    match verified_whnf_no_unfolding_fixpoint_bounded(ctx, e, fuel, Ghost(bound), Ghost(d), n) {
+        Some(whnfd) => {
+            let ghost cm = env_model_capped(*env, k as nat);
+            proof {
+                assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
+                    cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == cm[j]
+                by {}
+                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(e), to_model(whnfd));
+            }
+            match verified_unfold_def_step_capped(ctx, env, whnfd, fuel, k, Ghost(bound2), Ghost(d2)) {
+                Some(r) => {
+                    proof {
+                        pstep_star_trans(cm, to_model(e), to_model(whnfd), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => {
+                    assert(d2 <= k + d2 + d2);
                     Some(whnfd)
                 }
             }
@@ -773,6 +936,83 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         }
         proof {
             pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(cur), to_model(r));
+        }
+        cur = r;
+        i = i + 1;
+    }
+    cur
+}
+
+/// Delta-lift CM: `verified_whnf_measured_rounds` over the capped model
+/// (`k` replaces the global cap; no certificate needed).
+pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32, k: u32) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures
+        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+{
+    let mut cur = e;
+    let mut i: u32 = 0;
+    proof {
+        pstep_star_refl(env_model_capped(*env, k as nat), to_model(e));
+    }
+    while i < rounds
+        invariant
+            pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(cur)),
+            nlbv(to_model(cur)) <= 0,
+            k <= 60000,
+        decreases rounds - i
+    {
+        let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        if sc > 500 {
+            return cur;
+        }
+        proof {
+            depth_le_size(to_model(cur));
+            nlbv_bound_implies_max_var_below(to_model(cur), 0);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+        }
+        // P4: a measured PROJECTION-aware no-unfolding sub-step first
+        // (beta/zeta/iota, `verified_whnf_no_unfolding_step_with_proj`
+        // -- a genuine pstep_star now that iota is a first-class rule),
+        // then the beta/zeta+delta round on the RE-MEASURED result.
+        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(500 as nat), Ghost(500 as nat)) {
+            Some(v) => v,
+            None => return cur,
+        };
+        proof {
+            assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                env_model_capped(*env, k as nat).contains_key(k)
+                && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
+            by {}
+            pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(cur), to_model(rp));
+            pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rp));
+        }
+        cur = rp;
+        let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        if sc2 > 500 {
+            return cur;
+        }
+        proof {
+            depth_le_size(to_model(cur));
+            nlbv_bound_implies_max_var_below(to_model(cur), 0);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+            reveal_with_fuel(whnf_fixpoint_ok, 2);
+            assert(whnf_fixpoint_ok(500, 500, 1));
+            reveal_with_fuel(whnf_fixpoint_final_bound, 2);
+            reveal_with_fuel(whnf_fixpoint_final_d, 2);
+        }
+        let r = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(500 as nat), Ghost(500 as nat), 1, Ghost(whnf_fixpoint_final_bound(500 as nat, 500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(500 as nat, 1 as nat))) {
+            Some(v) => v,
+            None => return cur,
+        };
+        if expr_ptr_eq(r, cur) {
+            return cur;
+        }
+        proof {
+            pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(r));
         }
         cur = r;
         i = i + 1;

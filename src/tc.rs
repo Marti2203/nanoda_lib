@@ -1063,18 +1063,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
                 return true
             }
-            // Verified whnf-join route (see `delta_bound_model::
-            // verified_defeq_whnf_checked`): reduce both sides with the
-            // verified multi-round whnf and confirm on pointer-equal
-            // results -- a Some(true) carries a machine-checked `defeq`
-            // (model-level definitional equality by joinability).
-            if let Some(true) =
-                crate::delta_bound_model::verified_defeq_whnf_checked(self.ctx, cert, x, y, 100)
-            {
-                route_stats::bump(&route_stats::WHNF_JOIN);
-                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-                return true
-            }
+        }
+        // Verified whnf-join route (see `delta_bound_model::
+        // verified_defeq_whnf_capped`): reduce both sides with the verified
+        // multi-round whnf over the CAPPED environment model (definitions
+        // certified at unfold time -- no certificate, so this route is
+        // always available) and confirm on pointer-equal results -- a
+        // Some(true) carries a machine-checked `defeq` (model-level
+        // definitional equality by joinability).
+        if let Some(true) =
+            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, 500)
+        {
+            route_stats::bump(&route_stats::WHNF_JOIN);
+            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+            return true
         }
 
         let x_n = self.whnf_no_unfolding_cheap_proj(x);

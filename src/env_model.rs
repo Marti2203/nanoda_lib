@@ -44,7 +44,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below, env_wf};
+use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below, env_wf, env_closed};
 
 /// `Env::get_constructor` returns `Option<&ConstructorData>`, a reference
 /// to a struct with several fields -- rather than registering the whole
@@ -451,6 +451,87 @@ pub proof fn env_closed_of_global<'x, 'a>(env: Env<'x, 'a>)
 {
     env_global_wf(env);
     env_global_closed_wf(env);
+}
+
+/// THE CAPPED MODEL (delta-lift CM, 2026-09-04): `to_model_of_env(env)`
+/// restricted to the definitions whose value fits `k` (size <= k) and is
+/// closed (no free variables). `env_wf`/`env_closed` hold for it BY
+/// CONSTRUCTION -- no global scan, no certificate that can fail on one
+/// oversized definition elsewhere in the environment (which is exactly
+/// what `EnvCapCert` did on the full `Init` corpus: 449 builds, 44235
+/// failures, 2.16M def_eq calls with no verified route). A delta step
+/// certifies its own definition at unfold time (`verified_size <= k`,
+/// `!has_fvars`), which puts the id in this map's domain; results under
+/// the capped model weaken to the full model (`env_model_capped_sub`).
+pub open spec fn env_model_capped<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    to_model_of_env(env).restrict(
+        to_model_of_env(env).dom().filter(|id: u64|
+            size(to_model_of_env(env)[id].1) <= k && !has_fv(to_model_of_env(env)[id].1)),
+    )
+}
+
+/// Trust (same character as `env_global_closed_wf`'s ctor clause, now
+/// stated on its own so it no longer rides on the global scan): a name has
+/// ONE declaration per export, so no definition/theorem id is also a
+/// constructor id.
+#[verifier::external_body]
+pub proof fn env_defs_not_ctors<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+        ==> crate::expr_arena_bridge::ctor_num_params_of(id) is None
+{
+}
+
+/// Membership in the capped model from the per-definition checks.
+pub proof fn env_model_capped_has<'x, 'a>(env: Env<'x, 'a>, k: nat, id: u64)
+    requires
+        to_model_of_env(env).contains_key(id),
+        size(to_model_of_env(env)[id].1) <= k,
+        !has_fv(to_model_of_env(env)[id].1),
+    ensures
+        env_model_capped(env, k).contains_key(id),
+        env_model_capped(env, k)[id] == to_model_of_env(env)[id],
+{
+}
+
+/// The capped model is a sub-map of the full model (for `pstep_star_env_weaken`).
+pub proof fn env_model_capped_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures forall |id: u64| #[trigger] env_model_capped(env, k).contains_key(id)
+        ==> to_model_of_env(env).contains_key(id) && env_model_capped(env, k)[id] == to_model_of_env(env)[id]
+{
+}
+
+/// `env_wf(env_model_capped(env, k), k)` by construction: every member's
+/// value has size <= k, hence depth <= k (`depth_le_size`) and, being
+/// closed (`nlbv == 0` from the `get_declar_val` trust boundary), its
+/// variables are below its depth.
+pub proof fn env_model_capped_wf<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures env_wf(env_model_capped(env, k), k)
+{
+    env_global_wf(env);
+    let m = env_model_capped(env, k);
+    assert forall |id: u64| #[trigger] m.contains_key(id) implies
+        nlbv(m[id].1) == 0 && size(m[id].1) <= k && max_var_below(m[id].1, k) && depth(m[id].1) <= k by {
+        assert(to_model_of_env(env).contains_key(id));
+        let v = to_model_of_env(env)[id].1;
+        assert(m[id].1 == v);
+        depth_le_size(v);
+        nlbv_bound_implies_max_var_below(v, 0);
+        max_var_below_mono(v, (depth(v) + 0) as nat, k);
+    }
+}
+
+/// `env_closed(env_model_capped(env, k))` by construction.
+pub proof fn env_model_capped_closed<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures env_closed(env_model_capped(env, k))
+{
+    env_global_wf(env);
+    env_defs_not_ctors(env);
+    let m = env_model_capped(env, k);
+    assert forall |id: u64| #[trigger] m.contains_key(id) implies
+        nlbv(m[id].1) == 0 && !has_fv(m[id].1) && crate::expr_arena_bridge::ctor_num_params_of(id) is None by {
+        assert(to_model_of_env(env).contains_key(id));
+        assert(m[id].1 == to_model_of_env(env)[id].1);
+    }
 }
 
 #[verifier::external_body]
