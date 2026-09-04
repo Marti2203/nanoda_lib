@@ -1322,6 +1322,7 @@ pub proof fn pstep_d_implies_pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: Expr
 /// that excess COMPOUNDS through substitution, so the honest bound is
 /// multiplicative -- `size(e) * (cap + 1)`, which is exactly the old
 /// `size(e)` at `cap == 0` (every current caller).
+#[verifier::spinoff_prover]
 pub proof fn complete_depth_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e: ExprSpec)
     requires string_lits_ok(e, 0), env_wf(env, cap)
     ensures depth(complete(env, e)) <= size(e) * (cap + 1)
@@ -1330,18 +1331,22 @@ pub proof fn complete_depth_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat,
     let k: nat = cap + 1;
     match e {
         ExprSpec::Const(id, ls) => {
+            assert(size(e) == 1);
+            // Pinned explicitly: the `1 * k == k` normalization drifted
+            // across a Verus/Z3 bump (0.2026.09.03), so don't rely on it.
+            assert(size(e) * k == k) by (nonlinear_arith) requires size(e) == 1;
             if env.contains_key(id) && env[id].0.len() == ls.len() {
                 crate::expr_model::subst_expr_levels_sat_rel(env[id].1, env[id].0, ls);
                 subst_expr_levels_rel_depth(env[id].1, env[id].0, ls, complete(env, e));
                 assert(depth(complete(env, e)) == depth(env[id].1));
                 assert(depth(complete(env, e)) <= cap);
+                assert(depth(complete(env, e)) <= k);
             } else {
                 assert(complete(env, e) == e);
+                assert(depth(e) == 0);
+                assert(depth(complete(env, e)) <= k);
             }
-            assert(size(e) == 1);
-            // Pinned explicitly: the `1 * k == k` normalization drifted
-            // across a Verus/Z3 bump (0.2026.09.03), so don't rely on it.
-            assert(size(e) * k == k) by (nonlinear_arith) requires size(e) == 1;
+            assert(depth(complete(env, e)) <= size(e) * k);
         }
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) => {
             assert(complete(env, e) == e);
@@ -1795,6 +1800,8 @@ pub proof fn pstep_mvb_poly(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound
                 subst_expr_levels_rel_max_var_below(env[id].1, env[id].0, levels, e2, cap);
                 assert(max_var_below(e2, cap));
                 assert(size(e1) == 1);
+                assert(1 * 1 == 1) by (nonlinear_arith);
+                assert(growth(1) == 1 * 1 + 1);
                 assert(growth(1) == 2);
                 assert(growth(size(e1)) * k == 2 * k) by (nonlinear_arith)
                     requires growth(size(e1)) == 2;
@@ -11793,17 +11800,33 @@ pub proof fn subst1_abstr_commute(bound: nat, b: ExprSpec, a: ExprSpec, ks: Seq<
 /// skeleton exactly (per-witness `pstep_bounds` at `env == empty`); the
 /// beta/zeta arms close through `subst1_abstr_commute` (C2), the
 /// literal-unfolding arms through the targets being `Free`-free.
-pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec, ks: Seq<u32>, o: nat)
+pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, bound: nat, e1: ExprSpec, e2: ExprSpec, ks: Seq<u32>, o: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
+        env_closed(env),
         pstep(env, e1, e2),
         max_var_below(e1, bound),
         string_lits_ok(e1, 0),
-        o + ks.len() + bound + growth(size(e1)) + 2 * size(e1) + depth(e1) + 30 <= 0xFFFF_0000,
+        o + ks.len() + bound + growth(size(e1)) * (cap + 1) + 2 * size(e1) * (cap + 1) + depth(e1) + 30 <= 0xFFFF_0000,
     ensures pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o))
     decreases e1
 {
-    assert(env_wf(env, 0));
+    assert forall |x: ExprSpec| #![trigger size(x)] size(x) <= size(e1) implies
+        size(x) * (cap + 1) <= size(e1) * (cap + 1)
+        && 2 * size(x) * (cap + 1) <= 2 * size(e1) * (cap + 1)
+        && size(x) * (cap + 1) <= 2 * size(e1) * (cap + 1)
+        && growth(size(x)) * (cap + 1) <= growth(size(e1)) * (cap + 1) by {
+        growth_mono(size(x), size(e1));
+        scale_le(size(x), size(e1), cap + 1);
+        scale_le(growth(size(x)), growth(size(e1)), cap + 1);
+        // `2 * a * k` is the monomial `(2 * a) * k` -- a different term from
+        // `2 * (a * k)`; the requires uses the former shape.
+        assert(2 * size(x) * (cap + 1) <= 2 * size(e1) * (cap + 1)) by (nonlinear_arith)
+            requires size(x) <= size(e1);
+        assert(size(x) * (cap + 1) <= 2 * size(e1) * (cap + 1)) by (nonlinear_arith)
+            requires size(x) <= size(e1);
+    }
+    assert(size(e1) * (cap + 1) + size(e1) * (cap + 1) == 2 * size(e1) * (cap + 1)) by (nonlinear_arith);
     if e1 == e2 {
     } else {
         match e1 {
@@ -11831,15 +11854,14 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                         {
                             let (body2, a2) = choose |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
                                 pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2);
-                            pstep_abstr(env, bound, *body, body2, ks, (o + 1) as nat);
-                            pstep_abstr(env, bound, *a, a2, ks, o);
-                            let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *body, body2);
-                            let (amvb, adepth) = pstep_bounds(env, 0, bound, *a, a2);
-                            assert(bdepth <= size(*body) + 0 * size_growth(size(*body)));
-                            assert(adepth <= size(*a) + 0 * size_growth(size(*a)));
-                            assert(amvb <= bound + growth(size(*a)) + 0 * size_growth(size(*a)));
-                            assert(depth(body2) <= size(e1));
-                            assert(depth(a2) <= size(e1));
+                            pstep_abstr(env, cap, bound, *body, body2, ks, (o + 1) as nat);
+                            pstep_abstr(env, cap, bound, *a, a2, ks, o);
+                            pstep_depth_poly(env, cap, *body, body2);
+                            pstep_depth_poly(env, cap, *a, a2);
+                            pstep_mvb_poly(env, cap, bound, *a, a2);
+                            let amvb: nat = (bound + growth(size(*a)) * (cap + 1)) as nat;
+                            assert(depth(body2) <= size(e1) * (cap + 1));
+                            assert(depth(a2) <= size(e1) * (cap + 1));
                             subst1_abstr_commute(amvb, body2, a2, ks, o);
                             assert(abstr_full(e2, ks, o) == subst1(abstr_full(body2, ks, (o + 1) as nat), abstr_full(a2, ks, o)));
                             assert(abstr_full(e1, ks, o) == ExprSpec::App(
@@ -11856,8 +11878,8 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                         } else {
                             assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                             let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                            pstep_abstr(env, bound, *f, f2, ks, o);
-                            pstep_abstr(env, bound, *a, a2, ks, o);
+                            pstep_abstr(env, cap, bound, *f, f2, ks, o);
+                            pstep_abstr(env, cap, bound, *a, a2, ks, o);
                             assert(abstr_full(e1, ks, o) == ExprSpec::App(Box::new(abstr_full(*f, ks, o)), Box::new(abstr_full(*a, ks, o))));
                             assert(abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
                             assert(pstep(env, abstr_full(*f, ks, o), abstr_full(f2, ks, o))
@@ -11869,8 +11891,8 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                     _ => {
                         assert(exists |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)));
                         let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep(env, *f, f2) && pstep(env, *a, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                        pstep_abstr(env, bound, *f, f2, ks, o);
-                        pstep_abstr(env, bound, *a, a2, ks, o);
+                        pstep_abstr(env, cap, bound, *f, f2, ks, o);
+                        pstep_abstr(env, cap, bound, *a, a2, ks, o);
                         assert(abstr_full(e1, ks, o) == ExprSpec::App(Box::new(abstr_full(*f, ks, o)), Box::new(abstr_full(*a, ks, o))));
                         assert(abstr_full(e2, ks, o) == ExprSpec::App(Box::new(abstr_full(f2, ks, o)), Box::new(abstr_full(a2, ks, o))));
                         assert(pstep(env, abstr_full(*f, ks, o), abstr_full(f2, ks, o))
@@ -11891,8 +11913,8 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*b), size(e1));
                 let (t2, b2) = choose |t2: ExprSpec, b2: ExprSpec| pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(Box::new(t2), Box::new(b2));
-                pstep_abstr(env, bound, *t, t2, ks, o);
-                pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
+                pstep_abstr(env, cap, bound, *t, t2, ks, o);
+                pstep_abstr(env, cap, bound, *b, b2, ks, (o + 1) as nat);
                 assert(abstr_full(e1, ks, o) == ExprSpec::Bind(Box::new(abstr_full(*t, ks, o)), Box::new(abstr_full(*b, ks, (o + 1) as nat))));
                 assert(abstr_full(e2, ks, o) == ExprSpec::Bind(Box::new(abstr_full(t2, ks, o)), Box::new(abstr_full(b2, ks, (o + 1) as nat))));
                 assert(pstep(env, abstr_full(*t, ks, o), abstr_full(t2, ks, o))
@@ -11919,15 +11941,14 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                 {
                     let (b2, v2) = choose |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
                         pstep(env, *b, b2) && pstep(env, *v, v2) && e2 == subst1(b2, v2);
-                    pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
-                    pstep_abstr(env, bound, *v, v2, ks, o);
-                    let (bmvb, bdepth) = pstep_bounds(env, 0, bound, *b, b2);
-                    let (vmvb, vdepth) = pstep_bounds(env, 0, bound, *v, v2);
-                    assert(bdepth <= size(*b) + 0 * size_growth(size(*b)));
-                    assert(vdepth <= size(*v) + 0 * size_growth(size(*v)));
-                    assert(vmvb <= bound + growth(size(*v)) + 0 * size_growth(size(*v)));
-                    assert(depth(b2) <= size(e1));
-                    assert(depth(v2) <= size(e1));
+                    pstep_abstr(env, cap, bound, *b, b2, ks, (o + 1) as nat);
+                    pstep_abstr(env, cap, bound, *v, v2, ks, o);
+                    pstep_depth_poly(env, cap, *b, b2);
+                    pstep_depth_poly(env, cap, *v, v2);
+                    pstep_mvb_poly(env, cap, bound, *v, v2);
+                    let vmvb: nat = (bound + growth(size(*v)) * (cap + 1)) as nat;
+                    assert(depth(b2) <= size(e1) * (cap + 1));
+                    assert(depth(v2) <= size(e1) * (cap + 1));
                     subst1_abstr_commute(vmvb, b2, v2, ks, o);
                     assert(abstr_full(e2, ks, o) == subst1(abstr_full(b2, ks, (o + 1) as nat), abstr_full(v2, ks, o)));
                     assert(abstr_full(e1, ks, o) == ExprSpec::Let(
@@ -11944,9 +11965,9 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                         pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                     let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                         pstep(env, *t, t2) && pstep(env, *v, v2) && pstep(env, *b, b2) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                    pstep_abstr(env, bound, *t, t2, ks, o);
-                    pstep_abstr(env, bound, *v, v2, ks, o);
-                    pstep_abstr(env, bound, *b, b2, ks, (o + 1) as nat);
+                    pstep_abstr(env, cap, bound, *t, t2, ks, o);
+                    pstep_abstr(env, cap, bound, *v, v2, ks, o);
+                    pstep_abstr(env, cap, bound, *b, b2, ks, (o + 1) as nat);
                     assert(abstr_full(e1, ks, o) == ExprSpec::Let(
                         Box::new(abstr_full(*t, ks, o)),
                         Box::new(abstr_full(*v, ks, o)),
@@ -11972,7 +11993,7 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                 growth_mono(size(*sx), size(e1));
                 if pstep_iota(env, pidx1, *sx, e2) {
                     let (inner2, cid, lv, args2, np) = pstep_iota_destruct(env, pidx1, *sx, e2);
-                    pstep_abstr(env, bound, *sx, inner2, ks, o);
+                    pstep_abstr(env, cap, bound, *sx, inner2, ks, o);
                     abstr_full_spine_app(ExprSpec::Const(cid, lv), args2, ks, o);
                     let mapped = Seq::new(args2.len(), |i: int| abstr_full(args2[i], ks, o));
                     assert(abstr_full(ExprSpec::Const(cid, lv), ks, o) == ExprSpec::Const(cid, lv));
@@ -11984,7 +12005,7 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                     match e2 {
                         ExprSpec::Proj(pidx2, sx2) => {
                             assert(pstep(env, *sx, *sx2));
-                            pstep_abstr(env, bound, *sx, *sx2, ks, o);
+                            pstep_abstr(env, cap, bound, *sx, *sx2, ks, o);
                             assert(abstr_full(e1, ks, o) == ExprSpec::Proj(pidx1, Box::new(abstr_full(*sx, ks, o))));
                             assert(abstr_full(e2, ks, o) == ExprSpec::Proj(pidx2, Box::new(abstr_full(*sx2, ks, o))));
                             assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
@@ -11995,9 +12016,18 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, ls) => {
+                // Delta (delta-lift T4): the unfolded body is CLOSED
+                // (`env_closed`), so abstraction is a no-op on it and the
+                // same delta step fires on the abstracted constant.
+                assert(env.contains_key(id) && env[id].0.len() == ls.len());
+                assert(e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, ls));
+                crate::expr_model::subst_expr_levels_has_fv(env[id].1, env[id].0, ls);
+                assert(!has_fv(e2));
+                abstr_full_noop(e2, ks, o);
+                assert(abstr_full(e1, ks, o) == e1);
+                assert(abstr_full(e2, ks, o) == e2);
+                assert(pstep(env, abstr_full(e1, ks, o), abstr_full(e2, ks, o)));
             }
             ExprSpec::NatLit(n) => {
                 assert(abstr_full(e1, ks, o) == e1);
@@ -12045,18 +12075,17 @@ pub proof fn pstep_abstr(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: Ex
 /// `pstep_abstr` needs its source element's `max_var_below`/
 /// `string_lits_ok`/ceiling. (Only SOURCES need conditions -- the last
 /// element rides along for free.)
-pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: Seq<ExprSpec>, ks: Seq<u32>, o: nat, bound: nat)
+pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, chain: Seq<ExprSpec>, ks: Seq<u32>, o: nat, bound: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
+        env_closed(env),
         chain.len() >= 1,
         pstep_chain_valid(env, chain),
         forall |i: int| 0 <= i < chain.len() - 1 ==> max_var_below(#[trigger] chain[i], bound),
         forall |i: int| 0 <= i < chain.len() - 1 ==> string_lits_ok(#[trigger] chain[i], 0),
-        forall |i: int| 0 <= i < chain.len() - 1 ==> o + ks.len() + bound + growth(size(#[trigger] chain[i])) + 2 * size(chain[i]) + depth(chain[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < chain.len() - 1 ==> o + ks.len() + bound + growth(size(#[trigger] chain[i])) * (cap + 1) + 2 * size(chain[i]) * (cap + 1) + depth(chain[i]) + 30 <= 0xFFFF_0000,
     ensures pstep_star(env, abstr_full(chain[0], ks, o), abstr_full(chain[chain.len() - 1], ks, o))
 {
-    env_wf_empty_all();
-    env_closed_empty();
     let mapped = Seq::new(chain.len(), |i: int| abstr_full(chain[i], ks, o));
     assert(mapped.len() == chain.len());
     assert(mapped[0] == abstr_full(chain[0], ks, o));
@@ -12064,7 +12093,7 @@ pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: 
     assert(pstep_chain_valid(env, mapped)) by {
         assert forall |i: int| #![trigger mapped[i]] 0 <= i < mapped.len() - 1 implies pstep(env, mapped[i], mapped[i + 1]) by {
             assert(pstep(env, chain[i], chain[i + 1]));
-            pstep_abstr(env, bound, chain[i], chain[i + 1], ks, o);
+            pstep_abstr(env, cap, bound, chain[i], chain[i + 1], ks, o);
             assert(mapped[i] == abstr_full(chain[i], ks, o));
             assert(mapped[i + 1] == abstr_full(chain[i + 1], ks, o));
         }
@@ -12083,9 +12112,10 @@ pub proof fn pstep_star_abstr_chain(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: 
 /// explicit with per-element bounds for the standing reason (hidden
 /// `pstep_star` elements carry no bounds); real producers hold their
 /// concrete chains.
-pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
+pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
+        env_closed(env),
         fv_below(b1, k),
         fv_below(b2, k),
         ch1.len() >= 1,
@@ -12097,19 +12127,17 @@ pub proof fn defeq_bind_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: Ex
         pstep_chain_valid(env, ch2),
         forall |i: int| 0 <= i < ch1.len() - 1 ==> max_var_below(#[trigger] ch1[i], bound),
         forall |i: int| 0 <= i < ch1.len() - 1 ==> string_lits_ok(#[trigger] ch1[i], 0),
-        forall |i: int| 0 <= i < ch1.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch1[i])) + 2 * size(ch1[i]) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch1[i])) * (cap + 1) + 2 * size(ch1[i]) * (cap + 1) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
         forall |i: int| 0 <= i < ch2.len() - 1 ==> max_var_below(#[trigger] ch2[i], bound),
         forall |i: int| 0 <= i < ch2.len() - 1 ==> string_lits_ok(#[trigger] ch2[i], 0),
-        forall |i: int| 0 <= i < ch2.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch2[i])) + 2 * size(ch2[i]) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> 1 + bound + growth(size(#[trigger] ch2[i])) * (cap + 1) + 2 * size(ch2[i]) * (cap + 1) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
         defeq(env, t1, t2),
     ensures defeq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
 {
-    env_wf_empty_all();
-    env_closed_empty();
     let ks = seq![k];
     assert(ks.len() == 1);
-    pstep_star_abstr_chain(env, ch1, ks, 0, bound);
-    pstep_star_abstr_chain(env, ch2, ks, 0, bound);
+    pstep_star_abstr_chain(env, cap, ch1, ks, 0, bound);
+    pstep_star_abstr_chain(env, cap, ch2, ks, 0, bound);
     abstr_subst_roundtrip(b1, k, 0);
     abstr_subst_roundtrip(b2, k, 0);
     assert(abstr_full(ch1[0], ks, 0) == b1);
@@ -12203,7 +12231,9 @@ pub proof fn defeq_bind_intro_chains_demo(env: Map<u64, (Seq<u64>, ExprSpec)>, t
         assert(growth(5) == 30);
     }
     defeq_refl(env, t);
-    defeq_bind_intro_chains(env, t, t, b1, b2, k, ch1, ch2, 1);
+    env_wf_empty(0);
+    env_closed_empty();
+    defeq_bind_intro_chains(env, 0, t, t, b1, b2, k, ch1, ch2, 1);
 }
 
 /// A telescope of binders: `ts[0]` outermost, `body` innermost.
@@ -12251,9 +12281,10 @@ pub proof fn defeq_bind_telescope_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, ts1
 /// freshness), pairwise-`defeq` layer types, and the join transport
 /// through `pstep_star_abstr_chain` + the n-ary roundtrip, closed by
 /// telescope congruence.
-pub proof fn defeq_bind_telescope_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, ts1: Seq<ExprSpec>, ts2: Seq<ExprSpec>, b1: ExprSpec, b2: ExprSpec, ks: Seq<u32>, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
+pub proof fn defeq_bind_telescope_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, ts1: Seq<ExprSpec>, ts2: Seq<ExprSpec>, b1: ExprSpec, b2: ExprSpec, ks: Seq<u32>, ch1: Seq<ExprSpec>, ch2: Seq<ExprSpec>, bound: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, cap),
+        env_closed(env),
         ts1.len() == ts2.len(),
         forall |i: int| 0 <= i < ts1.len() ==> defeq(env, #[trigger] ts1[i], ts2[i]),
         forall |i: int| 0 <= i < ks.len() ==> fv_below(b1, #[trigger] ks[i]),
@@ -12268,16 +12299,14 @@ pub proof fn defeq_bind_telescope_intro_chains(env: Map<u64, (Seq<u64>, ExprSpec
         pstep_chain_valid(env, ch2),
         forall |i: int| 0 <= i < ch1.len() - 1 ==> max_var_below(#[trigger] ch1[i], bound),
         forall |i: int| 0 <= i < ch1.len() - 1 ==> string_lits_ok(#[trigger] ch1[i], 0),
-        forall |i: int| 0 <= i < ch1.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch1[i])) + 2 * size(ch1[i]) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch1.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch1[i])) * (cap + 1) + 2 * size(ch1[i]) * (cap + 1) + depth(ch1[i]) + 30 <= 0xFFFF_0000,
         forall |i: int| 0 <= i < ch2.len() - 1 ==> max_var_below(#[trigger] ch2[i], bound),
         forall |i: int| 0 <= i < ch2.len() - 1 ==> string_lits_ok(#[trigger] ch2[i], 0),
-        forall |i: int| 0 <= i < ch2.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch2[i])) + 2 * size(ch2[i]) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < ch2.len() - 1 ==> ks.len() + bound + growth(size(#[trigger] ch2[i])) * (cap + 1) + 2 * size(ch2[i]) * (cap + 1) + depth(ch2[i]) + 30 <= 0xFFFF_0000,
     ensures defeq(env, bind_telescope(ts1, b1), bind_telescope(ts2, b2))
 {
-    env_wf_empty_all();
-    env_closed_empty();
-    pstep_star_abstr_chain(env, ch1, ks, 0, bound);
-    pstep_star_abstr_chain(env, ch2, ks, 0, bound);
+    pstep_star_abstr_chain(env, cap, ch1, ks, 0, bound);
+    pstep_star_abstr_chain(env, cap, ch2, ks, 0, bound);
     abstr_subst_roundtrip_n(b1, ks, 0);
     abstr_subst_roundtrip_n(b2, ks, 0);
     assert(abstr_full(ch1[0], ks, 0) == b1);
