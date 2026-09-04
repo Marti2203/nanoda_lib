@@ -2966,15 +2966,45 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         }
         _ => {}
     }
-    // last leaf: the capped whnf-join
-    match verified_defeq_whnf_capped(ctx, env, x, y, fuel, k, conv_join_rounds()) {
-        Some(true) => {
-            proof { deq_any_of_defeq(em, to_model(x), to_model(y)); }
-            conv_stat(6);
-            Some(true)
-        }
-        _ => None,
+    // last leaf: the capped whnf of BOTH sides, then (a) the pointer-equal
+    // join, or (b) -- new 2026-09-04 -- one recursive `conv` on the REDUCTS
+    // when either side moved: this is where post-reduction congruence and
+    // the nat-literal leaf get to see `NLit(0)` vs `Nat.zero`, `Nat.succ
+    // (..)` vs a literal, and a constructor spine vs its unfolded twin
+    // (the real `def_eq`'s whnf_core-then-retry shape).
+    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), k);
+    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), k);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(cm, em, to_model(x), to_model(rx));
+        pstep_star_env_weaken(cm, em, to_model(y), to_model(ry));
     }
+    if expr_ptr_eq(rx, ry) {
+        proof {
+            assert(pstep_star(em, to_model(x), to_model(rx)));
+            assert(pstep_star(em, to_model(y), to_model(rx)));
+            assert(defeq(em, to_model(x), to_model(y)));
+            deq_any_of_defeq(em, to_model(x), to_model(y));
+        }
+        conv_stat(6);
+        return Some(true);
+    }
+    if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
+        if let Some(true) = verified_conv(ctx, env, rx, ry, fuel, k, budget - 1) {
+            proof {
+                defeq_of_pstep_star(em, to_model(x), to_model(rx));
+                deq_any_of_defeq(em, to_model(x), to_model(rx));
+                defeq_of_pstep_star(em, to_model(y), to_model(ry));
+                deq_any_of_defeq(em, to_model(y), to_model(ry));
+                deq_any_trans(em, to_model(x), to_model(rx), to_model(ry));
+                deq_any_symm(em, to_model(y), to_model(ry));
+                deq_any_trans(em, to_model(x), to_model(ry), to_model(y));
+            }
+            conv_stat(10);
+            return Some(true);
+        }
+    }
+    None
 }
 
 /// The claim `verified_proof_irrel_eq_of_types`'s `Some(true)` makes,
