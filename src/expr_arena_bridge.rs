@@ -36,6 +36,8 @@ use crate::expr::{Expr, BinderStyle, FVarId};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 use crate::expr_model::NatLitPayload;
+#[cfg(verus_only)]
+use crate::expr_model::fv_absent;
 use crate::expr_model::StringLitPayload;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
@@ -830,6 +832,76 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         proof { is_string_lit_shape_model(e); }
         assert(size(to_model(e)) == 1);
         return Some(1);
+    }
+    None
+}
+
+/// Freshness walker for the binder fresh-instance rule: `Some(true)`
+/// certifies `fv_absent(to_model(e), expr_id(local))` by POINTER
+/// comparison at every `Local` node (`expr_id` is injective on pointers,
+/// `expr_id_injective`). Sound regardless of `FVarId` reuse, since the
+/// model keys free variables by pointer identity.
+pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures match result {
+        Some(true) => fv_absent(to_model(e), expr_id(local)),
+        _ => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let el = ctx.read_expr(e);
+    if let Some((f, a)) = expr_as_app(&el) {
+        if verified_fv_absent(ctx, f, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, a, local, fuel - 1) != Some(true) { return None; }
+        return Some(true);
+    }
+    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        return Some(true);
+    }
+    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        return Some(true);
+    }
+    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, v, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        return Some(true);
+    }
+    if let Some((_, _, st)) = expr_as_proj(&el) {
+        if verified_fv_absent(ctx, st, local, fuel - 1) != Some(true) { return None; }
+        return Some(true);
+    }
+    if expr_as_var(&el).is_some() {
+        return Some(true);
+    }
+    if expr_as_sort(&el).is_some() {
+        return Some(true);
+    }
+    if expr_as_const(e, &el).is_some() {
+        proof { is_const_shape_model(e); }
+        return Some(true);
+    }
+    if expr_as_local(e, &el).is_some() {
+        proof { is_local_shape_model(e); }
+        if expr_ptr_eq(e, local) {
+            return None;
+        }
+        proof { expr_id_injective(e, local); }
+        return Some(true);
+    }
+    if expr_as_nat_lit(e, &el).is_some() {
+        proof { is_nat_lit_shape_model(e); }
+        return Some(true);
+    }
+    if expr_as_string_lit(e, &el) {
+        proof { is_string_lit_shape_model(e); }
+        return Some(true);
     }
     None
 }

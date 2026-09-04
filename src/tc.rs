@@ -201,8 +201,8 @@ pub mod route_stats {
     /// Which leaf/rule confirmed inside `verified_conv` (0 sort, 1 const,
     /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
     /// recursive confirmation, not just top-level ones.
-    pub static CONV_LEAF: [AtomicU64; 8] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
-    pub fn conv_leaf(kind: u8) { if (kind as usize) < 8 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
+    pub static CONV_LEAF: [AtomicU64; 9] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+    pub fn conv_leaf(kind: u8) { if (kind as usize) < 9 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
     thread_local! {
         /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
@@ -276,9 +276,9 @@ pub mod route_stats {
             if nontrivial == 0 { 0.0 } else { 100.0 * verified as f64 / nontrivial as f64 },
             if verified + lt == 0 { 0.0 } else { 100.0 * verified as f64 / (verified + lt) as f64 },
         ) + "\n" + &branches() + &format!(
-            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {}",
+            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
-            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed))
+            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed))
     }
 }
 
@@ -1183,6 +1183,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         };
         route_stats::bump(branch);
+        if result && std::env::var_os("NANODA_SAMPLE_LEGACY").is_some() {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n % 997 == 0 && n < 997 * 40 {
+                let bname = if std::ptr::eq(branch, &route_stats::LEG_PROOF_IRREL) { "proof_irrel" } else if std::ptr::eq(branch, &route_stats::LEG_LAZY_DELTA) { "lazy_delta" } else if std::ptr::eq(branch, &route_stats::LEG_CONST) { "const" } else if std::ptr::eq(branch, &route_stats::LEG_LOCAL) { "local" } else if std::ptr::eq(branch, &route_stats::LEG_PROJ) { "proj" } else if std::ptr::eq(branch, &route_stats::LEG_WHNF_RETRY) { "whnf_retry" } else if std::ptr::eq(branch, &route_stats::LEG_APP) { "app" } else if std::ptr::eq(branch, &route_stats::LEG_ETA) { "eta" } else if std::ptr::eq(branch, &route_stats::LEG_ETA_STRUCT) { "eta_struct" } else if std::ptr::eq(branch, &route_stats::LEG_STRING) { "string" } else if std::ptr::eq(branch, &route_stats::LEG_UNIT) { "unit" } else { "?" };
+                eprintln!("SAMPLE[{}] branch={} fv={}/{} lbv={}/{}\n  X: {:?}\n  Y: {:?}", n, bname, self.ctx.has_fvars(x_n), self.ctx.has_fvars(y_n), self.ctx.num_loose_bvars(x_n), self.ctx.num_loose_bvars(y_n), self.ctx.debug_print(x_n), self.ctx.debug_print(y_n));
+            }
+        }
         if result {
             route_stats::bump(&route_stats::LEGACY_TRUE);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));

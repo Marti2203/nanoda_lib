@@ -478,6 +478,22 @@ pub open spec fn fv_below(e: ExprSpec, b: u32) -> bool
     }
 }
 
+/// `k` does not occur as a free variable in `e` -- the freshness a
+/// binder's fresh-instance rule needs (checkable at run time by pointer
+/// comparison, unlike an id ordering).
+pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::Free(id) => id != k,
+        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => true,
+        ExprSpec::App(f, a) => fv_absent(*f, k) && fv_absent(*a, k),
+        ExprSpec::Bind(t, bd) => fv_absent(*t, k) && fv_absent(*bd, k),
+        ExprSpec::Let(t, v, bd) => fv_absent(*t, k) && fv_absent(*v, k) && fv_absent(*bd, k),
+        ExprSpec::Proj(pidx, s) => fv_absent(*s, k),
+    }
+}
+
 /// `find_from_end` misses when the id is absent.
 pub proof fn find_from_end_none(ks: Seq<u32>, id: u32)
     requires forall |i: int| 0 <= i < ks.len() ==> ks[i] != id

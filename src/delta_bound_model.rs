@@ -106,6 +106,11 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_sub};
+#[cfg(verus_only)]
+use crate::tc_model::{deq_any_bind_fresh, inst_free};
+use crate::expr_arena_bridge::verified_fv_absent;
+#[cfg(verus_only)]
+use crate::expr_model::fv_absent;
 use crate::expr_arena_bridge::expr_as_proj;
 #[cfg(verus_only)]
 use crate::tc_model::{deq_leaf, deq_any_refl, deq_any_of_leaf, deq_any_app_congr, deq_any_bind_congr, deq_any_proj_congr, deq_any_symm, deq_any_trans};
@@ -2677,6 +2682,54 @@ fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) {
     crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits());
 }
 
+/// The binder case of `verified_conv` by the FRESH-INSTANCE rule: open
+/// both bodies with one fresh local (`mk_dbj_level`, balanced by
+/// `replace_dbj_level` before returning), certify at run time that the
+/// local occurs in neither body (`verified_fv_absent`, pointer
+/// comparison), and compare the opened bodies -- closed terms now, so
+/// every reduction route applies. The claim composes through
+/// `deq_any_bind_fresh`.
+pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires
+        k <= 500,
+        deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
+    ensures match result {
+        Some(true) => deq_any(to_model_of_env(*env), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
+        _ => true,
+    }
+    decreases budget, 2int
+{
+    let ghost em = to_model_of_env(*env);
+    let sb1 = match verified_size(ctx, b1, fuel) { Some(v) => v, None => return None };
+    let sb2 = match verified_size(ctx, b2, fuel) { Some(v) => v, None => return None };
+    proof {
+        depth_le_size(to_model(b1));
+        depth_le_size(to_model(b2));
+    }
+    let local = ctx.mk_dbj_level(name, style, t1);
+    let substs: [ExprPtr<'t>; 1] = [local];
+    let mut ok = false;
+    let ib1 = verified_inst(ctx, b1, &substs, 0, fuel);
+    let ib2 = verified_inst(ctx, b2, &substs, 0, fuel);
+    if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
+        if verified_fv_absent(ctx, b1, local, fuel) == Some(true) && verified_fv_absent(ctx, b2, local, fuel) == Some(true) {
+            if let Some(true) = verified_conv(ctx, env, ib1, ib2, fuel, k, budget) {
+                proof {
+                    let kk = expr_id(local);
+                    let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
+                    assert(sm =~= seq![ExprSpec::Free(kk)]);
+                    assert(to_model(ib1) == inst_free(to_model(b1), kk));
+                    assert(to_model(ib2) == inst_free(to_model(b2), kk));
+                    deq_any_bind_fresh(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2), kk);
+                }
+                ok = true;
+            }
+        }
+    }
+    ctx.replace_dbj_level(local);
+    if ok { conv_stat(8); Some(true) } else { None }
+}
+
 /// `verified_conv` with the per-checker failure cache around it: pairs
 /// this checker already failed on are not re-searched (the recursion
 /// revisits the same sub-pairs from many contexts).
@@ -2769,11 +2822,14 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         _ => {}
     }
     match (expr_as_pi(&xe), expr_as_pi(&ye)) {
-        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
             if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
                 if let Some(true) = verified_conv(ctx, env, b1, b2, fuel, k, budget - 1) {
                     proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
                     return Some(true);
                 }
             }
@@ -2781,11 +2837,14 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         _ => {}
     }
     match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
-        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
             if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
                 if let Some(true) = verified_conv(ctx, env, b1, b2, fuel, k, budget - 1) {
                     proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
                     return Some(true);
                 }
             }
