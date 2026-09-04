@@ -1339,6 +1339,9 @@ pub proof fn complete_depth_bound(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat,
                 assert(complete(env, e) == e);
             }
             assert(size(e) == 1);
+            // Pinned explicitly: the `1 * k == k` normalization drifted
+            // across a Verus/Z3 bump (0.2026.09.03), so don't rely on it.
+            assert(size(e) * k == k) by (nonlinear_arith) requires size(e) == 1;
         }
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) => {
             assert(complete(env, e) == e);
