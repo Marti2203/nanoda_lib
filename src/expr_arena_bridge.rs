@@ -672,6 +672,15 @@ pub ghost struct RecDataSpec {
 
 pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
 
+/// A constructor id is never a recursor id (one declaration per name):
+/// the recursor-iota rule cannot fire on a constructor-headed spine.
+#[verifier::external_body]
+pub proof fn ctor_not_rec(id: u64)
+    requires ctor_num_params_of(id) is Some
+    ensures rec_data_of(id) is None
+{
+}
+
 /// Disclosed trust: every recursor rule's right-hand side is a CLOSED
 /// term (no loose bound variables, no free variables) with no string
 /// literals -- a Lean export's rule values are generated closed lambda
@@ -687,6 +696,10 @@ pub proof fn rec_rule_rhs_wf(id: u64, i: int)
         nlbv(rec_data_of(id)->Some_0.rules[i].rhs) == 0,
         !has_fv(rec_data_of(id)->Some_0.rules[i].rhs),
         crate::beta_model::string_free(rec_data_of(id)->Some_0.rules[i].rhs),
+        // A rule value abstracts at least the motive: a lambda.
+        rec_data_of(id)->Some_0.rules[i].rhs is Bind,
+        // A rule's constructor id IS a constructor (one declaration per name).
+        ctor_num_params_of(rec_data_of(id)->Some_0.rules[i].ctor_id) is Some,
 {
 }
 

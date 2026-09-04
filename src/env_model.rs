@@ -455,6 +455,7 @@ pub proof fn env_closed_of_global<'x, 'a>(env: Env<'x, 'a>)
 {
     env_global_wf(env);
     env_global_closed_wf(env);
+    env_defs_not_recs(env);
 }
 
 /// THE CAPPED MODEL (delta-lift CM, 2026-09-04): `to_model_of_env(env)`
@@ -482,6 +483,14 @@ pub open spec fn env_model_capped<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, 
 pub proof fn env_defs_not_ctors<'x, 'a>(env: Env<'x, 'a>)
     ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
         ==> crate::expr_arena_bridge::ctor_num_params_of(id) is None
+{
+}
+
+/// Trust: no definition/theorem id is a recursor id (one declaration per name).
+#[verifier::external_body]
+pub proof fn env_defs_not_recs<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
+        ==> crate::expr_arena_bridge::rec_data_of(id) is None
 {
 }
 
@@ -530,9 +539,11 @@ pub proof fn env_model_capped_closed<'x, 'a>(env: Env<'x, 'a>, k: nat)
 {
     env_global_wf(env);
     env_defs_not_ctors(env);
+    env_defs_not_recs(env);
     let m = env_model_capped(env, k);
     assert forall |id: u64| #[trigger] m.contains_key(id) implies
-        nlbv(m[id].1) == 0 && !has_fv(m[id].1) && crate::expr_arena_bridge::ctor_num_params_of(id) is None by {
+        nlbv(m[id].1) == 0 && !has_fv(m[id].1) && crate::expr_arena_bridge::ctor_num_params_of(id) is None
+        && crate::expr_arena_bridge::rec_data_of(id) is None by {
         assert(to_model_of_env(env).contains_key(id));
         assert(m[id].1 == to_model_of_env(env)[id].1);
     }
