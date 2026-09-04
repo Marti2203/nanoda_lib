@@ -1720,6 +1720,27 @@ pub proof fn pstep_d_rec_spine_cases(env: Map<u64, (Seq<u64>, ExprSpec)>, rid: u
     }
 }
 
+/// One argument of a spine steps (many steps) under the spine.
+pub proof fn pstep_star_spine_update(env: Map<u64, (Seq<u64>, ExprSpec)>, head: ExprSpec, args: Seq<ExprSpec>, i: int, y: ExprSpec)
+    requires
+        0 <= i < args.len(),
+        pstep_star(env, args[i], y),
+    ensures pstep_star(env, spine_app(head, args), spine_app(head, args.update(i, y)))
+{
+    let args2 = args.update(i, y);
+    let pre = args.subrange(0, i);
+    let rest = args.subrange(i + 1, args.len() as int);
+    assert(args =~= pre.push(args[i]) + rest);
+    assert(args2 =~= pre.push(y) + rest);
+    let x = spine_app(head, pre);
+    spine_app_concat(head, pre.push(args[i]), rest);
+    spine_app_concat(head, pre.push(y), rest);
+    spine_app_compose_last(head, pre, args[i]);
+    spine_app_compose_last(head, pre, y);
+    pstep_star_app_arg_congr(env, x, args[i], y);
+    pstep_spine_app_star(env, ExprSpec::App(Box::new(x), Box::new(args[i])), ExprSpec::App(Box::new(x), Box::new(y)), rest);
+}
+
 /// INVERSION for a `Proj` step: it is congruence (same idx, inner
 /// steps) or iota. The one place the family lemmas' `Proj` cases split.
 /// Takes the BOXED inner so every formula matches `pstep`'s own arm

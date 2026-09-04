@@ -77,7 +77,13 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_has};
+use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
+#[cfg(verus_only)]
+use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
+#[cfg(verus_only)]
+use crate::level_arena_bridge::name_id_injective;
 #[cfg(verus_only)]
 use crate::beta_model::size;
 #[cfg(verus_only)]
@@ -952,6 +958,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
     ensures
         pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
+    decreases fuel
 {
     let mut cur = e;
     let mut i: u32 = 0;
@@ -1004,9 +1011,20 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             reveal_with_fuel(whnf_fixpoint_final_bound, 2);
             reveal_with_fuel(whnf_fixpoint_final_d, 2);
         }
-        let r = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(500 as nat), Ghost(500 as nat), 1, Ghost(whnf_fixpoint_final_bound(500 as nat, 500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(500 as nat, 1 as nat))) {
+        let r1 = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(500 as nat), Ghost(500 as nat), 1, Ghost(whnf_fixpoint_final_bound(500 as nat, 500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(500 as nat, 1 as nat))) {
             Some(v) => v,
             None => return cur,
+        };
+        // rec-iota P2: one recursor step on the round's result (major
+        // premise whnf'd inside, rule certified at run time).
+        let r = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
+            Some(v) => {
+                proof {
+                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r1), to_model(v));
+                }
+                v
+            }
+            None => r1,
         };
         if expr_ptr_eq(r, cur) {
             return cur;
@@ -2175,6 +2193,207 @@ pub fn verified_reduce_rec_step<'t, 'p: 't, 'x>(
         }
         None => None,
     }
+}
+
+/// `find_index` hits are in range and hit the value.
+pub proof fn find_index_hit<T>(s: Seq<T>, v: T)
+    ensures match find_index(s, v) {
+        Some(i) => i < s.len() && s[i as int] == v,
+        None => true,
+    }
+    decreases s.len()
+{
+    if s.len() == 0 {
+    } else if s[0] == v {
+    } else {
+        find_index_hit(s.subrange(1, s.len() as int), v);
+    }
+}
+
+/// The exec rule scan (`find_index` by constructor NAME) agrees with the
+/// model's `find_rule` (by constructor id): `name_id` is injective.
+pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr<'a>)
+    ensures find_rule(rec_rules_model(rules), name_id(cname)) == (match find_index(rec_rule_ctor_names(rules), cname) {
+        Some(i) => Some(i as int),
+        None => None,
+    })
+    decreases rules.len()
+{
+    let names = rec_rule_ctor_names(rules);
+    let model = rec_rules_model(rules);
+    if rules.len() == 0 {
+        assert(names.len() == 0);
+        assert(model.len() == 0);
+    } else {
+        name_id_injective(rec_rule_ctor_name_of(rules[0]), cname);
+        assert(names[0] == rec_rule_ctor_name_of(rules[0]));
+        assert(model[0].ctor_id == name_id(rec_rule_ctor_name_of(rules[0])));
+        let rest = rules.subrange(1, rules.len() as int);
+        assert(names.subrange(1, names.len() as int) =~= rec_rule_ctor_names(rest));
+        assert(model.drop_first() =~= rec_rules_model(rest));
+        find_rule_of_find_index(rest, cname);
+    }
+}
+
+/// RECURSOR IOTA PRODUCER over the capped model (rec-iota P2a): mirrors
+/// `TypeChecker::reduce_rec` -- recursor head, whnf the major premise
+/// (capped measured rounds), constructor spine, rule by constructor
+/// name, the rule value at the recursor's levels applied to the
+/// params/motives/minors prefix, the constructor fields, and the trailing
+/// arguments -- and certifies `rec_ready` at run time (argument counts
+/// <= 64, rule value size <= 500). The claim is ONE genuine parallel
+/// recursor step after the congruence-star that reduced the major, under
+/// the capped model.
+pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let fun_el = ctx.read_expr(fun);
+    let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
+    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
+    if args.len() > 64 || major_idx >= args.len() {
+        return None;
+    }
+    let nprefix: usize = (np as usize) + (nm as usize) + (nmin as usize);
+    if nprefix > major_idx {
+        return None;
+    }
+    let major = args[major_idx];
+    proof {
+        spine_app_nlbv_decompose(to_model(fun), args_model_of(args@));
+        assert(args_model_of(args@)[major_idx as int] == to_model(major));
+        assert(nlbv(to_model(major)) <= 0);
+    }
+    if fuel == 0 {
+        return None;
+    }
+    let majw = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 8, k);
+    let (chead, cargs) = match verified_unfold_apps(ctx, majw, fuel) { Some(p) => p, None => return None };
+    let chead_el = ctx.read_expr(chead);
+    let (cname, _clevels) = match expr_as_const(chead, &chead_el) { Some(p) => p, None => return None };
+    if cargs.len() > 64 {
+        return None;
+    }
+    let rule = match verified_find_rec_rule(&rules, cname) { Some(rr) => rr, None => return None };
+    let nf: usize = rec_rule_ctor_telescope_size_wo_params(&rule) as usize;
+    if nf > cargs.len() {
+        return None;
+    }
+    let rhs = rec_rule_val(&rule);
+    let sz = match verified_size(ctx, rhs, fuel) { Some(v) => v, None => return None };
+    if sz > 500 {
+        return None;
+    }
+    let uv = read_levels_vec(ctx, uparams);
+    let lvv = read_levels_vec(ctx, rlevels);
+    if uv.len() != lvv.len() {
+        return None;
+    }
+    assert(to_model_of_levels(uparams).len() == to_model_of_levels(rlevels).len());
+    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, fuel) { Some(b) => b, None => return None };
+    let prefix_args = &args[0..nprefix];
+    let field_args = &cargs[(cargs.len() - nf)..cargs.len()];
+    let post_args = &args[(major_idx + 1)..args.len()];
+    let s1 = verified_foldl_apps(ctx, body, prefix_args);
+    let s2 = verified_foldl_apps(ctx, s1, field_args);
+    let r = verified_foldl_apps(ctx, s2, post_args);
+    proof {
+        // Model views.
+        is_const_shape_model(fun);
+        const_levels_vec_model(fun);
+        is_const_shape_model(chead);
+        const_levels_vec_model(chead);
+        let rid = const_id(fun);
+        let lv = const_levels_vec(fun);
+        let head = ExprSpec::Const(rid, lv);
+        assert(rid == name_id(rname));
+        let cid = const_id(chead);
+        let clv = const_levels_vec(chead);
+        let chm = ExprSpec::Const(cid, clv);
+        assert(cid == name_id(cname));
+        let am = args_model_of(args@);
+        let mi = major_idx as int;
+        let am2 = am.update(mi, to_model(majw));
+        let sp2 = spine_app(head, am2);
+        assert(to_model(e) == spine_app(head, am));
+        // The major reduced under the spine.
+        pstep_star_spine_update(cm, head, am, mi, to_model(majw));
+        assert(pstep_star(cm, to_model(e), sp2));
+        // Recursor data at the model level.
+        let rd = RecDataSpec {
+            num_params: np as nat,
+            num_motives: nm as nat,
+            num_minors: nmin as nat,
+            major_idx: major_idx as nat,
+            uparams: level_names(to_model_of_levels(uparams)),
+            rules: rec_rules_model(rules@),
+        };
+        assert(to_model_of_recursors(*env)[rid] == rd);
+        rec_data_of_agrees(*env, rid);
+        assert(rec_data_of(rid) == Some(rd));
+        // The rule.
+        find_rule_of_find_index(rules@, cname);
+        find_index_hit(rec_rule_ctor_names(rules@), cname);
+        let ri = find_index(rec_rule_ctor_names(rules@), cname)->Some_0 as int;
+        assert(0 <= ri < rules@.len());
+        assert(rules@[ri] == rule);
+        assert(rec_rule_ctor_names(rules@)[ri] == cname);
+        assert(rec_rule_ctor_name_of(rule) == cname);
+        assert(find_rule(rd.rules, cid) == Some(ri));
+        assert(rd.rules[ri] == rec_rules_model(rules@)[ri]);
+        assert(rec_rules_model(rules@)[ri] == RecRuleSpec {
+            ctor_id: name_id(rec_rule_ctor_name_of(rules@[ri])),
+            nfields: rec_rule_ctor_telescope_size_wo_params_of(rules@[ri]) as nat,
+            rhs: to_model(rec_rule_val_of(rules@[ri])),
+        });
+        assert(rd.rules[ri] == RecRuleSpec { ctor_id: cid, nfields: nf as nat, rhs: to_model(rhs) });
+        // Spine shapes.
+        spine_destruct_app(head, am2);
+        let cam = args_model_of(cargs@);
+        assert(to_model(majw) == spine_app(chm, cam));
+        spine_destruct_app(chm, cam);
+        assert(am2[mi] == to_model(majw));
+        assert(rec_prefix(rd) == nprefix as nat);
+        assert(rec_ready(sp2));
+        // The rule instance equals the exec result.
+        let bm = crate::expr_model::subst_expr_levels(to_model(rhs), rd.uparams, lv);
+        assert(to_model(body) == bm);
+        assert(args_model_of(prefix_args@) =~= am2.subrange(0, nprefix as int));
+        assert(args_model_of(field_args@) =~= cam.subrange((cam.len() - nf) as int, cam.len() as int));
+        assert(args_model_of(post_args@) =~= am2.subrange(mi + 1, am2.len() as int));
+        assert(to_model(r) == rec_result(sp2));
+        // One recursor step at the outermost application node.
+        let init = am2.subrange(0, am2.len() - 1);
+        let last = am2[am2.len() - 1];
+        assert(am2 =~= init.push(last));
+        spine_app_compose_last(head, init, last);
+        let fpart = spine_app(head, init);
+        assert(sp2 == ExprSpec::App(Box::new(fpart), Box::new(last)));
+        assert(pstep(cm, fpart, fpart));
+        assert(pstep(cm, last, last));
+        pstep_rec_intro(cm, Box::new(fpart), Box::new(last), fpart, last, to_model(r));
+        pstep_star_one(cm, sp2, to_model(r));
+        pstep_star_trans(cm, to_model(e), sp2, to_model(r));
+        // The result is closed: every argument of the stepped spine is.
+        assert forall |i: int| 0 <= i < am2.len() implies nlbv(#[trigger] am2[i]) <= 0 by {
+            if i == mi {
+            } else {
+                assert(am2[i] == am[i]);
+                assert(am[i] == to_model(args@[i]));
+            }
+        }
+        crate::beta_model::spine_app_nlbv(head, am2);
+        crate::beta_model::rec_result_bounds(sp2, 0, 0, 0);
+    }
+    Some(r)
 }
 
 /// `tc.rs::do_nat_bin`'s `Beq` case (`tc.rs:387`): whnf both operands,
