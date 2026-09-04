@@ -68,12 +68,6 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// of different struct fields are exclusive, but it can't analyze what fields of a given
     /// field's type are being exclusively borrowed.
     pub(crate) env: &'x Env<'x, 't>,
-    /// Lazily-initialized environment-cap certificate for the verified
-    /// delta route (`delta_bound_model::EnvCapCert`). Outer `None` means
-    /// the scan has not been attempted yet; inner `None` means the scan
-    /// declined (a declaration too large, or fuel ran out), so the route
-    /// stays off for this checker.
-    pub(crate) verified_env_cert: Option<Option<crate::delta_bound_model::EnvCapCert<'x, 'x, 't>>>,
     /// The caches for things like inference, reduction, and equality checking.
     pub(crate) tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
@@ -260,7 +254,7 @@ pub mod route_stats {
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
         assert_eq!(dag.dbj_level_counter, 0);
-        Self { ctx: dag, env, verified_env_cert: None, tc_cache: TcCache::new(), declar_info }
+        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info }
     }
 
     /// Conduct the preliminary checks done on all declarations; a declaration
@@ -1047,22 +1041,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // reused across calls; a `Some(true)` carries machine-checked
         // pstep_star reductions of both sides to a related pair. Like the
         // core route above, this only ever CONFIRMS equality.
-        if self.verified_env_cert.is_none() {
-            let made = crate::delta_bound_model::EnvCapCert::make(self.ctx, self.env, 100_000);
-            route_stats::bump(if made.is_some() { &route_stats::CERT_OK } else { &route_stats::CERT_NONE });
-            self.verified_env_cert = Some(made);
-        }
-        if let Some(None) = self.verified_env_cert.as_ref() {
-            route_stats::bump(&route_stats::NONQUICK_WITHOUT_CERT);
-        }
-        if let Some(Some(cert)) = self.verified_env_cert.as_ref() {
-            if let Some(true) =
-                crate::delta_bound_model::verified_lazy_delta_checked_cached(self.ctx, cert, x, y, 100)
-            {
-                route_stats::bump(&route_stats::DELTA);
-                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-                return true
-            }
+        // Verified delta route (see `delta_bound_model::verified_lazy_delta_capped`):
+        // one lazy-delta round over the CAPPED environment model
+        // (definitions certified at unfold time; no global certificate),
+        // then the verified core on the reducts; a Some(true) carries
+        // machine-checked pstep_star reductions of both sides to a related
+        // pair. Like the core route, this only ever CONFIRMS equality.
+        if let Some(true) =
+            crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, 500)
+        {
+            route_stats::bump(&route_stats::DELTA);
+            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+            return true
         }
         // Verified whnf-join route (see `delta_bound_model::
         // verified_defeq_whnf_capped`): reduce both sides with the verified
@@ -1547,7 +1537,7 @@ mod routed_tests {
     /// (not ptr-equal, not cached, not a sort/sort pair, not binders)
     /// and by the env-free verified core (no unfolding there), so the
     /// delta route is the first responder: it builds the env-cap
-    /// certificate (`EnvCapCert::make`), unfolds `foo`, and confirms
+    /// capped model (no certificate), unfolds `foo`, and confirms
     /// via the round's Continue + core close. The legacy pipeline's own
     /// `lazy_delta_step` sits later and would also answer, so this
     /// asserts behavior plus route placement, not exclusive attribution.
@@ -1579,15 +1569,10 @@ mod routed_tests {
         let c_foo = tc.ctx.mk_const(foo, uparams);
         assert_ne!(c_foo, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(c_foo, prop), "Const(foo) with foo := Sort 0 must be def_eq to Sort 0 via the delta route");
-        assert!(
-            matches!(tc.verified_env_cert, Some(Some(_))),
-            "the env-cap certificate must have been built for this one-definition environment"
-        );
         // Direct attribution: the verified boundary itself confirms the
         // pair (so the routed `true` above did not need the legacy path).
-        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
         assert_eq!(
-            crate::delta_bound_model::verified_lazy_delta_checked_cached(tc.ctx, cert, c_foo, prop, 100),
+            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, c_foo, prop, 100, 500),
             Some(true),
             "the delta boundary must confirm Const(foo) == Sort 0 on its own"
         );
@@ -1617,9 +1602,8 @@ mod routed_tests {
             let redex = tc.ctx.mk_app(lam, prop);
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
-            let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, redex, prop, 100),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500),
                 Some(true),
                 "the whnf-join boundary must confirm the beta redex on its own"
             );
@@ -1667,9 +1651,8 @@ mod routed_tests {
         let applied = tc.ctx.mk_app(c_foo, prop);
         assert_ne!(applied, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
-        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, applied, prop, 100),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, applied, prop, 100, 500),
             Some(true),
             "the whnf-join boundary must confirm the delta-then-beta pair on its own"
         );
@@ -1717,9 +1700,8 @@ mod routed_tests {
         let proj = tc.ctx.mk_proj(s_name, 1, mk_ab);
         assert_ne!(proj, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
-        let cert = tc.verified_env_cert.as_ref().unwrap().as_ref().unwrap();
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_checked(tc.ctx, cert, proj, prop, 100),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, proj, prop, 100, 500),
             Some(true),
             "the whnf-join boundary must confirm the projection pair on its own"
         );

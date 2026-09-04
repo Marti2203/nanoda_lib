@@ -115,7 +115,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_measured_rounds_capped};
+use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_measured_rounds_capped, verified_unfold_def_step_capped};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -2425,6 +2425,127 @@ pub fn verified_lazy_delta_checked_cached<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t
     }
 }
 
+/// Delta-lift CM: THE LAZY-DELTA ROUTE WITHOUT A CERTIFICATE -- the same
+/// procedure as `verified_lazy_delta_checked_cached` over the capped
+/// model (definitions certified at unfold time), with the witnesses
+/// weakened to the full model. `k` (<= 500) is the per-definition size
+/// cap, no longer a global property of the environment.
+pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
+            && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi))
+            && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat)),
+        _ => true,
+    }
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+    }
+    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
+    if sx > 500 || sy > 500 {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    proof {
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
+        assert(depth(to_model(x)) <= 500);
+        assert(depth(to_model(y)) <= 500);
+        nlbv_bound_implies_max_var_below(to_model(x), 0);
+        nlbv_bound_implies_max_var_below(to_model(y), 0);
+        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
+        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
+        assert(500 + k <= 1000);
+        assert(k + 500 + 500 <= 1500);
+    }
+    let r = verified_lazy_delta_round_capped(ctx, env, x, y, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat));
+    match r {
+        Some(DeltaRoundResult::Found(b)) => {
+            if b {
+                proof {
+                    pstep_star_refl(cm, to_model(x));
+                    pstep_star_refl(cm, to_model(y));
+                    assert(pstep_star(cm, to_model(x), to_model(x))
+                        && pstep_star(cm, to_model(y), to_model(y))
+                        && (nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat) || deq_core_claim(x, y, fuel as nat)));
+                }
+                proof {
+                    let (xi, yi) = choose |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+                        pstep_star(cm, to_model(x), #[trigger] to_model(xi))
+                        && pstep_star(cm, to_model(y), #[trigger] to_model(yi))
+                        && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(xi));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(y), to_model(yi));
+                }
+                Some(true)
+            } else {
+                None
+            }
+        }
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => {
+            match verified_def_eq_core(ctx, x2, y2, fuel) {
+                Some(true) => {
+                    proof {
+                        assert(x2 == x && y2 == y);
+                        pstep_star_refl(cm, to_model(x));
+                        pstep_star_refl(cm, to_model(y));
+                        assert(pstep_star(cm, to_model(x), to_model(x2))
+                            && pstep_star(cm, to_model(y), to_model(y2))
+                            && deq_core_claim(x2, y2, fuel as nat));
+                    }
+                    proof {
+                    let (xi, yi) = choose |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+                        pstep_star(cm, to_model(x), #[trigger] to_model(xi))
+                        && pstep_star(cm, to_model(y), #[trigger] to_model(yi))
+                        && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(xi));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(y), to_model(yi));
+                }
+                Some(true)
+                }
+                _ => None,
+            }
+        }
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            match verified_def_eq_core(ctx, x2, y2, fuel) {
+                Some(true) => {
+                    proof {
+                        if x2 == x {
+                            pstep_star_refl(cm, to_model(x));
+                        }
+                        if y2 == y {
+                            pstep_star_refl(cm, to_model(y));
+                        }
+                        assert(pstep_star(cm, to_model(x), to_model(x2))
+                            && pstep_star(cm, to_model(y), to_model(y2))
+                            && deq_core_claim(x2, y2, fuel as nat));
+                    }
+                    proof {
+                    let (xi, yi) = choose |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
+                        pstep_star(cm, to_model(x), #[trigger] to_model(xi))
+                        && pstep_star(cm, to_model(y), #[trigger] to_model(yi))
+                        && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat) || deq_core_claim(xi, yi, fuel as nat));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(xi));
+                    pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(y), to_model(yi));
+                }
+                Some(true)
+                }
+                _ => None,
+            }
+        }
+        None => None,
+    }
+}
+
 
 /// THE WHNF-JOIN ROUTE BOUNDARY: reduce BOTH sides with the real
 /// verified MEASURED multi-round whnf (`verified_whnf_measured_rounds`,
@@ -2653,6 +2774,60 @@ pub fn verified_delta_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     }
 }
 
+/// Delta-lift CM: `verified_delta_bounded` over the capped model (one
+/// delta attempt certified at unfold time, then one beta/zeta step);
+/// `k` replaces `env_global_cap`.
+pub fn verified_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        max_var_below(to_model(e), bound),
+        depth(to_model(e)) <= d,
+        bound + k <= bound2,
+        k + d + d <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+            &&& max_var_below(to_model(r), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(r)) <= d2 * d2 + d2 + d2 + d2 + d2
+        },
+        None => true,
+    }
+{
+    proof {
+        max_var_below_mono(to_model(e), bound, bound2);
+    }
+    match verified_unfold_def_step_capped(ctx, env, e, fuel, k, Ghost(bound2), Ghost(d)) {
+        Some(unfolded) => {
+            let ghost cm = env_model_capped(*env, k as nat);
+            match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, Ghost(bound2), Ghost(d2)) {
+                Some(r) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            cm.contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == cm[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(unfolded), to_model(r));
+                        pstep_star_trans(cm, to_model(e), to_model(unfolded), to_model(r));
+                    }
+                    Some(r)
+                }
+                None => {
+                    proof {
+                        max_var_below_mono(to_model(unfolded), bound2, bound2 + d2 * d2 * d2 + d2 * d2);
+                        assert(depth(to_model(unfolded)) <= d2);
+                        assert(d2 <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith) {}
+                    }
+                    Some(unfolded)
+                }
+            }
+        }
+        None => None,
+    }
+}
+
 /// Real-arena counterpart to ONE iteration of `tc.rs::TypeChecker::lazy_
 /// delta_step`'s own loop body (`tc.rs:1271-1304`, everything up to but
 /// NOT including the trailing `def_eq_quick_check` early-exit at
@@ -2854,6 +3029,146 @@ pub fn verified_lazy_delta_round<'t, 'p: 't, 'x>(
                     Some(b) => Some(DeltaRoundResult::Found(b)),
                     None => match verified_delta_bounded(ctx, env, x, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                         Some(xprime) => match verified_delta_bounded(ctx, env, y, fuel, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                            Some(yprime) => Some(DeltaRoundResult::Continue(xprime, yprime)),
+                            None => None,
+                        },
+                        None => None,
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// Delta-lift CM: `verified_lazy_delta_round` over the capped model.
+pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    k: u32,
+    Ghost(bound): Ghost<nat>,
+    Ghost(d): Ghost<nat>,
+    Ghost(bound2): Ghost<nat>,
+    Ghost(d2): Ghost<nat>,
+) -> (result: Option<DeltaRoundResult<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        max_var_below(to_model(x), bound),
+        depth(to_model(x)) <= d,
+        nlbv(to_model(y)) <= 0,
+        max_var_below(to_model(y), bound),
+        depth(to_model(y)) <= d,
+        d <= 60000,
+        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
+        bound + k <= bound2,
+        k + d + d <= d2,
+        d2 <= 60000,
+        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
+    ensures match result {
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            &&& (x2 == x || pstep_star(env_model_capped(*env, k as nat), to_model(x), to_model(x2)))
+            &&& (y2 == y || pstep_star(env_model_capped(*env, k as nat), to_model(y), to_model(y2)))
+            &&& nlbv(to_model(x2)) <= 0
+            &&& max_var_below(to_model(x2), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(x2)) <= d2 * d2 + d2 + d2 + d2 + d2
+            &&& nlbv(to_model(y2)) <= 0
+            &&& max_var_below(to_model(y2), bound2 + d2 * d2 * d2 + d2 * d2)
+            &&& depth(to_model(y2)) <= d2 * d2 + d2 + d2 + d2 + d2
+        },
+        Some(DeltaRoundResult::Exhausted(x2, y2)) => x2 == x && y2 == y,
+        Some(DeltaRoundResult::Found(b)) => b ==> nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat),
+        _ => true,
+    }
+{
+    proof {
+        assert(bound <= bound2);
+        assert(d <= d2);
+    }
+    if let Some(b) = verified_def_eq_nat(ctx, x, y, fuel) {
+        return Some(DeltaRoundResult::Found(b));
+    }
+    let r1 = verified_get_applied_def(ctx, env, x, fuel);
+    let r2 = verified_get_applied_def(ctx, env, y, fuel);
+    match (r1, r2) {
+        (None, None) => Some(DeltaRoundResult::Exhausted(x, y)),
+        (Some(_), None) => {
+            match verified_try_unfold_proj_app(ctx, y, fuel, Ghost(bound), Ghost(d)) {
+                Some(yprime) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            env_model_capped(*env, k as nat).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(y), to_model(yprime));
+                        weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        weaken_proj_result_bound(to_model(yprime), bound, d, bound2, d2);
+                    }
+                    Some(DeltaRoundResult::Continue(x, yprime))
+                }
+                None => match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                    Some(xprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(xprime, y))
+                    }
+                    None => None,
+                },
+            }
+        }
+        (None, Some(_)) => {
+            match verified_try_unfold_proj_app(ctx, x, fuel, Ghost(bound), Ghost(d)) {
+                Some(xprime) => {
+                    proof {
+                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
+                            env_model_capped(*env, k as nat).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
+                        by {}
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(x), to_model(xprime));
+                        weaken_proj_result_bound(to_model(xprime), bound, d, bound2, d2);
+                        weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                    }
+                    Some(DeltaRoundResult::Continue(xprime, y))
+                }
+                None => match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                    Some(yprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(x, yprime))
+                    }
+                    None => None,
+                },
+            }
+        }
+        (Some((x_name, x_hint)), Some((y_name, y_hint))) => {
+            if verified_is_lt(&x_hint, &y_hint) {
+                match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                    Some(yprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(x, yprime))
+                    }
+                    None => None,
+                }
+            } else if verified_is_lt(&y_hint, &x_hint) {
+                match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                    Some(xprime) => {
+                        proof {
+                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                        }
+                        Some(DeltaRoundResult::Continue(xprime, y))
+                    }
+                    None => None,
+                }
+            } else {
+                match verified_try_eq_const_app(ctx, x, x_name, x_hint, y, y_name, y_hint, fuel) {
+                    Some(b) => Some(DeltaRoundResult::Found(b)),
+                    None => match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                        Some(xprime) => match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
                             Some(yprime) => Some(DeltaRoundResult::Continue(xprime, yprime)),
                             None => None,
                         },
