@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
-use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose};
+use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
 #[cfg(verus_only)]
@@ -1021,7 +1021,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         };
         // rec-iota P2: one recursor step on the round's result (major
         // premise whnf'd inside, rule certified at run time).
-        let r = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
+        let r2 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
             Some(v) => {
                 proof {
                     pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r1), to_model(v));
@@ -1029,6 +1029,20 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 v
             }
             None => r1,
+        };
+        // proj-delta (2026-09-04): a `Proj`-headed spine whose structure
+        // needs DELTA (an instance constant) before its constructor head
+        // shows -- the real `reduce_proj(cheap=false)` `whnf`s the
+        // structure fully; this mirrors that with the capped multi-round
+        // whnf (recursion through `fuel`).
+        let r = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, r2, (fuel - 1) as u32, k) }) {
+            Some(v) => {
+                proof {
+                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r2), to_model(v));
+                }
+                v
+            }
+            None => r2,
         };
         if expr_ptr_eq(r, cur) {
             return cur;
@@ -1042,6 +1056,78 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
     cur
 }
 
+
+/// PROJ-DELTA producer (2026-09-04): `reduce_proj(cheap = false)`'s
+/// missing half. The measured rounds' no-unfolding step only reduces a
+/// `Proj` whose structure is ALREADY a constructor spine after beta/zeta;
+/// the dominant real shape (`LE.le Nat instLENat n a` after one delta +
+/// beta = `%(instLENat).0 n a`) needs the structure DELTA-unfolded first
+/// (`instLENat` is a definition whose value is `LE.mk Nat.le`). Here the
+/// structure is reduced with the capped multi-round whnf (delta + rec +
+/// nested proj-delta, all through `fuel`), then proj-iota extracts the
+/// field and the outer args are re-applied. `pstep_star` composes as
+/// congruence-through-`Proj` (`pstep_star_proj_congr`) + one iota step
+/// (`pstep_star_iota`) + spine congruence (`pstep_spine_app_star`).
+pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    let (head, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let head_el = ctx.read_expr(head);
+    let (_, idx, structure) = match expr_as_proj(&head_el) { Some(p) => p, None => return None };
+    if idx > 0xFFFF_0000 {
+        return None;
+    }
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    assert(to_model(head) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
+    proof {
+        spine_app_nlbv_decompose(to_model(head), args_model);
+        assert(nlbv(to_model(head)) <= 0);
+        assert(nlbv(to_model(structure)) <= 0);
+    }
+    if fuel == 0 {
+        return None;
+    }
+    let s2 = verified_whnf_measured_rounds_capped(ctx, env, structure, (fuel - 1) as u32, 8, k);
+    let (fun, cargs) = match verified_unfold_apps(ctx, s2, fuel) { Some(p) => p, None => return None };
+    let fun_el = ctx.read_expr(fun);
+    let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
+    let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
+    let i = num_params as usize + idx;
+    if i >= cargs.len() {
+        return None;
+    }
+    let field = cargs[i];
+    let r = verified_foldl_apps(ctx, field, args.as_slice());
+    proof {
+        let ghost cargs_model = Seq::new(cargs@.len(), |j: int| to_model(cargs@[j]));
+        is_const_shape_model(fun);
+        const_levels_vec_model(fun);
+        assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+        assert(to_model(s2) == spine_app(to_model(fun), cargs_model));
+        assert(const_id(fun) == name_id(name));
+        assert(cargs_model[i as int] == to_model(field));
+        ctor_num_params_of_agrees(*env, name_id(name));
+        pstep_star_iota(cm, idx, to_model(structure), const_id(fun), const_levels_vec(fun), cargs_model, num_params);
+        assert(pstep_star(cm, to_model(head), to_model(field)));
+        assert(to_model(e) == spine_app(to_model(head), args_model));
+        assert(to_model(r) == spine_app(to_model(field), args_model));
+        pstep_spine_app_star(cm, to_model(head), to_model(field), args_model);
+        // nlbv: the field is a sub-spine element of the (nlbv <= 0) reduct
+        spine_app_nlbv_decompose(to_model(fun), cargs_model);
+        assert(nlbv(to_model(field)) <= 0);
+        assert forall |j: int| 0 <= j < args_model.len() implies nlbv(#[trigger] args_model[j]) <= 0 by {}
+        spine_app_nlbv(to_model(field), args_model);
+    }
+    Some(r)
+}
 
 /// Real-arena mirror of `TypeChecker::ensure_sort` (`tc.rs:278-287`): if
 /// `e` is already `Sort`-shaped, return its level directly (matching the

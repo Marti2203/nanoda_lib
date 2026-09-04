@@ -220,6 +220,27 @@ pub mod route_stats {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }
     /// Set NANODA_NO_CONV to skip the conversion route (A/B measurement).
+    /// Experiment knobs (env-var overrides of the routed-def_eq caps; the
+    /// defaults are the committed production values). Read once.
+    pub fn knob(name: &'static str, default: u32) -> u32 {
+        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+    pub fn cap_k() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *V.get_or_init(|| knob("NANODA_CAP_K", 500))
+    }
+    pub fn whnf_rounds() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 8))
+    }
+    pub fn conv_budget() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 8))
+    }
+    pub fn conv_join_rounds() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 2))
+    }
     pub fn conv_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV").is_none())
@@ -1080,7 +1101,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // machine-checked pstep_star reductions of both sides to a related
         // pair. Like the core route, this only ever CONFIRMS equality.
         if let Some(true) =
-            crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, 500)
+            crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k())
         {
             route_stats::bump(&route_stats::DELTA);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
@@ -1094,7 +1115,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Some(true) carries a machine-checked `defeq` (model-level
         // definitional equality by joinability).
         if let Some(true) =
-            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, 500, 8)
+            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::whnf_rounds())
         {
             route_stats::bump(&route_stats::WHNF_JOIN);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
@@ -1107,7 +1128,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // definitional-equality relation).
         if route_stats::conv_enabled() {
             if let Some(true) =
-                crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, 500, 8)
+                crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget())
             {
                 route_stats::bump(&route_stats::CONV);
                 self.tc_cache.eq_cache.insert(SortedPair::new(x, y));

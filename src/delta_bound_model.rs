@@ -2676,6 +2676,13 @@ fn conv_stat(kind: u8) {
     crate::tc::route_stats::conv_leaf(kind);
 }
 
+/// Experiment knob (no contract; a round count is a pure budget --
+/// `verified_defeq_whnf_capped`'s claim holds for every value).
+#[verifier::external_body]
+fn conv_join_rounds() -> u32 {
+    crate::tc::route_stats::conv_join_rounds()
+}
+
 /// Failure-cache probes (diagnostics-grade, no contract): a hit only makes
 /// the route answer `None` early, never `Some(true)`.
 #[verifier::external_body]
@@ -2960,7 +2967,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         _ => {}
     }
     // last leaf: the capped whnf-join
-    match verified_defeq_whnf_capped(ctx, env, x, y, fuel, k, 2) {
+    match verified_defeq_whnf_capped(ctx, env, x, y, fuel, k, conv_join_rounds()) {
         Some(true) => {
             proof { deq_any_of_defeq(em, to_model(x), to_model(y)); }
             conv_stat(6);
