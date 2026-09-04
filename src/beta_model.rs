@@ -4335,7 +4335,8 @@ pub proof fn pstep_to_pstep_d_0(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat,
 /// values of its own concrete chain data, no equation to solve.)
 pub proof fn pstep_d_strip(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, mc: nat, dc: nat, m1: nat, d1: nat, m2: nat, d2: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         chain.len() >= 1,
         forall |i: int| 0 <= i < chain.len() - 1 ==> pstep_d(env, #[trigger] chain[i], chain[i + 1], mc, dc),
         forall |i: int| 0 <= i < chain.len() ==> max_var_below(#[trigger] chain[i], bound),
@@ -4363,8 +4364,6 @@ pub proof fn pstep_d_strip(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound
         && pstep_d(env, chain[chain.len() - 1], zch[zch.len() - 1], m2, d2)
     decreases chain.len()
 {
-    env_wf_empty_all();
-    env_closed_empty();
     if chain.len() == 1 {
         let zch = seq![y];
         assert(zch.len() == chain.len());
@@ -4575,7 +4574,8 @@ pub proof fn conf_ok_le_last(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bou
 #[verifier::rlimit(1000)]
 pub proof fn pstep_d_confluent(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         ach.len() >= 1,
         bch.len() >= 1,
         ach[0] == bch[0],
@@ -4593,8 +4593,6 @@ pub proof fn pstep_d_confluent(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, b
         && wa[wa.len() - 1] == wb[wb.len() - 1]
     decreases ach.len()
 {
-    env_wf_empty_all();
-    env_closed_empty();
     if ach.len() == 1 {
         let wa = bch;
         let wb = seq![bch[bch.len() - 1]];
@@ -4755,7 +4753,8 @@ pub proof fn pstep_d_chain_star(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<Exp
 /// `pstep_to_pstep_d`, and computes the ladder from its own data.
 pub proof fn defeq_trans_certified(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, c: ExprSpec, qch: Seq<ExprSpec>, rch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         qch.len() >= 1,
         rch.len() >= 1,
         qch[0] == rch[0],
@@ -4766,8 +4765,6 @@ pub proof fn defeq_trans_certified(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)
         conf_ok(ecap, env, bound, qch, rch, mlink, dlink, ms, ds),
     ensures defeq(env, a, c)
 {
-    env_wf_empty_all();
-    env_closed_empty();
     pstep_d_confluent(ecap, env, bound, qch, rch, mlink, dlink, ms, ds);
     let mf = ladder_last(mlink, ms);
     let df = ladder_last(dlink, ds);
@@ -4836,7 +4833,8 @@ pub open spec fn join2_d(ecap: nat, bound: nat, mlink: nat, dlink: nat, b: ExprS
 #[verifier::spinoff_prover]
 pub proof fn defeq_trans_single_middle(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         pstep_star(env, a, z1),
         pstep_star(env, c, z2),
         pstep_d(env, b, z1, mlink, dlink),
@@ -4851,8 +4849,6 @@ pub proof fn defeq_trans_single_middle(ecap: nat, env: Map<u64, (Seq<u64>, ExprS
         bound + join1_m(ecap, bound, mlink, dlink, b, z2) + 6 * join1_d(ecap, bound, dlink, b, z2) + tak_m(ecap, bound, join1_m(ecap, bound, mlink, dlink, b, z2), join1_d(ecap, bound, dlink, b, z2), z2) + 4 * tak_d(ecap, join1_d(ecap, bound, dlink, b, z2), z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
-    env_wf_empty_all();
-    env_closed_empty();
     let qch = seq![b, z1];
     let rch = seq![b, z2];
     let m1 = join1_m(ecap, bound, mlink, dlink, b, z2);
@@ -4993,7 +4989,8 @@ pub proof fn tak_m_ceil_mono(ecap: nat, bound: nat, m1: nat, d1: nat, m2: nat, d
 /// polynomial arithmetic in exec-measurable quantities.
 pub proof fn defeq_trans_single_middle_sized(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat, s0: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         pstep_star(env, a, z1),
         pstep_star(env, c, z2),
         pstep_d(env, b, z1, mlink, dlink),
@@ -5007,8 +5004,6 @@ pub proof fn defeq_trans_single_middle_sized(ecap: nat, env: Map<u64, (Seq<u64>,
         single_middle_ceil(ecap, bound, mlink, dlink, s0) <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
-    env_wf_empty_all();
-    env_closed_empty();
     let m1b = join1_m_ceil(ecap, bound, mlink, dlink, s0);
     let d1b = join1_d_ceil(ecap, dlink, s0);
     // Level-1 tak bounds for both middle terms.
@@ -14732,24 +14727,26 @@ pub proof fn full_chain_concat(env: Map<u64, (Seq<u64>, ExprSpec)>, ch1: Seq<Exp
 /// This is the last conversion step between a producer's sized chain
 /// (`spine_reduce_chain_sized_full`) and the certified-confluence
 /// machinery.
-pub proof fn chain_to_pstep_d_links(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, bound: nat, cap: nat)
+pub proof fn chain_to_pstep_d_links(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, bound: nat, cap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         pstep_chain_valid(env, ch),
         forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bound),
         forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0),
         forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= cap,
-        bound + growth(cap) + cap + 10 <= 0xFFFF_0000,
+        bound + growth(cap) * (ecap + 1) + cap * (ecap + 1) + 10 <= 0xFFFF_0000,
     ensures
-        forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap)
+        forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap) * (ecap + 1)) as nat, cap * (ecap + 1))
 {
-    env_wf_empty_all();
-    env_closed_empty();
-    assert forall |i: int| 0 <= i < ch.len() - 1 implies pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap)) as nat, cap) by {
+    let k: nat = ecap + 1;
+    assert forall |i: int| 0 <= i < ch.len() - 1 implies pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap) * k) as nat, cap * k) by {
         assert(pstep(env, ch[i], ch[i + 1]));
         growth_mono(size(ch[i]), cap);
-        pstep_to_pstep_d_0(env, bound, ch[i], ch[i + 1]);
-        pstep_d_mono(env, ch[i], ch[i + 1], (bound + growth(size(ch[i]))) as nat, size(ch[i]), (bound + growth(cap)) as nat, cap);
+        scale_le(growth(size(ch[i])), growth(cap), k);
+        scale_le(size(ch[i]), cap, k);
+        pstep_to_pstep_d(env, ecap, bound, ch[i], ch[i + 1]);
+        pstep_d_mono(env, ch[i], ch[i + 1], (bound + growth(size(ch[i])) * k) as nat, size(ch[i]) * k, (bound + growth(cap) * k) as nat, cap * k);
     }
 }
 
