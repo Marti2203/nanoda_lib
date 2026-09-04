@@ -4970,6 +4970,24 @@ pub proof fn single_middle_ceil_sat_demo_env()
     assert(single_middle_ceil(100, 1000, (1000 + growth(100)) as nat, 100, 40) <= 0xFFFF_0000) by (compute);
 }
 
+/// At `EnvCapCert`'s WORST-CASE cap (60000, the certificate's hard
+/// ceiling): only middle terms of size <= ~10 fit the single-middle
+/// route; a producer must therefore gate on the ACTUAL scanned cap
+/// (`cert.cap()`), not the ceiling. Recorded as the honest limit.
+pub proof fn single_middle_ceil_sat_demo_cert_max()
+    ensures single_middle_ceil(60000, 1000, (1000 + growth(10)) as nat, 10, 10) <= 0xFFFF_0000
+{
+    assert(single_middle_ceil(60000, 1000, (1000 + growth(10)) as nat, 10, 10) <= 0xFFFF_0000) by (compute);
+}
+
+/// At a REALISTIC scanned cap (500, the whnf routes' own working cap):
+/// middle terms of size <= 30 fit.
+pub proof fn single_middle_ceil_sat_demo_cert_typical()
+    ensures single_middle_ceil(500, 1000, (1000 + growth(30)) as nat, 30, 30) <= 0xFFFF_0000
+{
+    assert(single_middle_ceil(500, 1000, (1000 + growth(30)) as nat, 30, 30) <= 0xFFFF_0000) by (compute);
+}
+
 /// `tak_d_ceil` is monotone in its cap.
 pub proof fn tak_d_ceil_mono(ecap: nat, d1: nat, d2: nat, s0: nat)
     requires d1 <= d2
@@ -5534,6 +5552,23 @@ pub proof fn pstep_star_env_weaken(env1: Map<u64, (Seq<u64>, ExprSpec)>, env2: M
         pstep_env_weaken(env1, env2, chain[i], chain[i + 1]);
     }
     assert(pstep_chain_valid(env2, chain));
+}
+
+/// `pstep_env_weaken` mapped over an EXPLICIT chain (the producers'
+/// full-conjunct form), keeping the chain itself rather than just its
+/// endpoints -- the per-element size/mvb/strings facts a producer proved
+/// about the chain survive untouched, only the env under which the links
+/// hold grows.
+pub proof fn pstep_chain_valid_env_weaken(env1: Map<u64, (Seq<u64>, ExprSpec)>, env2: Map<u64, (Seq<u64>, ExprSpec)>, chain: Seq<ExprSpec>)
+    requires
+        pstep_chain_valid(env1, chain),
+        forall |k: u64| #[trigger] env1.contains_key(k) ==> env2.contains_key(k) && env1[k] == env2[k],
+    ensures pstep_chain_valid(env2, chain)
+{
+    assert forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 implies pstep(env2, chain[i], chain[i + 1]) by {
+        assert(pstep(env1, chain[i], chain[i + 1]));
+        pstep_env_weaken(env1, env2, chain[i], chain[i + 1]);
+    }
 }
 
 /// Support lemma for the diamond property: `pstep` is preserved by
@@ -14780,6 +14815,32 @@ pub proof fn chain_to_pstep_d_links(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec
         pstep_to_pstep_d(env, ecap, bound, ch[i], ch[i + 1]);
         pstep_d_mono(env, ch[i], ch[i + 1], (bound + growth(size(ch[i])) * k) as nat, size(ch[i]) * k, (bound + growth(cap) * k) as nat, cap * k);
     }
+}
+
+/// A sized producer's chain -- proven under `Map::empty()` (beta / zeta /
+/// iota only, e.g. `verified_whnf_beta_step_sized_full`'s) -- becomes
+/// uniform certified `pstep_d` links under ANY well-formed environment
+/// (delta-lift T4): links only get MORE valid under a larger env
+/// (`pstep_chain_valid_env_weaken`), and the certified caps are
+/// `chain_to_pstep_d_links`'s at the env cap `ecap`. This is the
+/// producer-facing entry into the env-generic confluence pipeline.
+pub proof fn empty_chain_to_pstep_d_links(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, bound: nat, cap: nat)
+    requires
+        env_wf(env, ecap),
+        env_closed(env),
+        pstep_chain_valid(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ch),
+        forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bound),
+        forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0),
+        forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= cap,
+        bound + growth(cap) * (ecap + 1) + cap * (ecap + 1) + 10 <= 0xFFFF_0000,
+    ensures
+        pstep_chain_valid(env, ch),
+        forall |i: int| 0 <= i < ch.len() - 1 ==> pstep_d(env, #[trigger] ch[i], ch[i + 1], (bound + growth(cap) * (ecap + 1)) as nat, cap * (ecap + 1))
+{
+    let empty = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+    assert forall |k: u64| #[trigger] empty.contains_key(k) implies env.contains_key(k) && empty[k] == env[k] by {}
+    pstep_chain_valid_env_weaken(empty, env, ch);
+    chain_to_pstep_d_links(ecap, env, ch, bound, cap);
 }
 
 /// `spine_reduce_chain_sized_full` wrapped under a further argument
