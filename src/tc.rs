@@ -201,8 +201,8 @@ pub mod route_stats {
     /// Which leaf/rule confirmed inside `verified_conv` (0 sort, 1 const,
     /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
     /// recursive confirmation, not just top-level ones.
-    pub static CONV_LEAF: [AtomicU64; 9] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
-    pub fn conv_leaf(kind: u8) { if (kind as usize) < 9 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
+    pub static CONV_LEAF: [AtomicU64; 10] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+    pub fn conv_leaf(kind: u8) { if (kind as usize) < 10 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
     thread_local! {
         /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
@@ -276,9 +276,9 @@ pub mod route_stats {
             if nontrivial == 0 { 0.0 } else { 100.0 * verified as f64 / nontrivial as f64 },
             if verified + lt == 0 { 0.0 } else { 100.0 * verified as f64 / (verified + lt) as f64 },
         ) + "\n" + &branches() + &format!(
-            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {}",
+            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
-            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed))
+            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed))
     }
 }
 

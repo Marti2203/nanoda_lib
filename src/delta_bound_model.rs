@@ -107,6 +107,12 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_sub};
 #[cfg(verus_only)]
+use crate::tc_model::{nat_repr_is_zero_reaches_canonical, nat_repr_pred_reaches_succ_app};
+#[cfg(verus_only)]
+use crate::beta_model::const_expr_no_levels;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::nat_succ_id;
+#[cfg(verus_only)]
 use crate::tc_model::{deq_any_bind_fresh, inst_free};
 use crate::expr_arena_bridge::verified_fv_absent;
 #[cfg(verus_only)]
@@ -2805,6 +2811,39 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         }
         conv_stat(1);
         return Some(true);
+    }
+    // --- nat-literal leaves (rec-iota P2c): two zero representations, or
+    // two successor representations with convertible predecessors (a
+    // literal counts as the successor of the literal below it) ---
+    if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
+        proof {
+            nat_repr_is_zero_reaches_canonical(em, x);
+            nat_repr_is_zero_reaches_canonical(em, y);
+            assert(defeq(em, to_model(x), to_model(y)));
+            deq_any_of_defeq(em, to_model(x), to_model(y));
+        }
+        conv_stat(9);
+        return Some(true);
+    }
+    let xp_opt = ctx.pred_of_nat_succ(x);
+    let yp_opt = ctx.pred_of_nat_succ(y);
+    if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
+        if let Some(true) = verified_conv(ctx, env, xp, yp, fuel, k, budget - 1) {
+            proof {
+                let sc = const_expr_no_levels(nat_succ_id());
+                let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
+                let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
+                nat_repr_pred_reaches_succ_app(em, x, xp);
+                nat_repr_pred_reaches_succ_app(em, y, yp);
+                deq_any_refl(em, sc);
+                deq_any_app_congr(em, sc, sc, to_model(xp), to_model(yp));
+                deq_any_trans(em, to_model(x), ax, ay);
+                deq_any_symm(em, to_model(y), ay);
+                deq_any_trans(em, to_model(x), ay, to_model(y));
+            }
+            conv_stat(9);
+            return Some(true);
+        }
     }
     // --- structural congruence (real-shape gated) ---
     let xe = ctx.read_expr(x);
