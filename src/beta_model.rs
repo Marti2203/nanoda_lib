@@ -3521,15 +3521,23 @@ pub proof fn pstep_d_subst1(env: Map<u64, (Seq<u64>, ExprSpec)>, body1: ExprSpec
 /// polynomial, the whole point of the two-cap design. Every arm is
 /// `>= size(e)` definitionally (the explicit `size(e)`/`+1` terms), which
 /// is what the refl branch's `pstep_complete_refl_d` result needs.
-pub open spec fn tak_d(dcap: nat, e: ExprSpec) -> nat
+///
+/// Delta-lift T4: `ecap` is the ENVIRONMENT cap (`env_wf(env, ecap)`),
+/// decoupled from the derivation cap `dcap` -- the refl branch's
+/// `pstep_complete_refl_d` caps are multiplicative in `(ecap + 1)`, so
+/// every `size(e)` term here is scaled by it; keeping `ecap` separate
+/// (rather than coupling it to `dcap`) keeps the cap LADDER
+/// (`join1`/`join2`, where `dcap` grows level by level while the env
+/// stays fixed) polynomial rather than quadratic in the level-1 cap.
+pub open spec fn tak_d(ecap: nat, dcap: nat, e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::App(f, a) => tak_d(dcap, *f) + tak_d(dcap, *a) + dcap + size(e) + 1,
-        ExprSpec::Bind(t, b) => tak_d(dcap, *t) + tak_d(dcap, *b) + size(e) + 1,
-        ExprSpec::Let(t, v, b) => tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + dcap + size(e) + 1,
-        ExprSpec::Proj(pidx, s) => tak_d(dcap, *s) + size(e) + 1,
-        _ => size(e),
+        ExprSpec::App(f, a) => tak_d(ecap, dcap, *f) + tak_d(ecap, dcap, *a) + dcap + size(e) * (ecap + 1) + 1,
+        ExprSpec::Bind(t, b) => tak_d(ecap, dcap, *t) + tak_d(ecap, dcap, *b) + size(e) * (ecap + 1) + 1,
+        ExprSpec::Let(t, v, b) => tak_d(ecap, dcap, *t) + tak_d(ecap, dcap, *v) + tak_d(ecap, dcap, *b) + dcap + size(e) * (ecap + 1) + 1,
+        ExprSpec::Proj(pidx, s) => tak_d(ecap, dcap, *s) + size(e) * (ecap + 1) + 1,
+        _ => size(e) * (ecap + 1),
     }
 }
 
@@ -3537,21 +3545,54 @@ pub open spec fn tak_d(dcap: nat, e: ExprSpec) -> nat
 /// `tak_d`. Every arm is `>= bound + growth(size(e))` definitionally
 /// (the refl branch's need); the App/Let arms are exactly what those
 /// cases' `pstep_d_subst1` results demand.
-pub open spec fn tak_m(bound: nat, mcap: nat, dcap: nat, e: ExprSpec) -> nat
+pub open spec fn tak_m(ecap: nat, bound: nat, mcap: nat, dcap: nat, e: ExprSpec) -> nat
     decreases e
 {
     match e {
-        ExprSpec::App(f, a) => tak_m(bound, mcap, dcap, *f) + tak_m(bound, mcap, dcap, *a) + tak_d(dcap, *f) + tak_d(dcap, *a) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
-        ExprSpec::Bind(t, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *b) + bound + growth(size(e)) + 1,
-        ExprSpec::Let(t, v, b) => tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *v) + tak_m(bound, mcap, dcap, *b) + tak_d(dcap, *t) + tak_d(dcap, *v) + tak_d(dcap, *b) + mcap + bound + growth(size(e)) + 2 * dcap + 7,
-        ExprSpec::Proj(pidx, s) => tak_m(bound, mcap, dcap, *s) + bound + growth(size(e)) + 1,
-        _ => bound + growth(size(e)),
+        ExprSpec::App(f, a) => tak_m(ecap, bound, mcap, dcap, *f) + tak_m(ecap, bound, mcap, dcap, *a) + tak_d(ecap, dcap, *f) + tak_d(ecap, dcap, *a) + mcap + bound + growth(size(e)) * (ecap + 1) + 2 * dcap + 7,
+        ExprSpec::Bind(t, b) => tak_m(ecap, bound, mcap, dcap, *t) + tak_m(ecap, bound, mcap, dcap, *b) + bound + growth(size(e)) * (ecap + 1) + 1,
+        ExprSpec::Let(t, v, b) => tak_m(ecap, bound, mcap, dcap, *t) + tak_m(ecap, bound, mcap, dcap, *v) + tak_m(ecap, bound, mcap, dcap, *b) + tak_d(ecap, dcap, *t) + tak_d(ecap, dcap, *v) + tak_d(ecap, dcap, *b) + mcap + bound + growth(size(e)) * (ecap + 1) + 2 * dcap + 7,
+        ExprSpec::Proj(pidx, s) => tak_m(ecap, bound, mcap, dcap, *s) + bound + growth(size(e)) * (ecap + 1) + 1,
+        _ => bound + growth(size(e)) * (ecap + 1),
     }
 }
 
 /// Every term has at least one node.
 pub proof fn size_pos(e: ExprSpec)
     ensures size(e) >= 1
+{
+    match e {
+        ExprSpec::App(..) | ExprSpec::Bind(..) | ExprSpec::Let(..) | ExprSpec::Proj(..) => {}
+        _ => {}
+    }
+}
+
+/// `a <= b ==> a * k <= b * k` -- the one nonlinear fact the scaled
+/// Takahashi caps need wherever a subterm bound is lifted by the env
+/// factor `(ecap + 1)`.
+pub proof fn scale_le(a: nat, b: nat, k: nat)
+    requires a <= b
+    ensures a * k <= b * k
+{
+    assert(a * k <= b * k) by (nonlinear_arith) requires a <= b;
+}
+
+/// Every `tak_d` arm dominates the scaled refl cap `size(e) * (ecap + 1)`
+/// (definitional per arm; stated as a lemma so callers need not unfold
+/// the match on a subterm of unknown shape).
+pub proof fn tak_d_ge(ecap: nat, dcap: nat, e: ExprSpec)
+    ensures tak_d(ecap, dcap, e) >= size(e) * (ecap + 1)
+{
+    match e {
+        ExprSpec::App(..) | ExprSpec::Bind(..) | ExprSpec::Let(..) | ExprSpec::Proj(..) => {}
+        _ => {}
+    }
+}
+
+/// Every `tak_m` arm dominates the scaled refl cap
+/// `bound + growth(size(e)) * (ecap + 1)`.
+pub proof fn tak_m_ge(ecap: nat, bound: nat, mcap: nat, dcap: nat, e: ExprSpec)
+    ensures tak_m(ecap, bound, mcap, dcap, e) >= bound + growth(size(e)) * (ecap + 1)
 {
     match e {
         ExprSpec::App(..) | ExprSpec::Bind(..) | ExprSpec::Let(..) | ExprSpec::Proj(..) => {}
@@ -3566,88 +3607,93 @@ pub proof fn size_pos(e: ExprSpec)
 /// This (with `tak_m_le` below) is what lets a producer discharge the
 /// Takahashi overflow ceilings numerically -- `tak_d`/`tak_m` are
 /// structural recursions over ghost terms, not runtime-evaluable.
-pub proof fn tak_d_le(dcap: nat, e: ExprSpec, s0: nat)
+pub proof fn tak_d_le(ecap: nat, dcap: nat, e: ExprSpec, s0: nat)
     requires size(e) <= s0
-    ensures tak_d(dcap, e) <= size(e) * (dcap + s0 + 1)
+    ensures tak_d(ecap, dcap, e) <= size(e) * (dcap + s0 * (ecap + 1) + 1)
     decreases e
 {
-    let f0 = dcap + s0 + 1;
+    let f0 = dcap + s0 * (ecap + 1) + 1;
+    scale_le(size(e), s0, ecap + 1);
     match e {
         ExprSpec::App(f, a) => {
-            tak_d_le(dcap, *f, s0);
-            tak_d_le(dcap, *a, s0);
+            tak_d_le(ecap, dcap, *f, s0);
+            tak_d_le(ecap, dcap, *a, s0);
             assert(size(*f) * f0 + size(*a) * f0 + f0 == (size(*f) + size(*a) + 1) * f0) by (nonlinear_arith);
         }
         ExprSpec::Bind(t, b) => {
-            tak_d_le(dcap, *t, s0);
-            tak_d_le(dcap, *b, s0);
+            tak_d_le(ecap, dcap, *t, s0);
+            tak_d_le(ecap, dcap, *b, s0);
             assert(size(*t) * f0 + size(*b) * f0 + f0 == (size(*t) + size(*b) + 1) * f0) by (nonlinear_arith);
         }
         ExprSpec::Let(t, v, b) => {
-            tak_d_le(dcap, *t, s0);
-            tak_d_le(dcap, *v, s0);
-            tak_d_le(dcap, *b, s0);
+            tak_d_le(ecap, dcap, *t, s0);
+            tak_d_le(ecap, dcap, *v, s0);
+            tak_d_le(ecap, dcap, *b, s0);
             assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 + f0 == (size(*t) + size(*v) + size(*b) + 1) * f0) by (nonlinear_arith);
         }
         ExprSpec::Proj(pidx, s) => {
-            tak_d_le(dcap, *s, s0);
+            tak_d_le(ecap, dcap, *s, s0);
             assert(size(*s) * f0 + f0 == (size(*s) + 1) * f0) by (nonlinear_arith);
         }
         _ => {
-            assert(f0 >= 1);
-            assert(size(e) * f0 >= size(e) * 1) by (nonlinear_arith)
-                requires f0 >= 1;
+            size_pos(e);
+            assert(s0 * (ecap + 1) >= ecap + 1) by (nonlinear_arith)
+                requires s0 >= 1;
+            scale_le(ecap + 1, f0, size(e));
+            assert(size(e) * (ecap + 1) == (ecap + 1) * size(e)) by (nonlinear_arith);
+            assert(size(e) * f0 == f0 * size(e)) by (nonlinear_arith);
         }
     }
 }
 
 /// CLOSED-FORM ceiling for `tak_m` -- same per-node argument as
 /// `tak_d_le` with the per-node contribution
-/// `K = mcap + bound + growth(s0) + 2*dcap + 7 + 2*s0*(dcap + s0 + 1)`
+/// `K = mcap + bound + growth(s0) + 2*dcap + 7 + 2*s0*(dcap + s0 * (ecap + 1) + 1)`
 /// (the App/Let arms' additive tail plus their `tak_d` side-payload,
 /// the latter bounded by `tak_d_le` across both children at once).
-pub proof fn tak_m_le(bound: nat, mcap: nat, dcap: nat, e: ExprSpec, s0: nat)
+pub proof fn tak_m_le(ecap: nat, bound: nat, mcap: nat, dcap: nat, e: ExprSpec, s0: nat)
     requires size(e) <= s0
-    ensures tak_m(bound, mcap, dcap, e) <= size(e) * (mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 + 1))
+    ensures tak_m(ecap, bound, mcap, dcap, e) <= size(e) * (mcap + bound + growth(s0) * (ecap + 1) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 * (ecap + 1) + 1))
     decreases e
 {
-    let f0 = dcap + s0 + 1;
-    let k0 = mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * f0;
+    let f0 = dcap + s0 * (ecap + 1) + 1;
+    let k0 = mcap + bound + growth(s0) * (ecap + 1) + 2 * dcap + 7 + 2 * s0 * f0;
     growth_mono(size(e), s0);
+    scale_le(growth(size(e)), growth(s0), ecap + 1);
     match e {
         ExprSpec::App(f, a) => {
-            tak_m_le(bound, mcap, dcap, *f, s0);
-            tak_m_le(bound, mcap, dcap, *a, s0);
-            tak_d_le(dcap, *f, s0);
-            tak_d_le(dcap, *a, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *f, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *a, s0);
+            tak_d_le(ecap, dcap, *f, s0);
+            tak_d_le(ecap, dcap, *a, s0);
             assert((size(*f) + size(*a)) * f0 <= 2 * s0 * f0) by (nonlinear_arith)
                 requires size(*f) + size(*a) <= s0;
             assert(size(*f) * f0 + size(*a) * f0 == (size(*f) + size(*a)) * f0) by (nonlinear_arith);
             assert(size(*f) * k0 + size(*a) * k0 + k0 == (size(*f) + size(*a) + 1) * k0) by (nonlinear_arith);
         }
         ExprSpec::Bind(t, b) => {
-            tak_m_le(bound, mcap, dcap, *t, s0);
-            tak_m_le(bound, mcap, dcap, *b, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *t, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *b, s0);
             assert(size(*t) * k0 + size(*b) * k0 + k0 == (size(*t) + size(*b) + 1) * k0) by (nonlinear_arith);
         }
         ExprSpec::Let(t, v, b) => {
-            tak_m_le(bound, mcap, dcap, *t, s0);
-            tak_m_le(bound, mcap, dcap, *v, s0);
-            tak_m_le(bound, mcap, dcap, *b, s0);
-            tak_d_le(dcap, *t, s0);
-            tak_d_le(dcap, *v, s0);
-            tak_d_le(dcap, *b, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *t, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *v, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *b, s0);
+            tak_d_le(ecap, dcap, *t, s0);
+            tak_d_le(ecap, dcap, *v, s0);
+            tak_d_le(ecap, dcap, *b, s0);
             assert((size(*t) + size(*v) + size(*b)) * f0 <= 2 * s0 * f0) by (nonlinear_arith)
                 requires size(*t) + size(*v) + size(*b) <= s0;
             assert(size(*t) * f0 + size(*v) * f0 + size(*b) * f0 == (size(*t) + size(*v) + size(*b)) * f0) by (nonlinear_arith);
             assert(size(*t) * k0 + size(*v) * k0 + size(*b) * k0 + k0 == (size(*t) + size(*v) + size(*b) + 1) * k0) by (nonlinear_arith);
         }
         ExprSpec::Proj(pidx, s) => {
-            tak_m_le(bound, mcap, dcap, *s, s0);
+            tak_m_le(ecap, bound, mcap, dcap, *s, s0);
             assert(size(*s) * k0 + k0 == (size(*s) + 1) * k0) by (nonlinear_arith);
         }
         _ => {
-            assert(k0 >= bound + growth(s0));
+            assert(k0 >= bound + growth(s0) * (ecap + 1));
             size_pos(e);
             assert(size(e) * k0 >= 1 * k0) by (nonlinear_arith)
                 requires size(e) >= 1;
@@ -3677,26 +3723,27 @@ pub proof fn tak_m_le(bound: nat, mcap: nat, dcap: nat, e: ExprSpec, s0: nat)
 /// (refl or Bind-congruence) to expose its body reduct, then assembles
 /// the target beta step directly.
 #[verifier::spinoff_prover]
-pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
+pub proof fn pstep_d_takahashi(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         pstep_d(env, e1, e2, mcap, dcap),
         max_var_below(e1, bound),
         string_lits_ok(e1, 0),
-        bound + mcap + 6 * dcap + tak_m(bound, mcap, dcap, e1) + 4 * tak_d(dcap, e1) + growth(size(e1)) + size(e1) + 40 <= 0xFFFF_0000,
-    ensures pstep_d(env, e2, complete(env, e1), tak_m(bound, mcap, dcap, e1), tak_d(dcap, e1))
+        bound + mcap + 6 * dcap + tak_m(ecap, bound, mcap, dcap, e1) + 4 * tak_d(ecap, dcap, e1) + growth(size(e1)) + size(e1) + 40 <= 0xFFFF_0000,
+    ensures pstep_d(env, e2, complete(env, e1), tak_m(ecap, bound, mcap, dcap, e1), tak_d(ecap, dcap, e1))
     decreases e1
 {
-    env_wf_empty_all();
-    env_closed_empty();
-    env_wf_empty(0);
     reveal(shift);
     reveal(subst);
-    let wm: nat = tak_m(bound, mcap, dcap, e1);
-    let wd: nat = tak_d(dcap, e1);
+    let wm: nat = tak_m(ecap, bound, mcap, dcap, e1);
+    let wd: nat = tak_d(ecap, dcap, e1);
+    let k: nat = ecap + 1;
+    tak_d_ge(ecap, dcap, e1);
+    tak_m_ge(ecap, bound, mcap, dcap, e1);
     if e1 == e2 {
-        pstep_complete_refl_d_0(env, bound, e1);
-        pstep_d_mono(env, e1, complete(env, e1), (bound + growth(size(e1))) as nat, size(e1), wm, wd);
+        pstep_complete_refl_d(env, ecap, bound, e1);
+        pstep_d_mono(env, e1, complete(env, e1), (bound + growth(size(e1)) * k) as nat, size(e1) * k, wm, wd);
     } else {
         match e1 {
             ExprSpec::App(f, a) => {
@@ -3710,17 +3757,25 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                         assert(max_var_below(*body, bound));
                         assert(string_lits_ok(*body, 0));
                         assert(size(*f) == 1 + size(*t) + size(*body));
-                        assert(tak_d(dcap, *f) == tak_d(dcap, *t) + tak_d(dcap, *body) + size(*f) + 1);
-                        assert(tak_m(bound, mcap, dcap, *f) == tak_m(bound, mcap, dcap, *t) + tak_m(bound, mcap, dcap, *body) + bound + growth(size(*f)) + 1);
+                        assert(tak_d(ecap, dcap, *f) == tak_d(ecap, dcap, *t) + tak_d(ecap, dcap, *body) + size(*f) * k + 1);
+                        assert(tak_m(ecap, bound, mcap, dcap, *f) == tak_m(ecap, bound, mcap, dcap, *t) + tak_m(ecap, bound, mcap, dcap, *body) + bound + growth(size(*f)) * k + 1);
                         growth_mono(size(*f), size(e1));
                         growth_mono(size(*body), size(e1));
                         growth_mono(size(*a), size(e1));
-                        complete_depth_bound_0(env, *a);
-                        complete_max_var_below_0(env, bound, *a);
-                        complete_depth_bound_0(env, *body);
-                        complete_max_var_below_0(env, bound, *body);
-                        let ma1: nat = (mcap + bound + growth(size(e1))) as nat;
-                        let da1: nat = (dcap + size(e1)) as nat;
+                        tak_d_ge(ecap, dcap, *a);
+                tak_m_ge(ecap, bound, mcap, dcap, *a);
+                scale_le(size(*a), size(e1), k);
+                scale_le(growth(size(*a)), growth(size(e1)), k);
+                complete_depth_bound(env, ecap, *a);
+                        complete_max_var_below(env, ecap, bound, *a);
+                        tak_d_ge(ecap, dcap, *body);
+                tak_m_ge(ecap, bound, mcap, dcap, *body);
+                scale_le(size(*body), size(e1), k);
+                scale_le(growth(size(*body)), growth(size(e1)), k);
+                complete_depth_bound(env, ecap, *body);
+                        complete_max_var_below(env, ecap, bound, *body);
+                        let ma1: nat = (mcap + bound + growth(size(e1)) * k) as nat;
+                        let da1: nat = (dcap + size(e1) * k) as nat;
                         if exists |body2: ExprSpec, a2: ExprSpec| #![trigger subst1(body2, a2)]
                             pstep_d(env, *body, body2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap)
                             && depth(body2) <= dcap && depth(a2) <= dcap
@@ -3732,15 +3787,15 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                                 && depth(body2) <= dcap && depth(a2) <= dcap
                                 && max_var_below(body2, mcap) && max_var_below(a2, mcap)
                                 && e2 == subst1(body2, a2);
-                            pstep_d_takahashi(env, bound, *body, body2, mcap, dcap);
-                            pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
+                            pstep_d_takahashi(ecap, env, bound, *body, body2, mcap, dcap);
+                            pstep_d_takahashi(ecap, env, bound, *a, a2, mcap, dcap);
                             max_var_below_mono(a2, mcap, ma1);
-                            max_var_below_mono(complete(env, *a), (bound + growth(size(*a))) as nat, ma1);
-                            pstep_d_subst1(env, body2, complete(env, *body), a2, complete(env, *a), tak_m(bound, mcap, dcap, *body), tak_d(dcap, *body), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), ma1, da1);
+                            max_var_below_mono(complete(env, *a), (bound + growth(size(*a)) * k) as nat, ma1);
+                            pstep_d_subst1(env, body2, complete(env, *body), a2, complete(env, *a), tak_m(ecap, bound, mcap, dcap, *body), tak_d(ecap, dcap, *body), tak_m(ecap, bound, mcap, dcap, *a), tak_d(ecap, dcap, *a), ma1, da1);
                             assert(complete(env, e1) == subst1(complete(env, *body), complete(env, *a)));
                             pstep_d_mono(env, subst1(body2, a2), subst1(complete(env, *body), complete(env, *a)),
-                                (tak_m(bound, mcap, dcap, *a) + ma1 + tak_m(bound, mcap, dcap, *body) + tak_d(dcap, *body) + tak_d(dcap, *a) + 2 * depth(body2) + 6) as nat,
-                                (tak_d(dcap, *body) + tak_d(dcap, *a) + da1 + 1) as nat,
+                                (tak_m(ecap, bound, mcap, dcap, *a) + ma1 + tak_m(ecap, bound, mcap, dcap, *body) + tak_d(ecap, dcap, *body) + tak_d(ecap, dcap, *a) + 2 * depth(body2) + 6) as nat,
+                                (tak_d(ecap, dcap, *body) + tak_d(ecap, dcap, *a) + da1 + 1) as nat,
                                 wm, wd);
                             assert(pstep_d(env, e2, complete(env, e1), wm, wd));
                         } else {
@@ -3759,15 +3814,15 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                                 assert(pstep_d(env, *body, bodyp, mcap, dcap));
                                 assert(f2 == ExprSpec::Bind(Box::new(t2), Box::new(bodyp)));
                             }
-                            pstep_d_takahashi(env, bound, *body, bodyp, mcap, dcap);
-                            pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
+                            pstep_d_takahashi(ecap, env, bound, *body, bodyp, mcap, dcap);
+                            pstep_d_takahashi(ecap, env, bound, *a, a2, mcap, dcap);
                             // Assemble the target beta step on e2 directly:
                             // witnesses complete(body)/complete(a), certified
                             // via the complete-bounds lemmas.
-                            pstep_d_mono(env, bodyp, complete(env, *body), tak_m(bound, mcap, dcap, *body), tak_d(dcap, *body), wm, wd);
-                            pstep_d_mono(env, a2, complete(env, *a), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), wm, wd);
-                            max_var_below_mono(complete(env, *body), (bound + growth(size(*body))) as nat, wm);
-                            max_var_below_mono(complete(env, *a), (bound + growth(size(*a))) as nat, wm);
+                            pstep_d_mono(env, bodyp, complete(env, *body), tak_m(ecap, bound, mcap, dcap, *body), tak_d(ecap, dcap, *body), wm, wd);
+                            pstep_d_mono(env, a2, complete(env, *a), tak_m(ecap, bound, mcap, dcap, *a), tak_d(ecap, dcap, *a), wm, wd);
+                            max_var_below_mono(complete(env, *body), (bound + growth(size(*body)) * k) as nat, wm);
+                            max_var_below_mono(complete(env, *a), (bound + growth(size(*a)) * k) as nat, wm);
                             assert(complete(env, e1) == subst1(complete(env, *body), complete(env, *a)));
                             assert(pstep_d(env, bodyp, complete(env, *body), wm, wd) && pstep_d(env, a2, complete(env, *a), wm, wd)
                                 && depth(complete(env, *body)) <= wd && depth(complete(env, *a)) <= wd
@@ -3781,10 +3836,10 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                         let (f2, a2) = choose |f2: ExprSpec, a2: ExprSpec| pstep_d(env, *f, f2, mcap, dcap) && pstep_d(env, *a, a2, mcap, dcap) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
                         growth_mono(size(*f), size(e1));
                         growth_mono(size(*a), size(e1));
-                        pstep_d_takahashi(env, bound, *f, f2, mcap, dcap);
-                        pstep_d_takahashi(env, bound, *a, a2, mcap, dcap);
-                        pstep_d_mono(env, f2, complete(env, *f), tak_m(bound, mcap, dcap, *f), tak_d(dcap, *f), wm, wd);
-                        pstep_d_mono(env, a2, complete(env, *a), tak_m(bound, mcap, dcap, *a), tak_d(dcap, *a), wm, wd);
+                        pstep_d_takahashi(ecap, env, bound, *f, f2, mcap, dcap);
+                        pstep_d_takahashi(ecap, env, bound, *a, a2, mcap, dcap);
+                        pstep_d_mono(env, f2, complete(env, *f), tak_m(ecap, bound, mcap, dcap, *f), tak_d(ecap, dcap, *f), wm, wd);
+                        pstep_d_mono(env, a2, complete(env, *a), tak_m(ecap, bound, mcap, dcap, *a), tak_d(ecap, dcap, *a), wm, wd);
                         assert(complete(env, e1) == ExprSpec::App(Box::new(complete(env, *f)), Box::new(complete(env, *a))));
                         assert(pstep_d(env, f2, complete(env, *f), wm, wd) && pstep_d(env, a2, complete(env, *a), wm, wd)
                             && complete(env, e1) == ExprSpec::App(Box::new(complete(env, *f)), Box::new(complete(env, *a))));
@@ -3801,10 +3856,10 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                 assert(size(e1) == 1 + size(*t) + size(*b));
                 growth_mono(size(*t), size(e1));
                 growth_mono(size(*b), size(e1));
-                pstep_d_takahashi(env, bound, *t, t2, mcap, dcap);
-                pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
-                pstep_d_mono(env, t2, complete(env, *t), tak_m(bound, mcap, dcap, *t), tak_d(dcap, *t), wm, wd);
-                pstep_d_mono(env, b2, complete(env, *b), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), wm, wd);
+                pstep_d_takahashi(ecap, env, bound, *t, t2, mcap, dcap);
+                pstep_d_takahashi(ecap, env, bound, *b, b2, mcap, dcap);
+                pstep_d_mono(env, t2, complete(env, *t), tak_m(ecap, bound, mcap, dcap, *t), tak_d(ecap, dcap, *t), wm, wd);
+                pstep_d_mono(env, b2, complete(env, *b), tak_m(ecap, bound, mcap, dcap, *b), tak_d(ecap, dcap, *b), wm, wd);
                 assert(complete(env, e1) == ExprSpec::Bind(Box::new(complete(env, *t)), Box::new(complete(env, *b))));
                 assert(pstep_d(env, t2, complete(env, *t), wm, wd) && pstep_d(env, b2, complete(env, *b), wm, wd)
                     && complete(env, e1) == ExprSpec::Bind(Box::new(complete(env, *t)), Box::new(complete(env, *b))));
@@ -3820,12 +3875,20 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                 assert(size(e1) == 1 + size(*t) + size(*v) + size(*b));
                 growth_mono(size(*v), size(e1));
                 growth_mono(size(*b), size(e1));
-                complete_depth_bound_0(env, *v);
-                complete_max_var_below_0(env, bound, *v);
-                complete_depth_bound_0(env, *b);
-                complete_max_var_below_0(env, bound, *b);
-                let ma1: nat = (mcap + bound + growth(size(e1))) as nat;
-                let da1: nat = (dcap + size(e1)) as nat;
+                tak_d_ge(ecap, dcap, *v);
+                tak_m_ge(ecap, bound, mcap, dcap, *v);
+                scale_le(size(*v), size(e1), k);
+                scale_le(growth(size(*v)), growth(size(e1)), k);
+                complete_depth_bound(env, ecap, *v);
+                complete_max_var_below(env, ecap, bound, *v);
+                tak_d_ge(ecap, dcap, *b);
+                tak_m_ge(ecap, bound, mcap, dcap, *b);
+                scale_le(size(*b), size(e1), k);
+                scale_le(growth(size(*b)), growth(size(e1)), k);
+                complete_depth_bound(env, ecap, *b);
+                complete_max_var_below(env, ecap, bound, *b);
+                let ma1: nat = (mcap + bound + growth(size(e1)) * k) as nat;
+                let da1: nat = (dcap + size(e1) * k) as nat;
                 if exists |b2: ExprSpec, v2: ExprSpec| #![trigger subst1(b2, v2)]
                     pstep_d(env, *b, b2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap)
                     && depth(b2) <= dcap && depth(v2) <= dcap
@@ -3837,15 +3900,15 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                         && depth(b2) <= dcap && depth(v2) <= dcap
                         && max_var_below(b2, mcap) && max_var_below(v2, mcap)
                         && e2 == subst1(b2, v2);
-                    pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
-                    pstep_d_takahashi(env, bound, *v, v2, mcap, dcap);
+                    pstep_d_takahashi(ecap, env, bound, *b, b2, mcap, dcap);
+                    pstep_d_takahashi(ecap, env, bound, *v, v2, mcap, dcap);
                     max_var_below_mono(v2, mcap, ma1);
-                    max_var_below_mono(complete(env, *v), (bound + growth(size(*v))) as nat, ma1);
-                    pstep_d_subst1(env, b2, complete(env, *b), v2, complete(env, *v), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), tak_m(bound, mcap, dcap, *v), tak_d(dcap, *v), ma1, da1);
+                    max_var_below_mono(complete(env, *v), (bound + growth(size(*v)) * k) as nat, ma1);
+                    pstep_d_subst1(env, b2, complete(env, *b), v2, complete(env, *v), tak_m(ecap, bound, mcap, dcap, *b), tak_d(ecap, dcap, *b), tak_m(ecap, bound, mcap, dcap, *v), tak_d(ecap, dcap, *v), ma1, da1);
                     assert(complete(env, e1) == subst1(complete(env, *b), complete(env, *v)));
                     pstep_d_mono(env, subst1(b2, v2), subst1(complete(env, *b), complete(env, *v)),
-                        (tak_m(bound, mcap, dcap, *v) + ma1 + tak_m(bound, mcap, dcap, *b) + tak_d(dcap, *b) + tak_d(dcap, *v) + 2 * depth(b2) + 6) as nat,
-                        (tak_d(dcap, *b) + tak_d(dcap, *v) + da1 + 1) as nat,
+                        (tak_m(ecap, bound, mcap, dcap, *v) + ma1 + tak_m(ecap, bound, mcap, dcap, *b) + tak_d(ecap, dcap, *b) + tak_d(ecap, dcap, *v) + 2 * depth(b2) + 6) as nat,
+                        (tak_d(ecap, dcap, *b) + tak_d(ecap, dcap, *v) + da1 + 1) as nat,
                         wm, wd);
                     assert(pstep_d(env, e2, complete(env, e1), wm, wd));
                 } else {
@@ -3853,14 +3916,14 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                         pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2)));
                     let (t2, v2, b2) = choose |t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
                         pstep_d(env, *t, t2, mcap, dcap) && pstep_d(env, *v, v2, mcap, dcap) && pstep_d(env, *b, b2, mcap, dcap) && e2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-                    pstep_d_takahashi(env, bound, *b, b2, mcap, dcap);
-                    pstep_d_takahashi(env, bound, *v, v2, mcap, dcap);
+                    pstep_d_takahashi(ecap, env, bound, *b, b2, mcap, dcap);
+                    pstep_d_takahashi(ecap, env, bound, *v, v2, mcap, dcap);
                     // The complete development zeta-contracts; e2 (a Let)
                     // beta/zeta-steps to it directly via the zeta disjunct.
-                    pstep_d_mono(env, b2, complete(env, *b), tak_m(bound, mcap, dcap, *b), tak_d(dcap, *b), wm, wd);
-                    pstep_d_mono(env, v2, complete(env, *v), tak_m(bound, mcap, dcap, *v), tak_d(dcap, *v), wm, wd);
-                    max_var_below_mono(complete(env, *b), (bound + growth(size(*b))) as nat, wm);
-                    max_var_below_mono(complete(env, *v), (bound + growth(size(*v))) as nat, wm);
+                    pstep_d_mono(env, b2, complete(env, *b), tak_m(ecap, bound, mcap, dcap, *b), tak_d(ecap, dcap, *b), wm, wd);
+                    pstep_d_mono(env, v2, complete(env, *v), tak_m(ecap, bound, mcap, dcap, *v), tak_d(ecap, dcap, *v), wm, wd);
+                    max_var_below_mono(complete(env, *b), (bound + growth(size(*b)) * k) as nat, wm);
+                    max_var_below_mono(complete(env, *v), (bound + growth(size(*v)) * k) as nat, wm);
                     assert(complete(env, e1) == subst1(complete(env, *b), complete(env, *v)));
                     assert(pstep_d(env, b2, complete(env, *b), wm, wd) && pstep_d(env, v2, complete(env, *v), wm, wd)
                         && depth(complete(env, *b)) <= wd && depth(complete(env, *v)) <= wd
@@ -3875,10 +3938,14 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                 assert(size(e1) == 1 + size(*s));
                 growth_mono(size(*s), size(e1));
                 let cs = complete(env, *s);
-                let tm_s = tak_m(bound, mcap, dcap, *s);
-                let td_s = tak_d(dcap, *s);
-                complete_depth_bound_0(env, *s);
-                complete_max_var_below_0(env, bound, *s);
+                let tm_s = tak_m(ecap, bound, mcap, dcap, *s);
+                let td_s = tak_d(ecap, dcap, *s);
+                tak_d_ge(ecap, dcap, *s);
+                tak_m_ge(ecap, bound, mcap, dcap, *s);
+                scale_le(size(*s), size(e1), k);
+                scale_le(growth(size(*s)), growth(size(e1)), k);
+                complete_depth_bound(env, ecap, *s);
+                complete_max_var_below(env, ecap, bound, *s);
                 if pstep_d_iota(env, pidx, *s, e2, mcap, dcap) {
                     // IOTA side of the critical pair: the given step
                     // extracted from SOME ctor-spine reduct of `s`; the
@@ -3886,7 +3953,7 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                     // Decompose the IH derivation over the spine and
                     // join POINTWISE at the extracted index.
                     let (inner2, cid, lv, args2, np) = pstep_d_iota_destruct(env, pidx, *s, e2, mcap, dcap);
-                    pstep_d_takahashi(env, bound, *s, inner2, mcap, dcap);
+                    pstep_d_takahashi(ecap, env, bound, *s, inner2, mcap, dcap);
                     let args3 = pstep_d_const_spine(env, cid, lv, args2, cs, tm_s, td_s);
                     spine_destruct_app(ExprSpec::Const(cid, lv), args3);
                     let k = (np as nat + pidx as nat) as int;
@@ -3901,7 +3968,7 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                     match e2 {
                         ExprSpec::Proj(pidx2, s2) => {
                             assert(pstep_d(env, *s, *s2, mcap, dcap));
-                            pstep_d_takahashi(env, bound, *s, *s2, mcap, dcap);
+                            pstep_d_takahashi(ecap, env, bound, *s, *s2, mcap, dcap);
                             if iota_ready(pidx, cs) {
                                 // CONGRUENCE-vs-iota: the complete
                                 // development contracted the projection;
@@ -3910,7 +3977,7 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                                 // (the IH target) as the rule's reduct.
                                 iota_ready_extract(pidx, cs, complete(env, e1));
                                 pstep_d_mono(env, *s2, cs, tm_s, td_s, wm, wd);
-                                max_var_below_mono(cs, (bound + growth(size(*s))) as nat, wm);
+                                max_var_below_mono(cs, (bound + growth(size(*s)) * k) as nat, wm);
                                 assert(complete(env, e1) == iota_result(pidx, cs));
                                 assert(iota_reduct(cs) && pstep_d(env, *s2, cs, wm, wd)
                                     && depth(cs) <= wd && max_var_below(cs, wm)
@@ -3929,9 +3996,13 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
                     }
                 }
             }
-            ExprSpec::Const(id, _levels) => {
-                assert(env.contains_key(id));
-                assert(false);
+            ExprSpec::Const(id, ls) => {
+                // Delta vs the complete development (delta-lift T4): delta
+                // is FUNCTIONAL, so the given step's target IS `complete(e1)`.
+                assert(env.contains_key(id) && env[id].0.len() == ls.len());
+                assert(e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, ls));
+                assert(complete(env, e1) == e2);
+                pstep_d_refl(env, e2, wm, wd);
             }
             ExprSpec::NatLit(n) => {
                 // The stepped target IS the complete development.
@@ -3974,22 +4045,21 @@ pub proof fn pstep_d_takahashi(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
 /// derivations against each other ever happens, which is precisely
 /// Takahashi's trick and precisely what dissolved the old proof's
 /// witness-reconciliation blowup.
-pub proof fn pstep_d_diamond(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
+pub proof fn pstep_d_diamond(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, e: ExprSpec, e1: ExprSpec, e2: ExprSpec, mcap: nat, dcap: nat)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_wf(env, ecap),
+        env_closed(env),
         pstep_d(env, e, e1, mcap, dcap),
         pstep_d(env, e, e2, mcap, dcap),
         max_var_below(e, bound),
         string_lits_ok(e, 0),
-        bound + mcap + 6 * dcap + tak_m(bound, mcap, dcap, e) + 4 * tak_d(dcap, e) + growth(size(e)) + size(e) + 40 <= 0xFFFF_0000,
+        bound + mcap + 6 * dcap + tak_m(ecap, bound, mcap, dcap, e) + 4 * tak_d(ecap, dcap, e) + growth(size(e)) + size(e) + 40 <= 0xFFFF_0000,
     ensures
-        pstep_d(env, e1, complete(env, e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
-        pstep_d(env, e2, complete(env, e), tak_m(bound, mcap, dcap, e), tak_d(dcap, e)),
+        pstep_d(env, e1, complete(env, e), tak_m(ecap, bound, mcap, dcap, e), tak_d(ecap, dcap, e)),
+        pstep_d(env, e2, complete(env, e), tak_m(ecap, bound, mcap, dcap, e), tak_d(ecap, dcap, e)),
 {
-    env_wf_empty_all();
-    env_closed_empty();
-    pstep_d_takahashi(env, bound, e, e1, mcap, dcap);
-    pstep_d_takahashi(env, bound, e, e2, mcap, dcap);
+    pstep_d_takahashi(ecap, env, bound, e, e1, mcap, dcap);
+    pstep_d_takahashi(ecap, env, bound, e, e2, mcap, dcap);
 }
 
 /// The `pstep ==> pstep_d` conversion -- and a pleasant surprise found
@@ -4263,7 +4333,7 @@ pub proof fn pstep_to_pstep_d_0(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat,
 /// true but vacuous for real terms. Stratifying removes the
 /// self-reference: a caller just computes the one- and two-deep tak
 /// values of its own concrete chain data, no equation to solve.)
-pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, mc: nat, dc: nat, m1: nat, d1: nat, m2: nat, d2: nat)
+pub proof fn pstep_d_strip(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chain: Seq<ExprSpec>, y: ExprSpec, mc: nat, dc: nat, m1: nat, d1: nat, m2: nat, d2: nat)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         chain.len() >= 1,
@@ -4278,12 +4348,12 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
         // facts) fit (m2,d2). Stratified -- no self-reference, so a real
         // caller just computes the one-deep and two-deep tak values of
         // its own concrete chain data.
-        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, mc, dc, #[trigger] chain[i]) <= m1,
-        forall |i: int| 0 <= i < chain.len() ==> tak_d(dc, #[trigger] chain[i]) <= d1,
-        forall |i: int| 0 <= i < chain.len() ==> tak_m(bound, m1, d1, #[trigger] chain[i]) <= m2,
-        forall |i: int| 0 <= i < chain.len() ==> tak_d(d1, #[trigger] chain[i]) <= d2,
-        forall |i: int| 0 <= i < chain.len() ==> bound + mc + 6 * dc + tak_m(bound, mc, dc, #[trigger] chain[i]) + 4 * tak_d(dc, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
-        forall |i: int| 0 <= i < chain.len() ==> bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] chain[i]) + 4 * tak_d(d1, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < chain.len() ==> tak_m(ecap, bound, mc, dc, #[trigger] chain[i]) <= m1,
+        forall |i: int| 0 <= i < chain.len() ==> tak_d(ecap, dc, #[trigger] chain[i]) <= d1,
+        forall |i: int| 0 <= i < chain.len() ==> tak_m(ecap, bound, m1, d1, #[trigger] chain[i]) <= m2,
+        forall |i: int| 0 <= i < chain.len() ==> tak_d(ecap, d1, #[trigger] chain[i]) <= d2,
+        forall |i: int| 0 <= i < chain.len() ==> bound + mc + 6 * dc + tak_m(ecap, bound, mc, dc, #[trigger] chain[i]) + 4 * tak_d(ecap, dc, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
+        forall |i: int| 0 <= i < chain.len() ==> bound + m1 + 6 * d1 + tak_m(ecap, bound, m1, d1, #[trigger] chain[i]) + 4 * tak_d(ecap, d1, chain[i]) + growth(size(chain[i])) + size(chain[i]) + 40 <= 0xFFFF_0000,
     ensures exists |zch: Seq<ExprSpec>|
         #![trigger zch.len()]
         zch.len() == chain.len()
@@ -4314,15 +4384,15 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
         assert(string_lits_ok(c0, 0));
         // Vertical edge for the recursion: Takahashi of the CHAIN LINK,
         // at level (mc,dc) -- always fresh, never the accumulated fact.
-        pstep_d_takahashi(env, bound, c0, c1, mc, dc);
-        assert(tak_m(bound, mc, dc, c0) <= m1);
-        assert(tak_d(dc, c0) <= d1);
-        pstep_d_mono(env, c1, complete(env, c0), tak_m(bound, mc, dc, c0), tak_d(dc, c0), m1, d1);
+        pstep_d_takahashi(ecap, env, bound, c0, c1, mc, dc);
+        assert(tak_m(ecap, bound, mc, dc, c0) <= m1);
+        assert(tak_d(ecap, dc, c0) <= d1);
+        pstep_d_mono(env, c1, complete(env, c0), tak_m(ecap, bound, mc, dc, c0), tak_d(ecap, dc, c0), m1, d1);
         // The y-side edge, at level (m1,d1); its output is a z-link.
-        pstep_d_takahashi(env, bound, c0, y, m1, d1);
-        assert(tak_m(bound, m1, d1, c0) <= m2);
-        assert(tak_d(d1, c0) <= d2);
-        pstep_d_mono(env, y, complete(env, c0), tak_m(bound, m1, d1, c0), tak_d(d1, c0), m2, d2);
+        pstep_d_takahashi(ecap, env, bound, c0, y, m1, d1);
+        assert(tak_m(ecap, bound, m1, d1, c0) <= m2);
+        assert(tak_d(ecap, d1, c0) <= d2);
+        pstep_d_mono(env, y, complete(env, c0), tak_m(ecap, bound, m1, d1, c0), tak_d(ecap, d1, c0), m2, d2);
         let chain2 = chain.subrange(1, chain.len() as int);
         assert(chain2.len() == chain.len() - 1);
         assert(chain2[0] == c1);
@@ -4339,31 +4409,31 @@ pub proof fn pstep_d_strip(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, chai
             assert(chain2[i] == chain[i + 1]);
             assert(string_lits_ok(chain[i + 1], 0));
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, mc, dc, #[trigger] chain2[i]) <= m1 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(ecap, bound, mc, dc, #[trigger] chain2[i]) <= m1 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_m(bound, mc, dc, chain[i + 1]) <= m1);
+            assert(tak_m(ecap, bound, mc, dc, chain[i + 1]) <= m1);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(dc, #[trigger] chain2[i]) <= d1 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(ecap, dc, #[trigger] chain2[i]) <= d1 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_d(dc, chain[i + 1]) <= d1);
+            assert(tak_d(ecap, dc, chain[i + 1]) <= d1);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(bound, m1, d1, #[trigger] chain2[i]) <= m2 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_m(ecap, bound, m1, d1, #[trigger] chain2[i]) <= m2 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_m(bound, m1, d1, chain[i + 1]) <= m2);
+            assert(tak_m(ecap, bound, m1, d1, chain[i + 1]) <= m2);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(d1, #[trigger] chain2[i]) <= d2 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies tak_d(ecap, d1, #[trigger] chain2[i]) <= d2 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(tak_d(d1, chain[i + 1]) <= d2);
+            assert(tak_d(ecap, d1, chain[i + 1]) <= d2);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies bound + mc + 6 * dc + tak_m(bound, mc, dc, #[trigger] chain2[i]) + 4 * tak_d(dc, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies bound + mc + 6 * dc + tak_m(ecap, bound, mc, dc, #[trigger] chain2[i]) + 4 * tak_d(ecap, dc, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(bound + mc + 6 * dc + tak_m(bound, mc, dc, chain[i + 1]) + 4 * tak_d(dc, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+            assert(bound + mc + 6 * dc + tak_m(ecap, bound, mc, dc, chain[i + 1]) + 4 * tak_d(ecap, dc, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
         }
-        assert forall |i: int| 0 <= i < chain2.len() implies bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] chain2[i]) + 4 * tak_d(d1, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
+        assert forall |i: int| 0 <= i < chain2.len() implies bound + m1 + 6 * d1 + tak_m(ecap, bound, m1, d1, #[trigger] chain2[i]) + 4 * tak_d(ecap, d1, chain2[i]) + growth(size(chain2[i])) + size(chain2[i]) + 40 <= 0xFFFF_0000 by {
             assert(chain2[i] == chain[i + 1]);
-            assert(bound + m1 + 6 * d1 + tak_m(bound, m1, d1, chain[i + 1]) + 4 * tak_d(d1, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
+            assert(bound + m1 + 6 * d1 + tak_m(ecap, bound, m1, d1, chain[i + 1]) + 4 * tak_d(ecap, d1, chain[i + 1]) + growth(size(chain[i + 1])) + size(chain[i + 1]) + 40 <= 0xFFFF_0000);
         }
-        pstep_d_strip(env, bound, chain2, complete(env, c0), mc, dc, m1, d1, m2, d2);
+        pstep_d_strip(ecap, env, bound, chain2, complete(env, c0), mc, dc, m1, d1, m2, d2);
         let zch2 = choose |zch2: Seq<ExprSpec>|
             #![trigger zch2.len()]
             zch2.len() == chain2.len()
@@ -4437,7 +4507,7 @@ pub open spec fn ladder_last(base: nat, ladder: Seq<nat>) -> nat {
 /// tak-nesting depth grows with the A-chain's length (unavoidable: each
 /// strip is a layer of Takahashi outputs), but every condition here is a
 /// computable fact about explicit data, never a fixpoint to solve.
-pub open spec fn conf_ok(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>) -> bool
+pub open spec fn conf_ok(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>) -> bool
     decreases ach.len()
 {
     if ach.len() <= 1 {
@@ -4448,23 +4518,23 @@ pub open spec fn conf_ok(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: S
         && dlink <= ds[0] && ds[0] <= ds[1]
         && (forall |i: int| 0 <= i < bch.len() ==> max_var_below(#[trigger] bch[i], bound))
         && (forall |i: int| 0 <= i < bch.len() ==> string_lits_ok(#[trigger] bch[i], 0))
-        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(bound, mlink, dlink, #[trigger] bch[i]) <= ms[0])
-        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(dlink, #[trigger] bch[i]) <= ds[0])
-        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(bound, ms[0], ds[0], #[trigger] bch[i]) <= ms[1])
-        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(ds[0], #[trigger] bch[i]) <= ds[1])
-        && (forall |i: int| 0 <= i < bch.len() ==> bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, #[trigger] bch[i]) + 4 * tak_d(dlink, bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
-        && (forall |i: int| 0 <= i < bch.len() ==> bound + ms[0] + 6 * ds[0] + tak_m(bound, ms[0], ds[0], #[trigger] bch[i]) + 4 * tak_d(ds[0], bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
-        && conf_ok(env, bound, ach.subrange(1, ach.len() as int), conf_zch(env, bch, ach[1]), ms[1], ds[1], ms.subrange(2, ms.len() as int), ds.subrange(2, ds.len() as int))
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(ecap, bound, mlink, dlink, #[trigger] bch[i]) <= ms[0])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(ecap, dlink, #[trigger] bch[i]) <= ds[0])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_m(ecap, bound, ms[0], ds[0], #[trigger] bch[i]) <= ms[1])
+        && (forall |i: int| 0 <= i < bch.len() ==> tak_d(ecap, ds[0], #[trigger] bch[i]) <= ds[1])
+        && (forall |i: int| 0 <= i < bch.len() ==> bound + mlink + 6 * dlink + tak_m(ecap, bound, mlink, dlink, #[trigger] bch[i]) + 4 * tak_d(ecap, dlink, bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
+        && (forall |i: int| 0 <= i < bch.len() ==> bound + ms[0] + 6 * ds[0] + tak_m(ecap, bound, ms[0], ds[0], #[trigger] bch[i]) + 4 * tak_d(ecap, ds[0], bch[i]) + growth(size(bch[i])) + size(bch[i]) + 40 <= 0xFFFF_0000)
+        && conf_ok(ecap, env, bound, ach.subrange(1, ach.len() as int), conf_zch(env, bch, ach[1]), ms[1], ds[1], ms.subrange(2, ms.len() as int), ds.subrange(2, ds.len() as int))
     }
 }
 
 /// A `conf_ok` ladder is monotone from its base to its last level (each
 /// level's `mlink <= ms[0] <= ms[1]` chains through the recursion) --
 /// needed to mono every intermediate edge up to the final common level.
-pub proof fn conf_ok_le_last(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+pub proof fn conf_ok_le_last(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
     requires
         ach.len() >= 1,
-        conf_ok(env, bound, ach, bch, mlink, dlink, ms, ds),
+        conf_ok(ecap, env, bound, ach, bch, mlink, dlink, ms, ds),
     ensures
         mlink <= ladder_last(mlink, ms),
         dlink <= ladder_last(dlink, ds),
@@ -4476,7 +4546,7 @@ pub proof fn conf_ok_le_last(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ac
         let ach2 = ach.subrange(1, ach.len() as int);
         let ms2 = ms.subrange(2, ms.len() as int);
         let ds2 = ds.subrange(2, ds.len() as int);
-        conf_ok_le_last(env, bound, ach2, conf_zch(env, bch, ach[1]), ms[1], ds[1], ms2, ds2);
+        conf_ok_le_last(ecap, env, bound, ach2, conf_zch(env, bch, ach[1]), ms[1], ds[1], ms2, ds2);
         if ms2.len() == 0 {
             assert(ms.len() == 2);
             assert(ladder_last(mlink, ms) == ms[1]);
@@ -4503,7 +4573,7 @@ pub proof fn conf_ok_le_last(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ac
 /// out of a common start, and this lemma hands back the common reduct.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(1000)]
-pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+pub proof fn pstep_d_confluent(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, ach: Seq<ExprSpec>, bch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         ach.len() >= 1,
@@ -4511,7 +4581,7 @@ pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
         ach[0] == bch[0],
         forall |i: int| 0 <= i < ach.len() - 1 ==> pstep_d(env, #[trigger] ach[i], ach[i + 1], mlink, dlink),
         forall |i: int| 0 <= i < bch.len() - 1 ==> pstep_d(env, #[trigger] bch[i], bch[i + 1], mlink, dlink),
-        conf_ok(env, bound, ach, bch, mlink, dlink, ms, ds),
+        conf_ok(ecap, env, bound, ach, bch, mlink, dlink, ms, ds),
     ensures exists |wa: Seq<ExprSpec>, wb: Seq<ExprSpec>|
         #![trigger wa.len(), wb.len()]
         wa.len() >= 1
@@ -4547,7 +4617,7 @@ pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
         assert(pstep_d(env, c0, a1, mlink, dlink));
         assert(bch[0] == c0);
         pstep_d_mono(env, c0, a1, mlink, dlink, ms[0], ds[0]);
-        pstep_d_strip(env, bound, bch, a1, mlink, dlink, ms[0], ds[0], ms[1], ds[1]);
+        pstep_d_strip(ecap, env, bound, bch, a1, mlink, dlink, ms[0], ds[0], ms[1], ds[1]);
         let zch = choose |zch: Seq<ExprSpec>|
             #![trigger zch.len()]
             zch.len() == bch.len()
@@ -4579,9 +4649,9 @@ pub proof fn pstep_d_confluent(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, 
             assert(pstep_d(env, ach[i + 1], ach[i + 2], mlink, dlink));
             pstep_d_mono(env, ach[i + 1], ach[i + 2], mlink, dlink, ms[1], ds[1]);
         }
-        assert(conf_ok(env, bound, ach2, zc, ms[1], ds[1], ms2, ds2));
-        pstep_d_confluent(env, bound, ach2, zch, ms[1], ds[1], ms2, ds2);
-        conf_ok_le_last(env, bound, ach2, zch, ms[1], ds[1], ms2, ds2);
+        assert(conf_ok(ecap, env, bound, ach2, zc, ms[1], ds[1], ms2, ds2));
+        pstep_d_confluent(ecap, env, bound, ach2, zch, ms[1], ds[1], ms2, ds2);
+        conf_ok_le_last(ecap, env, bound, ach2, zch, ms[1], ds[1], ms2, ds2);
         let mf2 = ladder_last(ms[1], ms2);
         let df2 = ladder_last(ds[1], ds2);
         // The recursion's final level IS this call's final level.
@@ -4683,7 +4753,7 @@ pub proof fn pstep_d_chain_star(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<Exp
 /// every real producer in this codebase (the `verified_*` whnf/def_eq
 /// family) holds its concrete chains and their bounds, converts them via
 /// `pstep_to_pstep_d`, and computes the ladder from its own data.
-pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, c: ExprSpec, qch: Seq<ExprSpec>, rch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
+pub proof fn defeq_trans_certified(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, c: ExprSpec, qch: Seq<ExprSpec>, rch: Seq<ExprSpec>, mlink: nat, dlink: nat, ms: Seq<nat>, ds: Seq<nat>)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         qch.len() >= 1,
@@ -4693,12 +4763,12 @@ pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
         pstep_star(env, c, rch[rch.len() - 1]),
         forall |i: int| 0 <= i < qch.len() - 1 ==> pstep_d(env, #[trigger] qch[i], qch[i + 1], mlink, dlink),
         forall |i: int| 0 <= i < rch.len() - 1 ==> pstep_d(env, #[trigger] rch[i], rch[i + 1], mlink, dlink),
-        conf_ok(env, bound, qch, rch, mlink, dlink, ms, ds),
+        conf_ok(ecap, env, bound, qch, rch, mlink, dlink, ms, ds),
     ensures defeq(env, a, c)
 {
     env_wf_empty_all();
     env_closed_empty();
-    pstep_d_confluent(env, bound, qch, rch, mlink, dlink, ms, ds);
+    pstep_d_confluent(ecap, env, bound, qch, rch, mlink, dlink, ms, ds);
     let mf = ladder_last(mlink, ms);
     let df = ladder_last(dlink, ds);
     let (wa, wb) = choose |wa: Seq<ExprSpec>, wb: Seq<ExprSpec>|
@@ -4727,29 +4797,29 @@ pub proof fn defeq_trans_certified(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: n
 /// `defeq_trans_single_middle`'s `conf_ok` obligation close by
 /// construction, demonstrating the confluence requires are genuinely
 /// satisfiable (the check the original strip formulation failed).
-pub open spec fn join1_m(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
-    let t = if tak_m(bound, mlink, dlink, b) >= tak_m(bound, mlink, dlink, z) { tak_m(bound, mlink, dlink, b) } else { tak_m(bound, mlink, dlink, z) };
+pub open spec fn join1_m(ecap: nat, bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let t = if tak_m(ecap, bound, mlink, dlink, b) >= tak_m(ecap, bound, mlink, dlink, z) { tak_m(ecap, bound, mlink, dlink, b) } else { tak_m(ecap, bound, mlink, dlink, z) };
     if mlink >= t { mlink } else { t }
 }
 
-pub open spec fn join1_d(bound: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
-    let t = if tak_d(dlink, b) >= tak_d(dlink, z) { tak_d(dlink, b) } else { tak_d(dlink, z) };
+pub open spec fn join1_d(ecap: nat, bound: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let t = if tak_d(ecap, dlink, b) >= tak_d(ecap, dlink, z) { tak_d(ecap, dlink, b) } else { tak_d(ecap, dlink, z) };
     if dlink >= t { dlink } else { t }
 }
 
 /// Second ladder level: dominates the two-deep Takahashi values (tak at
 /// the first level) of both middle-chain elements, and the first level.
-pub open spec fn join2_m(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
-    let m1 = join1_m(bound, mlink, dlink, b, z);
-    let d1 = join1_d(bound, dlink, b, z);
-    let t = if tak_m(bound, m1, d1, b) >= tak_m(bound, m1, d1, z) { tak_m(bound, m1, d1, b) } else { tak_m(bound, m1, d1, z) };
+pub open spec fn join2_m(ecap: nat, bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let m1 = join1_m(ecap, bound, mlink, dlink, b, z);
+    let d1 = join1_d(ecap, bound, dlink, b, z);
+    let t = if tak_m(ecap, bound, m1, d1, b) >= tak_m(ecap, bound, m1, d1, z) { tak_m(ecap, bound, m1, d1, b) } else { tak_m(ecap, bound, m1, d1, z) };
     if m1 >= t { m1 } else { t }
 }
 
-pub open spec fn join2_d(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
-    let m1 = join1_m(bound, mlink, dlink, b, z);
-    let d1 = join1_d(bound, dlink, b, z);
-    let t = if tak_d(d1, b) >= tak_d(d1, z) { tak_d(d1, b) } else { tak_d(d1, z) };
+pub open spec fn join2_d(ecap: nat, bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: ExprSpec) -> nat {
+    let m1 = join1_m(ecap, bound, mlink, dlink, b, z);
+    let d1 = join1_d(ecap, bound, dlink, b, z);
+    let t = if tak_d(ecap, d1, b) >= tak_d(ecap, d1, z) { tak_d(ecap, d1, b) } else { tak_d(ecap, d1, z) };
     if d1 >= t { d1 } else { t }
 }
 
@@ -4764,7 +4834,7 @@ pub open spec fn join2_d(bound: nat, mlink: nat, dlink: nat, b: ExprSpec, z: Exp
 /// the general machinery's requires (the discipline adopted after the
 /// original strip formulation turned out true-but-vacuous).
 #[verifier::spinoff_prover]
-pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat)
+pub proof fn defeq_trans_single_middle(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         pstep_star(env, a, z1),
@@ -4775,20 +4845,20 @@ pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, boun
         max_var_below(z2, bound),
         string_lits_ok(b, 0),
         string_lits_ok(z2, 0),
-        bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, b) + 4 * tak_d(dlink, b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
-        bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, z2) + 4 * tak_d(dlink, z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
-        bound + join1_m(bound, mlink, dlink, b, z2) + 6 * join1_d(bound, dlink, b, z2) + tak_m(bound, join1_m(bound, mlink, dlink, b, z2), join1_d(bound, dlink, b, z2), b) + 4 * tak_d(join1_d(bound, dlink, b, z2), b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
-        bound + join1_m(bound, mlink, dlink, b, z2) + 6 * join1_d(bound, dlink, b, z2) + tak_m(bound, join1_m(bound, mlink, dlink, b, z2), join1_d(bound, dlink, b, z2), z2) + 4 * tak_d(join1_d(bound, dlink, b, z2), z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
+        bound + mlink + 6 * dlink + tak_m(ecap, bound, mlink, dlink, b) + 4 * tak_d(ecap, dlink, b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
+        bound + mlink + 6 * dlink + tak_m(ecap, bound, mlink, dlink, z2) + 4 * tak_d(ecap, dlink, z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
+        bound + join1_m(ecap, bound, mlink, dlink, b, z2) + 6 * join1_d(ecap, bound, dlink, b, z2) + tak_m(ecap, bound, join1_m(ecap, bound, mlink, dlink, b, z2), join1_d(ecap, bound, dlink, b, z2), b) + 4 * tak_d(ecap, join1_d(ecap, bound, dlink, b, z2), b) + growth(size(b)) + size(b) + 40 <= 0xFFFF_0000,
+        bound + join1_m(ecap, bound, mlink, dlink, b, z2) + 6 * join1_d(ecap, bound, dlink, b, z2) + tak_m(ecap, bound, join1_m(ecap, bound, mlink, dlink, b, z2), join1_d(ecap, bound, dlink, b, z2), z2) + 4 * tak_d(ecap, join1_d(ecap, bound, dlink, b, z2), z2) + growth(size(z2)) + size(z2) + 40 <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
     env_wf_empty_all();
     env_closed_empty();
     let qch = seq![b, z1];
     let rch = seq![b, z2];
-    let m1 = join1_m(bound, mlink, dlink, b, z2);
-    let d1 = join1_d(bound, dlink, b, z2);
-    let m2 = join2_m(bound, mlink, dlink, b, z2);
-    let d2 = join2_d(bound, mlink, dlink, b, z2);
+    let m1 = join1_m(ecap, bound, mlink, dlink, b, z2);
+    let d1 = join1_d(ecap, bound, dlink, b, z2);
+    let m2 = join2_m(ecap, bound, mlink, dlink, b, z2);
+    let d2 = join2_d(ecap, bound, mlink, dlink, b, z2);
     let ms = seq![m1, m2];
     let ds = seq![d1, d2];
     assert(qch.len() == 2 && rch.len() == 2);
@@ -4806,36 +4876,36 @@ pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, boun
     let ds2 = ds.subrange(2, 2);
     assert(qch2.len() == 1);
     assert(ms2.len() == 0 && ds2.len() == 0);
-    assert(conf_ok(env, bound, qch2, conf_zch(env, rch, qch[1]), m2, d2, ms2, ds2));
+    assert(conf_ok(ecap, env, bound, qch2, conf_zch(env, rch, qch[1]), m2, d2, ms2, ds2));
     assert forall |i: int| 0 <= i < rch.len() implies max_var_below(#[trigger] rch[i], bound) by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
     assert forall |i: int| 0 <= i < rch.len() implies string_lits_ok(#[trigger] rch[i], 0) by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies tak_m(bound, mlink, dlink, #[trigger] rch[i]) <= m1 by {
+    assert forall |i: int| 0 <= i < rch.len() implies tak_m(ecap, bound, mlink, dlink, #[trigger] rch[i]) <= m1 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies tak_d(dlink, #[trigger] rch[i]) <= d1 by {
+    assert forall |i: int| 0 <= i < rch.len() implies tak_d(ecap, dlink, #[trigger] rch[i]) <= d1 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies tak_m(bound, m1, d1, #[trigger] rch[i]) <= m2 by {
+    assert forall |i: int| 0 <= i < rch.len() implies tak_m(ecap, bound, m1, d1, #[trigger] rch[i]) <= m2 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies tak_d(d1, #[trigger] rch[i]) <= d2 by {
+    assert forall |i: int| 0 <= i < rch.len() implies tak_d(ecap, d1, #[trigger] rch[i]) <= d2 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies bound + mlink + 6 * dlink + tak_m(bound, mlink, dlink, #[trigger] rch[i]) + 4 * tak_d(dlink, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
+    assert forall |i: int| 0 <= i < rch.len() implies bound + mlink + 6 * dlink + tak_m(ecap, bound, mlink, dlink, #[trigger] rch[i]) + 4 * tak_d(ecap, dlink, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
-    assert forall |i: int| 0 <= i < rch.len() implies bound + m1 + 6 * d1 + tak_m(bound, m1, d1, #[trigger] rch[i]) + 4 * tak_d(d1, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
+    assert forall |i: int| 0 <= i < rch.len() implies bound + m1 + 6 * d1 + tak_m(ecap, bound, m1, d1, #[trigger] rch[i]) + 4 * tak_d(ecap, d1, rch[i]) + growth(size(rch[i])) + size(rch[i]) + 40 <= 0xFFFF_0000 by {
         if i == 0 { assert(rch[0] == b); } else { assert(rch[1] == z2); }
     }
     assert(mlink <= m1 && m1 <= m2 && dlink <= d1 && d1 <= d2);
-    assert(conf_ok(env, bound, qch, rch, mlink, dlink, ms, ds));
+    assert(conf_ok(ecap, env, bound, qch, rch, mlink, dlink, ms, ds));
     assert(qch[qch.len() - 1] == z1);
     assert(rch[rch.len() - 1] == z2);
-    defeq_trans_certified(env, bound, a, c, qch, rch, mlink, dlink, ms, ds);
+    defeq_trans_certified(ecap, env, bound, a, c, qch, rch, mlink, dlink, ms, ds);
 }
 
 /// Closed-form (size-ceiling-only) versions of the Takahashi caps and
@@ -4843,30 +4913,30 @@ pub proof fn defeq_trans_single_middle(env: Map<u64, (Seq<u64>, ExprSpec)>, boun
 /// `s0` (a size ceiling on the middle terms) and the link caps alone,
 /// with no structural recursion over ghost terms. `tak_d_le`/`tak_m_le`
 /// connect the real `tak_*` values to these.
-pub open spec fn tak_d_ceil(dcap: nat, s0: nat) -> nat {
-    s0 * (dcap + s0 + 1)
+pub open spec fn tak_d_ceil(ecap: nat, dcap: nat, s0: nat) -> nat {
+    s0 * (dcap + s0 * (ecap + 1) + 1)
 }
 
-pub open spec fn tak_m_ceil(bound: nat, mcap: nat, dcap: nat, s0: nat) -> nat {
-    s0 * (mcap + bound + growth(s0) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 + 1))
+pub open spec fn tak_m_ceil(ecap: nat, bound: nat, mcap: nat, dcap: nat, s0: nat) -> nat {
+    s0 * (mcap + bound + growth(s0) * (ecap + 1) + 2 * dcap + 7 + 2 * s0 * (dcap + s0 * (ecap + 1) + 1))
 }
 
-pub open spec fn join1_m_ceil(bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
-    mlink + tak_m_ceil(bound, mlink, dlink, s0)
+pub open spec fn join1_m_ceil(ecap: nat, bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
+    mlink + tak_m_ceil(ecap, bound, mlink, dlink, s0)
 }
 
-pub open spec fn join1_d_ceil(dlink: nat, s0: nat) -> nat {
-    dlink + tak_d_ceil(dlink, s0)
+pub open spec fn join1_d_ceil(ecap: nat, dlink: nat, s0: nat) -> nat {
+    dlink + tak_d_ceil(ecap, dlink, s0)
 }
 
 /// The ONE numeric ceiling that dominates all four of
 /// `defeq_trans_single_middle`'s takahashi overflow requires (the
 /// level-1 pair is dominated by the level-2 pair since the ladder is
 /// monotone) -- evaluated at the closed-form level-1 caps.
-pub open spec fn single_middle_ceil(bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
-    let m1b = join1_m_ceil(bound, mlink, dlink, s0);
-    let d1b = join1_d_ceil(dlink, s0);
-    bound + m1b + 6 * d1b + tak_m_ceil(bound, m1b, d1b, s0) + 4 * tak_d_ceil(d1b, s0) + growth(s0) + s0 + 40
+pub open spec fn single_middle_ceil(ecap: nat, bound: nat, mlink: nat, dlink: nat, s0: nat) -> nat {
+    let m1b = join1_m_ceil(ecap, bound, mlink, dlink, s0);
+    let d1b = join1_d_ceil(ecap, dlink, s0);
+    bound + m1b + 6 * d1b + tak_m_ceil(ecap, bound, m1b, d1b, s0) + 4 * tak_d_ceil(ecap, d1b, s0) + growth(s0) + s0 + 40
 }
 
 /// Concrete satisfiability witness for `defeq_trans_single_middle_sized`'s
@@ -4878,30 +4948,41 @@ pub open spec fn single_middle_ceil(bound: nat, mlink: nat, dlink: nat, s0: nat)
 /// dominant term is ~2*s0^4, so size ceilings up to ~200 fit; beyond
 /// that the single-middle route needs smaller link caps.)
 pub proof fn single_middle_ceil_sat_demo()
-    ensures single_middle_ceil(1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000
+    ensures single_middle_ceil(0, 1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000
 {
-    assert(single_middle_ceil(1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000) by (compute);
+    assert(single_middle_ceil(0, 1000, (1000 + growth(100)) as nat, 100, 100) <= 0xFFFF_0000) by (compute);
+}
+
+/// The same discipline under a REAL environment cap (delta-lift T4):
+/// with `ecap = 100` the env factor multiplies every size term, so the
+/// size ceiling drops to ~40 for the single-middle route to fit u32
+/// (hand-derived: the dominant term is ~`s0^2 * d1b * ...` with
+/// `d1b ~ s0^2 * ecap`, i.e. ~`s0^4 * ecap`).
+pub proof fn single_middle_ceil_sat_demo_env()
+    ensures single_middle_ceil(100, 1000, (1000 + growth(100)) as nat, 100, 40) <= 0xFFFF_0000
+{
+    assert(single_middle_ceil(100, 1000, (1000 + growth(100)) as nat, 100, 40) <= 0xFFFF_0000) by (compute);
 }
 
 /// `tak_d_ceil` is monotone in its cap.
-pub proof fn tak_d_ceil_mono(d1: nat, d2: nat, s0: nat)
+pub proof fn tak_d_ceil_mono(ecap: nat, d1: nat, d2: nat, s0: nat)
     requires d1 <= d2
-    ensures tak_d_ceil(d1, s0) <= tak_d_ceil(d2, s0)
+    ensures tak_d_ceil(ecap, d1, s0) <= tak_d_ceil(ecap, d2, s0)
 {
-    assert(s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1)) by (nonlinear_arith)
+    assert(s0 * (d1 + s0 * (ecap + 1) + 1) <= s0 * (d2 + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires d1 <= d2;
 }
 
 /// `tak_m_ceil` is monotone in both caps.
-pub proof fn tak_m_ceil_mono(bound: nat, m1: nat, d1: nat, m2: nat, d2: nat, s0: nat)
+pub proof fn tak_m_ceil_mono(ecap: nat, bound: nat, m1: nat, d1: nat, m2: nat, d2: nat, s0: nat)
     requires m1 <= m2, d1 <= d2
-    ensures tak_m_ceil(bound, m1, d1, s0) <= tak_m_ceil(bound, m2, d2, s0)
+    ensures tak_m_ceil(ecap, bound, m1, d1, s0) <= tak_m_ceil(ecap, bound, m2, d2, s0)
 {
-    assert(s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1)) by (nonlinear_arith)
+    assert(s0 * (d1 + s0 * (ecap + 1) + 1) <= s0 * (d2 + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires d1 <= d2;
-    assert(s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
-        <= s0 * (m2 + bound + growth(s0) + 2 * d2 + 7 + 2 * s0 * (d2 + s0 + 1))) by (nonlinear_arith)
-        requires m1 <= m2, d1 <= d2, s0 * (d1 + s0 + 1) <= s0 * (d2 + s0 + 1);
+    assert(s0 * (m1 + bound + growth(s0) * (ecap + 1) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 * (ecap + 1) + 1))
+        <= s0 * (m2 + bound + growth(s0) * (ecap + 1) + 2 * d2 + 7 + 2 * s0 * (d2 + s0 * (ecap + 1) + 1))) by (nonlinear_arith)
+        requires m1 <= m2, d1 <= d2, s0 * (d1 + s0 * (ecap + 1) + 1) <= s0 * (d2 + s0 * (ecap + 1) + 1);
 }
 
 /// `defeq_trans_single_middle` with the four structural-recursion
@@ -4910,7 +4991,7 @@ pub proof fn tak_m_ceil_mono(bound: nat, m1: nat, d1: nat, m2: nat, d2: nat, s0:
 /// discharge, since `tak_m`/`tak_d` are ghost structural recursions a
 /// runtime gate can never evaluate, while `single_middle_ceil` is plain
 /// polynomial arithmetic in exec-measurable quantities.
-pub proof fn defeq_trans_single_middle_sized(env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat, s0: nat)
+pub proof fn defeq_trans_single_middle_sized(ecap: nat, env: Map<u64, (Seq<u64>, ExprSpec)>, bound: nat, a: ExprSpec, b: ExprSpec, c: ExprSpec, z1: ExprSpec, z2: ExprSpec, mlink: nat, dlink: nat, s0: nat)
     requires
         env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
         pstep_star(env, a, z1),
@@ -4923,65 +5004,65 @@ pub proof fn defeq_trans_single_middle_sized(env: Map<u64, (Seq<u64>, ExprSpec)>
         string_lits_ok(z2, 0),
         size(b) <= s0,
         size(z2) <= s0,
-        single_middle_ceil(bound, mlink, dlink, s0) <= 0xFFFF_0000,
+        single_middle_ceil(ecap, bound, mlink, dlink, s0) <= 0xFFFF_0000,
     ensures defeq(env, a, c)
 {
     env_wf_empty_all();
     env_closed_empty();
-    let m1b = join1_m_ceil(bound, mlink, dlink, s0);
-    let d1b = join1_d_ceil(dlink, s0);
+    let m1b = join1_m_ceil(ecap, bound, mlink, dlink, s0);
+    let d1b = join1_d_ceil(ecap, dlink, s0);
     // Level-1 tak bounds for both middle terms.
-    tak_m_le(bound, mlink, dlink, b, s0);
-    tak_m_le(bound, mlink, dlink, z2, s0);
-    tak_d_le(dlink, b, s0);
-    tak_d_le(dlink, z2, s0);
-    assert(size(b) * (dlink + s0 + 1) <= s0 * (dlink + s0 + 1)) by (nonlinear_arith)
+    tak_m_le(ecap, bound, mlink, dlink, b, s0);
+    tak_m_le(ecap, bound, mlink, dlink, z2, s0);
+    tak_d_le(ecap, dlink, b, s0);
+    tak_d_le(ecap, dlink, z2, s0);
+    assert(size(b) * (dlink + s0 * (ecap + 1) + 1) <= s0 * (dlink + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires size(b) <= s0;
-    assert(size(z2) * (dlink + s0 + 1) <= s0 * (dlink + s0 + 1)) by (nonlinear_arith)
+    assert(size(z2) * (dlink + s0 * (ecap + 1) + 1) <= s0 * (dlink + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires size(z2) <= s0;
-    assert(size(b) * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))
-        <= s0 * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))) by (nonlinear_arith)
+    assert(size(b) * (mlink + bound + growth(s0) * (ecap + 1) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 * (ecap + 1) + 1))
+        <= s0 * (mlink + bound + growth(s0) * (ecap + 1) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 * (ecap + 1) + 1))) by (nonlinear_arith)
         requires size(b) <= s0;
-    assert(size(z2) * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))
-        <= s0 * (mlink + bound + growth(s0) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 + 1))) by (nonlinear_arith)
+    assert(size(z2) * (mlink + bound + growth(s0) * (ecap + 1) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 * (ecap + 1) + 1))
+        <= s0 * (mlink + bound + growth(s0) * (ecap + 1) + 2 * dlink + 7 + 2 * s0 * (dlink + s0 * (ecap + 1) + 1))) by (nonlinear_arith)
         requires size(z2) <= s0;
-    assert(tak_m(bound, mlink, dlink, b) <= tak_m_ceil(bound, mlink, dlink, s0));
-    assert(tak_m(bound, mlink, dlink, z2) <= tak_m_ceil(bound, mlink, dlink, s0));
-    assert(tak_d(dlink, b) <= tak_d_ceil(dlink, s0));
-    assert(tak_d(dlink, z2) <= tak_d_ceil(dlink, s0));
+    assert(tak_m(ecap, bound, mlink, dlink, b) <= tak_m_ceil(ecap, bound, mlink, dlink, s0));
+    assert(tak_m(ecap, bound, mlink, dlink, z2) <= tak_m_ceil(ecap, bound, mlink, dlink, s0));
+    assert(tak_d(ecap, dlink, b) <= tak_d_ceil(ecap, dlink, s0));
+    assert(tak_d(ecap, dlink, z2) <= tak_d_ceil(ecap, dlink, s0));
     // The actual join1 level is under its closed-form ceiling.
-    let m1 = join1_m(bound, mlink, dlink, b, z2);
-    let d1 = join1_d(bound, dlink, b, z2);
+    let m1 = join1_m(ecap, bound, mlink, dlink, b, z2);
+    let d1 = join1_d(ecap, bound, dlink, b, z2);
     assert(m1 <= m1b);
     assert(d1 <= d1b);
     // Level-2 tak bounds at the ACTUAL level-1 caps, monotoned up to
     // the closed-form level-1 caps.
-    tak_m_le(bound, m1, d1, b, s0);
-    tak_m_le(bound, m1, d1, z2, s0);
-    tak_d_le(d1, b, s0);
-    tak_d_le(d1, z2, s0);
-    assert(size(b) * (d1 + s0 + 1) <= s0 * (d1 + s0 + 1)) by (nonlinear_arith)
+    tak_m_le(ecap, bound, m1, d1, b, s0);
+    tak_m_le(ecap, bound, m1, d1, z2, s0);
+    tak_d_le(ecap, d1, b, s0);
+    tak_d_le(ecap, d1, z2, s0);
+    assert(size(b) * (d1 + s0 * (ecap + 1) + 1) <= s0 * (d1 + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires size(b) <= s0;
-    assert(size(z2) * (d1 + s0 + 1) <= s0 * (d1 + s0 + 1)) by (nonlinear_arith)
+    assert(size(z2) * (d1 + s0 * (ecap + 1) + 1) <= s0 * (d1 + s0 * (ecap + 1) + 1)) by (nonlinear_arith)
         requires size(z2) <= s0;
-    assert(size(b) * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
-        <= s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))) by (nonlinear_arith)
+    assert(size(b) * (m1 + bound + growth(s0) * (ecap + 1) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 * (ecap + 1) + 1))
+        <= s0 * (m1 + bound + growth(s0) * (ecap + 1) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 * (ecap + 1) + 1))) by (nonlinear_arith)
         requires size(b) <= s0;
-    assert(size(z2) * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))
-        <= s0 * (m1 + bound + growth(s0) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 + 1))) by (nonlinear_arith)
+    assert(size(z2) * (m1 + bound + growth(s0) * (ecap + 1) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 * (ecap + 1) + 1))
+        <= s0 * (m1 + bound + growth(s0) * (ecap + 1) + 2 * d1 + 7 + 2 * s0 * (d1 + s0 * (ecap + 1) + 1))) by (nonlinear_arith)
         requires size(z2) <= s0;
-    tak_m_ceil_mono(bound, m1, d1, m1b, d1b, s0);
-    tak_d_ceil_mono(d1, d1b, s0);
-    assert(tak_m(bound, m1, d1, b) <= tak_m_ceil(bound, m1b, d1b, s0));
-    assert(tak_m(bound, m1, d1, z2) <= tak_m_ceil(bound, m1b, d1b, s0));
-    assert(tak_d(d1, b) <= tak_d_ceil(d1b, s0));
-    assert(tak_d(d1, z2) <= tak_d_ceil(d1b, s0));
+    tak_m_ceil_mono(ecap, bound, m1, d1, m1b, d1b, s0);
+    tak_d_ceil_mono(ecap, d1, d1b, s0);
+    assert(tak_m(ecap, bound, m1, d1, b) <= tak_m_ceil(ecap, bound, m1b, d1b, s0));
+    assert(tak_m(ecap, bound, m1, d1, z2) <= tak_m_ceil(ecap, bound, m1b, d1b, s0));
+    assert(tak_d(ecap, d1, b) <= tak_d_ceil(ecap, d1b, s0));
+    assert(tak_d(ecap, d1, z2) <= tak_d_ceil(ecap, d1b, s0));
     // Everything in sight fits under the one ceiling.
     growth_mono(size(b), s0);
     growth_mono(size(z2), s0);
-    tak_m_ceil_mono(bound, mlink, dlink, m1b, d1b, s0);
-    tak_d_ceil_mono(dlink, d1b, s0);
-    defeq_trans_single_middle(env, bound, a, b, c, z1, z2, mlink, dlink);
+    tak_m_ceil_mono(ecap, bound, mlink, dlink, m1b, d1b, s0);
+    tak_d_ceil_mono(ecap, dlink, d1b, s0);
+    defeq_trans_single_middle(ecap, env, bound, a, b, c, z1, z2, mlink, dlink);
 }
 
 /// `e` is "`StringLit`-headroom-well-formed" w.r.t. `cap`: every `StringLit`
