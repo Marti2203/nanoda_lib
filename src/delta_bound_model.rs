@@ -106,6 +106,10 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_sub};
+use crate::expr_arena_bridge::expr_as_proj;
+#[cfg(verus_only)]
+use crate::tc_model::{deq_leaf, deq_any_refl, deq_any_of_leaf, deq_any_app_congr, deq_any_bind_congr, deq_any_proj_congr, deq_any_symm, deq_any_trans};
+use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
 use crate::expr_arena_bridge::verified_size;
@@ -2605,7 +2609,7 @@ pub fn verified_defeq_whnf_checked<'e, 't, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
 /// available: on the full `Init` corpus the global certificate failed for
 /// 44235 of 44684 checkers, leaving 2.16M non-trivial def_eq calls with no
 /// verified route at all.
-pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, rounds: u32) -> (result: Option<bool>)
     requires k <= 60000,
     ensures match result {
         Some(true) => defeq(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -2623,8 +2627,8 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if ctx.num_loose_bvars(y) != 0 {
         return None;
     }
-    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, 8, k);
-    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, 8, k);
+    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, rounds, k);
+    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, rounds, k);
     if expr_ptr_eq(rx, ry) {
         proof {
             let cm = env_model_capped(*env, k as nat);
@@ -2638,6 +2642,231 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         Some(true)
     } else {
         Some(false)
+    }
+}
+
+/// THE VERIFIED CONVERSION ROUTE (CR1, 2026-09-04): definitional equality
+/// by a verified recursion that mirrors `TypeChecker::def_eq`'s main loop
+/// over the CAPPED environment model and never calls the legacy checker:
+/// pointer equality; `Sort`/`Const` leaves (level equivalence); structural
+/// congruence over `App`, `Pi`, `Lambda`, `Proj` (real-shape gated: a `Pi`
+/// never matches a `Lambda` even though the model's `Bind` conflates
+/// them); ONE capped lazy-delta round with recursion on the reducts; and
+/// the capped whnf-join as the last leaf. Every `Some(true)` composes
+/// into `deq_any(to_model_of_env(env), x, y)` -- the combined inductive
+/// definitional-equality relation (reduction joinability + leaf level
+/// equivalence + congruence + transitivity). Anything it cannot decide
+/// is `None`, and the caller falls back to the legacy path exactly as
+/// before, so this costs no completeness.
+/// Diagnostics-only bridge into `tc::route_stats` (no contract; the
+/// counters are never read by verified code).
+#[verifier::external_body]
+fn conv_stat(kind: u8) {
+    crate::tc::route_stats::conv_leaf(kind);
+}
+
+/// Failure-cache probes (diagnostics-grade, no contract): a hit only makes
+/// the route answer `None` early, never `Some(true)`.
+#[verifier::external_body]
+fn conv_fail_seen<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits())
+}
+
+#[verifier::external_body]
+fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) {
+    crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits());
+}
+
+/// `verified_conv` with the per-checker failure cache around it: pairs
+/// this checker already failed on are not re-searched (the recursion
+/// revisits the same sub-pairs from many contexts).
+pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 1int
+{
+    if conv_fail_seen(x, y) {
+        return None;
+    }
+    let r = verified_conv_inner(ctx, env, x, y, fuel, k, budget);
+    match r {
+        Some(true) => Some(true),
+        _ => {
+            conv_fail_note(x, y);
+            None
+        }
+    }
+}
+
+pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 0int
+{
+    let ghost em = to_model_of_env(*env);
+    if expr_ptr_eq(x, y) {
+        proof { deq_any_refl(em, to_model(x)); }
+        return Some(true);
+    }
+    if budget == 0 {
+        return None;
+    }
+    // --- leaves: Sort / Const by level equivalence ---
+    match verified_def_eq_sort(ctx, x, y, fuel) {
+        Some(true) => {
+            proof {
+                let (lx, ly) = choose |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                    to_model(x) == ExprSpec::Sort(level_to_model(lx))
+                    && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+                    && (true ==> forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho));
+                assert(deq_leaf(to_model(x), to_model(y)));
+                deq_any_of_leaf(em, to_model(x), to_model(y));
+            }
+            conv_stat(0);
+            return Some(true);
+        }
+        Some(false) => return None,
+        None => {}
+    }
+    if verified_def_eq_const(ctx, x, y, fuel) {
+        proof {
+            is_const_shape_model(x);
+            const_levels_vec_model(x);
+            is_const_shape_model(y);
+            const_levels_vec_model(y);
+            assert(to_model(x) == ExprSpec::Const(const_id(x), to_model_of_levels(const_levels_of(x))));
+            assert(to_model(y) == ExprSpec::Const(const_id(y), to_model_of_levels(const_levels_of(y))));
+            let ls1 = to_model_of_levels(const_levels_of(x));
+            let ls2 = to_model_of_levels(const_levels_of(y));
+            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1.len() implies #[trigger] interp(ls1[i], rho) == interp(ls2[i], rho) by {
+                assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho));
+            }
+            assert(deq_leaf(to_model(x), to_model(y)));
+            deq_any_of_leaf(em, to_model(x), to_model(y));
+        }
+        conv_stat(1);
+        return Some(true);
+    }
+    // --- structural congruence (real-shape gated) ---
+    let xe = ctx.read_expr(x);
+    let ye = ctx.read_expr(y);
+    match (expr_as_app(&xe), expr_as_app(&ye)) {
+        (Some((f1, a1)), Some((f2, a2))) => {
+            if let Some(true) = verified_conv(ctx, env, f1, f2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, a1, a2, fuel, k, budget - 1) {
+                    proof { deq_any_app_congr(em, to_model(f1), to_model(f2), to_model(a1), to_model(a2)); }
+                    conv_stat(2);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_pi(&xe), expr_as_pi(&ye)) {
+        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, b1, b2, fuel, k, budget - 1) {
+                    proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
+                    conv_stat(3);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, b1, b2, fuel, k, budget - 1) {
+                    proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
+                    conv_stat(3);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_proj(&xe), expr_as_proj(&ye)) {
+        (Some((_, i1, s1)), Some((_, i2, s2))) => {
+            if i1 == i2 {
+                if let Some(true) = verified_conv(ctx, env, s1, s2, fuel, k, budget - 1) {
+                    proof { deq_any_proj_congr(em, i1, to_model(s1), to_model(s2)); }
+                    conv_stat(4);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    // --- reduction: closed, size-gated terms only ---
+    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
+    if sx > 500 || sy > 500 {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    let ghost cm = env_model_capped(*env, k as nat);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
+        nlbv_bound_implies_max_var_below(to_model(x), 0);
+        nlbv_bound_implies_max_var_below(to_model(y), 0);
+        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
+        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
+        assert(500 + k <= 1000);
+        assert(k + 500 + 500 <= 1500);
+    }
+    // one lazy-delta round, then recurse on the reducts
+    match verified_lazy_delta_round_capped(ctx, env, x, y, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat)) {
+        Some(DeltaRoundResult::Continue(x2, y2)) => {
+            if !(expr_ptr_eq(x2, x) && expr_ptr_eq(y2, y)) {
+                if let Some(true) = verified_conv(ctx, env, x2, y2, fuel, k, budget - 1) {
+                    proof {
+                        if x2 == x {
+                            deq_any_refl(em, to_model(x));
+                        } else {
+                            pstep_star_env_weaken(cm, em, to_model(x), to_model(x2));
+                            defeq_of_pstep_star(em, to_model(x), to_model(x2));
+                            deq_any_of_defeq(em, to_model(x), to_model(x2));
+                        }
+                        if y2 == y {
+                            deq_any_refl(em, to_model(y));
+                        } else {
+                            pstep_star_env_weaken(cm, em, to_model(y), to_model(y2));
+                            defeq_of_pstep_star(em, to_model(y), to_model(y2));
+                            deq_any_of_defeq(em, to_model(y), to_model(y2));
+                        }
+                        deq_any_trans(em, to_model(x), to_model(x2), to_model(y2));
+                        deq_any_symm(em, to_model(y), to_model(y2));
+                        deq_any_trans(em, to_model(x), to_model(y2), to_model(y));
+                    }
+                    conv_stat(5);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    // last leaf: the capped whnf-join
+    match verified_defeq_whnf_capped(ctx, env, x, y, fuel, k, 2) {
+        Some(true) => {
+            proof { deq_any_of_defeq(em, to_model(x), to_model(y)); }
+            conv_stat(6);
+            Some(true)
+        }
+        _ => None,
     }
 }
 

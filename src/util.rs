@@ -44,6 +44,12 @@ pub struct Ptr<A> {
     ph: PhantomData<A>,
 }
 
+impl<A> Ptr<A> {
+    /// The raw 32-bit encoding (marker bit + index) -- for diagnostics-only
+    /// caches keyed by pointer identity (see `tc::route_stats`).
+    pub(crate) fn raw_bits(self) -> u32 { self.raw }
+}
+
 /// Bit 31 set indicates TcCtx; cleared indicates ExportFile.
 const TC_BIT: u32 = 1 << 31;
 /// Mask for the 31-bit index stored in bits 0-30.

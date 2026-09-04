@@ -197,6 +197,33 @@ pub mod route_stats {
     pub static CORE: AtomicU64 = AtomicU64::new(0);
     pub static DELTA: AtomicU64 = AtomicU64::new(0);
     pub static WHNF_JOIN: AtomicU64 = AtomicU64::new(0);
+    pub static CONV: AtomicU64 = AtomicU64::new(0);
+    /// Which leaf/rule confirmed inside `verified_conv` (0 sort, 1 const,
+    /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
+    /// recursive confirmation, not just top-level ones.
+    pub static CONV_LEAF: [AtomicU64; 7] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+    pub fn conv_leaf(kind: u8) { if (kind as usize) < 7 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
+    thread_local! {
+        /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
+        /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
+        /// prunes work (the route answers `None`), so this cannot affect what
+        /// gets confirmed, only how fast it fails.
+        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+    }
+    pub fn conv_fail_seen(a: u32, b: u32) -> bool {
+        CONV_FAIL.with(|c| c.borrow().contains(&(a, b)))
+    }
+    pub fn conv_fail_note(a: u32, b: u32) {
+        CONV_FAIL.with(|c| { c.borrow_mut().insert((a, b)); });
+    }
+    pub fn conv_fail_clear() {
+        CONV_FAIL.with(|c| c.borrow_mut().clear());
+    }
+    /// Set NANODA_NO_CONV to skip the conversion route (A/B measurement).
+    pub fn conv_enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV").is_none())
+    }
     pub static LEGACY_TRUE: AtomicU64 = AtomicU64::new(0);
     pub static LEGACY_FALSE: AtomicU64 = AtomicU64::new(0);
     // Legacy sub-branches (which unverified rule decided the call). The
@@ -237,23 +264,28 @@ pub mod route_stats {
         let c = CORE.load(Ordering::Relaxed);
         let d = DELTA.load(Ordering::Relaxed);
         let w = WHNF_JOIN.load(Ordering::Relaxed);
+        let cv = CONV.load(Ordering::Relaxed);
         let lt = LEGACY_TRUE.load(Ordering::Relaxed);
         let lf = LEGACY_FALSE.load(Ordering::Relaxed);
-        let total = q + c + d + w + lt + lf;
-        let verified = c + d + w;
-        let nontrivial = c + d + w + lt + lf;
+        let total = q + c + d + w + cv + lt + lf;
+        let verified = c + d + w + cv;
+        let nontrivial = c + d + w + cv + lt + lf;
         format!(
-            "def_eq route stats: total {} | quick {} | verified core {} | verified delta {} | verified whnf-join {} | legacy true {} | legacy false {} | verified share of non-quick: {:.1}% | verified share of non-quick confirmations: {:.1}%",
-            total, q, c, d, w, lt, lf,
+            "def_eq route stats: total {} | quick {} | verified core {} | verified delta {} | verified whnf-join {} | verified conv {} | legacy true {} | legacy false {} | verified share of non-quick: {:.1}% | verified share of non-quick confirmations: {:.1}%",
+            total, q, c, d, w, cv, lt, lf,
             if nontrivial == 0 { 0.0 } else { 100.0 * verified as f64 / nontrivial as f64 },
             if verified + lt == 0 { 0.0 } else { 100.0 * verified as f64 / (verified + lt) as f64 },
-        ) + "\n" + &branches()
+        ) + "\n" + &branches() + &format!(
+            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {}",
+            CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
+            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed))
     }
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
         assert_eq!(dag.dbj_level_counter, 0);
+        route_stats::conv_fail_clear();
         Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info }
     }
 
@@ -1062,11 +1094,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Some(true) carries a machine-checked `defeq` (model-level
         // definitional equality by joinability).
         if let Some(true) =
-            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, 500)
+            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, 500, 8)
         {
             route_stats::bump(&route_stats::WHNF_JOIN);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
             return true
+        }
+        // Verified conversion route (see `delta_bound_model::verified_conv`):
+        // leaves + structural congruence + one lazy-delta round + the
+        // whnf-join, recursing through verified routes ONLY; a Some(true)
+        // carries a machine-checked `deq_any` (the combined inductive
+        // definitional-equality relation).
+        if route_stats::conv_enabled() {
+            if let Some(true) =
+                crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, 500, 8)
+            {
+                route_stats::bump(&route_stats::CONV);
+                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+                return true
+            }
         }
 
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
@@ -1603,7 +1649,7 @@ mod routed_tests {
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500, 8),
                 Some(true),
                 "the whnf-join boundary must confirm the beta redex on its own"
             );
@@ -1652,7 +1698,7 @@ mod routed_tests {
         assert_ne!(applied, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, applied, prop, 100, 500),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, applied, prop, 100, 500, 8),
             Some(true),
             "the whnf-join boundary must confirm the delta-then-beta pair on its own"
         );
@@ -1701,7 +1747,7 @@ mod routed_tests {
         assert_ne!(proj, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, proj, prop, 100, 500),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, proj, prop, 100, 500, 8),
             Some(true),
             "the whnf-join boundary must confirm the projection pair on its own"
         );
