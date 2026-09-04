@@ -941,15 +941,23 @@ pub open spec fn complete(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec) -> E
 /// still needs `pstep_subst1`'s substitutivity machinery for its beta
 /// case, which is where this file's real size-tracking difficulty lives
 /// -- see `feedback_defeq_witness_vs_pstep_star`'s own running account.
+///
+/// Delta-lift T4: NO environment hypothesis at all -- `complete`'s `Const`
+/// arm unfolds exactly when `pstep`'s delta arm fires, so the developed
+/// constant is its own delta reduct, and otherwise it is `e` (refl).
 pub proof fn pstep_complete_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
-    requires env == Map::<u64, (Seq<u64>, ExprSpec)>::empty()
     ensures pstep(env, e, complete(env, e))
     decreases e
 {
     match e {
         ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::Sort(_) => {}
-        ExprSpec::Const(id, _levels) => {
-            assert(!env.contains_key(id));
+        ExprSpec::Const(id, ls) => {
+            if env.contains_key(id) && env[id].0.len() == ls.len() {
+                assert(complete(env, e) == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, ls));
+                assert(pstep(env, e, complete(env, e)));
+            } else {
+                assert(complete(env, e) == e);
+            }
         }
         ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {}
         ExprSpec::App(f, a) => match *f {
@@ -5252,25 +5260,19 @@ pub proof fn string_lits_ok_subst1(body: ExprSpec, arg: ExprSpec, cap: nat)
 /// target with NO `StringLit` inside it at all (`NatLit`'s `Nat.zero`/
 /// `Nat.succ` targets are pure `Const`/`App`/`NatLit`; `StringLit`'s own
 /// target is trusted `StringLit`-free too, see `string_lit_expand_model_
-/// no_nested_string_lits`). Restricted to `env == Map::empty()` -- the
-/// SAME restriction `pstep_diamond` itself already carries, needed here
-/// for the SAME reason: delta's `env[id]` body is an EXTERNALLY-supplied
-/// value `env_wf` says nothing about w.r.t. `StringLit` content, so
-/// without this restriction the `Const` case would need its own separate
-/// (and currently nonexistent) hypothesis. Under `Map::empty()`, delta
-/// never fires (`env.contains_key` is always `false`), so `Const` falls
-/// into the trivial contradiction case exactly like `pstep_diamond`'s own
-/// unhandled shapes do.
+/// no_nested_string_lits`). Delta (delta-lift T4) needs the ONE
+/// extra hypothesis `env_strings_ok(env, cap)`: a definition body is
+/// externally supplied and `env_wf` says nothing about its `StringLit`
+/// content; level substitution never touches a `StringLit`, so the
+/// unfolded target inherits the body's headroom.
 pub proof fn pstep_preserves_string_lits_ok(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat, e1: ExprSpec, e2: ExprSpec)
     requires
-        env == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+        env_strings_ok(env, cap),
         pstep(env, e1, e2),
         string_lits_ok(e1, cap),
     ensures string_lits_ok(e2, cap)
     decreases e1
 {
-    env_wf_empty_all();
-    env_closed_empty();
     if e1 == e2 {
     } else {
         match e1 {
@@ -5368,6 +5370,14 @@ pub proof fn pstep_preserves_string_lits_ok(env: Map<u64, (Seq<u64>, ExprSpec)>,
                 string_lit_expand_model_no_nested_string_lits(len.0@, cap);
                 assert(string_lits_ok(e2, cap));
             }
+            ExprSpec::Const(id, ls) => {
+                // Delta (delta-lift T4): the target is the level-substituted
+                // definition body, strings-ok at `cap` by `env_strings_ok`.
+                assert(env.contains_key(id) && env[id].0.len() == ls.len());
+                assert(e2 == crate::expr_model::subst_expr_levels(env[id].1, env[id].0, ls));
+                assert(string_lits_ok(env[id].1, cap));
+                subst_expr_levels_string_lits_ok(env[id].1, env[id].0, ls, cap);
+            }
             _ => {
                 assert(false);
             }
@@ -5411,6 +5421,49 @@ pub open spec fn env_closed(env: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
         &&& nlbv(env[id].1) == 0
         &&& !has_fv(env[id].1)
         &&& ctor_num_params_of(id) is None
+    }
+}
+
+/// The `StringLit`-headroom half of environment well-formedness
+/// (delta-lift T4): every definition body's string literals fit `cap`'s
+/// headroom, so a delta target is `string_lits_ok` at `cap` -- the one
+/// hypothesis `pstep_preserves_string_lits_ok` needs beyond `pstep` (level
+/// substitution never touches a `StringLit`).
+pub open spec fn env_strings_ok(env: Map<u64, (Seq<u64>, ExprSpec)>, cap: nat) -> bool {
+    forall |id: u64| #[trigger] env.contains_key(id) ==> string_lits_ok(env[id].1, cap)
+}
+
+/// The empty environment is strings-ok at every cap (vacuously).
+pub proof fn env_strings_ok_empty(cap: nat)
+    ensures env_strings_ok(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cap)
+{
+    assert forall |id: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(id) implies false by {}
+}
+
+/// Level substitution preserves `string_lits_ok` exactly: it rewrites
+/// `Sort`/`Const` level payloads only, and `StringLit` nodes are untouched.
+pub proof fn subst_expr_levels_string_lits_ok(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, cap: nat)
+    ensures string_lits_ok(crate::expr_model::subst_expr_levels(e, ks, vs), cap) == string_lits_ok(e, cap)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_string_lits_ok(*f, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(*a, ks, vs, cap);
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_string_lits_ok(*t, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(*b, ks, vs, cap);
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_string_lits_ok(*t, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(*v, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(*b, ks, vs, cap);
+        }
+        ExprSpec::Proj(pidx, st) => {
+            subst_expr_levels_string_lits_ok(*st, ks, vs, cap);
+        }
+        _ => {}
     }
 }
 
