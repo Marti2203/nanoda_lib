@@ -192,6 +192,71 @@ impl<'p> ExportFile<'p> {
     }
 }
 
+/// Route-attribution counters for `TypeChecker::def_eq` (diagnostics only;
+/// read by `nanoda_bin` when `NANODA_ROUTE_STATS` is set). Which route
+/// CONFIRMED each call: the verified core, the verified delta route, the
+/// verified whnf-join route, or the legacy (unverified) path -- plus the
+/// legacy refutations, which no verified route covers today.
+pub mod route_stats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub static QUICK: AtomicU64 = AtomicU64::new(0);
+    pub static CORE: AtomicU64 = AtomicU64::new(0);
+    pub static DELTA: AtomicU64 = AtomicU64::new(0);
+    pub static WHNF_JOIN: AtomicU64 = AtomicU64::new(0);
+    pub static LEGACY_TRUE: AtomicU64 = AtomicU64::new(0);
+    pub static LEGACY_FALSE: AtomicU64 = AtomicU64::new(0);
+    // Legacy sub-branches (which unverified rule decided the call). The
+    // first group only ever confirms; LAZY_DELTA / WHNF_RETRY decide either
+    // way; EXHAUSTED only refutes. WHNF_RETRY recurses into `def_eq`, so its
+    // inner call is counted again by whichever route decides it.
+    pub static CERT_OK: AtomicU64 = AtomicU64::new(0);
+    pub static CERT_NONE: AtomicU64 = AtomicU64::new(0);
+    pub static NONQUICK_WITHOUT_CERT: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_BOOL_TRUE: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_QUICK2_TRUE: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_QUICK2_FALSE: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_LAZY_DELTA: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_CONST: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_LOCAL: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_PROJ: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_WHNF_RETRY: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_APP: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_ETA: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_ETA_STRUCT: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_STRING: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_UNIT: AtomicU64 = AtomicU64::new(0);
+    pub static LEG_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
+    #[inline]
+    pub fn bump(c: &AtomicU64) { c.fetch_add(1, Ordering::Relaxed); }
+    fn branches() -> String {
+        let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        format!(
+            "env cert: built {} | failed {} | non-quick def_eq calls without a cert {}\nlegacy branches: bool_true {} | quick2 true {} / false {} | proof_irrel {} | lazy_delta {} | const {} | local {} | proj {} | whnf_retry {} | app {} | eta {} | eta_struct {} | string_lit {} | unit {} | exhausted(false) {}",
+            g(&CERT_OK), g(&CERT_NONE), g(&NONQUICK_WITHOUT_CERT),
+            g(&LEG_BOOL_TRUE), g(&LEG_QUICK2_TRUE), g(&LEG_QUICK2_FALSE), g(&LEG_PROOF_IRREL), g(&LEG_LAZY_DELTA), g(&LEG_CONST), g(&LEG_LOCAL), g(&LEG_PROJ),
+            g(&LEG_WHNF_RETRY), g(&LEG_APP), g(&LEG_ETA), g(&LEG_ETA_STRUCT), g(&LEG_STRING), g(&LEG_UNIT), g(&LEG_EXHAUSTED),
+        )
+    }
+    pub fn report() -> String {
+        let q = QUICK.load(Ordering::Relaxed);
+        let c = CORE.load(Ordering::Relaxed);
+        let d = DELTA.load(Ordering::Relaxed);
+        let w = WHNF_JOIN.load(Ordering::Relaxed);
+        let lt = LEGACY_TRUE.load(Ordering::Relaxed);
+        let lf = LEGACY_FALSE.load(Ordering::Relaxed);
+        let total = q + c + d + w + lt + lf;
+        let verified = c + d + w;
+        let nontrivial = c + d + w + lt + lf;
+        format!(
+            "def_eq route stats: total {} | quick {} | verified core {} | verified delta {} | verified whnf-join {} | legacy true {} | legacy false {} | verified share of non-quick: {:.1}% | verified share of non-quick confirmations: {:.1}%",
+            total, q, c, d, w, lt, lf,
+            if nontrivial == 0 { 0.0 } else { 100.0 * verified as f64 / nontrivial as f64 },
+            if verified + lt == 0 { 0.0 } else { 100.0 * verified as f64 / (verified + lt) as f64 },
+        ) + "\n" + &branches()
+    }
+}
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
         assert_eq!(dag.dbj_level_counter, 0);
@@ -962,6 +1027,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         if let Some(easy) = self.def_eq_quick_check(x, y) {
+            route_stats::bump(&route_stats::QUICK);
             return easy
         }
 
@@ -971,6 +1037,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // to the legacy path below, so this costs no completeness -- the
         // verified route only ever CONFIRMS equality.
         if let Some(true) = crate::tc_model::verified_def_eq_checked(self.ctx, x, y) {
+            route_stats::bump(&route_stats::CORE);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
             return true
         }
@@ -981,13 +1048,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // pstep_star reductions of both sides to a related pair. Like the
         // core route above, this only ever CONFIRMS equality.
         if self.verified_env_cert.is_none() {
-            self.verified_env_cert =
-                Some(crate::delta_bound_model::EnvCapCert::make(self.ctx, self.env, 100_000));
+            let made = crate::delta_bound_model::EnvCapCert::make(self.ctx, self.env, 100_000);
+            route_stats::bump(if made.is_some() { &route_stats::CERT_OK } else { &route_stats::CERT_NONE });
+            self.verified_env_cert = Some(made);
+        }
+        if let Some(None) = self.verified_env_cert.as_ref() {
+            route_stats::bump(&route_stats::NONQUICK_WITHOUT_CERT);
         }
         if let Some(Some(cert)) = self.verified_env_cert.as_ref() {
             if let Some(true) =
                 crate::delta_bound_model::verified_lazy_delta_checked_cached(self.ctx, cert, x, y, 100)
             {
+                route_stats::bump(&route_stats::DELTA);
                 self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
                 return true
             }
@@ -999,6 +1071,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if let Some(true) =
                 crate::delta_bound_model::verified_defeq_whnf_checked(self.ctx, cert, x, y, 100)
             {
+                route_stats::bump(&route_stats::WHNF_JOIN);
                 self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
                 return true
             }
@@ -1010,40 +1083,73 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n) == self.ctx.c_bool_true() {
             let x_nn = self.whnf(x_n);
             if Some(x_nn) == self.ctx.c_bool_true() {
+                route_stats::bump(&route_stats::LEG_BOOL_TRUE);
                 return true
             }
         }
 
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
+            route_stats::bump(if easy { &route_stats::LEG_QUICK2_TRUE } else { &route_stats::LEG_QUICK2_FALSE });
             return easy
         }
 
+        // Branch attribution (diagnostics only): same decision procedure as
+        // before, with the short-circuit `||` chains spelled out so each
+        // confirming rule can be counted.
+        let mut branch: &'static std::sync::atomic::AtomicU64 = &route_stats::LEG_EXHAUSTED;
         let result = if self.proof_irrel_eq(x_n, y_n) {
+            branch = &route_stats::LEG_PROOF_IRREL;
             true
         } else {
             match self.lazy_delta_step(x_n, y_n) {
-                FoundEqResult(short) => short,
+                FoundEqResult(short) => {
+                    branch = &route_stats::LEG_LAZY_DELTA;
+                    short
+                }
                 Exhausted(x_n, y_n) => {
-                    if self.def_eq_const(x_n, y_n) || self.def_eq_local(x_n, y_n) || self.def_eq_proj(x_n, y_n) {
+                    if self.def_eq_const(x_n, y_n) {
+                        branch = &route_stats::LEG_CONST;
+                        true
+                    } else if self.def_eq_local(x_n, y_n) {
+                        branch = &route_stats::LEG_LOCAL;
+                        true
+                    } else if self.def_eq_proj(x_n, y_n) {
+                        branch = &route_stats::LEG_PROJ;
                         true
                     } else {
                         let (xn0, yn0) = (x_n, y_n);
                         let (x_n, y_n) = (self.whnf_no_unfolding(xn0), self.whnf_no_unfolding(yn0));
                         if x_n != xn0 || y_n != yn0 {
+                            branch = &route_stats::LEG_WHNF_RETRY;
                             self.def_eq(x_n, y_n)
+                        } else if self.def_eq_app(x_n, y_n) {
+                            branch = &route_stats::LEG_APP;
+                            true
+                        } else if self.try_eta_expansion(x_n, y_n) {
+                            branch = &route_stats::LEG_ETA;
+                            true
+                        } else if self.try_eta_struct(x_n, y_n) {
+                            branch = &route_stats::LEG_ETA_STRUCT;
+                            true
+                        } else if self.try_string_lit_expansion(x_n, y_n) {
+                            branch = &route_stats::LEG_STRING;
+                            true
+                        } else if matches!(self.def_eq_unit(x_n, y_n), Some(true)) {
+                            branch = &route_stats::LEG_UNIT;
+                            true
                         } else {
-                            self.def_eq_app(x_n, y_n)
-                                || self.try_eta_expansion(x_n, y_n)
-                                || self.try_eta_struct(x_n, y_n)
-                                || self.try_string_lit_expansion(x_n, y_n)
-                                || matches!(self.def_eq_unit(x_n, y_n), Some(true))
+                            false
                         }
                     }
                 }
             }
         };
+        route_stats::bump(branch);
         if result {
+            route_stats::bump(&route_stats::LEGACY_TRUE);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+        } else {
+            route_stats::bump(&route_stats::LEGACY_FALSE);
         }
         result
     }

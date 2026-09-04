@@ -26,6 +26,9 @@ fn use_config(config_path: &Path) -> Result<Option<String>, Box<dyn Error>> {
     let (export_file, skipped_axioms) = cfg.to_export_file()?;
     // Check the environment
     export_file.check_all_declars();
+    if std::env::var_os("NANODA_ROUTE_STATS").is_some() {
+        eprintln!("{}", nanoda_lib::tc::route_stats::report());
+    }
     // Pretty print as necessary
     let pp_errs = export_file.pp_selected_declars(pp_destination.as_mut());
     if export_file.config.print_success_message {
