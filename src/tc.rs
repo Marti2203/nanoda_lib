@@ -1183,14 +1183,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         };
         route_stats::bump(branch);
-        if result && std::env::var_os("NANODA_SAMPLE_LEGACY").is_some() {
-            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if n % 997 == 0 && n < 997 * 40 {
-                let bname = if std::ptr::eq(branch, &route_stats::LEG_PROOF_IRREL) { "proof_irrel" } else if std::ptr::eq(branch, &route_stats::LEG_LAZY_DELTA) { "lazy_delta" } else if std::ptr::eq(branch, &route_stats::LEG_CONST) { "const" } else if std::ptr::eq(branch, &route_stats::LEG_LOCAL) { "local" } else if std::ptr::eq(branch, &route_stats::LEG_PROJ) { "proj" } else if std::ptr::eq(branch, &route_stats::LEG_WHNF_RETRY) { "whnf_retry" } else if std::ptr::eq(branch, &route_stats::LEG_APP) { "app" } else if std::ptr::eq(branch, &route_stats::LEG_ETA) { "eta" } else if std::ptr::eq(branch, &route_stats::LEG_ETA_STRUCT) { "eta_struct" } else if std::ptr::eq(branch, &route_stats::LEG_STRING) { "string" } else if std::ptr::eq(branch, &route_stats::LEG_UNIT) { "unit" } else { "?" };
-                eprintln!("SAMPLE[{}] branch={} fv={}/{} lbv={}/{}\n  X: {:?}\n  Y: {:?}", n, bname, self.ctx.has_fvars(x_n), self.ctx.has_fvars(y_n), self.ctx.num_loose_bvars(x_n), self.ctx.num_loose_bvars(y_n), self.ctx.debug_print(x_n), self.ctx.debug_print(y_n));
-            }
-        }
         if result {
             route_stats::bump(&route_stats::LEGACY_TRUE);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
