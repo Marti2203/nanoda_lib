@@ -40,6 +40,10 @@ use crate::expr_model::{nlbv, depth, has_fv};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model as expr_to_model;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::{RecRuleSpec, RecDataSpec};
+#[cfg(verus_only)]
+use crate::tc_model::{rec_rule_ctor_name_of, rec_rule_ctor_telescope_size_wo_params_of, rec_rule_val_of};
+#[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
@@ -625,12 +629,45 @@ pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
 /// keyed map is needed here: unlike delta/proj/quot, nothing downstream
 /// needs to relate TWO separate calls' results back to the same identity,
 /// so this is a plain per-call fact, not a lookup table.
+/// The env's recursors at the MODEL level (rec-iota P0): keyed by name id,
+/// the same shape `get_recursor_data` returns, with rule values modeled
+/// through `to_model`. Tied to the arena-global `rec_data_of` by
+/// `rec_data_of_agrees` (disclosed trust, exactly `ctor_num_params_of_agrees`'s
+/// character).
+pub uninterp spec fn to_model_of_recursors<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, RecDataSpec>;
+
+pub open spec fn rec_rules_model<'a>(rules: Seq<RecRule<'a>>) -> Seq<RecRuleSpec> {
+    Seq::new(rules.len(), |i: int| RecRuleSpec {
+        ctor_id: name_id(rec_rule_ctor_name_of(rules[i])),
+        nfields: rec_rule_ctor_telescope_size_wo_params_of(rules[i]) as nat,
+        rhs: expr_to_model(rec_rule_val_of(rules[i])),
+    })
+}
+
 pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
     ensures match result {
-        Some((_, _, _, _, uparams, _)) =>
-            forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
+        Some((np, nm, nmin, major, uparams, rules)) =>
+            (forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param)
+            && to_model_of_recursors(*env).contains_key(name_id(*n))
+            && to_model_of_recursors(*env)[name_id(*n)] == RecDataSpec {
+                num_params: np as nat,
+                num_motives: nm as nat,
+                num_minors: nmin as nat,
+                major_idx: major as nat,
+                uparams: level_names(to_model_of_levels(uparams)),
+                rules: rec_rules_model(rules@),
+            },
         None => true,
     };
+
+/// Ties any env's recursor lookup to the arena-global `rec_data_of`
+/// (see `ctor_num_params_of_agrees`).
+#[verifier::external_body]
+pub proof fn rec_data_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    requires to_model_of_recursors(env).contains_key(id)
+    ensures crate::expr_arena_bridge::rec_data_of(id) == Some(to_model_of_recursors(env)[id])
+{
+}
 
 /// `def_eq_unit`'s own env lookups -- unlike `get_declar_hint`/`get_
 /// constructor_num_params`, neither needs a semantic fact connecting the

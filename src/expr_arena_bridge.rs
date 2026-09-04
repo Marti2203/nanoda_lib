@@ -647,6 +647,47 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// rejected.
 pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
 
+/// RECURSOR DATA, arena-global (rec-iota P0, 2026-09-04) -- the same
+/// "one declaration per name id per export" trust as `ctor_num_params_of`
+/// above: what `pstep`'s recursor-iota rule needs about a recursor, with
+/// NO env parameter. Rules are keyed by constructor id; `nfields` is the
+/// constructor's telescope size without the inductive's parameters
+/// (`RecRule::ctor_telescope_size_wo_params`); `rhs` is the rule's value
+/// (a closed lambda term over params/motives/minors/fields), instantiated
+/// at the recursor's universe parameters `uparams`.
+pub ghost struct RecRuleSpec {
+    pub ctor_id: u64,
+    pub nfields: nat,
+    pub rhs: ExprSpec,
+}
+
+pub ghost struct RecDataSpec {
+    pub num_params: nat,
+    pub num_motives: nat,
+    pub num_minors: nat,
+    pub major_idx: nat,
+    pub uparams: Seq<u64>,
+    pub rules: Seq<RecRuleSpec>,
+}
+
+pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
+
+/// Disclosed trust: every recursor rule's right-hand side is a CLOSED
+/// term (no loose bound variables, no free variables) -- a Lean export's
+/// rule values are closed lambda abstractions over the rule's telescope.
+/// The rule's SIZE is deliberately NOT trusted here: `rec_ready` gates
+/// firing on `size(rhs) <= 500` and producers check it at run time.
+#[verifier::external_body]
+pub proof fn rec_rule_rhs_closed(id: u64, i: int)
+    requires
+        rec_data_of(id) is Some,
+        0 <= i < rec_data_of(id)->Some_0.rules.len(),
+    ensures
+        nlbv(rec_data_of(id)->Some_0.rules[i].rhs) == 0,
+        !has_fv(rec_data_of(id)->Some_0.rules[i].rhs),
+{
+}
+
 /// `e` is SOME representation of `Nat` zero -- reused by `verified_def_
 /// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
 /// itself.

@@ -44,6 +44,8 @@ use crate::expr_model::subst_full_noop;
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_id, nat_succ_id, ctor_num_params_of};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
 
 verus! {
 
@@ -526,6 +528,113 @@ pub open spec fn iota_result(pidx: usize, e: ExprSpec) -> ExprSpec {
             None => e,
         },
         _ => e,
+    }
+}
+
+/// RECURSOR-IOTA decision helpers (rec-iota P0). `find_rule`: the rule
+/// for constructor `cid` (front-to-back, first match -- the real
+/// `get_rec_rule`'s scan).
+pub open spec fn find_rule(rules: Seq<RecRuleSpec>, cid: u64) -> Option<int>
+    decreases rules.len()
+{
+    if rules.len() == 0 {
+        None
+    } else if rules[0].ctor_id == cid {
+        Some(0)
+    } else {
+        match find_rule(rules.drop_first(), cid) {
+            Some(i) => Some(i + 1),
+            None => None,
+        }
+    }
+}
+
+/// `find_rule` returns a valid index whose rule has the constructor.
+pub proof fn find_rule_spec(rules: Seq<RecRuleSpec>, cid: u64)
+    ensures match find_rule(rules, cid) {
+        Some(i) => 0 <= i < rules.len() && rules[i].ctor_id == cid,
+        None => true,
+    }
+    decreases rules.len()
+{
+    if rules.len() == 0 {
+    } else if rules[0].ctor_id == cid {
+    } else {
+        find_rule_spec(rules.drop_first(), cid);
+    }
+}
+
+pub open spec fn rec_prefix(rd: RecDataSpec) -> nat {
+    rd.num_params + rd.num_motives + rd.num_minors
+}
+
+/// `s` is a recursor application whose major premise (at `major_idx`)
+/// is an applied constructor spine with a rule, enough fields, matching
+/// universe-parameter count, and a rule value under the size gate (500
+/// -- the model's SCOPING of the rule, disclosed; producers check it).
+pub open spec fn rec_ready(s: ExprSpec) -> bool {
+    match spine_head(s) {
+        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+            Some(rd) => {
+                let args = spine_args(s);
+                rec_prefix(rd) <= rd.major_idx
+                && rd.major_idx < args.len()
+                && rd.uparams.len() == lv.len()
+                && {
+                    let major = args[rd.major_idx as int];
+                    match spine_head(major) {
+                        ExprSpec::Const(cid, clv) => match find_rule(rd.rules, cid) {
+                            Some(ri) => {
+                                let rule = rd.rules[ri];
+                                rule.nfields <= spine_args(major).len()
+                                && size(rule.rhs) <= 500
+                            }
+                            None => false,
+                        },
+                        _ => false,
+                    }
+                }
+            }
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// The rule instance when `rec_ready` (garbage otherwise): the rule
+/// value at the recursor's levels, applied to the params/motives/minors
+/// prefix, then the constructor's FIELDS (the last `nfields` arguments
+/// of the major's spine -- extra leading arguments are the inductive's
+/// own parameters, which nested inductives may repeat), then the
+/// arguments after the major. Exactly `TypeChecker::reduce_rec`.
+pub open spec fn rec_result(s: ExprSpec) -> ExprSpec {
+    match spine_head(s) {
+        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+            Some(rd) => {
+                let args = spine_args(s);
+                let major = args[rd.major_idx as int];
+                match spine_head(major) {
+                    ExprSpec::Const(cid, clv) => match find_rule(rd.rules, cid) {
+                        Some(ri) => {
+                            let rule = rd.rules[ri];
+                            let cargs = spine_args(major);
+                            let body = crate::expr_model::subst_expr_levels(rule.rhs, rd.uparams, lv);
+                            spine_app(
+                                spine_app(
+                                    spine_app(body, args.subrange(0, rec_prefix(rd) as int)),
+                                    cargs.subrange((cargs.len() - rule.nfields) as int, cargs.len() as int),
+                                ),
+                                args.subrange((rd.major_idx + 1) as int, args.len() as int),
+                            )
+                        }
+                        None => s,
+                    },
+                    _ => s,
+                }
+            }
+            None => s,
+        },
+        _ => s,
     }
 }
 
