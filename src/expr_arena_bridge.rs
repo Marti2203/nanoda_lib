@@ -673,18 +673,20 @@ pub ghost struct RecDataSpec {
 pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
 
 /// Disclosed trust: every recursor rule's right-hand side is a CLOSED
-/// term (no loose bound variables, no free variables) -- a Lean export's
-/// rule values are closed lambda abstractions over the rule's telescope.
+/// term (no loose bound variables, no free variables) with no string
+/// literals -- a Lean export's rule values are generated closed lambda
+/// abstractions over the rule's telescope.
 /// The rule's SIZE is deliberately NOT trusted here: `rec_ready` gates
 /// firing on `size(rhs) <= 500` and producers check it at run time.
 #[verifier::external_body]
-pub proof fn rec_rule_rhs_closed(id: u64, i: int)
+pub proof fn rec_rule_rhs_wf(id: u64, i: int)
     requires
         rec_data_of(id) is Some,
         0 <= i < rec_data_of(id)->Some_0.rules.len(),
     ensures
         nlbv(rec_data_of(id)->Some_0.rules[i].rhs) == 0,
         !has_fv(rec_data_of(id)->Some_0.rules[i].rhs),
+        crate::beta_model::string_free(rec_data_of(id)->Some_0.rules[i].rhs),
 {
 }
 

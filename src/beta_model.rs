@@ -638,6 +638,448 @@ pub open spec fn rec_result(s: ExprSpec) -> ExprSpec {
     }
 }
 
+/// Depth of an applied spine (pure depth companion of `spine_app_bounds`).
+pub proof fn spine_app_depth_bound(head: ExprSpec, args: Seq<ExprSpec>, hd: nat, ad: nat)
+    requires
+        depth(head) <= hd,
+        forall |i: int| 0 <= i < args.len() ==> depth(#[trigger] args[i]) <= ad,
+    ensures depth(spine_app(head, args)) <= hd + ad + args.len()
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(args =~= init.push(last));
+        spine_app_compose_last(head, init, last);
+        spine_app_depth_bound(head, init, hd, ad);
+    }
+}
+
+/// `spine_app(head, init.push(last)) == App(spine_app(head, init), last)`.
+pub proof fn spine_app_compose_last(head: ExprSpec, init: Seq<ExprSpec>, last: ExprSpec)
+    ensures spine_app(head, init.push(last)) == ExprSpec::App(Box::new(spine_app(head, init)), Box::new(last))
+{
+    let args = init.push(last);
+    assert(args.len() == init.len() + 1);
+    assert(args.subrange(0, args.len() - 1) =~= init);
+    assert(args[args.len() - 1] == last);
+}
+
+/// No escaping references compose over a spine (converse of
+/// `spine_app_no_escaping_decompose`).
+pub proof fn spine_app_no_escaping(head: ExprSpec, args: Seq<ExprSpec>, k: nat)
+    requires
+        !has_escaping_ref(head, k),
+        forall |i: int| 0 <= i < args.len() ==> !has_escaping_ref(#[trigger] args[i], k),
+    ensures !has_escaping_ref(spine_app(head, args), k)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(args =~= init.push(last));
+        spine_app_compose_last(head, init, last);
+        spine_app_no_escaping(head, init, k);
+    }
+}
+
+/// `args_size_sum` of a subrange is at most the whole.
+pub proof fn args_size_sum_subrange_le(args: Seq<ExprSpec>, a: int, b: int)
+    requires 0 <= a <= b <= args.len()
+    ensures args_size_sum(args.subrange(a, b)) <= args_size_sum(args)
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else if a == 0 && b == args.len() {
+        assert(args.subrange(a, b) =~= args);
+    } else if a == 0 {
+        // drop the last element
+        let sub = args.subrange(a, b);
+        let init = args.subrange(0, args.len() - 1);
+        assert(sub =~= init.subrange(a, b));
+        args_size_sum_subrange_le(init, a, b);
+        args_size_sum_init_le(args);
+    } else {
+        let rest = args.subrange(1, args.len() as int);
+        assert(args.subrange(a, b) =~= rest.subrange(a - 1, b - 1));
+        args_size_sum_subrange_le(rest, a - 1, b - 1);
+    }
+}
+
+/// Dropping the last element does not increase `args_size_sum`.
+pub proof fn args_size_sum_init_le(args: Seq<ExprSpec>)
+    requires args.len() >= 1
+    ensures args_size_sum(args.subrange(0, args.len() - 1)) <= args_size_sum(args)
+    decreases args.len()
+{
+    if args.len() == 1 {
+        assert(args.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    } else {
+        let rest = args.subrange(1, args.len() as int);
+        let init = args.subrange(0, args.len() - 1);
+        assert(init.subrange(1, init.len() as int) =~= rest.subrange(0, rest.len() - 1));
+        args_size_sum_init_le(rest);
+    }
+}
+
+/// UNPACKING a ready recursor application: every component the rule
+/// instance is built from, with `rec_result` spelled out. The one place
+/// the nested matches of `rec_ready`/`rec_result` are opened; every
+/// commutation/bound lemma below goes through it.
+pub proof fn rec_unpack(s: ExprSpec) -> (r: (u64, Seq<LevelSpec>, Seq<ExprSpec>, RecDataSpec, ExprSpec, u64, Seq<LevelSpec>, Seq<ExprSpec>, int, ExprSpec))
+    requires rec_ready(s)
+    ensures ({
+        let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = r;
+        &&& spine_head(s) == ExprSpec::Const(rid, lv)
+        &&& spine_args(s) == args
+        &&& s == spine_app(ExprSpec::Const(rid, lv), args)
+        &&& rec_data_of(rid) == Some(rd)
+        &&& rec_prefix(rd) <= rd.major_idx
+        &&& rd.major_idx < args.len()
+        &&& rd.uparams.len() == lv.len()
+        &&& major == args[rd.major_idx as int]
+        &&& spine_head(major) == ExprSpec::Const(cid, clv)
+        &&& spine_args(major) == cargs
+        &&& major == spine_app(ExprSpec::Const(cid, clv), cargs)
+        &&& find_rule(rd.rules, cid) == Some(ri)
+        &&& 0 <= ri < rd.rules.len()
+        &&& rd.rules[ri].ctor_id == cid
+        &&& rd.rules[ri].nfields <= cargs.len()
+        &&& size(rd.rules[ri].rhs) <= 500
+        &&& body == crate::expr_model::subst_expr_levels(rd.rules[ri].rhs, rd.uparams, lv)
+        &&& rec_result(s) == spine_app(
+                spine_app(
+                    spine_app(body, args.subrange(0, rec_prefix(rd) as int)),
+                    cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int),
+                ),
+                args.subrange((rd.major_idx + 1) as int, args.len() as int),
+            )
+        &&& nlbv(body) == 0
+        &&& !has_fv(body)
+        &&& size(body) <= 500
+        &&& depth(body) <= 500
+        &&& forall |cap: nat| #[trigger] string_lits_ok(body, cap)
+    })
+{
+    spine_recompose(s);
+    let (rid, lv) = match spine_head(s) {
+        ExprSpec::Const(rid, lv) => (rid, lv),
+        _ => { assert(false); (0u64, Seq::<LevelSpec>::empty()) }
+    };
+    let args = spine_args(s);
+    let rd = rec_data_of(rid)->Some_0;
+    let major = args[rd.major_idx as int];
+    spine_recompose(major);
+    let (cid, clv) = match spine_head(major) {
+        ExprSpec::Const(cid, clv) => (cid, clv),
+        _ => { assert(false); (0u64, Seq::<LevelSpec>::empty()) }
+    };
+    let cargs = spine_args(major);
+    find_rule_spec(rd.rules, cid);
+    let ri = find_rule(rd.rules, cid)->Some_0;
+    let rhs = rd.rules[ri].rhs;
+    let body = crate::expr_model::subst_expr_levels(rhs, rd.uparams, lv);
+    crate::expr_arena_bridge::rec_rule_rhs_wf(rid, ri);
+    crate::expr_model::subst_expr_levels_sat_rel(rhs, rd.uparams, lv);
+    subst_expr_levels_rel_nlbv(rhs, rd.uparams, lv, body);
+    subst_expr_levels_rel_size(rhs, rd.uparams, lv, body);
+    subst_expr_levels_rel_depth(rhs, rd.uparams, lv, body);
+    crate::expr_model::subst_expr_levels_has_fv(rhs, rd.uparams, lv);
+    depth_le_size(rhs);
+    assert forall |cap: nat| #[trigger] string_lits_ok(body, cap) by {
+        string_free_lits_ok(rhs, cap);
+        subst_expr_levels_string_lits_ok(rhs, rd.uparams, lv, cap);
+    }
+    (rid, lv, args, rd, major, cid, clv, cargs, ri, body)
+}
+
+/// `shift` commutes with the recursor rule (closed rule body, mapped arguments).
+pub proof fn rec_result_shift(d: int, c: nat, s: ExprSpec)
+    requires rec_ready(s)
+    ensures
+        rec_ready(shift(d, c, s)),
+        shift(d, c, rec_result(s)) == rec_result(shift(d, c, s)),
+{
+    reveal(shift);
+    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(s);
+    let args2 = Seq::new(args.len(), |i: int| shift(d, c, args[i]));
+    let cargs2 = Seq::new(cargs.len(), |i: int| shift(d, c, cargs[i]));
+    let head = ExprSpec::Const(rid, lv);
+    let chead = ExprSpec::Const(cid, clv);
+    shift_spine_app(d, c, head, args);
+    assert(shift(d, c, head) == head);
+    assert(shift(d, c, s) == spine_app(head, args2));
+    spine_destruct_app(head, args2);
+    assert(spine_head(shift(d, c, s)) == head);
+    assert(spine_args(shift(d, c, s)) =~= args2);
+    shift_spine_app(d, c, chead, cargs);
+    assert(shift(d, c, chead) == chead);
+    assert(shift(d, c, major) == spine_app(chead, cargs2));
+    spine_destruct_app(chead, cargs2);
+    assert(args2[rd.major_idx as int] == shift(d, c, major));
+    assert(spine_head(shift(d, c, major)) == chead);
+    assert(spine_args(shift(d, c, major)) =~= cargs2);
+    assert(rec_ready(shift(d, c, s)));
+    // The rule instance of the mapped application.
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
+    let trail = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+    let pre2 = args2.subrange(0, rec_prefix(rd) as int);
+    let flds2 = cargs2.subrange((cargs2.len() - rd.rules[ri].nfields) as int, cargs2.len() as int);
+    let trail2 = args2.subrange((rd.major_idx + 1) as int, args2.len() as int);
+    assert(rec_result(shift(d, c, s)) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+    nlbv_shift_noop(d, c, body);
+    assert(shift(d, c, body) == body);
+    let s1 = spine_app(body, pre);
+    let s2 = spine_app(s1, flds);
+    shift_spine_app(d, c, body, pre);
+    shift_spine_app(d, c, s1, flds);
+    shift_spine_app(d, c, s2, trail);
+    assert(Seq::new(pre.len(), |i: int| shift(d, c, pre[i])) =~= pre2);
+    assert(Seq::new(flds.len(), |i: int| shift(d, c, flds[i])) =~= flds2);
+    assert(Seq::new(trail.len(), |i: int| shift(d, c, trail[i])) =~= trail2);
+    assert(shift(d, c, rec_result(s)) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+}
+
+/// `subst` commutes with the recursor rule.
+pub proof fn rec_result_subst(j: nat, x: ExprSpec, s: ExprSpec)
+    requires rec_ready(s)
+    ensures
+        rec_ready(subst(j, x, s)),
+        subst(j, x, rec_result(s)) == rec_result(subst(j, x, s)),
+{
+    reveal(subst);
+    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(s);
+    let args2 = Seq::new(args.len(), |i: int| subst(j, x, args[i]));
+    let cargs2 = Seq::new(cargs.len(), |i: int| subst(j, x, cargs[i]));
+    let head = ExprSpec::Const(rid, lv);
+    let chead = ExprSpec::Const(cid, clv);
+    subst_spine_app(j, x, head, args);
+    assert(subst(j, x, head) == head);
+    assert(subst(j, x, s) == spine_app(head, args2));
+    spine_destruct_app(head, args2);
+    assert(spine_head(subst(j, x, s)) == head);
+    assert(spine_args(subst(j, x, s)) =~= args2);
+    subst_spine_app(j, x, chead, cargs);
+    assert(subst(j, x, chead) == chead);
+    assert(subst(j, x, major) == spine_app(chead, cargs2));
+    spine_destruct_app(chead, cargs2);
+    assert(args2[rd.major_idx as int] == subst(j, x, major));
+    assert(spine_head(subst(j, x, major)) == chead);
+    assert(spine_args(subst(j, x, major)) =~= cargs2);
+    assert(rec_ready(subst(j, x, s)));
+    // The rule instance of the mapped application.
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
+    let trail = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+    let pre2 = args2.subrange(0, rec_prefix(rd) as int);
+    let flds2 = cargs2.subrange((cargs2.len() - rd.rules[ri].nfields) as int, cargs2.len() as int);
+    let trail2 = args2.subrange((rd.major_idx + 1) as int, args2.len() as int);
+    assert(rec_result(subst(j, x, s)) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+    nlbv_subst_noop(j, x, body);
+    assert(subst(j, x, body) == body);
+    let s1 = spine_app(body, pre);
+    let s2 = spine_app(s1, flds);
+    subst_spine_app(j, x, body, pre);
+    subst_spine_app(j, x, s1, flds);
+    subst_spine_app(j, x, s2, trail);
+    assert(Seq::new(pre.len(), |i: int| subst(j, x, pre[i])) =~= pre2);
+    assert(Seq::new(flds.len(), |i: int| subst(j, x, flds[i])) =~= flds2);
+    assert(Seq::new(trail.len(), |i: int| subst(j, x, trail[i])) =~= trail2);
+    assert(subst(j, x, rec_result(s)) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+}
+
+/// `abstr_full` commutes with the recursor rule.
+pub proof fn rec_result_abstr(ks: Seq<u32>, o: nat, s: ExprSpec)
+    requires rec_ready(s)
+    ensures
+        rec_ready(abstr_full(s, ks, o)),
+        abstr_full(rec_result(s), ks, o) == rec_result(abstr_full(s, ks, o)),
+{
+    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(s);
+    let args2 = Seq::new(args.len(), |i: int| abstr_full(args[i], ks, o));
+    let cargs2 = Seq::new(cargs.len(), |i: int| abstr_full(cargs[i], ks, o));
+    let head = ExprSpec::Const(rid, lv);
+    let chead = ExprSpec::Const(cid, clv);
+    abstr_full_spine_app(head, args, ks, o);
+    assert(abstr_full(head, ks, o) == head);
+    assert(abstr_full(s, ks, o) == spine_app(head, args2));
+    spine_destruct_app(head, args2);
+    assert(spine_head(abstr_full(s, ks, o)) == head);
+    assert(spine_args(abstr_full(s, ks, o)) =~= args2);
+    abstr_full_spine_app(chead, cargs, ks, o);
+    assert(abstr_full(chead, ks, o) == chead);
+    assert(abstr_full(major, ks, o) == spine_app(chead, cargs2));
+    spine_destruct_app(chead, cargs2);
+    assert(args2[rd.major_idx as int] == abstr_full(major, ks, o));
+    assert(spine_head(abstr_full(major, ks, o)) == chead);
+    assert(spine_args(abstr_full(major, ks, o)) =~= cargs2);
+    assert(rec_ready(abstr_full(s, ks, o)));
+    // The rule instance of the mapped application.
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
+    let trail = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+    let pre2 = args2.subrange(0, rec_prefix(rd) as int);
+    let flds2 = cargs2.subrange((cargs2.len() - rd.rules[ri].nfields) as int, cargs2.len() as int);
+    let trail2 = args2.subrange((rd.major_idx + 1) as int, args2.len() as int);
+    assert(rec_result(abstr_full(s, ks, o)) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+    abstr_full_noop(body, ks, o);
+    assert(abstr_full(body, ks, o) == body);
+    let s1 = spine_app(body, pre);
+    let s2 = spine_app(s1, flds);
+    abstr_full_spine_app(body, pre, ks, o);
+    abstr_full_spine_app(s1, flds, ks, o);
+    abstr_full_spine_app(s2, trail, ks, o);
+    assert(Seq::new(pre.len(), |i: int| abstr_full(pre[i], ks, o)) =~= pre2);
+    assert(Seq::new(flds.len(), |i: int| abstr_full(flds[i], ks, o)) =~= flds2);
+    assert(Seq::new(trail.len(), |i: int| abstr_full(trail[i], ks, o)) =~= trail2);
+    assert(abstr_full(rec_result(s), ks, o) == spine_app(spine_app(spine_app(body, pre2), flds2), trail2));
+}
+
+/// Bounds of the rule instance: depth, `max_var_below`, size, string
+/// headroom, escaping references, loose bound variables -- all in terms
+/// of the application `s` plus the rule body's 500 gate.
+pub proof fn rec_result_bounds(s: ExprSpec, bound: nat, cap: nat, k: nat)
+    requires rec_ready(s)
+    ensures
+        depth(rec_result(s)) <= 500 + 5 * depth(s),
+        max_var_below(s, bound) ==> max_var_below(rec_result(s), bound + 500),
+        size(rec_result(s)) <= 500 + 3 * size(s),
+        string_lits_ok(s, cap) ==> string_lits_ok(rec_result(s), cap),
+        !has_escaping_ref(s, k) ==> !has_escaping_ref(rec_result(s), k),
+        nlbv(rec_result(s)) <= nlbv(s),
+{
+    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(s);
+    let head = ExprSpec::Const(rid, lv);
+    let chead = ExprSpec::Const(cid, clv);
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
+    let trail = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+    let s1 = spine_app(body, pre);
+    let s2 = spine_app(s1, flds);
+    let r = spine_app(s2, trail);
+    assert(rec_result(s) == r);
+    // element facts of args / cargs from s
+    spine_app_depth_decompose(head, args);
+    spine_app_depth_decompose(chead, cargs);
+    assert(depth(major) <= depth(s));
+    assert(args.len() <= depth(s));
+    assert(cargs.len() <= depth(major));
+    let ds = depth(s);
+    assert forall |i: int| 0 <= i < pre.len() implies depth(#[trigger] pre[i]) <= ds by { assert(pre[i] == args[i]); }
+    assert forall |i: int| 0 <= i < flds.len() implies depth(#[trigger] flds[i]) <= ds by {
+        assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
+    }
+    assert forall |i: int| 0 <= i < trail.len() implies depth(#[trigger] trail[i]) <= ds by {
+        assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
+    }
+    spine_app_depth_bound(body, pre, 500, ds);
+    spine_app_depth_bound(s1, flds, 500 + ds + pre.len(), ds);
+    spine_app_depth_bound(s2, trail, 500 + ds + pre.len() + ds + flds.len(), ds);
+    assert(pre.len() + flds.len() + trail.len() <= args.len() + cargs.len());
+    assert(pre.len() <= args.len() && flds.len() <= cargs.len() && trail.len() <= args.len());
+    assert(depth(r) <= 500 + 5 * ds);
+    // max_var_below
+    if max_var_below(s, bound) {
+        spine_app_mvb_decompose(head, args, bound);
+        assert(max_var_below(major, bound));
+        spine_app_mvb_decompose(chead, cargs, bound);
+        nlbv_bound_implies_max_var_below(body, 0);
+        max_var_below_mono(body, (depth(body) + 0) as nat, bound + 500);
+        assert forall |i: int| 0 <= i < pre.len() implies max_var_below(#[trigger] pre[i], bound + 500) by {
+            assert(pre[i] == args[i]);
+            max_var_below_mono(args[i], bound, bound + 500);
+        }
+        assert forall |i: int| 0 <= i < flds.len() implies max_var_below(#[trigger] flds[i], bound + 500) by {
+            let j = (cargs.len() - rd.rules[ri].nfields) as int + i;
+            assert(flds[i] == cargs[j]);
+            max_var_below_mono(cargs[j], bound, bound + 500);
+        }
+        assert forall |i: int| 0 <= i < trail.len() implies max_var_below(#[trigger] trail[i], bound + 500) by {
+            let j = (rd.major_idx + 1) as int + i;
+            assert(trail[i] == args[j]);
+            max_var_below_mono(args[j], bound, bound + 500);
+        }
+        spine_app_max_var_below(body, pre, bound + 500);
+        spine_app_max_var_below(s1, flds, bound + 500);
+        spine_app_max_var_below(s2, trail, bound + 500);
+    }
+    // size
+    spine_app_size(body, pre);
+    spine_app_size(s1, flds);
+    spine_app_size(s2, trail);
+    spine_app_size(head, args);
+    spine_app_size(chead, cargs);
+    args_size_sum_subrange_le(args, 0, rec_prefix(rd) as int);
+    args_size_sum_subrange_le(cargs, (cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
+    args_size_sum_subrange_le(args, (rd.major_idx + 1) as int, args.len() as int);
+    args_size_sum_elem(args, rd.major_idx as int);
+    assert(size(major) <= args_size_sum(args));
+    assert(args_size_sum(cargs) <= size(major));
+    assert(args_size_sum(args) <= size(s));
+    assert(size(r) <= 500 + 3 * size(s));
+    // strings
+    if string_lits_ok(s, cap) {
+        spine_app_strings_decompose(head, args, cap);
+        spine_app_strings_decompose(chead, cargs, cap);
+        assert(string_lits_ok(body, cap));
+        assert forall |i: int| 0 <= i < pre.len() implies string_lits_ok(#[trigger] pre[i], cap) by { assert(pre[i] == args[i]); }
+        assert forall |i: int| 0 <= i < flds.len() implies string_lits_ok(#[trigger] flds[i], cap) by {
+            assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
+        }
+        assert forall |i: int| 0 <= i < trail.len() implies string_lits_ok(#[trigger] trail[i], cap) by {
+            assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
+        }
+        string_lits_ok_spine_app(body, pre, cap);
+        string_lits_ok_spine_app(s1, flds, cap);
+        string_lits_ok_spine_app(s2, trail, cap);
+    }
+    // escaping refs
+    if !has_escaping_ref(s, k) {
+        spine_app_no_escaping_decompose(head, args, k);
+        spine_app_no_escaping_decompose(chead, cargs, k);
+        nlbv_no_escaping_ref(body, k);
+        assert forall |i: int| 0 <= i < pre.len() implies !has_escaping_ref(#[trigger] pre[i], k) by { assert(pre[i] == args[i]); }
+        assert forall |i: int| 0 <= i < flds.len() implies !has_escaping_ref(#[trigger] flds[i], k) by {
+            assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
+        }
+        assert forall |i: int| 0 <= i < trail.len() implies !has_escaping_ref(#[trigger] trail[i], k) by {
+            assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
+        }
+        spine_app_no_escaping(body, pre, k);
+        spine_app_no_escaping(s1, flds, k);
+        spine_app_no_escaping(s2, trail, k);
+    }
+    // nlbv
+    spine_app_nlbv_decompose(head, args);
+    spine_app_nlbv_decompose(chead, cargs);
+    let n = nlbv(s);
+    assert(nlbv(major) <= n);
+    rec_spine_nlbv_le(body, pre, n);
+    rec_spine_nlbv_le(s1, flds, n);
+    rec_spine_nlbv_le(s2, trail, n);
+}
+
+/// `nlbv` of a spine is at most the max over head and args (bound form).
+pub proof fn rec_spine_nlbv_le(head: ExprSpec, args: Seq<ExprSpec>, n: nat)
+    requires
+        nlbv(head) <= n,
+        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) <= n,
+    ensures nlbv(spine_app(head, args)) <= n
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        let init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(args =~= init.push(last));
+        spine_app_compose_last(head, init, last);
+        rec_spine_nlbv_le(head, init, n);
+    }
+}
+
 /// `iota_ready`/`iota_result` agree with the rule's existential form.
 pub proof fn iota_ready_extract(pidx: usize, inner2: ExprSpec, e2: ExprSpec)
     requires iota_ready(pidx, inner2), e2 == iota_result(pidx, inner2)
