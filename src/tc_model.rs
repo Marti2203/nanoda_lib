@@ -57,7 +57,7 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, c
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, verified_whnf_no_unfolding_fixpoint_bounded, expr_as_nat_lit, read_bignum_value};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, verified_whnf_no_unfolding_fixpoint_bounded, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{whnf_fixpoint_ok, whnf_fixpoint_final_bound, whnf_fixpoint_final_d, is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
@@ -84,6 +84,10 @@ use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_
 use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::name_id_injective;
+#[cfg(verus_only)]
+use crate::beta_model::pstep_env_weaken;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::bignum_ptr_value;
 #[cfg(verus_only)]
 use crate::beta_model::size;
 #[cfg(verus_only)]
@@ -2275,7 +2279,29 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     if fuel == 0 {
         return None;
     }
-    let majw = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 8, k);
+    let majw0 = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 8, k);
+    // A literal major converts to its constructor form (`Nat.zero` /
+    // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
+    let majw0_el = ctx.read_expr(majw0);
+    let majw = match expr_as_nat_lit(majw0, &majw0_el) {
+        Some(nptr) => match verified_nat_lit_to_constructor(ctx, nptr) {
+            Some(c) => {
+                proof {
+                    is_nat_lit_shape_model(majw0);
+                    assert(to_model(majw0) == ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(nptr)))));
+                    assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
+                        cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == cm[j]
+                    by {}
+                    pstep_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(majw0), to_model(c));
+                    pstep_star_one(cm, to_model(majw0), to_model(c));
+                    pstep_star_trans(cm, to_model(major), to_model(majw0), to_model(c));
+                }
+                c
+            }
+            None => return None,
+        },
+        None => majw0,
+    };
     let (chead, cargs) = match verified_unfold_apps(ctx, majw, fuel) { Some(p) => p, None => return None };
     let chead_el = ctx.read_expr(chead);
     let (cname, _clevels) = match expr_as_const(chead, &chead_el) { Some(p) => p, None => return None };
