@@ -2811,9 +2811,11 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         return None;
     }
     if ctx.num_loose_bvars(x) != 0 {
+        conv_stat(7);
         return None;
     }
     if ctx.num_loose_bvars(y) != 0 {
+        conv_stat(7);
         return None;
     }
     let ghost cm = env_model_capped(*env, k as nat);
