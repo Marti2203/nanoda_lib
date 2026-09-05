@@ -448,15 +448,9 @@ pub proof fn env_wf_of_global<'x, 'a>(env: Env<'x, 'a>, k: nat)
     }
 }
 
-/// The model-level `env_closed` of the real environment.
-pub proof fn env_closed_of_global<'x, 'a>(env: Env<'x, 'a>)
-    requires env_global_closed(env)
-    ensures crate::beta_model::env_closed(to_model_of_env(env))
-{
-    env_global_wf(env);
-    env_global_closed_wf(env);
-    env_defs_not_recs(env);
-}
+/// (`env_closed_of_global` retired with the nat-fold rule, P3: the full
+/// model contains the nat-op definitions, which `env_closed` now excludes;
+/// confluence consumers use `env_model_conf` below.)
 
 /// THE CAPPED MODEL (delta-lift CM, 2026-09-04): `to_model_of_env(env)`
 /// restricted to the definitions whose value fits `k` (size <= k) and is
@@ -534,16 +528,36 @@ pub proof fn env_model_capped_wf<'x, 'a>(env: Env<'x, 'a>, k: nat)
 }
 
 /// `env_closed(env_model_capped(env, k))` by construction.
-pub proof fn env_model_capped_closed<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures env_closed(env_model_capped(env, k))
+/// THE CONFLUENCE MODEL (nat-fold P3): the capped model with the nat-op
+/// definitions (`Nat.add`, ...) REMOVED, so `env_closed` holds by
+/// construction -- the environment the certified confluence/transitivity
+/// chains are stated over. The routes' reduction claims use the unfiltered
+/// `env_model_capped` (symbolic unfolding of the ops stays available);
+/// `env_model_conf` is a sub-map of it (`env_model_conf_sub`).
+pub open spec fn env_model_conf<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    env_model_capped(env, k).restrict(
+        env_model_capped(env, k).dom().filter(|id: u64| crate::expr_arena_bridge::nat_bin_op_of(id) is None),
+    )
+}
+
+pub proof fn env_model_conf_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures forall |id: u64| #[trigger] env_model_conf(env, k).contains_key(id)
+        ==> env_model_capped(env, k).contains_key(id) && env_model_conf(env, k)[id] == env_model_capped(env, k)[id]
+{
+}
+
+pub proof fn env_model_conf_closed<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures env_closed(env_model_conf(env, k))
 {
     env_global_wf(env);
     env_defs_not_ctors(env);
     env_defs_not_recs(env);
-    let m = env_model_capped(env, k);
+    let m = env_model_conf(env, k);
     assert forall |id: u64| #[trigger] m.contains_key(id) implies
         nlbv(m[id].1) == 0 && !has_fv(m[id].1) && crate::expr_arena_bridge::ctor_num_params_of(id) is None
-        && crate::expr_arena_bridge::rec_data_of(id) is None by {
+        && crate::expr_arena_bridge::rec_data_of(id) is None
+        && crate::expr_arena_bridge::nat_bin_op_of(id) is None by {
+        assert(env_model_capped(env, k).contains_key(id));
         assert(to_model_of_env(env).contains_key(id));
         assert(m[id].1 == to_model_of_env(env)[id].1);
     }

@@ -647,6 +647,38 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// rejected.
 pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
 
+/// NAT-LITERAL FOLDING (rec-iota P3, 2026-09-04): the kernel's `nat_
+/// extension` dispatch (`tc.rs::try_reduce_nat`) keyed by name id, as an
+/// ARENA-GLOBAL uninterpreted op code -- same "one declaration per name
+/// id per export" trust as `nat_zero_id`/`ctor_num_params_of` above.
+/// Op codes: 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq,
+/// 8 ble (`land`/`lor`/`xor`/`shl`/`shr` are NOT modeled: `None`).
+pub uninterp spec fn nat_bin_op_of(id: u64) -> Option<u8>;
+
+/// Disclosed trust (kernel facts): a nat-op id (`Nat.add`, ...) is a
+/// DEFINITION, so neither a constructor nor a recursor; `Nat.zero`/
+/// `Nat.succ` are constructors (hence never delta-unfoldable in a closed
+/// env) and not nat-op ids; the two are distinct ids.
+#[verifier::external_body]
+pub proof fn nat_op_not_ctor_not_rec(id: u64)
+    requires nat_bin_op_of(id) is Some
+    ensures ctor_num_params_of(id) is None, rec_data_of(id) is None
+{
+}
+
+#[verifier::external_body]
+pub proof fn nat_ctor_facts()
+    ensures
+        ctor_num_params_of(nat_zero_id()) is Some,
+        ctor_num_params_of(nat_succ_id()) is Some,
+        nat_bin_op_of(nat_zero_id()) is None,
+        nat_bin_op_of(nat_succ_id()) is None,
+        nat_zero_id() != nat_succ_id(),
+        ctor_num_params_of(bool_true_id()) is Some,
+        ctor_num_params_of(bool_false_id()) is Some,
+{
+}
+
 /// RECURSOR DATA, arena-global (rec-iota P0, 2026-09-04) -- the same
 /// "one declaration per name id per export" trust as `ctor_num_params_of`
 /// above: what `pstep`'s recursor-iota rule needs about a recursor, with
@@ -1307,6 +1339,16 @@ pub proof fn bool_true_arity_is_zero<'a>(e: ExprPtr<'a>)
 {
 }
 
+/// Either `Bool` constant (`bool_to_expr`'s result) carries empty levels
+/// -- `bool_true_arity_is_zero` extended to `Bool.false`, same disclosed
+/// trust (neither constructor is universe-polymorphic).
+#[verifier::external_body]
+pub proof fn bool_true_arity_is_zero_any<'a>(e: ExprPtr<'a>)
+    requires is_const_shape(e), const_id(e) == bool_true_id() || const_id(e) == bool_false_id()
+    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+{
+}
+
 /// `Nat.succ`'s twin of `nat_zero_arity_is_zero` (see that lemma's doc
 /// comment for the full rationale): `Nat.succ` is likewise not
 /// universe-polymorphic in the real Lean prelude, so a real
@@ -1331,6 +1373,16 @@ pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
     ensures result == nat_repr_is_zero(e);
+
+/// `expr.rs::TcCtx::nat_bin_op_code`'s identity: the name-cache dispatch
+/// agrees with the arena-global `nat_bin_op_of` (a `Some` verdict is the
+/// real dispatch; `None` is conservative -- the extension may be
+/// disabled -- so only the `Some` direction is stated).
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_bin_op_code] (ctx: &TcCtx<'t, 'p>, name: NamePtr<'t>) -> (result: Option<u8>) where 'p: 't
+    ensures match result {
+        Some(op) => nat_bin_op_of(name_id(name)) == Some(op),
+        None => true,
+    };
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {

@@ -495,6 +495,25 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
     
+    /// The `nat_extension` binary-op code of a constant name (the same
+    /// name-cache dispatch `tc.rs::try_reduce_nat` performs), or `None`:
+    /// 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq, 8 ble.
+    /// Bridged to `expr_arena_bridge::nat_bin_op_of`.
+    pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> Option<u8> {
+        let nc = &self.export_file.name_cache;
+        if !self.export_file.config.nat_extension { return None }
+        if Some(name) == nc.nat_add { Some(0) }
+        else if Some(name) == nc.nat_sub { Some(1) }
+        else if Some(name) == nc.nat_mul { Some(2) }
+        else if Some(name) == nc.nat_div { Some(3) }
+        else if Some(name) == nc.nat_mod { Some(4) }
+        else if Some(name) == nc.nat_pow { Some(5) }
+        else if Some(name) == nc.nat_gcd { Some(6) }
+        else if Some(name) == nc.nat_beq { Some(7) }
+        else if Some(name) == nc.nat_ble { Some(8) }
+        else { None }
+    }
+
     pub(crate) fn is_nat_zero(&mut self, e: ExprPtr<'t>) -> bool {
         match self.read_expr(e) {
             Const { .. } => self.c_nat_zero() == Some(e),

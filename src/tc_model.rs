@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
-use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr};
+use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
 #[cfg(verus_only)]
@@ -109,7 +109,7 @@ use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
 use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id};
+use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id, bool_true_arity_is_zero_any};
 use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_full, fv_absent};
@@ -1002,6 +1002,17 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rp));
         }
         cur = rp;
+        // nat-fold (P3): the kernel tries `try_reduce_nat` BEFORE any
+        // delta unfolding in every whnf round; mirror that order.
+        match (if fuel == 0 { None } else { verified_nat_fold_step_capped(ctx, env, cur, (fuel - 1) as u32, k) }) {
+            Some(v) => {
+                proof {
+                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(v));
+                }
+                cur = v;
+            }
+            None => {}
+        }
         let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
         if sc2 > 500 {
             return cur;
@@ -1056,6 +1067,151 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
     cur
 }
 
+
+/// The numeral VALUE of a whnf'd operand in the two representations the
+/// kernel's `get_bignum_from_expr` accepts (`NatLit`, `Nat.zero`), with
+/// the model-side `nat_value` fact.
+pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>) -> (result: Option<num_bigint::BigUint>)
+    ensures match result {
+        Some(b) => nat_value(to_model(v)) == Some(crate::nat_lit_model::to_nat(b)),
+        None => true,
+    }
+{
+    let el = ctx.read_expr(v);
+    if let Some(p) = expr_as_nat_lit(v, &el) {
+        match read_bignum_value(ctx, p) {
+            Some(b) => {
+                proof { is_nat_lit_shape_model(v); }
+                Some(b)
+            }
+            None => None,
+        }
+    } else if ctx.is_nat_zero(v) {
+        proof {
+            is_const_shape_model(v);
+            const_levels_vec_model(v);
+            nat_zero_arity_is_zero(v);
+            assert(to_model(v) == ExprSpec::Const(const_id(v), const_levels_vec(v)));
+            assert(const_levels_vec(v).len() == 0);
+        }
+        Some(<num_bigint::BigUint as num_traits::Zero>::zero())
+    } else {
+        None
+    }
+}
+
+/// NAT-LITERAL FOLD producer (rec-iota P3, 2026-09-05): the kernel's
+/// `try_reduce_nat`/`do_nat_bin` as a `pstep_star` -- a nat-op constant
+/// applied to exactly two operands, both operands whnf'd with the capped
+/// multi-round whnf (through `fuel`), both numerals, folded with the
+/// bridged bignum arithmetic (`add`/`sub`/`mul`/`div`/`mod`; `beq`/`ble`
+/// give `Bool` constants; `pow`/`gcd` not yet). The claim composes two
+/// spine-argument reductions with ONE parallel fold step.
+pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let fun_el = ctx.read_expr(fun);
+    let (name, levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
+    let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
+    if args.len() != 2 {
+        return None;
+    }
+    let lvv = read_levels_vec(ctx, levels);
+    if lvv.len() != 0 {
+        return None;
+    }
+    if fuel == 0 {
+        return None;
+    }
+    let x = args[0];
+    let y = args[1];
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    proof {
+        spine_app_nlbv_decompose(to_model(fun), args_model);
+        assert(args_model[0] == to_model(x));
+        assert(args_model[1] == to_model(y));
+    }
+    let vx = verified_whnf_measured_rounds_capped(ctx, env, x, (fuel - 1) as u32, 8, k);
+    let vy = verified_whnf_measured_rounds_capped(ctx, env, y, (fuel - 1) as u32, 8, k);
+    let bx = match nat_operand_value(ctx, vx) { Some(b) => b, None => return None };
+    let by = match nat_operand_value(ctx, vy) { Some(b) => b, None => return None };
+    let ghost a = crate::nat_lit_model::to_nat(bx);
+    let ghost b = crate::nat_lit_model::to_nat(by);
+    let r_opt = if op == 0 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_add(bx, by))
+    } else if op == 1 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_sub(bx, by))
+    } else if op == 2 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_mul(bx, by))
+    } else if op == 3 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_div(bx, by))
+    } else if op == 4 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_mod(bx, by))
+    } else if op == 7 {
+        ctx.bool_to_expr(crate::nat_lit_model::biguint_eq(&bx, &by))
+    } else if op == 8 {
+        ctx.bool_to_expr(crate::nat_lit_model::biguint_le(&bx, &by))
+    } else {
+        return None;
+    };
+    let r = match r_opt { Some(r) => r, None => return None };
+    proof {
+        // the spine after both operand reductions
+        is_const_shape_model(fun);
+        const_levels_vec_model(fun);
+        let fm = to_model(fun);
+        assert(fm == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+        assert(const_id(fun) == name_id(name));
+        assert(const_levels_vec(fun).len() == 0);
+        let args1 = args_model.update(0, to_model(vx));
+        let args2 = args1.update(1, to_model(vy));
+        pstep_star_spine_update(cm, fm, args_model, 0, to_model(vx));
+        assert(args1[1] == to_model(y));
+        pstep_star_spine_update(cm, fm, args1, 1, to_model(vy));
+        pstep_star_trans(cm, to_model(e), spine_app(fm, args1), spine_app(fm, args2));
+        let sp = spine_app(fm, args2);
+        // sp == App(App(fm, vx), vy)
+        assert(args2 =~= Seq::<ExprSpec>::empty().push(to_model(vx)).push(to_model(vy)));
+        spine_app_compose_last(fm, Seq::<ExprSpec>::empty().push(to_model(vx)), to_model(vy));
+        spine_app_compose_last(fm, Seq::<ExprSpec>::empty(), to_model(vx));
+        assert(spine_app(fm, Seq::<ExprSpec>::empty()) == fm);
+        let inner = ExprSpec::App(Box::new(fm), Box::new(to_model(vx)));
+        assert(sp == ExprSpec::App(Box::new(inner), Box::new(to_model(vy))));
+        // fold-ready with values a, b
+        spine_destruct_app(fm, args2);
+        assert(spine_head(sp) == fm);
+        assert(spine_args(sp) =~= args2);
+        assert(nat_fold_ready(sp));
+        // the folded literal is r
+        if op == 7 || op == 8 {
+            bool_true_arity_is_zero_any(r);
+            is_const_shape_model(r);
+            const_levels_vec_model(r);
+            assert(to_model(r) == ExprSpec::Const(const_id(r), const_levels_vec(r)));
+            const_expr_no_levels_canonical(to_model(r), const_id(r));
+        } else {
+            is_nat_lit_shape_model(r);
+        }
+        assert(nat_fold_result(sp) == to_model(r));
+        // one parallel fold step
+        assert(pstep(cm, inner, inner));
+        assert(pstep(cm, to_model(vy), to_model(vy)));
+        pstep_fold_intro(cm, Box::new(inner), Box::new(to_model(vy)), inner, to_model(vy), to_model(r));
+        pstep_star_one(cm, sp, to_model(r));
+        pstep_star_trans(cm, to_model(e), sp, to_model(r));
+        nat_fold_result_bounds(sp, 0, 0, 0);
+    }
+    Some(r)
+}
 
 /// PROJ-DELTA producer (2026-09-04): `reduce_proj(cheap = false)`'s
 /// missing half. The measured rounds' no-unfolding step only reduces a
