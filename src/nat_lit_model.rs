@@ -90,6 +90,14 @@ pub(crate) fn biguint_pred(x: BigUint) -> BigUint {
 /// `tc.rs::do_nat_bin`'s `Add` case (`arg1 + arg2`) -- also a plain
 /// delegation, no custom branching.
 #[allow(dead_code)]
+pub(crate) fn biguint_pow(x: BigUint, y: BigUint) -> BigUint {
+    num_traits::Pow::pow(x, y)
+}
+
+pub(crate) fn biguint_gcd(x: &BigUint, y: &BigUint) -> BigUint {
+    crate::util::nat_gcd(x, y)
+}
+
 pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
     x + y
 }
@@ -147,6 +155,14 @@ pub assume_specification [biguint_succ] (x: BigUint) -> (result: BigUint)
 pub assume_specification [biguint_pred] (x: BigUint) -> (result: BigUint)
     requires to_nat(x) > 0
     ensures to_nat(result) == (to_nat(x) - 1) as nat;
+
+/// `pow`/`gcd` bridges (rec-iota P3): the kernel's `arg1.pow(arg2)` and
+/// `util::nat_gcd`, axiomatized against the model's `nat_pow`/`nat_gcd`.
+pub assume_specification [biguint_pow] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_pow(to_nat(x), to_nat(y));
+
+pub assume_specification [biguint_gcd] (x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y));
 
 pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + to_nat(y);

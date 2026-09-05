@@ -3276,6 +3276,18 @@ pub fn verified_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
 }
 
+/// A closed leaf (a folded literal: depth 0, no loose bvars) fits any
+/// round's output bounds.
+pub proof fn weaken_leaf_bound(e: ExprSpec, bound2: nat, d2: nat)
+    requires nlbv(e) <= 0, depth(e) == 0
+    ensures
+        max_var_below(e, bound2 + d2 * d2 * d2 + d2 * d2),
+        depth(e) <= d2 * d2 + d2 + d2 + d2 + d2,
+{
+    nlbv_bound_implies_max_var_below(e, 0);
+    max_var_below_mono(e, (depth(e) + 0) as nat, bound2 + d2 * d2 * d2 + d2 * d2);
+}
+
 /// Real-arena counterpart to ONE iteration of `tc.rs::TypeChecker::lazy_
 /// delta_step`'s own loop body (`tc.rs:1271-1304`, everything up to but
 /// NOT including the trailing `def_eq_quick_check` early-exit at
@@ -3536,6 +3548,30 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     }
     if let Some(b) = verified_def_eq_nat(ctx, x, y, fuel) {
         return Some(DeltaRoundResult::Found(b));
+    }
+    // nat-fold (P3): the kernel's `delta_try_nat` folds a literal
+    // application on either side BEFORE any unfolding; mirror that.
+    if fuel > 0 {
+        match crate::tc_model::verified_nat_fold_step_capped(ctx, env, x, (fuel - 1) as u32, k) {
+            Some(xprime) => {
+                proof {
+                    weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
+                    weaken_leaf_bound(to_model(xprime), bound2, d2);
+                }
+                return Some(DeltaRoundResult::Continue(xprime, y));
+            }
+            None => {}
+        }
+        match crate::tc_model::verified_nat_fold_step_capped(ctx, env, y, (fuel - 1) as u32, k) {
+            Some(yprime) => {
+                proof {
+                    weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
+                    weaken_leaf_bound(to_model(yprime), bound2, d2);
+                }
+                return Some(DeltaRoundResult::Continue(x, yprime));
+            }
+            None => {}
+        }
     }
     let r1 = verified_get_applied_def(ctx, env, x, fuel);
     let r2 = verified_get_applied_def(ctx, env, y, fuel);

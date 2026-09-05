@@ -1068,14 +1068,17 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
 }
 
 
-/// The numeral VALUE of a whnf'd operand in the two representations the
-/// kernel's `get_bignum_from_expr` accepts (`NatLit`, `Nat.zero`), with
-/// the model-side `nat_value` fact.
-pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>) -> (result: Option<num_bigint::BigUint>)
+/// The numeral VALUE of a whnf'd operand: `NatLit`, `Nat.zero`, or a
+/// `Nat.succ` spine over another numeral (the model's `nat_value`; the
+/// kernel's own `get_bignum_from_expr` stops at the first two, but its
+/// whnf folds `Nat.succ x` for a literal `x` first -- covered here by
+/// recursion through `pred_of_nat_succ`).
+pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>, fuel: u32) -> (result: Option<num_bigint::BigUint>)
     ensures match result {
         Some(b) => nat_value(to_model(v)) == Some(crate::nat_lit_model::to_nat(b)),
         None => true,
     }
+    decreases fuel
 {
     let el = ctx.read_expr(v);
     if let Some(p) = expr_as_nat_lit(v, &el) {
@@ -1095,8 +1098,32 @@ pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>) ->
             assert(const_levels_vec(v).len() == 0);
         }
         Some(<num_bigint::BigUint as num_traits::Zero>::zero())
-    } else {
+    } else if fuel == 0 {
         None
+    } else {
+        match ctx.pred_of_nat_succ(v) {
+            Some(p) => {
+                // not a literal here, so the App(Nat.succ, p) disjunct holds
+                match nat_operand_value(ctx, p, (fuel - 1) as u32) {
+                    Some(bp) => {
+                        proof {
+                            let fun = choose |fun: ExprPtr<'t>|
+                                to_model(v) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
+                                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+                            is_const_shape_model(fun);
+                            const_levels_vec_model(fun);
+                            nat_succ_arity_is_zero(fun);
+                            assert(to_model(fun) == ExprSpec::Const(nat_succ_id(), const_levels_vec(fun)));
+                            assert(const_levels_vec(fun).len() == 0);
+                            assert(nat_value(to_model(v)) == Some(crate::nat_lit_model::to_nat(bp) + 1));
+                        }
+                        Some(crate::nat_lit_model::biguint_succ(bp))
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        }
     }
 }
 
@@ -1104,15 +1131,15 @@ pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>) ->
 /// `try_reduce_nat`/`do_nat_bin` as a `pstep_star` -- a nat-op constant
 /// applied to exactly two operands, both operands whnf'd with the capped
 /// multi-round whnf (through `fuel`), both numerals, folded with the
-/// bridged bignum arithmetic (`add`/`sub`/`mul`/`div`/`mod`; `beq`/`ble`
-/// give `Bool` constants; `pow`/`gcd` not yet). The claim composes two
+/// bridged bignum arithmetic (`add`/`sub`/`mul`/`div`/`mod`/`pow`/`gcd`;
+/// `beq`/`ble` give `Bool` constants). The claim composes two
 /// spine-argument reductions with ONE parallel fold step.
 pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         k <= 60000,
     ensures match result {
-        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0 && depth(to_model(r)) == 0,
         None => true,
     }
     decreases fuel
@@ -1142,8 +1169,8 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
     }
     let vx = verified_whnf_measured_rounds_capped(ctx, env, x, (fuel - 1) as u32, 8, k);
     let vy = verified_whnf_measured_rounds_capped(ctx, env, y, (fuel - 1) as u32, 8, k);
-    let bx = match nat_operand_value(ctx, vx) { Some(b) => b, None => return None };
-    let by = match nat_operand_value(ctx, vy) { Some(b) => b, None => return None };
+    let bx = match nat_operand_value(ctx, vx, fuel) { Some(b) => b, None => return None };
+    let by = match nat_operand_value(ctx, vy, fuel) { Some(b) => b, None => return None };
     let ghost a = crate::nat_lit_model::to_nat(bx);
     let ghost b = crate::nat_lit_model::to_nat(by);
     let r_opt = if op == 0 {
@@ -1156,6 +1183,10 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_div(bx, by))
     } else if op == 4 {
         ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_mod(bx, by))
+    } else if op == 5 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_pow(bx, by))
+    } else if op == 6 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_gcd(&bx, &by))
     } else if op == 7 {
         ctx.bool_to_expr(crate::nat_lit_model::biguint_eq(&bx, &by))
     } else if op == 8 {
