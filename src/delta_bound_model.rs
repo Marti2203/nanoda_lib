@@ -1263,6 +1263,7 @@ pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: Exp
     types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(e), to_model(r), fuel)
 }
 
+#[verifier::spinoff_prover]
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
@@ -1275,7 +1276,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
         None => true,
     }
-    decreases fuel
+    decreases fuel, 1int
 {
     let el = ctx.read_expr(e);
     if let Some((_, ty)) = expr_as_local(e, &el) {
@@ -1390,6 +1391,39 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     if fuel == 0 {
         return None;
     }
+    if expr_as_lambda(&el).is_some() {
+        return verified_infer_lambda_arm(ctx, env, e, fuel, d, dd);
+    }
+    if expr_as_pi(&el).is_some() {
+        return verified_infer_pi_arm(ctx, env, e, fuel, d, dd);
+    }
+    if expr_as_let(&el).is_some() {
+        return verified_infer_let_arm(ctx, env, e, fuel, d, dd);
+    }
+    None
+}
+
+/// `verified_infer`'s lambda arm, factored out so the dispatcher's SMT query
+/// stays small and the arms verify in parallel (the arm took most of
+/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
+/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
+#[verifier::spinoff_prover]
+pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        fuel >= 1,
+    ensures match result {
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel, 0int
+{
+    let el = ctx.read_expr(e);
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
         assert(depth(to_model(binder_type)) < depth(to_model(e)));
@@ -1453,6 +1487,30 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         }
         return Some(result);
     }
+    None
+}
+
+/// `verified_infer`'s pi arm, factored out so the dispatcher's SMT query
+/// stays small and the arms verify in parallel (the arm took most of
+/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
+/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
+#[verifier::spinoff_prover]
+pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        fuel >= 1,
+    ensures match result {
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel, 0int
+{
+    let el = ctx.read_expr(e);
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
         assert(depth(to_model(binder_type)) < depth(to_model(e)));
@@ -1535,6 +1593,30 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         }
         return Some(result);
     }
+    None
+}
+
+/// `verified_infer`'s let arm, factored out so the dispatcher's SMT query
+/// stays small and the arms verify in parallel (the arm took most of
+/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
+/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
+#[verifier::spinoff_prover]
+pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        fuel >= 1,
+    ensures match result {
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel, 0int
+{
+    let el = ctx.read_expr(e);
     if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
         assert(depth(to_model(body)) <= dd);
         assert(depth(to_model(val)) <= dd);
