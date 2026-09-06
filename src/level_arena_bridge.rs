@@ -340,7 +340,45 @@ pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, f
         let sa = verified_simplify(ctx, a, fuel1);
         let sb = verified_simplify(ctx, b, fuel1);
         let sbl = ctx.read_level(sb);
-        let result = if level_is_zero(&sbl) {
+        let sal = ctx.read_level(sa);
+        // Mirror of the kernel's `is_zero(l_simp) || is_one(l_simp) => r_simp`
+        // case (`level.rs`): imax(0, r) = imax(1, r) = r. Without it deep
+        // binder telescopes left `imax(1, imax(1, ...))` towers that sent the
+        // certified comparison into its exponential case split (2026-09-06).
+        let sa_is_zero = level_is_zero(&sal);
+        let sa_is_one = match level_as_succ(&sal) {
+            Some(z) => {
+                let zl = ctx.read_level(z);
+                let r = level_is_zero(&zl);
+                proof {
+                    if r {
+                        assert(to_model(z) == LevelSpec::Zero);
+                        assert(to_model(sa) == LevelSpec::Succ(Box::new(LevelSpec::Zero)));
+                    }
+                }
+                r
+            }
+            None => false,
+        };
+        let result = if sa_is_zero || sa_is_one {
+            proof {
+                assert(to_model(sa) == LevelSpec::Zero || to_model(sa) == LevelSpec::Succ(Box::new(LevelSpec::Zero)));
+                assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho) <= 1 by {
+                    assert(interp(LevelSpec::Zero, rho) == 0);
+                    if to_model(sa) == LevelSpec::Succ(Box::new(LevelSpec::Zero)) {
+                        assert(interp(to_model(sa), rho) == interp(LevelSpec::Zero, rho) + 1);
+                    }
+                }
+                assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho)
+                    == interp(LevelSpec::IMax(Box::new(to_model(sa)), Box::new(to_model(sb))), rho) by {
+                    assert(interp(to_model(sa), rho) <= 1);
+                    if interp(to_model(sb), rho) != 0 {
+                        assert(max_nat(interp(to_model(sa), rho), interp(to_model(sb), rho)) == interp(to_model(sb), rho));
+                    }
+                }
+            }
+            sb
+        } else if level_is_zero(&sbl) {
             sb
         } else if level_as_succ(&sbl).is_some() {
             verified_combining(ctx, sa, sb, fuel1)

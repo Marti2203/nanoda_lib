@@ -3917,6 +3917,12 @@ pub proof fn full_def_eq_of_def_eq_witness<'t>(env: Map<u64, (Seq<u64>, ExprSpec
 /// three remaining existentials carry explicit arithmetic-free triggers
 /// (per `docs/verus_recursive_exists_note.md`, so the intro direction
 /// producers need actually works).
+/// Marker trigger for the fuel witness of `types_to`'s `Let` rule: an
+/// exists in a match arm can't be introduced through a trigger that
+/// mentions match-bound selectors, so the trigger is this ground marker
+/// over the binder alone (see the memo's match-arm exists law).
+pub open spec fn fuel_marker(f: nat) -> bool { true }
+
 pub open spec fn types_to(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
@@ -3963,8 +3969,8 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Let(_ty0, val, body) =>
-            types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, (fuel - 1) as nat),
+        ExprSpec::Let(_ty0, val, body) => exists |f2: nat|
+            #[trigger] fuel_marker(f2) && f2 < fuel && types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, f2),
         _ => false,
     })
     ||| (fuel > 0 && match e {
@@ -4145,12 +4151,13 @@ pub proof fn types_to_spine(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, 
     }
 }
 
-pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, fuel: nat)
+pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, f2: nat, fuel: nat)
     requires
-        fuel > 0,
-        types_to(dty, denv, lctx, subst_full(body, seq![val], 0), t, (fuel - 1) as nat),
+        f2 < fuel,
+        types_to(dty, denv, lctx, subst_full(body, seq![val], 0), t, f2),
     ensures types_to(dty, denv, lctx, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), t, fuel)
 {
+    assert(fuel_marker(f2));
 }
 
 pub proof fn types_to_lambda(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, infd: ExprSpec, fuel: nat)

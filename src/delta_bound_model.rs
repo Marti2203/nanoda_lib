@@ -1124,7 +1124,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
     decreases fuel
 {
-    dd <= 60000 && (fuel == 0 || infer_depth_fixpoint_ok(dd + dd, (fuel - 1) as nat))
+    dd <= 60000 && (fuel == 0 || (infer_depth_fixpoint_ok(dd, (fuel - 1) as nat) && infer_depth_fixpoint_ok(dd + dd, ((fuel - 1) as nat) / 2)))
 }
 
 /// `verified_infer`'s own postcondition, factored into a standalone
@@ -1138,6 +1138,10 @@ pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
 /// coincide by `verified_inst`'s own postcondition, so the recursion stays
 /// entirely in terms of real arena pointers, exactly like every other
 /// function in this arc).
+/// Marker trigger for the fuel witness of `infer_spec`'s `Let` rule (same
+/// device as `tc_model::fuel_marker`).
+pub open spec fn infer_fuel_marker(f: nat) -> bool { true }
+
 pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool
     decreases fuel
 {
@@ -1159,7 +1163,7 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
     ||| (fuel > 0 && exists |ty: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, substituted: ExprPtr<'t>|
             to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body)))
             && to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0)
-            && infer_spec(env, substituted, r, (fuel - 1) as nat))
+            && exists |f2: nat| #[trigger] infer_fuel_marker(f2) && f2 < fuel && infer_spec(env, substituted, r, f2))
     ||| (fuel > 0 && exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, instd: ExprPtr<'t>, infd: ExprPtr<'t>|
             to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
             && to_model(local) == ExprSpec::Free(expr_id(local))
@@ -1293,9 +1297,33 @@ pub open spec fn infer_result_depth_bound(dd: nat, d: nat, fuel: nat) -> nat
     if fuel == 0 {
         base
     } else {
-        let rec = infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat);
+        let rec = infer_result_depth_bound(dd, d, (fuel - 1) as nat);
+        let recl = infer_result_depth_bound(dd + dd, d, ((fuel - 1) as nat) / 2);
         let wrapped = 1 + rec;
-        if base >= wrapped { base } else { wrapped }
+        let m = if base >= wrapped { base } else { wrapped };
+        if m >= recl { m } else { recl }
+    }
+}
+
+/// A linear budget suffices for the fixpoint predicate: binders keep the
+/// depth budget and cost one fuel, lets double it and halve the fuel, so
+/// `dd * (fuel + 1) <= 60000` covers every path (2026-09-06; before this
+/// the budget doubled at EVERY binder, capping fuel at 6 for size-500
+/// terms, which was ~35% of the remaining inference declines).
+pub proof fn infer_depth_fixpoint_ok_linear(dd: nat, fuel: nat)
+    requires dd * (fuel + 1) <= 60000
+    ensures infer_depth_fixpoint_ok(dd, fuel)
+    decreases fuel
+{
+    assert(dd <= dd * (fuel + 1)) by (nonlinear_arith);
+    if fuel > 0 {
+        let f1 = (fuel - 1) as nat;
+        assert(dd * (f1 + 1) <= dd * (fuel + 1)) by (nonlinear_arith) requires f1 + 1 <= fuel + 1;
+        infer_depth_fixpoint_ok_linear(dd, f1);
+        let h = f1 / 2;
+        assert(2 * h <= f1);
+        assert((dd + dd) * (h + 1) <= dd * (fuel + 1)) by (nonlinear_arith) requires 2 * h <= f1, f1 + 1 == fuel;
+        infer_depth_fixpoint_ok_linear(dd + dd, h);
     }
 }
 /// `types_to` instantiated the way `verified_infer` emits it: the real
@@ -1482,7 +1510,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             assert(depth(to_model(instd)) <= dd + dd);
             assert(nlbv(to_model(instd)) <= 0);
         }
-        let infd = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd + dd)) {
+        let infd = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
@@ -1503,10 +1531,10 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             assert(depth(to_model(abstrd_infd)) == depth(to_model(infd)));
             assert(to_model(result) == ExprSpec::Bind(Box::new(to_model(abstrd_binder_type)), Box::new(to_model(abstrd_infd))));
             assert(depth(to_model(binder_type)) <= dd);
-            assert(depth(to_model(infd)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
-            assert(dd <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
-            assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
-            assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+            assert(depth(to_model(infd)) <= infer_result_depth_bound(dd, d, (fuel - 1) as nat));
+            assert(dd <= infer_result_depth_bound(dd, d, (fuel - 1) as nat));
+            assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd, d, (fuel - 1) as nat));
+            assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd, d, (fuel - 1) as nat));
             assert(nlbv(to_model(result)) == 0);
             assert(to_model(local) == ExprSpec::Free(expr_id(local)));
             assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
@@ -1550,7 +1578,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(depth(to_model(body)) < depth(to_model(e)));
         assert(nlbv(to_model(binder_type)) == 0);
         assert(nlbv(to_model(body)) <= 1);
-        let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, Ghost(d), Ghost(dd + dd)) {
+        let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
             None => return None,
         };
@@ -1584,7 +1612,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             assert(depth(to_model(instd)) <= dd + dd);
             assert(nlbv(to_model(instd)) <= 0);
         }
-        let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd + dd)) {
+        let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
@@ -1665,15 +1693,20 @@ pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
                     subst_full_nlbv_bound(to_model(body), to_model(val), 0);
                     assert(nlbv(to_model(substituted)) <= 0);
                 }
-                let result = verified_infer(ctx, env, substituted, fuel - 1, Ghost(d), Ghost(dd + dd));
+                let half: u32 = (fuel - 1) / 2;
+                let result = verified_infer(ctx, env, substituted, half, Ghost(d), Ghost(dd + dd));
                 proof {
                     if let Some(r) = result {
-                        assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
-                        assert(infer_result_depth_bound(dd, d, fuel as nat) >= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
+                        assert(half as nat == ((fuel - 1) as nat) / 2);
+                        assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, half as nat));
+                        assert(infer_result_depth_bound(dd, d, fuel as nat) >= infer_result_depth_bound(dd + dd, d, half as nat));
                         assert(to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body))));
-                        assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(substituted), to_model(r), (fuel - 1) as nat));
-                        assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
-                        types_to_let(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(ty), to_model(val), to_model(body), to_model(r), fuel as nat);
+                        assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(substituted), to_model(r), half as nat));
+                        assert(half < fuel);
+                        types_to_let(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(ty), to_model(val), to_model(body), to_model(r), half as nat, fuel as nat);
+                        assert(infer_spec(*env, substituted, r, half as nat));
+                        assert(infer_fuel_marker(half as nat));
+                        assert(infer_spec(*env, e, r, fuel as nat));
                         assert(infer_types_to(*env, e, r, fuel as nat));
                     }
                 }
@@ -3093,40 +3126,34 @@ pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
 {
     let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return None };
-    if sz > 500 || ctx.num_loose_bvars(e) != 0 {
+    if sz == 0 || sz > 6000 || ctx.num_loose_bvars(e) != 0 {
         return None;
     }
+    // Linear fuel budget: `sz * (fuel + 1) <= 60000` (size 500 -> fuel 119,
+    // size 6000 -> fuel 9); the runtime check makes the product fact exec-visible.
+    let q: u64 = 60000 / (sz as u64);
+    if q < 2 || q > 60000 {
+        return None;
+    }
+    proof {
+        assert((q as int) * (sz as int) <= 60000int * 60000int) by (nonlinear_arith) requires q <= 60000, sz <= 60000;
+    }
+    if q * (sz as u64) > 60000 {
+        return None;
+    }
+    let fuel: u32 = (q - 1) as u32;
     proof {
         env_global_cap_bounded(*env);
         local_type_cap_bounded();
         depth_le_size(to_model(e));
-        reveal_with_fuel(infer_depth_fixpoint_ok, 12);
+        assert(fuel as nat + 1 == q as nat);
+        assert((sz as nat) * (fuel as nat + 1) == (q as nat) * (sz as nat)) by (nonlinear_arith) requires fuel as nat + 1 == q as nat;
+        assert((q as nat) * (sz as nat) <= 60000);
+        infer_depth_fixpoint_ok_linear(sz as nat, fuel as nat);
     }
-    let r = if sz <= 29 {
-        proof { assert(infer_depth_fixpoint_ok(29, 10)); }
-        verified_infer(ctx, env, e, 10, Ghost(60000 as nat), Ghost(29 as nat))
-    } else if sz <= 58 {
-        proof { assert(infer_depth_fixpoint_ok(58, 9)); }
-        verified_infer(ctx, env, e, 9, Ghost(60000 as nat), Ghost(58 as nat))
-    } else if sz <= 117 {
-        proof { assert(infer_depth_fixpoint_ok(117, 8)); }
-        verified_infer(ctx, env, e, 8, Ghost(60000 as nat), Ghost(117 as nat))
-    } else if sz <= 234 {
-        proof { assert(infer_depth_fixpoint_ok(234, 7)); }
-        verified_infer(ctx, env, e, 7, Ghost(60000 as nat), Ghost(234 as nat))
-    } else {
-        proof { assert(infer_depth_fixpoint_ok(500, 6)); }
-        verified_infer(ctx, env, e, 6, Ghost(60000 as nat), Ghost(500 as nat))
-    };
-    match r {
+    match verified_infer(ctx, env, e, fuel, Ghost(60000 as nat), Ghost(sz as nat)) {
         Some(ty) => {
-            proof {
-                if sz <= 29 { assert(infer_types_to(*env, e, ty, 10nat)); }
-                else if sz <= 58 { assert(infer_types_to(*env, e, ty, 9nat)); }
-                else if sz <= 117 { assert(infer_types_to(*env, e, ty, 8nat)); }
-                else if sz <= 234 { assert(infer_types_to(*env, e, ty, 7nat)); }
-                else { assert(infer_types_to(*env, e, ty, 6nat)); }
-            }
+            proof { assert(infer_types_to(*env, e, ty, fuel as nat)); }
             Some(ty)
         }
         None => None,
@@ -3224,6 +3251,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         depth_le_size(to_model(x));
         depth_le_size(to_model(y));
         reveal_with_fuel(infer_depth_fixpoint_ok, 6);
+        infer_depth_fixpoint_ok_linear(500, 4);
         assert(infer_depth_fixpoint_ok(500, 4));
     }
     let xt = match verified_infer(ctx, env, x, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
