@@ -96,7 +96,7 @@ use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{const_expr_no_levels_canonical, defeq_of_pstep_star, pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
+use crate::beta_model::{const_expr_no_levels_canonical, spine_app_compose_last, defeq_of_pstep_star, pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -2768,13 +2768,13 @@ fn conv_join_rounds() -> u32 {
 /// Failure-cache probes (diagnostics-grade, no contract): a hit only makes
 /// the route answer `None` early, never `Some(true)`.
 #[verifier::external_body]
-fn conv_fail_seen<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits())
+fn conv_fail_seen<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) -> bool {
+    crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits(), budget)
 }
 
 #[verifier::external_body]
-fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) {
-    crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits());
+fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
+    crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits(), budget);
 }
 
 /// The binder case of `verified_conv` by the FRESH-INSTANCE rule: open
@@ -2836,17 +2836,90 @@ pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>,
     }
     decreases budget, 1int
 {
-    if conv_fail_seen(x, y) {
+    if conv_fail_seen(x, y, budget) {
         return None;
     }
     let r = verified_conv_inner(ctx, env, x, y, fuel, k, budget);
     match r {
         Some(true) => Some(true),
         _ => {
-            conv_fail_note(x, y);
+            conv_fail_note(x, y, budget);
             None
         }
     }
+}
+
+/// Spine-wise application congruence for `verified_conv` (the kernel's
+/// `def_eq_app` shape): both sides are unfolded into head + arguments; with
+/// equal argument counts and at least one argument, the heads and then each
+/// argument pair are `conv`-checked at `budget - 1`, and the verdict is
+/// assembled by repeated `deq_any_app_congr` along the spine prefixes.
+pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 1int
+{
+    let ghost em = to_model_of_env(*env);
+    if budget == 0 {
+        return None;
+    }
+    let (h1, args1) = match verified_unfold_apps(ctx, x, fuel) { Some(p) => p, None => return None };
+    let (h2, args2) = match verified_unfold_apps(ctx, y, fuel) { Some(p) => p, None => return None };
+    if args1.len() == 0 || args1.len() != args2.len() {
+        return None;
+    }
+    let ghost am1 = Seq::new(args1@.len(), |i: int| to_model(args1@[i]));
+    let ghost am2 = Seq::new(args2@.len(), |i: int| to_model(args2@[i]));
+    if let Some(true) = verified_conv(ctx, env, h1, h2, fuel, k, budget - 1) {
+    } else {
+        return None;
+    }
+    let n = args1.len();
+    let mut i: usize = 0;
+    proof {
+        assert(am1.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(am2.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(spine_app(to_model(h1), am1.subrange(0, 0)) == to_model(h1));
+        assert(spine_app(to_model(h2), am2.subrange(0, 0)) == to_model(h2));
+    }
+    while i < n
+        invariant
+            n == args1.len(), n == args2.len(), i <= n,
+            am1 == Seq::new(args1@.len(), |j: int| to_model(args1@[j])),
+            am2 == Seq::new(args2@.len(), |j: int| to_model(args2@[j])),
+            em == to_model_of_env(*env),
+            deq_any(em, spine_app(to_model(h1), am1.subrange(0, i as int)), spine_app(to_model(h2), am2.subrange(0, i as int))),
+            k <= 500, budget >= 1,
+        decreases n - i
+    {
+        let a1 = args1[i];
+        let a2 = args2[i];
+        if let Some(true) = verified_conv(ctx, env, a1, a2, fuel, k, budget - 1) {
+            proof {
+                let p1 = am1.subrange(0, i as int);
+                let p2 = am2.subrange(0, i as int);
+                assert(am1.subrange(0, i as int + 1) =~= p1.push(to_model(a1)));
+                assert(am2.subrange(0, i as int + 1) =~= p2.push(to_model(a2)));
+                spine_app_compose_last(to_model(h1), p1, to_model(a1));
+                spine_app_compose_last(to_model(h2), p2, to_model(a2));
+                deq_any_app_congr(em, spine_app(to_model(h1), p1), spine_app(to_model(h2), p2), to_model(a1), to_model(a2));
+            }
+        } else {
+            return None;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(am1.subrange(0, n as int) =~= am1);
+        assert(am2.subrange(0, n as int) =~= am2);
+        assert(to_model(x) == spine_app(to_model(h1), am1));
+        assert(to_model(y) == spine_app(to_model(h2), am2));
+    }
+    conv_stat(2);
+    Some(true)
 }
 
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
@@ -2937,6 +3010,14 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // --- structural congruence (real-shape gated) ---
     let xe = ctx.read_expr(x);
     let ye = ctx.read_expr(y);
+    // SPINE-WISE congruence (2026-09-05): the kernel's `def_eq_app` compares
+    // the two spines' heads and arguments pairwise; the node-by-node arm
+    // below spent one budget unit per application layer, so a 10-argument
+    // spine exhausted the budget walking down its own head. Here every
+    // head/argument pair is checked at the SAME budget level.
+    if let Some(true) = verified_conv_spine(ctx, env, x, y, fuel, k, budget - 1) {
+        return Some(true);
+    }
     match (expr_as_app(&xe), expr_as_app(&ye)) {
         (Some((f1, a1)), Some((f2, a2))) => {
             if let Some(true) = verified_conv(ctx, env, f1, f2, fuel, k, budget - 1) {

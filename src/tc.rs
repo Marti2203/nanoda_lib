@@ -208,13 +208,18 @@ pub mod route_stats {
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
         /// prunes work (the route answers `None`), so this cannot affect what
         /// gets confirmed, only how fast it fails.
-        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u32), u32>> = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
     }
-    pub fn conv_fail_seen(a: u32, b: u32) -> bool {
-        CONV_FAIL.with(|c| c.borrow().contains(&(a, b)))
+    // Remembers the HIGHEST budget a pair failed at (2026-09-05): a failure
+    // at budget B implies failure at any budget <= B (the route is monotone
+    // in its budget), so a low-budget failure (e.g. inside the spine-wise
+    // congruence loop) never poisons a later, higher-budget attempt, while a
+    // top-budget failure still short-circuits every retry.
+    pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
+        CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
     }
-    pub fn conv_fail_note(a: u32, b: u32) {
-        CONV_FAIL.with(|c| { c.borrow_mut().insert((a, b)); });
+    pub fn conv_fail_note(a: u32, b: u32, budget: u32) {
+        CONV_FAIL.with(|c| { let mut m = c.borrow_mut(); let e = m.entry((a, b)).or_insert(0); if budget > *e { *e = budget; } });
     }
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
@@ -240,6 +245,12 @@ pub mod route_stats {
     pub fn conv_join_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         *V.get_or_init(|| knob("NANODA_CONV_JOIN", 2))
+    }
+    pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
+    pub fn shadow_enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("NANODA_SHADOW").is_some())
     }
     pub fn conv_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -281,23 +292,24 @@ pub mod route_stats {
         )
     }
     pub fn report() -> String {
-        let q = QUICK.load(Ordering::Relaxed);
-        let c = CORE.load(Ordering::Relaxed);
-        let d = DELTA.load(Ordering::Relaxed);
-        let w = WHNF_JOIN.load(Ordering::Relaxed);
-        let cv = CONV.load(Ordering::Relaxed);
-        let lt = LEGACY_TRUE.load(Ordering::Relaxed);
-        let lf = LEGACY_FALSE.load(Ordering::Relaxed);
-        let total = q + c + d + w + cv + lt + lf;
-        let verified = c + d + w + cv;
-        let nontrivial = c + d + w + cv + lt + lf;
+        let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        let (q, lt, lf) = (g(&QUICK), g(&LEGACY_TRUE), g(&LEGACY_FALSE));
+        let total = q + lt + lf;
+        let cert = g(&SHADOW_CERTIFIED);
+        let dis = g(&SHADOW_DISAGREE);
+        let share = if lt > 0 { 100.0 * cert as f64 / lt as f64 } else { 0.0 };
         format!(
-            "def_eq route stats: total {} | quick {} | verified core {} | verified delta {} | verified whnf-join {} | verified conv {} | legacy true {} | legacy false {} | verified share of non-quick: {:.1}% | verified share of non-quick confirmations: {:.1}%",
-            total, q, c, d, w, cv, lt, lf,
-            if nontrivial == 0 { 0.0 } else { 100.0 * verified as f64 / nontrivial as f64 },
-            if verified + lt == 0 { 0.0 } else { 100.0 * verified as f64 / (verified + lt) as f64 },
-        ) + "\n" + &branches() + &format!(
-            "\nconv leaves (all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
+            "def_eq (original checker decides): total {} | quick {} | non-quick true {} | non-quick false {}",
+            total, q, lt, lf,
+        ) + &(if shadow_enabled() {
+            format!(
+                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.1}%) | disagreements {}",
+                cert, lt, share, dis,
+            )
+        } else {
+            String::from("\nshadow certification: off (set NANODA_SHADOW=1)")
+        }) + &format!(
+            "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
             CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed))
     }
@@ -1072,68 +1084,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) { assert!(self.def_eq(u, v)) }
 
+    /// The ORIGINAL nanoda_lib decision procedure, verbatim (restored
+    /// 2026-09-05): the legacy checker alone decides every verdict. The
+    /// verified routes never influence the result; with `NANODA_SHADOW=1`
+    /// they run AFTER the verdict on the same pair, purely to CERTIFY it
+    /// (`route_stats::shadow_check`), and any disagreement -- a verified
+    /// confirmation the original code rejected -- is counted as an alarm.
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         if let Some(easy) = self.def_eq_quick_check(x, y) {
             route_stats::bump(&route_stats::QUICK);
             return easy
-        }
-
-        // Verified route (see `tc_model::verified_def_eq_checked`): a
-        // `Some(true)` from the verified core carries a machine-checked
-        // `def_eq_witness && deq_full_claim`; anything else falls through
-        // to the legacy path below, so this costs no completeness -- the
-        // verified route only ever CONFIRMS equality.
-        if let Some(true) = crate::tc_model::verified_def_eq_checked(self.ctx, x, y) {
-            route_stats::bump(&route_stats::CORE);
-            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-            return true
-        }
-
-        // Verified delta route (see `delta_bound_model::verified_lazy_delta_checked_cached`):
-        // the environment-cap certificate is scanned once per checker and
-        // reused across calls; a `Some(true)` carries machine-checked
-        // pstep_star reductions of both sides to a related pair. Like the
-        // core route above, this only ever CONFIRMS equality.
-        // Verified delta route (see `delta_bound_model::verified_lazy_delta_capped`):
-        // one lazy-delta round over the CAPPED environment model
-        // (definitions certified at unfold time; no global certificate),
-        // then the verified core on the reducts; a Some(true) carries
-        // machine-checked pstep_star reductions of both sides to a related
-        // pair. Like the core route, this only ever CONFIRMS equality.
-        if let Some(true) =
-            crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k())
-        {
-            route_stats::bump(&route_stats::DELTA);
-            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-            return true
-        }
-        // Verified whnf-join route (see `delta_bound_model::
-        // verified_defeq_whnf_capped`): reduce both sides with the verified
-        // multi-round whnf over the CAPPED environment model (definitions
-        // certified at unfold time -- no certificate, so this route is
-        // always available) and confirm on pointer-equal results -- a
-        // Some(true) carries a machine-checked `defeq` (model-level
-        // definitional equality by joinability).
-        if let Some(true) =
-            crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::whnf_rounds())
-        {
-            route_stats::bump(&route_stats::WHNF_JOIN);
-            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-            return true
-        }
-        // Verified conversion route (see `delta_bound_model::verified_conv`):
-        // leaves + structural congruence + one lazy-delta round + the
-        // whnf-join, recursing through verified routes ONLY; a Some(true)
-        // carries a machine-checked `deq_any` (the combined inductive
-        // definitional-equality relation).
-        if route_stats::conv_enabled() {
-            if let Some(true) =
-                crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget())
-            {
-                route_stats::bump(&route_stats::CONV);
-                self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
-                return true
-            }
         }
 
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
@@ -1142,75 +1102,76 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n) == self.ctx.c_bool_true() {
             let x_nn = self.whnf(x_n);
             if Some(x_nn) == self.ctx.c_bool_true() {
-                route_stats::bump(&route_stats::LEG_BOOL_TRUE);
+                route_stats::bump(&route_stats::LEGACY_TRUE);
+                self.shadow_check(x, y, true);
                 return true
             }
         }
 
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
-            route_stats::bump(if easy { &route_stats::LEG_QUICK2_TRUE } else { &route_stats::LEG_QUICK2_FALSE });
+            route_stats::bump(if easy { &route_stats::LEGACY_TRUE } else { &route_stats::LEGACY_FALSE });
+            self.shadow_check(x, y, easy);
             return easy
         }
 
-        // Branch attribution (diagnostics only): same decision procedure as
-        // before, with the short-circuit `||` chains spelled out so each
-        // confirming rule can be counted.
-        let mut branch: &'static std::sync::atomic::AtomicU64 = &route_stats::LEG_EXHAUSTED;
         let result = if self.proof_irrel_eq(x_n, y_n) {
-            branch = &route_stats::LEG_PROOF_IRREL;
             true
         } else {
             match self.lazy_delta_step(x_n, y_n) {
-                FoundEqResult(short) => {
-                    branch = &route_stats::LEG_LAZY_DELTA;
-                    short
-                }
+                FoundEqResult(short) => short,
                 Exhausted(x_n, y_n) => {
-                    if self.def_eq_const(x_n, y_n) {
-                        branch = &route_stats::LEG_CONST;
-                        true
-                    } else if self.def_eq_local(x_n, y_n) {
-                        branch = &route_stats::LEG_LOCAL;
-                        true
-                    } else if self.def_eq_proj(x_n, y_n) {
-                        branch = &route_stats::LEG_PROJ;
+                    if self.def_eq_const(x_n, y_n) || self.def_eq_local(x_n, y_n) || self.def_eq_proj(x_n, y_n) {
                         true
                     } else {
                         let (xn0, yn0) = (x_n, y_n);
                         let (x_n, y_n) = (self.whnf_no_unfolding(xn0), self.whnf_no_unfolding(yn0));
                         if x_n != xn0 || y_n != yn0 {
-                            branch = &route_stats::LEG_WHNF_RETRY;
                             self.def_eq(x_n, y_n)
-                        } else if self.def_eq_app(x_n, y_n) {
-                            branch = &route_stats::LEG_APP;
-                            true
-                        } else if self.try_eta_expansion(x_n, y_n) {
-                            branch = &route_stats::LEG_ETA;
-                            true
-                        } else if self.try_eta_struct(x_n, y_n) {
-                            branch = &route_stats::LEG_ETA_STRUCT;
-                            true
-                        } else if self.try_string_lit_expansion(x_n, y_n) {
-                            branch = &route_stats::LEG_STRING;
-                            true
-                        } else if matches!(self.def_eq_unit(x_n, y_n), Some(true)) {
-                            branch = &route_stats::LEG_UNIT;
-                            true
                         } else {
-                            false
+                            self.def_eq_app(x_n, y_n)
+                                || self.try_eta_expansion(x_n, y_n)
+                                || self.try_eta_struct(x_n, y_n)
+                                || self.try_string_lit_expansion(x_n, y_n)
+                                || matches!(self.def_eq_unit(x_n, y_n), Some(true))
                         }
                     }
                 }
             }
         };
-        route_stats::bump(branch);
         if result {
             route_stats::bump(&route_stats::LEGACY_TRUE);
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
         } else {
             route_stats::bump(&route_stats::LEGACY_FALSE);
         }
+        self.shadow_check(x, y, result);
         result
+    }
+
+    /// SHADOW certification (diagnostics only, `NANODA_SHADOW=1`): run the
+    /// verified routes on the pair the original code just decided and count
+    /// (a) verdicts they certify (a machine-checked `deq_any`/`defeq`
+    /// claim over the environment model) and (b) disagreements (a verified
+    /// confirmation of a pair the original code rejected -- never expected;
+    /// would mean either an unsound bridge axiom or a legacy incompleteness).
+    /// Never touches `tc_cache`, so the verdict path is unaffected.
+    fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool) {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        let certified = matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true))
+            || matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true))
+            || matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::whnf_rounds()), Some(true))
+            || (route_stats::conv_enabled()
+                && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)));
+        if certified {
+            if verdict {
+                route_stats::bump(&route_stats::SHADOW_CERTIFIED);
+            } else {
+                route_stats::bump(&route_stats::SHADOW_DISAGREE);
+                eprintln!("SHADOW DISAGREEMENT: verified routes confirm a pair the original checker rejected");
+            }
+        }
     }
 
     fn mk_nullary_ctor(&mut self, e: ExprPtr<'t>, num_params: usize) -> Option<ExprPtr<'t>> {
@@ -1594,7 +1555,10 @@ mod routed_tests {
             let c1 = tc.ctx.mk_const(anon, ls1);
             let c2 = tc.ctx.mk_const(anon, ls2);
             assert_ne!(c1, c2, "distinct pointers required to exercise the route");
-            assert!(tc.def_eq(c1, c2), "consts with interp-equal levels must be def_eq via the verified route");
+            // The original checker decides `def_eq` (an undeclared constant has
+            // no type to infer, so the legacy path is not exercised here); the
+            // verified core is what the shadow certifier would run on this pair.
+            assert_eq!(crate::tc_model::verified_def_eq_checked(tc.ctx, c1, c2), Some(true), "consts with interp-equal levels must be confirmed by the verified core");
         });
     }
 
