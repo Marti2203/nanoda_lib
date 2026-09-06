@@ -3294,11 +3294,10 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         _ => {}
     }
     // --- reduction: closed, size-gated terms only ---
-    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
-    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
-    if sx > 500 || sy > 500 {
-        return None;
-    }
+    // (No entry size gate any more, 2026-09-05: it rejected every large
+    // proof term before spine congruence -- which needs no size bound --
+    // could run; `verified_delta_chain` and the measured rounds gate
+    // themselves per round.)
     if ctx.num_loose_bvars(x) != 0 {
         conv_stat(7);
         conv_trace(1, x, y, budget);
@@ -3312,14 +3311,6 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     let ghost cm = env_model_capped(*env, k as nat);
     proof {
         env_model_capped_sub(*env, k as nat);
-        depth_le_size(to_model(x));
-        depth_le_size(to_model(y));
-        nlbv_bound_implies_max_var_below(to_model(x), 0);
-        nlbv_bound_implies_max_var_below(to_model(y), 0);
-        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
-        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
-        assert(500 + k <= 1000);
-        assert(k + 500 + 500 <= 1500);
     }
     // LAZY-DELTA CHAIN (2026-09-05): the kernel's `lazy_delta_step` LOOPS
     // unfolding rounds until the pair is decided or exhausted; one round per
