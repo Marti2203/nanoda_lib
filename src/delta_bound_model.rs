@@ -1037,7 +1037,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         None => true,
     }
 {
-    let (fun, args) = match verified_unfold_apps(ctx, x, fuel) {
+    let (fun, args) = match verified_unfold_apps(ctx, x, 100000) {
         Some(p) => p,
         None => return None,
     };
@@ -1063,7 +1063,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     let fun_el = ctx.read_expr(fun);
     // the function's type: a constant's instantiated declared type, or a local's binder type
     let fun_ty = if let Some((c_name, c_uparams)) = expr_as_const(fun, &fun_el) {
-        match verified_infer_const(ctx, env, c_name, c_uparams, fuel) {
+        match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
             Some(t) => {
                 proof {
                     is_const_shape_model(fun);
@@ -1096,7 +1096,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     };
     assert(depth(to_model(fun_ty)) <= d);
     assert(nlbv(to_model(fun_ty)) == 0);
-    match verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, Ghost(d), Ghost(dd)) {
+    match verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), 100000, Ghost(d), Ghost(dd)) {
         Some(r) => {
             proof {
                 let body = choose |body: ExprSpec|
@@ -1349,7 +1349,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         return Some(result);
     }
     if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
-        match verified_infer_const(ctx, env, c_name, c_uparams, fuel) {
+        match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
             Some(r) => {
                 assert(depth(to_model(r)) <= env_global_cap(*env));
                 assert(depth(to_model(r)) <= d + dd + 1);
@@ -1468,7 +1468,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         let locals_slice: &[ExprPtr<'t>] = &[local];
         assert(depth(to_model(local)) == 0);
         assert(nlbv(to_model(local)) == 0);
-        let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
@@ -1554,7 +1554,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             Some(v) => v,
             None => return None,
         };
-        let dom_univ = match verified_infer_sort_of_unbounded(ctx, env, bt_ty, fuel, fuel) {
+        let dom_univ = match verified_sort_of_capped(ctx, env, bt_ty, fuel) {
             Some(v) => v,
             None => return None,
         };
@@ -1570,7 +1570,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         let locals_slice: &[ExprPtr<'t>] = &[local];
         assert(depth(to_model(local)) == 0);
         assert(nlbv(to_model(local)) == 0);
-        let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
+        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
@@ -1588,7 +1588,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
-        let cod_univ = match verified_infer_sort_of_unbounded(ctx, env, instd_ty, fuel, fuel) {
+        let cod_univ = match verified_sort_of_capped(ctx, env, instd_ty, fuel) {
             Some(v) => v,
             None => { ctx.replace_dbj_level(local); return None; }
         };
@@ -1656,7 +1656,7 @@ pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         assert(nlbv(to_model(val)) <= 0);
         assert(nlbv(to_model(body)) <= 1);
         let val_slice: &[ExprPtr<'t>] = &[val];
-        match verified_inst(ctx, body, val_slice, 0, fuel) {
+        match verified_inst(ctx, body, val_slice, 0, 100000) {
             Some(substituted) => {
                 proof {
                     assert(Seq::new(val_slice@.len(), |i: int| to_model(val_slice@[i])) =~= seq![to_model(val)]);
@@ -1939,6 +1939,34 @@ pub fn verified_infer_sort_of<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
         None => None,
     }
+}
+
+/// Capped sort extraction (2026-09-05): whnf `ty` with the measured rounds
+/// over the capped model (delta, beta, projections, recursors, literal
+/// folds; 32 rounds; cap 2000) and read off a `Sort`. Replaces
+/// `verified_infer_sort_of_unbounded` (delta-only) in the Pi arm, where a
+/// `Sort` behind an applied type-valued function or a projection was missed.
+pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
+    requires nlbv(to_model(ty)) <= 0,
+    ensures match result {
+        Some(l) => exists |r: ExprPtr<'t>|
+            pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
+            && to_model(r) == ExprSpec::Sort(level_to_model(l)),
+        None => true,
+    }
+{
+    let k: u32 = 2000;
+    let r = verified_whnf_measured_rounds_capped(ctx, env, ty, fuel, 32, k);
+    let rel = ctx.read_expr(r);
+    if let Some(l) = expr_as_sort(&rel) {
+        proof {
+            env_model_capped_sub(*env, k as nat);
+            pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(ty), to_model(r));
+            assert(to_model(r) == ExprSpec::Sort(level_to_model(l)));
+        }
+        return Some(l);
+    }
+    None
 }
 
 /// BOUND-FREE sibling of `verified_infer_sort_of` above, needed to wire
