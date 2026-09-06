@@ -1175,8 +1175,8 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         assert(args_model[0] == to_model(x));
         assert(args_model[1] == to_model(y));
     }
-    let vx = verified_whnf_measured_rounds_capped(ctx, env, x, (fuel - 1) as u32, 8, k);
-    let vy = verified_whnf_measured_rounds_capped(ctx, env, y, (fuel - 1) as u32, 8, k);
+    let vx = verified_whnf_measured_rounds_capped(ctx, env, x, (fuel - 1) as u32, 32, k);
+    let vy = verified_whnf_measured_rounds_capped(ctx, env, y, (fuel - 1) as u32, 32, k);
     let bx = match nat_operand_value(ctx, vx, fuel) { Some(b) => b, None => return None };
     let by = match nat_operand_value(ctx, vy, fuel) { Some(b) => b, None => return None };
     let ghost a = crate::nat_lit_model::to_nat(bx);
@@ -1290,7 +1290,7 @@ pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     if fuel == 0 {
         return None;
     }
-    let s2 = verified_whnf_measured_rounds_capped(ctx, env, structure, (fuel - 1) as u32, 8, k);
+    let s2 = verified_whnf_measured_rounds_capped(ctx, env, structure, (fuel - 1) as u32, 32, k);
     let (fun, cargs) = match verified_unfold_apps(ctx, s2, fuel) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
@@ -2560,7 +2560,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     if fuel == 0 {
         return None;
     }
-    let majw0 = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 8, k);
+    let majw0 = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 32, k);
     // A literal major converts to its constructor form (`Nat.zero` /
     // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
     let majw0_el = ctx.read_expr(majw0);
