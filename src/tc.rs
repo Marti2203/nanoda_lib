@@ -264,6 +264,7 @@ pub mod route_stats {
         *V.get_or_init(|| knob("NANODA_CONV_JOIN", 32))
     }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -320,8 +321,8 @@ pub mod route_stats {
             total, q, lt, lf,
         ) + &(if shadow_enabled() {
             format!(
-                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.1}%) | disagreements {}",
-                cert, lt, share, dis,
+                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.1}%) | of which proof-irrelevance certificates {} | disagreements {}",
+                cert, lt, share, g(&SHADOW_PROOF_IRREL), dis,
             )
         } else {
             String::from("\nshadow certification: off (set NANODA_SHADOW=1)")
@@ -1176,17 +1177,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if !route_stats::shadow_enabled() {
             return;
         }
-        let certified = matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true))
-            || matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true))
-            || matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true))
+        let mut which = 0u8;
+        let certified = (matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) && { which = 1; true })
+            || (matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) && { which = 2; true })
+            || (matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) && { which = 3; true })
             || (route_stats::conv_enabled()
-                && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)));
+                && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) && { which = 4; true })
+            || {
+                // proof irrelevance (its own certificate kind: both types are
+                // convertible Props), counted separately in the report
+                let pi = matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true));
+                if pi { route_stats::bump(&route_stats::SHADOW_PROOF_IRREL); }
+                pi
+            };
         if certified {
             if verdict {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
             } else {
                 route_stats::bump(&route_stats::SHADOW_DISAGREE);
-                eprintln!("SHADOW DISAGREEMENT: verified routes confirm a pair the original checker rejected");
+                eprintln!("SHADOW DISAGREEMENT (route {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}", if which == 0 { 5 } else { which }, self.ctx.debug_print(x), self.ctx.debug_print(y));
             }
         }
     }

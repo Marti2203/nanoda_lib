@@ -508,6 +508,13 @@ pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
 /// separate caps per context.
 pub uninterp spec fn local_type_cap() -> nat;
 
+/// Disclosed CEILING on `local_type_cap` (twin of `env_global_cap_bounded`).
+#[verifier::external_body]
+pub proof fn local_type_cap_bounded()
+    ensures local_type_cap() <= 30000,
+{
+}
+
 /// Deliberately omits `max_var_below`/`size` (unlike `env_global_wf`) --
 /// `depth` is needed for `infer`'s own depth-boundedness, and an
 /// UNCONDITIONAL axiom that includes `size` has been shown to blow up

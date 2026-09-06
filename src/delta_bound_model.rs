@@ -60,7 +60,7 @@ use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model, bool_true_arity_is_zero};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
+use crate::expr_arena_bridge::{local_type_cap, local_type_wf, local_type_cap_bounded};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]
@@ -105,7 +105,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_sub};
+use crate::env_model::{env_model_capped, env_model_capped_sub, env_global_cap_bounded};
 #[cfg(verus_only)]
 use crate::tc_model::{nat_repr_is_zero_reaches_canonical, nat_repr_pred_reaches_succ_app};
 #[cfg(verus_only)]
@@ -1005,7 +1005,7 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         None => return None,
     };
     assert(depth(to_model(fun_ty)) <= d);
-    verified_infer_app_single(ctx, fun_ty, arg, fuel, d)
+    verified_infer_app_single(ctx, fun_ty, arg, fuel, Ghost(d))
 }
 
 /// `verified_infer_app_bounded`'s multi-argument generalization: unfolds
@@ -1017,7 +1017,7 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// telescoped` itself: `None` if the head isn't a bare `Const` application,
 /// or if the callee's type doesn't have at least as many Pi-layers as
 /// there are args (the real `ensure_pi`/WHNF fallback, not modeled).
-pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         d <= 60000,
@@ -1066,7 +1066,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     };
     assert(depth(to_model(fun_ty)) <= d);
     assert(nlbv(to_model(fun_ty)) == 0);
-    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, d, dd)
+    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, Ghost(d), Ghost(dd))
 }
 
 /// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in
@@ -1176,8 +1176,7 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
 /// monotonicity lemma needed).
 ///
 /// **CURRIED `Lambda` is covered for free, not just the single-binder
-/// case**: the recursive `verified_infer(ctx, env, instd, fuel - 1, d,
-/// dd + dd)` call re-reads `instd` fresh at the top of `verified_infer`'s
+/// case**: the recursive `verified_infer(ctx, env, instd, fuel - 1, Ghost(d),Ghost(/// dd + dd))` call re-reads `instd` fresh at the top of `verified_infer`'s
 /// own body -- if `instd` is ITSELF `Lambda`-shaped (a curried source
 /// term), the SAME branch fires again, peeling the next binder, with
 /// only `fuel` bounding how many layers can be peeled. `infer_spec`'s new
@@ -1264,7 +1263,7 @@ pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: Exp
 }
 
 #[verifier::spinoff_prover]
-pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -1336,7 +1335,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         }
     }
     if expr_as_app(&el).is_some() {
-        match verified_infer_app_bounded_multi(ctx, env, e, fuel, d, dd) {
+        match verified_infer_app_bounded_multi(ctx, env, e, fuel, Ghost(d), Ghost(dd)) {
             Some(r) => {
                 assert(depth(to_model(r)) <= d + dd);
                 assert(depth(to_model(r)) <= d + dd + 1);
@@ -1392,13 +1391,13 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
         return None;
     }
     if expr_as_lambda(&el).is_some() {
-        return verified_infer_lambda_arm(ctx, env, e, fuel, d, dd);
+        return verified_infer_lambda_arm(ctx, env, e, fuel, Ghost(d), Ghost(dd));
     }
     if expr_as_pi(&el).is_some() {
-        return verified_infer_pi_arm(ctx, env, e, fuel, d, dd);
+        return verified_infer_pi_arm(ctx, env, e, fuel, Ghost(d), Ghost(dd));
     }
     if expr_as_let(&el).is_some() {
-        return verified_infer_let_arm(ctx, env, e, fuel, d, dd);
+        return verified_infer_let_arm(ctx, env, e, fuel, Ghost(d), Ghost(dd));
     }
     None
 }
@@ -1408,7 +1407,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
 /// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
 /// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
 #[verifier::spinoff_prover]
-pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -1437,7 +1436,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
             Some(v) => v,
-            None => return None,
+            None => { ctx.replace_dbj_level(local); return None; }
         };
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
@@ -1449,9 +1448,9 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             assert(depth(to_model(instd)) <= dd + dd);
             assert(nlbv(to_model(instd)) <= 0);
         }
-        let infd = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
+        let infd = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd + dd)) {
             Some(v) => v,
-            None => return None,
+            None => { ctx.replace_dbj_level(local); return None; }
         };
         let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
         ctx.replace_dbj_level(local);
@@ -1495,7 +1494,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 /// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
 /// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
 #[verifier::spinoff_prover]
-pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -1517,7 +1516,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(depth(to_model(body)) < depth(to_model(e)));
         assert(nlbv(to_model(binder_type)) == 0);
         assert(nlbv(to_model(body)) <= 1);
-        let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, d, dd + dd) {
+        let bt_ty = match verified_infer(ctx, env, binder_type, fuel - 1, Ghost(d), Ghost(dd + dd)) {
             Some(v) => v,
             None => return None,
         };
@@ -1539,7 +1538,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, fuel) {
             Some(v) => v,
-            None => return None,
+            None => { ctx.replace_dbj_level(local); return None; }
         };
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
@@ -1551,13 +1550,13 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             assert(depth(to_model(instd)) <= dd + dd);
             assert(nlbv(to_model(instd)) <= 0);
         }
-        let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, d, dd + dd) {
+        let instd_ty = match verified_infer(ctx, env, instd, fuel - 1, Ghost(d), Ghost(dd + dd)) {
             Some(v) => v,
-            None => return None,
+            None => { ctx.replace_dbj_level(local); return None; }
         };
         let cod_univ = match verified_infer_sort_of_unbounded(ctx, env, instd_ty, fuel, fuel) {
             Some(v) => v,
-            None => return None,
+            None => { ctx.replace_dbj_level(local); return None; }
         };
         proof {
             let cod_sort = choose |r: ExprPtr<'t>|
@@ -1601,7 +1600,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 /// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
 /// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
 #[verifier::spinoff_prover]
-pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -1632,7 +1631,7 @@ pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
                     subst_full_nlbv_bound(to_model(body), to_model(val), 0);
                     assert(nlbv(to_model(substituted)) <= 0);
                 }
-                let result = verified_infer(ctx, env, substituted, fuel - 1, d, dd + dd);
+                let result = verified_infer(ctx, env, substituted, fuel - 1, Ghost(d), Ghost(dd + dd));
                 proof {
                     if let Some(r) = result {
                         assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, (fuel - 1) as nat));
@@ -1748,7 +1747,7 @@ pub fn verified_infer_proj_full<'t, 'p: 't, 'x>(
         bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures true
 {
-    let structure_ty = match verified_infer(ctx, env, structure, fuel, d, dd_s) {
+    let structure_ty = match verified_infer(ctx, env, structure, fuel, Ghost(d), Ghost(dd_s)) {
         Some(v) => v,
         None => return None,
     };
@@ -1803,7 +1802,7 @@ pub fn verified_ensure_infers_as_sort<'t, 'p: 't, 'x>(
         whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
     ensures true
 {
-    match verified_infer(ctx, env, e, fuel, d, dd) {
+    match verified_infer(ctx, env, e, fuel, Ghost(d), Ghost(dd)) {
         Some(infd) => {
             proof {
                 nlbv_bound_implies_max_var_below(to_model(infd), 0);
@@ -1857,7 +1856,7 @@ pub fn verified_infer_then_whnf<'t, 'p: 't, 'x>(
         None => true,
     }
 {
-    match verified_infer(ctx, env, e, fuel, d, dd) {
+    match verified_infer(ctx, env, e, fuel, Ghost(d), Ghost(dd)) {
         Some(infd) => {
             proof {
                 nlbv_bound_implies_max_var_below(to_model(infd), 0);
@@ -3010,6 +3009,137 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         j = j + 1;
     }
     (cx, cy)
+}
+
+/// The claim of a shadow PROOF-IRRELEVANCE certificate: both terms have a
+/// type (`infer_types_to`), both types reduce to a `Prop`-level `Sort`,
+/// and the two types are convertible (`deq_any`). This is the kernel's
+/// `proof_irrel_eq` rule, stated over the model; it is NOT a reduction fact
+/// about `x`/`y` themselves (proof irrelevance is a separate rule of
+/// definitional equality), so the shadow report counts it as its own kind
+/// of certificate.
+pub open spec fn proof_irrel_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
+        #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
+        infer_types_to(env, x, xt, fx)
+        && infer_types_to(env, y, yt, fy)
+        && is_proof_type_claim(env, xt)
+        && is_proof_type_claim(env, yt)
+        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt))
+}
+
+/// "`ty` is the type of a PROOF": the type OF `ty` reduces to a `Prop`-level
+/// sort (the kernel's `is_proof`: `infer(infer(x))` whnf's to `Sort 0`).
+/// (An earlier draft tested `ty` itself against `Sort 0`, which makes the
+/// TERM a proposition rather than a proof; the shadow certifier's
+/// disagreement counter caught that on `Nat.lt 0 y` vs `Nat.le y x`.)
+pub open spec fn is_proof_type_claim<'t, 'x>(env: Env<'x, 't>, ty: ExprPtr<'t>) -> bool {
+    exists |tt: ExprPtr<'t>, f: nat| #![trigger infer_types_to(env, ty, tt, f)]
+        infer_types_to(env, ty, tt, f) && is_prop_type_claim(env, tt)
+}
+
+/// "`ty` reduces to a `Prop`-level sort" over the FULL environment model.
+pub open spec fn is_prop_type_claim<'t, 'x>(env: Env<'x, 't>, ty: ExprPtr<'t>) -> bool {
+    exists |r: ExprPtr<'t>, l: LevelPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(ty), to_model(r))
+        && to_model(r) == ExprSpec::Sort(level_to_model(l))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(l), rho) <= 0)
+}
+
+/// Capped Prop check for the shadow certifier: whnf `ty` with the measured
+/// rounds over the capped model (no global caps), read off a `Sort`, and
+/// check its level is `<= 0` (`verified_leq` against `zero`).
+pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ty: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+    requires nlbv(to_model(ty)) <= 0, k <= 60000,
+    ensures match result {
+        Some(true) => is_prop_type_claim(*env, ty),
+        _ => true,
+    }
+{
+    let r = verified_whnf_measured_rounds_capped(ctx, env, ty, fuel, 32, k);
+    let rel = ctx.read_expr(r);
+    if let Some(level) = expr_as_sort(&rel) {
+        let zero = ctx.zero();
+        if verified_leq(ctx, level, zero, fuel) {
+            proof {
+                env_model_capped_sub(*env, k as nat);
+                pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(ty), to_model(r));
+                assert forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(level), rho) <= 0 by {
+                    assert(interp(level_to_model(level), rho) <= interp(level_to_model(zero), rho));
+                }
+                assert(to_model(r) == ExprSpec::Sort(level_to_model(level)));
+            }
+            return Some(true);
+        }
+    }
+    None
+}
+
+/// Shadow proof-irrelevance check (2026-09-05): infer both types with the
+/// verified inference (ghost depth caps discharged by the disclosed
+/// ceilings `env_global_cap_bounded`/`local_type_cap_bounded`), confirm
+/// both are `Prop`s (`verified_is_prop_capped`) and convertible
+/// (`verified_conv`). Honest incompleteness: terms above size 500 give
+/// `None`.
+pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => proof_irrel_shadow_claim(*env, x, y),
+        _ => true,
+    }
+{
+    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
+    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
+    if sx > 500 || sy > 500 {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 || ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    proof {
+        env_global_cap_bounded(*env);
+        local_type_cap_bounded();
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
+        reveal_with_fuel(infer_depth_fixpoint_ok, 6);
+        assert(infer_depth_fixpoint_ok(500, 4));
+    }
+    let xt = match verified_infer(ctx, env, x, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
+    let yt = match verified_infer(ctx, env, y, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
+    // the TYPES of the types must be Prop (the kernel's `is_proof`)
+    let sxt = match verified_size(ctx, xt, fuel) { Some(v) => v, None => return None };
+    let syt = match verified_size(ctx, yt, fuel) { Some(v) => v, None => return None };
+    if sxt > 500 || syt > 500 {
+        return None;
+    }
+    proof {
+        depth_le_size(to_model(xt));
+        depth_le_size(to_model(yt));
+    }
+    let xtt = match verified_infer(ctx, env, xt, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
+    let ytt = match verified_infer(ctx, env, yt, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
+    match verified_is_prop_capped(ctx, env, xtt, fuel, k) {
+        Some(true) => {}
+        _ => return None,
+    }
+    match verified_is_prop_capped(ctx, env, ytt, fuel, k) {
+        Some(true) => {}
+        _ => return None,
+    }
+    match verified_conv(ctx, env, xt, yt, fuel, k, 16) {
+        Some(true) => {
+            proof {
+                assert(infer_types_to(*env, x, xt, 4nat));
+                assert(infer_types_to(*env, y, yt, 4nat));
+                assert(infer_types_to(*env, xt, xtt, 4nat));
+                assert(infer_types_to(*env, yt, ytt, 4nat));
+                assert(is_proof_type_claim(*env, xt));
+                assert(is_proof_type_claim(*env, yt));
+            }
+            Some(true)
+        }
+        _ => None,
+    }
 }
 
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
@@ -4675,7 +4805,7 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
     proof {
         assert(infer_depth_fixpoint_ok(d_major, 0));
     }
-    let major_ty_raw = match verified_infer(ctx, env, major, 0, d_i, d_major) {
+    let major_ty_raw = match verified_infer(ctx, env, major, 0, Ghost(d_i), Ghost(d_major)) {
         Some(v) => v,
         None => return None,
     };
@@ -4714,7 +4844,7 @@ pub fn verified_to_ctor_when_k<'t, 'p: 't, 'x>(
     proof {
         assert(infer_depth_fixpoint_ok(dd_new, 0));
     }
-    let new_type = match verified_infer(ctx, env, new_ctor_app, 0, d_i, dd_new) {
+    let new_type = match verified_infer(ctx, env, new_ctor_app, 0, Ghost(d_i), Ghost(dd_new)) {
         Some(v) => v,
         None => return None,
     };
@@ -4797,7 +4927,7 @@ pub fn verified_iota_try_eta_struct<'t, 'p: 't, 'x>(
     proof {
         assert(infer_depth_fixpoint_ok(d_e, 0));
     }
-    let e_type_raw = match verified_infer(ctx, env, e, 0, d_i, d_e) {
+    let e_type_raw = match verified_infer(ctx, env, e, 0, Ghost(d_i), Ghost(d_e)) {
         Some(v) => v,
         None => return e,
     };
@@ -5566,7 +5696,7 @@ pub fn verified_def_eq_fallback_group<'t, 'p: 't, 'x>(
 /// to make it external here") -- written BEFORE `verified_infer` had any
 /// depth/nlbv bound on its own result at all. It does now (`infer_result_
 /// depth_bound`, `nlbv(to_model(r)) <= 0` on every wired branch, both
-/// this session): `verified_infer(ctx, env, x, 0, d_i, d_xy)` derives
+/// this session): `verified_infer(ctx, env, x, 0, Ghost(d_i), Ghost(d_xy))` derives
 /// `x`'s type INTERNALLY, using ONLY facts already available about `x`
 /// itself (`nlbv(x) <= 0`, `depth(x) <= d_xy`) -- no external parameter
 /// needed at all. Same "explicit fuel=0" scoping choice as everywhere
@@ -5693,8 +5823,8 @@ pub fn verified_def_eq_fallback_group_full<'t, 'p: 't, 'x>(
         assert(infer_depth_fixpoint_ok(d_xy, 0));
         assert(d_i + d_xy + 1 <= dd_i);
     }
-    let xt_opt = verified_infer(ctx, env, x, 0, d_i, d_xy);
-    let yt_opt = verified_infer(ctx, env, y, 0, d_i, d_xy);
+    let xt_opt = verified_infer(ctx, env, x, 0, Ghost(d_i), Ghost(d_xy));
+    let yt_opt = verified_infer(ctx, env, y, 0, Ghost(d_i), Ghost(d_xy));
     if let (Some(xt), Some(yt)) = (xt_opt, yt_opt) {
         assert(depth(to_model(xt)) <= dd_i);
         assert(depth(to_model(yt)) <= dd_i);
@@ -6473,7 +6603,7 @@ pub fn verified_def_eq_bool_true_shortcut<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p
 /// clique). The dispatcher instead inlines an equivalent `Lambda` case
 /// directly, mirroring how its `Let` case is inlined rather than
 /// factored out.
-pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -6520,7 +6650,7 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
         assert(depth(to_model(instd)) <= dd);
         assert(nlbv(to_model(instd)) <= 0);
     }
-    let infd = match verified_infer(ctx, env, instd, fuel, d, dd) {
+    let infd = match verified_infer(ctx, env, instd, fuel, Ghost(d), Ghost(dd)) {
         Some(v) => v,
         None => return None,
     };
@@ -6572,7 +6702,7 @@ pub fn verified_infer_lambda_single<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
 /// which no downstream caller in this arc yet needs -- same "thin
 /// composition, no restated soundness fact" precedent `verified_def_eq_
 /// with_delta`/`get_rec_rule` already established.
-pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, d: nat, dd: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
         local_type_cap() <= d,
@@ -6645,7 +6775,7 @@ pub fn verified_infer_lambda_telescoped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         assert(to_model(instd) == subst_full(to_model(cur_e), substs_model, 0));
         assert(nlbv(to_model(instd)) <= 0);
     }
-    let infd = match verified_infer(ctx, env, instd, fuel, d, dd) {
+    let infd = match verified_infer(ctx, env, instd, fuel, Ghost(d), Ghost(dd)) {
         Some(v) => v,
         None => return None,
     };

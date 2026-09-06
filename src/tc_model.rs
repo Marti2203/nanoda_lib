@@ -6045,7 +6045,7 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 /// as explicit parameters here rather than internally derived, matching
 /// the `verified_def_eq`/`verified_def_eq_binder_step` precedent of
 /// threading depth bounds in from the caller rather than deriving them.
-pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, arg: ExprPtr<'t>, fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, arg: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         depth(to_model(fun_ty)) <= d,
         d <= 60000,
@@ -6096,7 +6096,7 @@ pub fn verified_infer_app_single<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: Ex
 /// adding one here would only narrow this function's callers for no
 /// benefit -- the same reason `verified_infer_app_single` never needed one
 /// either.
-pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, d: nat, args_d: nat) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(d): Ghost<nat>, Ghost(args_d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         depth(to_model(fun_ty)) <= d,
         d <= 60000,

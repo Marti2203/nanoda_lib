@@ -865,6 +865,17 @@ pub uninterp spec fn mutual_block_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// checks without threading a bespoke requires through every such site.
 /// Same "name the max, don't compute it" trust character as `mutual_
 /// block_cap` itself.
+/// Disclosed CEILING on the global declaration-type depth cap (same trust
+/// character as `mutual_block_cap_bounded`): no real Lean environment has
+/// a declaration type of depth 30000. Lets `verified_infer` be called
+/// with a GHOST `d` (no per-checker certificate scan) by the shadow
+/// certifier's proof-irrelevance check.
+#[verifier::external_body]
+pub proof fn env_global_cap_bounded<'x, 'a>(env: Env<'x, 'a>)
+    ensures env_global_cap(env) <= 30000,
+{
+}
+
 #[verifier::external_body]
 pub proof fn mutual_block_cap_bounded<'x, 'a>(env: Env<'x, 'a>)
     ensures mutual_block_cap(env) <= u32::MAX as nat,
