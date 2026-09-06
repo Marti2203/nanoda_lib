@@ -3011,6 +3011,66 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     (cx, cy)
 }
 
+/// The claim of a shadow INFERENCE certificate: the verified inference
+/// derives a type `r` for `e` (`infer_types_to`, i.e. the model's typing
+/// relation `types_to` over the declaration types, the environment and the
+/// local context, at some fuel).
+pub open spec fn infer_shadow_claim<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>) -> bool {
+    exists |f: nat| #[trigger] infer_types_to(env, e, r, f)
+}
+
+/// Shadow type inference (2026-09-05): the verified inference on `e`, with
+/// the binder-recursion fuel chosen from `e`'s size so that
+/// `infer_depth_fixpoint_ok(size, fuel)` holds (the depth bound doubles per
+/// binder level: `size * 2^fuel <= 60000`). Ghost depth caps come from the
+/// disclosed ceilings. `None` above size 500 (honest incompleteness).
+pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    ensures match result {
+        Some(r) => infer_shadow_claim(*env, e, r),
+        None => true,
+    }
+{
+    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return None };
+    if sz > 500 || ctx.num_loose_bvars(e) != 0 {
+        return None;
+    }
+    proof {
+        env_global_cap_bounded(*env);
+        local_type_cap_bounded();
+        depth_le_size(to_model(e));
+        reveal_with_fuel(infer_depth_fixpoint_ok, 12);
+    }
+    let r = if sz <= 29 {
+        proof { assert(infer_depth_fixpoint_ok(29, 10)); }
+        verified_infer(ctx, env, e, 10, Ghost(60000 as nat), Ghost(29 as nat))
+    } else if sz <= 58 {
+        proof { assert(infer_depth_fixpoint_ok(58, 9)); }
+        verified_infer(ctx, env, e, 9, Ghost(60000 as nat), Ghost(58 as nat))
+    } else if sz <= 117 {
+        proof { assert(infer_depth_fixpoint_ok(117, 8)); }
+        verified_infer(ctx, env, e, 8, Ghost(60000 as nat), Ghost(117 as nat))
+    } else if sz <= 234 {
+        proof { assert(infer_depth_fixpoint_ok(234, 7)); }
+        verified_infer(ctx, env, e, 7, Ghost(60000 as nat), Ghost(234 as nat))
+    } else {
+        proof { assert(infer_depth_fixpoint_ok(500, 6)); }
+        verified_infer(ctx, env, e, 6, Ghost(60000 as nat), Ghost(500 as nat))
+    };
+    match r {
+        Some(ty) => {
+            proof {
+                if sz <= 29 { assert(infer_types_to(*env, e, ty, 10nat)); }
+                else if sz <= 58 { assert(infer_types_to(*env, e, ty, 9nat)); }
+                else if sz <= 117 { assert(infer_types_to(*env, e, ty, 8nat)); }
+                else if sz <= 234 { assert(infer_types_to(*env, e, ty, 7nat)); }
+                else { assert(infer_types_to(*env, e, ty, 6nat)); }
+            }
+            Some(ty)
+        }
+        None => None,
+    }
+}
+
 /// The claim of a shadow PROOF-IRRELEVANCE certificate: both terms have a
 /// type (`infer_types_to`), both types reduce to a `Prop`-level `Sort`,
 /// and the two types are convertible (`deq_any`). This is the kernel's

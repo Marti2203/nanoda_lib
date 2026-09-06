@@ -89,6 +89,7 @@ impl<'p> ExportFile<'p> {
                 self.with_tc_and_declar(*d.info(), |tc| {
                     tc.check_declar_info(d).unwrap();
                     let inferred_type = tc.infer(*val, crate::tc::InferFlag::Check);
+                    tc.shadow_infer(*val, inferred_type);
                     tc.assert_def_eq(inferred_type, d.info().ty);
                 }),
             Constructor(ctor_data) => {
@@ -265,6 +266,9 @@ pub mod route_stats {
     }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_INFER_TOTAL: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_INFER_CERT: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_INFER_UNEQUAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -326,7 +330,11 @@ pub mod route_stats {
             )
         } else {
             String::from("\nshadow certification: off (set NANODA_SHADOW=1)")
-        }) + &format!(
+        }) + &(if shadow_enabled() {
+            let (it, ic, iu) = (g(&SHADOW_INFER_TOTAL), g(&SHADOW_INFER_CERT), g(&SHADOW_INFER_UNEQUAL));
+            let ishare = if it > 0 { 100.0 * ic as f64 / it as f64 } else { 0.0 };
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}", ic, it, ishare, iu)
+        } else { String::new() }) + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
             CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed))
@@ -349,6 +357,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert!(self.ctx.no_dupes_all_params(info.uparams));
         assert!(!self.ctx.has_fvars(info.ty));
         let inferred_type = self.infer(info.ty, Check);
+        self.shadow_infer(info.ty, inferred_type);
         let sort = self.ensure_sort(inferred_type);
 
         // This is sort of a "soft" check in terms of soundness, but for theorems, ensure 
@@ -1173,30 +1182,62 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// confirmation of a pair the original code rejected -- never expected;
     /// would mean either an unsound bridge axiom or a legacy incompleteness).
     /// Never touches `tc_cache`, so the verdict path is unaffected.
+    /// Does some verified route certify `x == y`? (0 = none; 1..5 = the
+    /// route: core, delta, join, conv, proof-irrelevance.)
+    fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
+        if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
+        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
+        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
+        if route_stats::conv_enabled()
+            && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
+        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) {
+            route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
+            return 5;
+        }
+        0
+    }
+
+    /// SHADOW certification of a def_eq verdict (diagnostics only,
+    /// `NANODA_SHADOW=1`): run the verified routes on the pair the original
+    /// code just decided and count (a) verdicts they certify and (b)
+    /// disagreements (a verified confirmation of a pair the original code
+    /// rejected -- never expected; would mean either an unsound bridge
+    /// axiom or a legacy incompleteness). Never touches `tc_cache`.
     fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool) {
         if !route_stats::shadow_enabled() {
             return;
         }
-        let mut which = 0u8;
-        let certified = (matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) && { which = 1; true })
-            || (matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) && { which = 2; true })
-            || (matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) && { which = 3; true })
-            || (route_stats::conv_enabled()
-                && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) && { which = 4; true })
-            || {
-                // proof irrelevance (its own certificate kind: both types are
-                // convertible Props), counted separately in the report
-                let pi = matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true));
-                if pi { route_stats::bump(&route_stats::SHADOW_PROOF_IRREL); }
-                pi
-            };
-        if certified {
+        let which = self.pair_certified(x, y);
+        if which != 0 {
             if verdict {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
             } else {
                 route_stats::bump(&route_stats::SHADOW_DISAGREE);
-                eprintln!("SHADOW DISAGREEMENT (route {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}", if which == 0 { 5 } else { which }, self.ctx.debug_print(x), self.ctx.debug_print(y));
+                eprintln!("SHADOW DISAGREEMENT (route {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}", which, self.ctx.debug_print(x), self.ctx.debug_print(y));
             }
+        }
+    }
+
+    /// SHADOW certification of a top-level INFERENCE (diagnostics only):
+    /// the verified inference re-derives a type for `e`; the kernel's
+    /// answer `kernel_ty` counts as certified when a verified equality route
+    /// confirms the two types. Counts: attempted / certified / verified type
+    /// produced but not shown equal (informative, not an alarm: the equality
+    /// routes are incomplete).
+    pub(crate) fn shadow_infer(&mut self, e: ExprPtr<'t>, kernel_ty: ExprPtr<'t>) {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        route_stats::bump(&route_stats::SHADOW_INFER_TOTAL);
+        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, e) {
+            Some(vty) => {
+                if std::ptr::eq(vty.raw_bits() as *const u8, kernel_ty.raw_bits() as *const u8) || self.pair_certified(vty, kernel_ty) != 0 {
+                    route_stats::bump(&route_stats::SHADOW_INFER_CERT);
+                } else {
+                    route_stats::bump(&route_stats::SHADOW_INFER_UNEQUAL);
+                }
+            }
+            None => {}
         }
     }
 
