@@ -2766,6 +2766,14 @@ fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
     crate::tc::route_stats::conv_trace(tag, x.raw_bits(), y.raw_bits(), budget);
 }
 
+/// Environment cap for conv's RETRY whnf (the measured rounds allow
+/// k <= 60000; only the lazy-delta round/chain assume k <= 500). Clamped
+/// at the call site; no contract needed.
+#[verifier::external_body]
+fn conv_retry_cap() -> u32 {
+    crate::tc::route_stats::cap_k_join()
+}
+
 #[verifier::external_body]
 fn conv_join_rounds() -> u32 {
     crate::tc::route_stats::conv_join_rounds()
@@ -3225,12 +3233,15 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // the nat-literal leaf get to see `NLit(0)` vs `Nat.zero`, `Nat.succ
     // (..)` vs a literal, and a constructor spine vs its unfolded twin
     // (the real `def_eq`'s whnf_core-then-retry shape).
-    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), k);
-    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), k);
+    let kr0 = conv_retry_cap();
+    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), kr);
+    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), kr);
     proof {
-        env_model_capped_sub(*env, k as nat);
-        pstep_star_env_weaken(cm, em, to_model(x), to_model(rx));
-        pstep_star_env_weaken(cm, em, to_model(y), to_model(ry));
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
+        pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
     }
     if expr_ptr_eq(rx, ry) {
         proof {
