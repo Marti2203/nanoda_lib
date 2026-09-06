@@ -4284,15 +4284,34 @@ pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Se
 /// content a proof-irrelevance verdict SHOULD carry, and the exact
 /// ingredient a future `deq_p` (typed definitional equality with the
 /// irrelevance case) consumes. Non-recursive; clean triggers.
+/// Marker trigger for `proof_irrel_pair`'s witnesses.
+pub open spec fn irrel_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool { true }
+
+/// Marker trigger for `is_proof_type_m`'s witnesses.
+pub open spec fn proof_type_marker(tt: ExprSpec, f: nat, l: LevelSpec) -> bool { true }
+
+/// "`ty` is the type of a PROOF": its own type reduces to a `Prop`-level
+/// sort (the model-side twin of `delta_bound_model::is_proof_type_claim`).
+pub open spec fn is_proof_type_m(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty: ExprSpec) -> bool {
+    exists |tt: ExprSpec, f: nat, l: LevelSpec|
+        #[trigger] proof_type_marker(tt, f, l)
+        && types_to(dty, denv, lctx, ty, tt, f)
+        && pstep_star(denv, tt, ExprSpec::Sort(l))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0)
+}
+
+/// Proof irrelevance: `x` and `y` are PROOFS (their types' types are
+/// `Prop`-level sorts) of convertible propositions. (Fixed 2026-09-06: the
+/// previous form tested the types themselves against `Prop`, i.e. made `x`
+/// and `y` propositions rather than proofs -- the same slip the exec
+/// shadow route once had; nothing on the live certifier read the old form.)
 pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
-    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat, lx: LevelSpec, ly: LevelSpec|
-        #![trigger types_to(dty, denv, lctx, x, tx, fx), types_to(dty, denv, lctx, y, ty2, fy), pstep_star(denv, tx, ExprSpec::Sort(lx)), pstep_star(denv, ty2, ExprSpec::Sort(ly))]
-        types_to(dty, denv, lctx, x, tx, fx)
+    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+        #[trigger] irrel_marker(tx, ty2, fx, fy)
+        && types_to(dty, denv, lctx, x, tx, fx)
         && types_to(dty, denv, lctx, y, ty2, fy)
-        && pstep_star(denv, tx, ExprSpec::Sort(lx))
-        && (forall |rho: Map<nat, nat>| #[trigger] interp(lx, rho) <= 0)
-        && pstep_star(denv, ty2, ExprSpec::Sort(ly))
-        && (forall |rho: Map<nat, nat>| #[trigger] interp(ly, rho) <= 0)
+        && is_proof_type_m(dty, denv, lctx, tx)
+        && is_proof_type_m(dty, denv, lctx, ty2)
         && deq_any(denv, tx, ty2)
 }
 
@@ -5132,23 +5151,15 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
     } else if proof_irrel_pair(dty, env, lctx, x, y) {
-        let (tx, ty2, fx, fy, lx, ly) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat, lx: LevelSpec, ly: LevelSpec|
-            #![trigger types_to(dty, env, lctx, x, tx, fx), types_to(dty, env, lctx, y, ty2, fy), pstep_star(env, tx, ExprSpec::Sort(lx)), pstep_star(env, ty2, ExprSpec::Sort(ly))]
-            types_to(dty, env, lctx, x, tx, fx)
+        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+            #[trigger] irrel_marker(tx, ty2, fx, fy)
+            && types_to(dty, env, lctx, x, tx, fx)
             && types_to(dty, env, lctx, y, ty2, fy)
-            && pstep_star(env, tx, ExprSpec::Sort(lx))
-            && (forall |rho: Map<nat, nat>| #[trigger] interp(lx, rho) <= 0)
-            && pstep_star(env, ty2, ExprSpec::Sort(ly))
-            && (forall |rho: Map<nat, nat>| #[trigger] interp(ly, rho) <= 0)
+            && is_proof_type_m(dty, env, lctx, tx)
+            && is_proof_type_m(dty, env, lctx, ty2)
             && deq_any(env, tx, ty2);
         deq_any_symm(env, tx, ty2);
-        assert(types_to(dty, env, lctx, y, ty2, fy)
-            && types_to(dty, env, lctx, x, tx, fx)
-            && pstep_star(env, ty2, ExprSpec::Sort(ly))
-            && (forall |rho: Map<nat, nat>| #[trigger] interp(ly, rho) <= 0)
-            && pstep_star(env, tx, ExprSpec::Sort(lx))
-            && (forall |rho: Map<nat, nat>| #[trigger] interp(lx, rho) <= 0)
-            && deq_any(env, ty2, tx));
+        assert(irrel_marker(ty2, tx, fy, fx));
         assert(proof_irrel_pair(dty, env, lctx, y, x));
     } else {
         assert(h > 0);
@@ -5459,6 +5470,51 @@ pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u6
 {
     deq_p_of_irrel(dty, env, lctx, x, y, 0);
     assert(deq_p(dty, env, lctx, x, y, 0));
+}
+
+/// `deq_p_any` congruences: lift the height-indexed `deq_p_*_congr` through
+/// `deq_p_mono` to a common height (2026-09-06, for the conversion route).
+pub proof fn deq_p_any_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
+    requires deq_p_any(dty, env, lctx, f1, f2), deq_p_any(dty, env, lctx, a1, a2)
+    ensures deq_p_any(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
+{
+    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, f1, f2, h);
+    let h2 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, a1, a2, h);
+    let h = if h1 >= h2 { h1 } else { h2 };
+    deq_p_mono(dty, env, lctx, f1, f2, h1, h);
+    deq_p_mono(dty, env, lctx, a1, a2, h2, h);
+    deq_p_app_congr(dty, env, lctx, f1, f2, a1, a2, h);
+    assert(deq_p(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1));
+}
+
+pub proof fn deq_p_any_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
+    requires deq_p_any(dty, env, lctx, t1, t2), deq_p_any(dty, env, lctx, b1, b2)
+    ensures deq_p_any(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+{
+    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
+    let h2 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, b1, b2, h);
+    let h = if h1 >= h2 { h1 } else { h2 };
+    deq_p_mono(dty, env, lctx, t1, t2, h1, h);
+    deq_p_mono(dty, env, lctx, b1, b2, h2, h);
+    deq_p_bind_congr(dty, env, lctx, t1, t2, b1, b2, h);
+    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
+}
+
+pub proof fn deq_p_any_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, pidx: usize, s1: ExprSpec, s2: ExprSpec)
+    requires deq_p_any(dty, env, lctx, s1, s2)
+    ensures deq_p_any(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)))
+{
+    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, s1, s2, h);
+    deq_p_proj_congr(dty, env, lctx, pidx, s1, s2, h1);
+    assert(deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h1 + 1));
+}
+
+pub proof fn deq_p_any_of_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires deq_leaf(x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    deq_any_of_leaf(env, x, y);
+    deq_p_any_of_deq_any(dty, env, lctx, x, y);
 }
 
 pub proof fn deq_p_any_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec)

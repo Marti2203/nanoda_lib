@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
+use crate::tc_model::{deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -3276,6 +3276,18 @@ fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
     crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits(), budget);
 }
 
+/// The `_p` (proof-irrelevance-aware) family's failure cache: the same map,
+/// keyed 1000 budget units above the reduction-only family's entries.
+#[verifier::external_body]
+fn conv_fail_seen_p<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) -> bool {
+    crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits(), budget.wrapping_add(1000))
+}
+
+#[verifier::external_body]
+fn conv_fail_note_p<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
+    crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits(), budget.wrapping_add(1000));
+}
+
 /// The binder case of `verified_conv` by the FRESH-INSTANCE rule: open
 /// both bodies with one fresh local (`mk_dbj_level`, balanced by
 /// `replace_dbj_level` before returning), certify at run time that the
@@ -3628,54 +3640,39 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         _ => true,
     }
 {
-    let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
-    let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
-    if sx > 500 || sy > 500 {
-        return None;
-    }
     if ctx.num_loose_bvars(x) != 0 || ctx.num_loose_bvars(y) != 0 {
-        return None;
+        { conv_stat(29); return None; }
     }
-    proof {
-        env_global_cap_bounded(*env);
-        local_type_cap_bounded();
-        depth_le_size(to_model(x));
-        depth_le_size(to_model(y));
-        reveal_with_fuel(infer_depth_fixpoint_ok, 6);
-        infer_depth_fixpoint_ok_linear(500, 4);
-        assert(infer_depth_fixpoint_ok(500, 4));
-    }
-    let xt = match verified_infer(ctx, env, x, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
-    let yt = match verified_infer(ctx, env, y, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
+    // (2026-09-06) the linear-budget shadow entry instead of a fixed fuel of 4:
+    // the leaf counters showed the fixed fuel as the leaf's main early exit.
+    let xt = match verified_infer_shadow(ctx, env, x) { Some(v) => v, None => { conv_stat(22); return None; } };
+    let yt = match verified_infer_shadow(ctx, env, y) { Some(v) => v, None => { conv_stat(23); return None; } };
     // the TYPES of the types must be Prop (the kernel's `is_proof`)
-    let sxt = match verified_size(ctx, xt, fuel) { Some(v) => v, None => return None };
-    let syt = match verified_size(ctx, yt, fuel) { Some(v) => v, None => return None };
-    if sxt > 500 || syt > 500 {
-        return None;
+    let xtt = match verified_infer_shadow(ctx, env, xt) { Some(v) => v, None => { conv_stat(26); return None; } };
+    let ytt = match verified_infer_shadow(ctx, env, yt) { Some(v) => v, None => { conv_stat(27); return None; } };
+    if ctx.num_loose_bvars(xtt) != 0 || ctx.num_loose_bvars(ytt) != 0 {
+        { conv_stat(30); return None; }
     }
-    proof {
-        depth_le_size(to_model(xt));
-        depth_le_size(to_model(yt));
-    }
-    let xtt = match verified_infer(ctx, env, xt, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
-    let ytt = match verified_infer(ctx, env, yt, 4, Ghost(60000 as nat), Ghost(500 as nat)) { Some(v) => v, None => return None };
     match verified_is_prop_capped(ctx, env, xtt, fuel, k) {
         Some(true) => {}
-        _ => return None,
+        _ => { conv_stat(31); return None; }
     }
     match verified_is_prop_capped(ctx, env, ytt, fuel, k) {
         Some(true) => {}
-        _ => return None,
+        _ => { conv_stat(32); return None; }
     }
     match verified_conv(ctx, env, xt, yt, fuel, k, 16) {
         Some(true) => {
             proof {
-                assert(infer_types_to(*env, x, xt, 4nat));
-                assert(infer_types_to(*env, y, yt, 4nat));
-                assert(infer_types_to(*env, xt, xtt, 4nat));
-                assert(infer_types_to(*env, yt, ytt, 4nat));
+                let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
+                let fy = choose |f: nat| #[trigger] infer_types_to(*env, y, yt, f);
+                let fxt = choose |f: nat| #[trigger] infer_types_to(*env, xt, xtt, f);
+                let fyt = choose |f: nat| #[trigger] infer_types_to(*env, yt, ytt, f);
+                assert(infer_types_to(*env, xt, xtt, fxt) && is_prop_type_claim(*env, xtt));
                 assert(is_proof_type_claim(*env, xt));
+                assert(infer_types_to(*env, yt, ytt, fyt) && is_prop_type_claim(*env, ytt));
                 assert(is_proof_type_claim(*env, yt));
+                assert(infer_types_to(*env, x, xt, fx) && infer_types_to(*env, y, yt, fy));
             }
             Some(true)
         }
@@ -3926,6 +3923,422 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
                 deq_any_trans(em, to_model(x), to_model(rx), to_model(ry));
                 deq_any_symm(em, to_model(y), to_model(ry));
                 deq_any_trans(em, to_model(x), to_model(ry), to_model(y));
+            }
+            conv_stat(10);
+            return Some(true);
+        }
+    }
+    conv_trace(5, x, y, budget);
+    None
+}
+
+
+/// The exec shadow's proof-irrelevance claim IS the model's `proof_irrel_pair`
+/// (both say: two proofs -- types whose types are Prop-level sorts -- of
+/// convertible propositions), modulo `to_model` and the marker triggers.
+pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires proof_irrel_shadow_claim(env, x, y)
+    ensures proof_irrel_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y))
+{
+    let dty = to_model_of_declar_ty(env);
+    let denv = to_model_of_env(env);
+    let lctx = arena_lctx();
+    let (xt, yt, fx, fy) = choose |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
+        #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
+        infer_types_to(env, x, xt, fx)
+        && infer_types_to(env, y, yt, fy)
+        && is_proof_type_claim(env, xt)
+        && is_proof_type_claim(env, yt)
+        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt));
+    let (xtt, fxt) = choose |tt: ExprPtr<'t>, f: nat| #![trigger infer_types_to(env, xt, tt, f)]
+        infer_types_to(env, xt, tt, f) && is_prop_type_claim(env, tt);
+    let (ytt, fyt) = choose |tt: ExprPtr<'t>, f: nat| #![trigger infer_types_to(env, yt, tt, f)]
+        infer_types_to(env, yt, tt, f) && is_prop_type_claim(env, tt);
+    let (xr, xl) = choose |r: ExprPtr<'t>, l: LevelPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(xtt), to_model(r))
+        && to_model(r) == ExprSpec::Sort(level_to_model(l))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(l), rho) <= 0);
+    let (yr, yl) = choose |r: ExprPtr<'t>, l: LevelPtr<'t>|
+        pstep_star(to_model_of_env(env), to_model(ytt), to_model(r))
+        && to_model(r) == ExprSpec::Sort(level_to_model(l))
+        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(l), rho) <= 0);
+    assert(proof_type_marker(to_model(xtt), fxt, level_to_model(xl)));
+    assert(pstep_star(denv, to_model(xtt), ExprSpec::Sort(level_to_model(xl))));
+    assert(is_proof_type_m(dty, denv, lctx, to_model(xt)));
+    assert(proof_type_marker(to_model(ytt), fyt, level_to_model(yl)));
+    assert(pstep_star(denv, to_model(ytt), ExprSpec::Sort(level_to_model(yl))));
+    assert(is_proof_type_m(dty, denv, lctx, to_model(yt)));
+    assert(irrel_marker(to_model(xt), to_model(yt), fx, fy));
+    assert(proof_irrel_pair(dty, denv, lctx, to_model(x), to_model(y)));
+}
+
+/// `verified_conv` with the per-checker failure cache around it: pairs
+/// this checker already failed on are not re-searched (the recursion
+/// revisits the same sub-pairs from many contexts).
+pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 1int
+{
+    if conv_fail_seen_p(x, y, budget) {
+        return None;
+    }
+    let r = verified_conv_inner_p(ctx, env, x, y, fuel, k, budget);
+    match r {
+        Some(true) => Some(true),
+        _ => {
+            conv_fail_note_p(x, y, budget);
+            None
+        }
+    }
+}
+
+/// Spine-wise application congruence for `verified_conv` (the kernel's
+/// `def_eq_app` shape): both sides are unfolded into head + arguments; with
+/// equal argument counts and at least one argument, the heads and then each
+/// argument pair are `conv`-checked at `budget - 1`, and the verdict is
+/// assembled by repeated `deq_any_app_congr` along the spine prefixes.
+pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 1int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+    let (h1, args1) = match verified_unfold_apps(ctx, x, fuel) { Some(p) => p, None => return None };
+    let (h2, args2) = match verified_unfold_apps(ctx, y, fuel) { Some(p) => p, None => return None };
+    if args1.len() == 0 || args1.len() != args2.len() {
+        return None;
+    }
+    let ghost am1 = Seq::new(args1@.len(), |i: int| to_model(args1@[i]));
+    let ghost am2 = Seq::new(args2@.len(), |i: int| to_model(args2@[i]));
+    if let Some(true) = verified_conv_p(ctx, env, h1, h2, fuel, k, budget - 1) {
+    } else {
+        return None;
+    }
+    let n = args1.len();
+    let mut i: usize = 0;
+    proof {
+        assert(am1.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(am2.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(spine_app(to_model(h1), am1.subrange(0, 0)) == to_model(h1));
+        assert(spine_app(to_model(h2), am2.subrange(0, 0)) == to_model(h2));
+    }
+    while i < n
+        invariant
+            n == args1.len(), n == args2.len(), i <= n,
+            am1 == Seq::new(args1@.len(), |j: int| to_model(args1@[j])),
+            am2 == Seq::new(args2@.len(), |j: int| to_model(args2@[j])),
+            em == to_model_of_env(*env),
+            dtym == to_model_of_declar_ty(*env),
+            lcm == arena_lctx(),
+            deq_p_any(dtym, em, lcm, spine_app(to_model(h1), am1.subrange(0, i as int)), spine_app(to_model(h2), am2.subrange(0, i as int))),
+            k <= 500, budget >= 1,
+        decreases n - i
+    {
+        let a1 = args1[i];
+        let a2 = args2[i];
+        if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget - 1) {
+            proof {
+                let p1 = am1.subrange(0, i as int);
+                let p2 = am2.subrange(0, i as int);
+                assert(am1.subrange(0, i as int + 1) =~= p1.push(to_model(a1)));
+                assert(am2.subrange(0, i as int + 1) =~= p2.push(to_model(a2)));
+                spine_app_compose_last(to_model(h1), p1, to_model(a1));
+                spine_app_compose_last(to_model(h2), p2, to_model(a2));
+                deq_p_any_app_congr(dtym, em, lcm, spine_app(to_model(h1), p1), spine_app(to_model(h2), p2), to_model(a1), to_model(a2));
+            }
+        } else {
+            return None;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(am1.subrange(0, n as int) =~= am1);
+        assert(am2.subrange(0, n as int) =~= am2);
+        assert(to_model(x) == spine_app(to_model(h1), am1));
+        assert(to_model(y) == spine_app(to_model(h2), am2));
+    }
+    conv_stat(2);
+    Some(true)
+}
+
+pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires k <= 500,
+    ensures match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, 0int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if expr_ptr_eq(x, y) {
+        proof { deq_p_any_refl(dtym, em, lcm, to_model(x)); }
+        return Some(true);
+    }
+    if budget == 0 {
+        return None;
+    }
+    conv_trace(0, x, y, budget);
+    // --- leaves: Sort / Const by level equivalence ---
+    match verified_def_eq_sort(ctx, x, y, fuel) {
+        Some(true) => {
+            proof {
+                let (lx, ly) = choose |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                    to_model(x) == ExprSpec::Sort(level_to_model(lx))
+                    && to_model(y) == ExprSpec::Sort(level_to_model(ly))
+                    && (true ==> forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho));
+                assert(deq_leaf(to_model(x), to_model(y)));
+                deq_p_any_of_leaf(dtym, em, lcm, to_model(x), to_model(y));
+            }
+            conv_stat(0);
+            return Some(true);
+        }
+        Some(false) => return None,
+        None => {}
+    }
+    if verified_def_eq_const(ctx, x, y, fuel) {
+        proof {
+            is_const_shape_model(x);
+            const_levels_vec_model(x);
+            is_const_shape_model(y);
+            const_levels_vec_model(y);
+            assert(to_model(x) == ExprSpec::Const(const_id(x), to_model_of_levels(const_levels_of(x))));
+            assert(to_model(y) == ExprSpec::Const(const_id(y), to_model_of_levels(const_levels_of(y))));
+            let ls1 = to_model_of_levels(const_levels_of(x));
+            let ls2 = to_model_of_levels(const_levels_of(y));
+            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1.len() implies #[trigger] interp(ls1[i], rho) == interp(ls2[i], rho) by {
+                assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho));
+            }
+            assert(deq_leaf(to_model(x), to_model(y)));
+            deq_p_any_of_leaf(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(1);
+        return Some(true);
+    }
+    // --- nat-literal leaves (rec-iota P2c): two zero representations, or
+    // two successor representations with convertible predecessors (a
+    // literal counts as the successor of the literal below it) ---
+    if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
+        proof {
+            nat_repr_is_zero_reaches_canonical(em, x);
+            nat_repr_is_zero_reaches_canonical(em, y);
+            assert(defeq(em, to_model(x), to_model(y)));
+            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(9);
+        return Some(true);
+    }
+    let xp_opt = ctx.pred_of_nat_succ(x);
+    let yp_opt = ctx.pred_of_nat_succ(y);
+    if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
+        if let Some(true) = verified_conv_p(ctx, env, xp, yp, fuel, k, budget - 1) {
+            proof {
+                let sc = const_expr_no_levels(nat_succ_id());
+                let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
+                let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
+                nat_repr_pred_reaches_succ_app(em, x, xp);
+                nat_repr_pred_reaches_succ_app(em, y, yp);
+                deq_p_any_refl(dtym, em, lcm, sc);
+                deq_p_any_app_congr(dtym, em, lcm, sc, sc, to_model(xp), to_model(yp));
+                deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), ax);
+                deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), ay);
+                deq_p_any_trans(dtym, em, lcm, to_model(x), ax, ay);
+                deq_p_any_symm(dtym, em, lcm, to_model(y), ay);
+                deq_p_any_trans(dtym, em, lcm, to_model(x), ay, to_model(y));
+            }
+            conv_stat(9);
+            return Some(true);
+        }
+    }
+    // --- structural congruence (real-shape gated) ---
+    let xe = ctx.read_expr(x);
+    let ye = ctx.read_expr(y);
+    // SPINE-WISE congruence (2026-09-05): the kernel's `def_eq_app` compares
+    // the two spines' heads and arguments pairwise; the node-by-node arm
+    // below spent one budget unit per application layer, so a 10-argument
+    // spine exhausted the budget walking down its own head. Here every
+    // head/argument pair is checked at the SAME budget level.
+    if let Some(true) = verified_conv_spine_p(ctx, env, x, y, fuel, k, budget - 1) {
+        return Some(true);
+    }
+    match (expr_as_app(&xe), expr_as_app(&ye)) {
+        (Some((f1, a1)), Some((f2, a2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, f1, f2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget - 1) {
+                    proof { deq_p_any_app_congr(dtym, em, lcm, to_model(f1), to_model(f2), to_model(a1), to_model(a2)); }
+                    conv_stat(2);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_pi(&xe), expr_as_pi(&ye)) {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget - 1) {
+                    proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
+                    conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
+                    if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                        proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(y)); }
+                        return Some(true);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget - 1) {
+                    proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
+                    conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
+                    if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                        proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(y)); }
+                        return Some(true);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    match (expr_as_proj(&xe), expr_as_proj(&ye)) {
+        (Some((_, i1, s1)), Some((_, i2, s2))) => {
+            if i1 == i2 {
+                if let Some(true) = verified_conv_p(ctx, env, s1, s2, fuel, k, budget - 1) {
+                    proof { deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2)); }
+                    conv_stat(4);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    // --- proof irrelevance (2026-09-06): the kernel's `is_def_eq_proof_irrel`
+    // at EVERY recursive comparison -- two proofs of convertible propositions
+    // (`verified_proof_irrel_shadow`: infer both types, their types must be
+    // Prop-level sorts, the types convertible over the reduction-only route).
+    // This is the leaf that distinguishes the `_p` family from `verified_conv`.
+    if let Some(true) = verified_proof_irrel_shadow(ctx, env, x, y, fuel, k) {
+        proof {
+            proof_irrel_pair_of_shadow_claim(*env, x, y);
+            deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(11);
+        return Some(true);
+    }
+    // --- reduction: closed, size-gated terms only ---
+    // (No entry size gate any more, 2026-09-05: it rejected every large
+    // proof term before spine congruence -- which needs no size bound --
+    // could run; `verified_delta_chain` and the measured rounds gate
+    // themselves per round.)
+    if ctx.num_loose_bvars(x) != 0 {
+        conv_stat(7);
+        conv_trace(1, x, y, budget);
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        conv_stat(7);
+        conv_trace(1, x, y, budget);
+        return None;
+    }
+    let ghost cm = env_model_capped(*env, k as nat);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+    }
+    // LAZY-DELTA CHAIN (2026-09-05): the kernel's `lazy_delta_step` LOOPS
+    // unfolding rounds until the pair is decided or exhausted; one round per
+    // conv level spent a budget unit per unfolding, so a chain such as
+    // `Add.add -> instAddNat -> Nat.add -> Nat.add._f -> brecOn -> Nat.rec`
+    // ran out of budget before its reducts could be compared. Run the rounds
+    // in a loop here (bounded by `conv_join_rounds() * 8`, not the budget),
+    // then recurse ONCE on the final reducts.
+    let (cx, cy) = verified_delta_chain(ctx, env, x, y, fuel, k, 32);
+    if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
+        conv_trace(2, cx, cy, budget);
+        if let Some(true) = verified_conv_p(ctx, env, cx, cy, fuel, k, budget - 1) {
+            proof {
+                if cx == x {
+                    deq_p_any_refl(dtym, em, lcm, to_model(x));
+                } else {
+                    pstep_star_env_weaken(cm, em, to_model(x), to_model(cx));
+                    defeq_of_pstep_star(em, to_model(x), to_model(cx));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(cx));
+                }
+                if cy == y {
+                    deq_p_any_refl(dtym, em, lcm, to_model(y));
+                } else {
+                    pstep_star_env_weaken(cm, em, to_model(y), to_model(cy));
+                    defeq_of_pstep_star(em, to_model(y), to_model(cy));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(cy));
+                }
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cx), to_model(cy));
+                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(cy));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cy), to_model(y));
+            }
+            conv_stat(5);
+            return Some(true);
+        }
+    } else {
+        conv_trace(3, x, y, budget);
+    }
+    // last leaf: the capped whnf of BOTH sides, then (a) the pointer-equal
+    // join, or (b) -- new 2026-09-04 -- one recursive `conv` on the REDUCTS
+    // when either side moved: this is where post-reduction congruence and
+    // the nat-literal leaf get to see `NLit(0)` vs `Nat.zero`, `Nat.succ
+    // (..)` vs a literal, and a constructor spine vs its unfolded twin
+    // (the real `def_eq`'s whnf_core-then-retry shape).
+    let kr0 = conv_retry_cap();
+    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), kr);
+    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
+        pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
+    }
+    if expr_ptr_eq(rx, ry) {
+        proof {
+            assert(pstep_star(em, to_model(x), to_model(rx)));
+            assert(pstep_star(em, to_model(y), to_model(rx)));
+            assert(defeq(em, to_model(x), to_model(y)));
+            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(6);
+        return Some(true);
+    }
+    conv_trace(4, rx, ry, budget);
+    if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
+        if let Some(true) = verified_conv_p(ctx, env, rx, ry, fuel, k, budget - 1) {
+            proof {
+                defeq_of_pstep_star(em, to_model(x), to_model(rx));
+                deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(rx));
+                defeq_of_pstep_star(em, to_model(y), to_model(ry));
+                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(ry));
+                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
             }
             conv_stat(10);
             return Some(true);
@@ -5918,11 +6331,7 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
         Some(true) =>
             to_model(x) == to_model(y)
             || (proof_irrel_claim(*env, x_type, y_type)
-                && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type)
-                && (((exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(x_type), f))
-                    && (exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(y), to_model(y_type), f))
-                    && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))))
-                    ==> proof_irrel_pair(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y))))
+                && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type))
             || with_delta_claim(*env, x, y, fuel as nat),
         _ => true,
     }
@@ -5932,36 +6341,6 @@ pub fn verified_def_eq_with_delta_and_proof_irrel<'t, 'p: 't, 'x>(
     }
     match verified_proof_irrel_eq_of_types(ctx, env, x_type, y_type, fuel, bound, d, n) {
         Some(true) => {
-            proof {
-                let dty = to_model_of_declar_ty(*env);
-                let denvm = to_model_of_env(*env);
-                let lc = arena_lctx();
-                if (exists |f: nat| #[trigger] types_to(dty, denvm, lc, to_model(x), to_model(x_type), f))
-                    && (exists |f: nat| #[trigger] types_to(dty, denvm, lc, to_model(y), to_model(y_type), f))
-                    && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))) {
-                    let fx = choose |f: nat| types_to(dty, denvm, lc, to_model(x), to_model(x_type), f);
-                    let fy = choose |f: nat| types_to(dty, denvm, lc, to_model(y), to_model(y_type), f);
-                    let (lr, ll) = choose |lr: ExprPtr<'t>, ll: LevelPtr<'t>|
-                        pstep_star(to_model_of_env(*env), to_model(x_type), to_model(lr))
-                        && to_model(lr) == ExprSpec::Sort(level_to_model(ll))
-                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0);
-                    let (rr, rl) = choose |rr: ExprPtr<'t>, rl: LevelPtr<'t>|
-                        pstep_star(to_model_of_env(*env), to_model(y_type), to_model(rr))
-                        && to_model(rr) == ExprSpec::Sort(level_to_model(rl))
-                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0);
-                    assert(pstep_star(denvm, to_model(x_type), ExprSpec::Sort(level_to_model(ll))));
-                    assert(pstep_star(denvm, to_model(y_type), ExprSpec::Sort(level_to_model(rl))));
-                    assert(deq_any(denvm, to_model(x_type), to_model(y_type)));
-                    assert(types_to(dty, denvm, lc, to_model(x), to_model(x_type), fx)
-                        && types_to(dty, denvm, lc, to_model(y), to_model(y_type), fy)
-                        && pstep_star(denvm, to_model(x_type), ExprSpec::Sort(level_to_model(ll)))
-                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(ll), rho) <= 0)
-                        && pstep_star(denvm, to_model(y_type), ExprSpec::Sort(level_to_model(rl)))
-                        && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(rl), rho) <= 0)
-                        && deq_any(denvm, to_model(x_type), to_model(y_type)));
-                    assert(proof_irrel_pair(dty, denvm, lc, to_model(x), to_model(y)));
-                }
-            }
             return Some(true);
         },
         _ => {}
@@ -6014,11 +6393,7 @@ pub open spec fn def_eq_full_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: 
     ||| bool_true_claim(env, x, y)
     ||| to_model(x) == to_model(y)
     ||| (proof_irrel_claim(env, x_type, y_type)
-        && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type)
-        && (((exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(x_type), f))
-            && (exists |f: nat| #[trigger] types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(y), to_model(y_type), f))
-            && (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x_type), to_model(y_type))))
-            ==> proof_irrel_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y))))
+        && def_eq_witness(x_type, y_type) && deq_full_claim(x_type, y_type))
     ||| with_delta_claim(env, x, y, fuel)
 }
 

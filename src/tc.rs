@@ -202,8 +202,8 @@ pub mod route_stats {
     /// Which leaf/rule confirmed inside `verified_conv` (0 sort, 1 const,
     /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
     /// recursive confirmation, not just top-level ones.
-    pub static CONV_LEAF: [AtomicU64; 11] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
-    pub fn conv_leaf(kind: u8) { if (kind as usize) < 11 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
+    pub static CONV_LEAF: [AtomicU64; 40] = [const { AtomicU64::new(0) }; 40];
+    pub fn conv_leaf(kind: u8) { if (kind as usize) < 40 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
     thread_local! {
         /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
@@ -337,7 +337,10 @@ pub mod route_stats {
         } else { String::new() }) + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
-            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed))
+            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed)) + &{
+            let extra: Vec<String> = (11..40).filter(|i| CONV_LEAF[*i].load(Ordering::Relaxed) > 0).map(|i| format!("{}:{}", i, CONV_LEAF[i].load(Ordering::Relaxed))).collect();
+            format!("\nconv leaf codes >= 11 (11 = proof-irrel leaf hit; 20-33 = proof-irrel shadow early returns): {}", extra.join(" "))
+        }
     }
 }
 
@@ -1189,7 +1192,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
         if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
         if route_stats::conv_enabled()
-            && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
+            && matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
         if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
             return 5;
