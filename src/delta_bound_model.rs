@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
+use crate::tc_model::{types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -126,6 +126,10 @@ use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_
 use crate::expr_arena_bridge::{verified_size, verified_depth};
 #[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
+#[cfg(verus_only)]
+use crate::env_model::{struct_ctor_of_agrees, ctor_num_params_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{depth_le_size, size};
 #[cfg(verus_only)]
@@ -1270,6 +1274,9 @@ pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
 /// device as `tc_model::fuel_marker`).
 pub open spec fn infer_fuel_marker(f: nat) -> bool { true }
 
+/// Marker trigger for `infer_spec`'s `Proj` case (2026-09-06).
+pub open spec fn infer_proj_marker<'t>(idx: usize, s: ExprPtr<'t>, sty: ExprPtr<'t>, f2: nat) -> bool { true }
+
 pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool
     decreases fuel
 {
@@ -1312,6 +1319,11 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
             && pstep_star(to_model_of_env(env), to_model(instd_ty), to_model(cod_sort))
             && to_model(cod_sort) == ExprSpec::Sort(level_to_model(cod_level))
             && to_model(r) == ExprSpec::Sort(LevelSpec::IMax(Box::new(level_to_model(dom_level)), Box::new(level_to_model(cod_level)))))
+    ||| (exists |idx: usize, s: ExprPtr<'t>, sty: ExprPtr<'t>, f2: nat|
+            #[trigger] infer_proj_marker(idx, s, sty, f2)
+            && to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(s)))
+            && f2 < fuel
+            && infer_spec(env, s, sty, f2))
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
@@ -1589,6 +1601,9 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     if expr_as_let(&el).is_some() {
         return verified_infer_let_arm(ctx, env, e, fuel, Ghost(d), Ghost(dd));
     }
+    if expr_as_proj(&el).is_some() {
+        return verified_infer_proj_arm(ctx, env, e, fuel, Ghost(d), Ghost(dd));
+    }
     None
 }
 
@@ -1845,6 +1860,254 @@ pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     } else {
         None
     }
+}
+
+/// "Ensure Pi" with capped reduction: a syntactic `Pi` is returned as is;
+/// otherwise the capped measured whnf (32 rounds, cap `k`) is tried once.
+/// `Some((w, bt, body))`: `cur` reduces to `w == Bind(bt, body)`.
+pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, cur: ExprPtr<'t>, k: u32) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)>)
+    requires
+        nlbv(to_model(cur)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some((w, bt, body)) =>
+            pstep_star(to_model_of_env(*env), to_model(cur), to_model(w))
+            && to_model(w) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body)))
+            && nlbv(to_model(w)) <= 0,
+        None => true,
+    }
+{
+    let el = ctx.read_expr(cur);
+    if let Some((_, _, bt0, body0)) = expr_as_pi(&el) {
+        proof { pstep_star_refl(to_model_of_env(*env), to_model(cur)); }
+        return Some((cur, bt0, body0));
+    }
+    let w0 = verified_whnf_measured_rounds_capped(ctx, env, cur, 32, 32, k);
+    let wl = ctx.read_expr(w0);
+    match expr_as_pi(&wl) {
+        Some((_, _, bt0, body0)) => {
+            proof {
+                env_model_capped_sub(*env, k as nat);
+                pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(cur), to_model(w0));
+            }
+            Some((w0, bt0, body0))
+        }
+        None => None,
+    }
+}
+
+/// `Proj` arm of `verified_infer` (2026-09-06): the kernel's `infer_proj`
+/// (`tc.rs`) with capped reduction -- infer the structure's type, reduce
+/// it to a constant spine `I ls args`, look up `I`'s constructor and its
+/// parameter count, instantiate the constructor's type through the
+/// parameters (with `args`) and the earlier fields (with `Proj(j, s)`),
+/// and read the field type off the next binder. The typing claim is the
+/// relation's `Proj` rule (`types_to_proj`); its forward-recursive
+/// telescope chain (`proj_field_type`) is discharged by a universally
+/// quantified implication invariant that composes one step per iteration.
+/// The dispatcher's `d + dd` result-depth bound is enforced at runtime
+/// (depth(result) <= depth(e) + depth(constructor type)).
+#[verifier::spinoff_prover]
+pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        local_type_cap() <= d,
+        d <= 60000,
+        depth(to_model(e)) <= dd,
+        nlbv(to_model(e)) <= 0,
+        infer_depth_fixpoint_ok(dd, fuel as nat),
+        fuel >= 1,
+    ensures match result {
+        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel, 0int
+{
+    let el = ctx.read_expr(e);
+    let (idx, structure) = match expr_as_proj(&el) { Some((_, i, s)) => (i, s), None => return None };
+    assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
+    assert(depth(to_model(structure)) < depth(to_model(e)));
+    assert(nlbv(to_model(structure)) <= 0);
+    let ghost dty = to_model_of_declar_ty(*env);
+    let ghost denv = to_model_of_env(*env);
+    let ghost lctx = arena_lctx();
+    let ghost f2: nat = (fuel - 1) as nat;
+    let ghost s_m = to_model(structure);
+    let ghost idxn: nat = idx as nat;
+    let sty = match verified_infer(ctx, env, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return None };
+    assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
+    let k: u32 = 2000;
+    let w = verified_whnf_measured_rounds_capped(ctx, env, sty, 32, 32, k);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(env_model_capped(*env, k as nat), denv, to_model(sty), to_model(w));
+    }
+    let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return None };
+    let args_s: &[ExprPtr<'t>] = args.as_slice();
+    let ghost args_model = Seq::new(args_s@.len(), |i: int| to_model(args_s@[i]));
+    let ghost ind_id = name_id(ind_name);
+    let ghost ls = to_model_of_levels(ind_levels);
+    proof {
+        is_const_shape_model(f);
+        const_levels_vec_model(f);
+        assert(to_model(f) == ExprSpec::Const(const_id(f), const_levels_vec(f)));
+        assert(const_id(f) == ind_id);
+        assert(const_levels_vec(f) =~= ls);
+        assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model);
+        assert(to_model(w) == spine_app(ExprSpec::Const(ind_id, ls), args_model));
+        spine_app_nlbv_decompose(ExprSpec::Const(ind_id, ls), args_model);
+        assert forall |j: int| 0 <= j < args_s@.len() implies nlbv(to_model(#[trigger] args_s@[j])) <= 0 by {
+            assert(args_model[j] == to_model(args_s@[j]));
+            assert(nlbv(args_model[j]) <= nlbv(spine_app(ExprSpec::Const(ind_id, ls), args_model)));
+        }
+    }
+    let ctor_name = match get_structure_first_ctor(env, &ind_name, true) { Some(c) => c, None => return None };
+    let ghost ctor_id = name_id(ctor_name);
+    proof {
+        struct_ctor_of_agrees(*env, ind_id);
+        assert(struct_ctor_of(ind_id) == Some(ctor_id));
+    }
+    let np = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return None };
+    proof {
+        ctor_num_params_of_agrees(*env, ctor_id);
+        assert(ctor_num_params_of(ctor_id) == Some(np));
+    }
+    if (np as usize) > args_s.len() {
+        return None;
+    }
+    let ghost npn: nat = np as nat;
+    let ctor_ty0 = match verified_infer_const(ctx, env, ctor_name, ind_levels, 100000) { Some(t) => t, None => return None };
+    proof {
+        let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+            to_model_of_declar_ty(*env).contains_key(name_id(ctor_name))
+            && to_model_of_declar_ty(*env)[name_id(ctor_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+            && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(ind_levels), to_model(ctor_ty0));
+        types_to_const(dty, denv, lctx, ctor_id, ls, to_model(ctor_ty0), f2);
+    }
+    let mut cur = ctor_ty0;
+    let mut i: usize = 0;
+    proof {
+        assert(args_model.skip(0) =~= args_model);
+    }
+    while i < np as usize
+        invariant
+            0 <= i <= np as usize,
+            np as usize <= args_s@.len(),
+            args_model == Seq::new(args_s@.len(), |j: int| to_model(args_s@[j])),
+            denv == to_model_of_env(*env),
+            k == 2000,
+            env_global_cap(*env) <= d,
+            d <= 60000,
+            npn == np as nat,
+            s_m == to_model(structure),
+            idxn == idx as nat,
+            nlbv(to_model(cur)) <= 0,
+            forall |j: int| 0 <= j < args_s@.len() ==> nlbv(to_model(#[trigger] args_s@[j])) <= 0,
+            forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t)
+                ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
+        decreases np as usize - i
+    {
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, cur, k) { Some(v) => v, None => return None };
+        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
+        proof {
+            depth_le_size(to_model(w2));
+            assert(depth(to_model(body)) < depth(to_model(w2)));
+            assert(nlbv(to_model(body)) <= 1);
+        }
+        let arg_slice: &[ExprPtr<'t>] = &args_s[i..i + 1];
+        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return None };
+        proof {
+            assert(arg_slice@.len() == 1);
+            assert(arg_slice@[0] == args_s@[i as int]);
+            assert(Seq::new(arg_slice@.len(), |j: int| to_model(arg_slice@[j])) =~= seq![to_model(args_s@[i as int])]);
+            assert(to_model(new_ty) == subst_full(to_model(body), seq![to_model(args_s@[i as int])], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(args_s@[i as int]), 0);
+            assert(args_model.skip(i as int).len() > 0);
+            assert(args_model.skip(i as int)[0] == to_model(args_s@[i as int]));
+            assert(args_model.skip(i as int).drop_first() =~= args_model.skip(i as int + 1));
+            assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(new_ty), args_model.skip(i as int + 1), (npn - ((i + 1) as nat)) as nat, 0, idxn, s_m, t)
+                implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
+                proj_field_type_param_step(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t);
+            }
+        }
+        cur = new_ty;
+        i = i + 1;
+    }
+    proof {
+        assert(i == np as usize);
+        assert((npn - (i as nat)) as nat == 0);
+        assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, 0, (idxn - (0 as nat)) as nat, s_m, t)
+            implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
+            assert(proj_field_type(denv, to_model(cur), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t));
+        }
+    }
+    let mut j: usize = 0;
+    while j < idx
+        invariant
+            0 <= j <= idx,
+            np as usize <= args_s@.len(),
+            args_model == Seq::new(args_s@.len(), |q: int| to_model(args_s@[q])),
+            denv == to_model_of_env(*env),
+            k == 2000,
+            env_global_cap(*env) <= d,
+            d <= 60000,
+            npn == np as nat,
+            s_m == to_model(structure),
+            nlbv(s_m) <= 0,
+            idxn == idx as nat,
+            nlbv(to_model(cur)) <= 0,
+            forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, j, (idxn - (j as nat)) as nat, s_m, t)
+                ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
+        decreases idx - j
+    {
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, cur, k) { Some(v) => v, None => return None };
+        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
+        proof {
+            depth_le_size(to_model(w2));
+            assert(depth(to_model(body)) < depth(to_model(w2)));
+            assert(nlbv(to_model(body)) <= 1);
+        }
+        let pj = ctx.mk_proj(ind_name, j, structure);
+        let pj_slice: &[ExprPtr<'t>] = &[pj];
+        let new_ty = match verified_inst(ctx, body, pj_slice, 0, 100000) { Some(v) => v, None => return None };
+        proof {
+            assert(to_model(pj) == ExprSpec::Proj(j, Box::new(s_m)));
+            assert(nlbv(to_model(pj)) <= 0);
+            assert(Seq::new(pj_slice@.len(), |q: int| to_model(pj_slice@[q])) =~= seq![to_model(pj)]);
+            assert(to_model(new_ty) == subst_full(to_model(body), seq![ExprSpec::Proj(j, Box::new(s_m))], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(pj), 0);
+            assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(new_ty), args_model.skip(npn as int), 0, (j + 1) as usize, (idxn - ((j + 1) as nat)) as nat, s_m, t)
+                implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
+                proj_field_type_field_step(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), j, (idxn - (j as nat)) as nat, s_m, t);
+            }
+        }
+        cur = new_ty;
+        j = j + 1;
+    }
+    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, cur, k) { Some(v) => v, None => return None };
+    proof {
+        proj_field_type_final(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), idx, s_m);
+        assert(j == idx);
+        assert((idxn - (j as nat)) as nat == 0);
+        assert(proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, j, (idxn - (j as nat)) as nat, s_m, to_model(bt)));
+        assert(proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, to_model(bt)));
+        types_to_proj(dty, denv, lctx, idx, s_m, to_model(bt), f2, to_model(sty), ind_id, ls, args_model, ctor_id, np, to_model(ctor_ty0), fuel as nat);
+        assert(infer_types_to(*env, e, bt, fuel as nat));
+        assert(nlbv(to_model(bt)) <= 0);
+        assert(infer_proj_marker(idx, structure, sty, f2));
+        assert(infer_spec(*env, structure, sty, f2));
+        assert(infer_spec(*env, e, bt, fuel as nat));
+    }
+    let dr = match verified_depth(ctx, bt, 100000) { Some(v) => v, None => return None };
+    let de = match verified_depth(ctx, e, 100000) { Some(v) => v, None => return None };
+    let dc = match verified_depth(ctx, ctor_ty0, 100000) { Some(v) => v, None => return None };
+    if (dr as u64) > (de as u64) + (dc as u64) {
+        return None;
+    }
+    assert(depth(to_model(ctor_ty0)) <= d);
+    assert(depth(to_model(bt)) <= d + dd);
+    assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
+    Some(bt)
 }
 
 /// The payoff of this whole well-formedness detour: `verified_infer_proj`

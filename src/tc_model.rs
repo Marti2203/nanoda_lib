@@ -96,6 +96,8 @@ use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar
 #[cfg(verus_only)]
 use crate::env_model::ctor_num_params_of_agrees;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
+#[cfg(verus_only)]
 use crate::env_model::{env_global_wf_ty, env_global_wf, env_global_cap};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_declar_ty;
@@ -3923,6 +3925,35 @@ pub proof fn full_def_eq_of_def_eq_witness<'t>(env: Map<u64, (Seq<u64>, ExprSpec
 /// over the binder alone (see the memo's match-arm exists law).
 pub open spec fn fuel_marker(f: nat) -> bool { true }
 
+/// Marker trigger for the `Proj` rule's witnesses (same device).
+pub open spec fn proj_marker(f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec) -> bool { true }
+
+/// Marker trigger for one telescope step of `proj_field_type`.
+pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool { true }
+
+/// The kernel's `infer_proj` telescope walk (`tc.rs`): from the
+/// constructor's (level-instantiated) type `cur`, reduce to a `Pi`
+/// (`pstep_star`), and either instantiate with the next structure-type
+/// argument (`np` params left), or with `Proj(fld, s)` (`remaining`
+/// fields left), or -- both exhausted -- read the field type off the
+/// binder. Instantiating a closed body is a no-op (`subst_full_noop`),
+/// which covers the kernel's "no loose bvars" shortcut.
+pub open spec fn proj_field_type(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, args: Seq<ExprSpec>, np: nat, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec) -> bool
+    decreases np + remaining
+{
+    exists |bt: ExprSpec, body: ExprSpec|
+        #[trigger] proj_step_marker(bt, body)
+        && pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)))
+        && (if np > 0 {
+                args.len() > 0
+                && proj_field_type(denv, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s, t)
+            } else if remaining > 0 {
+                proj_field_type(denv, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, t)
+            } else {
+                t == bt
+            })
+}
+
 pub open spec fn types_to(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
@@ -3990,6 +4021,19 @@ pub open spec fn types_to(
             && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat)
             && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
             && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
+        _ => false,
+    })
+    ||| (match e {
+        ExprSpec::Proj(idx, s) => exists |f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+            #[trigger] proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0)
+            && f2 < fuel
+            && types_to(dty, denv, lctx, *s, sty, f2)
+            && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+            && struct_ctor_of(ind_id) == Some(ctor_id)
+            && ctor_num_params_of(ctor_id) == Some(np)
+            && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2)
+            && (np as nat) <= args.len()
+            && proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, *s, t),
         _ => false,
     })
 }
@@ -4158,6 +4202,53 @@ pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (S
     ensures types_to(dty, denv, lctx, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), t, fuel)
 {
     assert(fuel_marker(f2));
+}
+
+/// Constructor lemma for the `Proj` rule.
+pub proof fn types_to_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, idx: usize, s: ExprSpec, t: ExprSpec, f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec, fuel: nat)
+    requires
+        f2 < fuel,
+        types_to(dty, denv, lctx, s, sty, f2),
+        pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args)),
+        struct_ctor_of(ind_id) == Some(ctor_id),
+        ctor_num_params_of(ctor_id) == Some(np),
+        types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
+        (np as nat) <= args.len(),
+        proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
+    ensures types_to(dty, denv, lctx, ExprSpec::Proj(idx, Box::new(s)), t, fuel)
+{
+    assert(proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
+}
+
+/// One parameter step of `proj_field_type`.
+pub proof fn proj_field_type_param_step(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, np: nat, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec)
+    requires
+        np > 0,
+        args.len() > 0,
+        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+        proj_field_type(denv, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s, t),
+    ensures proj_field_type(denv, cur, args, np, fld, remaining, s, t)
+{
+    assert(proj_step_marker(bt, body));
+}
+
+/// One field step of `proj_field_type`.
+pub proof fn proj_field_type_field_step(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec)
+    requires
+        remaining > 0,
+        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+        proj_field_type(denv, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, t),
+    ensures proj_field_type(denv, cur, args, 0, fld, remaining, s, t)
+{
+    assert(proj_step_marker(bt, body));
+}
+
+/// The final step of `proj_field_type`: the field type is the binder type.
+pub proof fn proj_field_type_final(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, fld: usize, s: ExprSpec)
+    requires pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+    ensures proj_field_type(denv, cur, args, 0, fld, 0, s, bt)
+{
+    assert(proj_step_marker(bt, body));
 }
 
 pub proof fn types_to_lambda(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, infd: ExprSpec, fuel: nat)

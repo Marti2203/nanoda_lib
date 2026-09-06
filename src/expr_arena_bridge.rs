@@ -654,6 +654,12 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// rejected.
 pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
 
+/// Arena-global "structure -> its first (only) constructor" lookup, the
+/// same convention as `ctor_num_params_of` (tied to each env's
+/// `to_model_of_struct_ctor` by `env_model::struct_ctor_of_agrees`); the
+/// typing model's `Proj` rule reads it (2026-09-06).
+pub uninterp spec fn struct_ctor_of(id: u64) -> Option<u64>;
+
 /// NAT-LITERAL FOLDING (rec-iota P3, 2026-09-04): the kernel's `nat_
 /// extension` dispatch (`tc.rs::try_reduce_nat`) keyed by name id, as an
 /// ARENA-GLOBAL uninterpreted op code -- same "one declaration per name

@@ -701,7 +701,26 @@ pub proof fn rec_data_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
 /// soundness content of `verified_def_eq_unit` is carried by its final
 /// `verified_def_eq` call, same "plain per-call fact, no keyed map"
 /// convention as `get_recursor_data` above.
-pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<NamePtr<'a>>);
+/// Structure -> first (only) constructor, `name_id`-keyed: the typing
+/// model's `Proj` rule needs the two `get_structure_first_ctor` calls
+/// (arm and rule) to agree on ONE ground truth, so unlike the per-call
+/// wrappers above this one is tied to a map (2026-09-06, projection typing).
+pub uninterp spec fn to_model_of_struct_ctor<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u64>;
+
+/// Same disclosed trust as `ctor_num_params_of_agrees`: a structure visible
+/// in SOME env has the arena-global first-constructor its env reports.
+#[verifier::external_body]
+pub proof fn struct_ctor_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    requires to_model_of_struct_ctor(env).contains_key(id)
+    ensures crate::expr_arena_bridge::struct_ctor_of(id) == Some(to_model_of_struct_ctor(env)[id])
+{
+}
+
+pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<NamePtr<'a>>)
+    ensures match result {
+        Some(c) => to_model_of_struct_ctor(*env).contains_key(name_id(*n)) && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
+        None => true,
+    };
 
 pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>);
 
