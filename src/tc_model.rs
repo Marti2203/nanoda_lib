@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
-use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args};
+use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
 #[cfg(verus_only)]
@@ -3925,7 +3925,7 @@ pub open spec fn types_to(
     t: ExprSpec,
     fuel: nat,
 ) -> bool
-    decreases fuel
+    decreases fuel, e
 {
     ||| (match e {
         ExprSpec::Free(lid) => lctx.contains_key(lid) && t == lctx[lid],
@@ -3940,10 +3940,20 @@ pub open spec fn types_to(
             dty.contains_key(cid) && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
         _ => false,
     })
-    ||| (exists |fid: u64, flevels: Seq<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec|
-            #![trigger spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0)]
-            e == spine_app(ExprSpec::Const(fid, flevels), args_model)
-            && t == subst_full(body, args_model, 0))
+    // APPLICATION (2026-09-05, replaces a vacuous "some substitution
+    // instance of some body" rule): `f a : B[a]` when `f : T` and `T`
+    // reduces to the binder `Bind(A, B)` (the kernel's `infer_app`: infer
+    // the function, whnf its type to a Pi, instantiate the codomain).
+    // Recursion on the syntactic subterm `f` at the SAME fuel
+    // (`decreases fuel, e`); the trigger is the non-recursive reduction fact.
+    ||| (match e {
+        ExprSpec::App(f, a) => exists |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec|
+            #![trigger pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))]
+            types_to(dty, denv, lctx, *f, ft, fuel)
+            && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
+            && t == subst_full(bt, seq![*a], 0),
+        _ => false,
+    })
     ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
         ExprSpec::Const(cid, _) => cid == nat_type_id(),
         _ => false,
@@ -4019,11 +4029,120 @@ pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, 
 {
 }
 
-pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, fid: u64, flevels: Seq<LevelSpec>, args_model: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
-    ensures types_to(dty, denv, lctx, spine_app(ExprSpec::Const(fid, flevels), args_model), subst_full(body, args_model, 0), fuel)
+pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, a: ExprSpec, ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, fuel: nat)
+    requires
+        types_to(dty, denv, lctx, f, ft, fuel),
+        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+    ensures types_to(dty, denv, lctx, ExprSpec::App(Box::new(f), Box::new(a)), subst_full(bt, seq![a], 0), fuel)
 {
-    assert(spine_app(ExprSpec::Const(fid, flevels), args_model) == spine_app(ExprSpec::Const(fid, flevels), args_model)
-        && subst_full(body, args_model, 0) == subst_full(body, args_model, 0));
+    assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
+        && subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
+}
+
+/// `spine_app` peels from the FRONT too: `f a0 rest... == (f a0) rest...`.
+pub proof fn spine_app_front(f: ExprSpec, args: Seq<ExprSpec>)
+    requires args.len() >= 1
+    ensures spine_app(f, args) == spine_app(ExprSpec::App(Box::new(f), Box::new(args[0])), args.subrange(1, args.len() as int))
+    decreases args.len()
+{
+    let a0 = args[0];
+    let f2 = ExprSpec::App(Box::new(f), Box::new(a0));
+    if args.len() == 1 {
+        let e = Seq::<ExprSpec>::empty();
+        assert(args =~= e.push(a0));
+        spine_app_compose_last(f, e, a0);
+        assert(spine_app(f, e) == f);
+        assert(spine_app(f, args) == f2);
+        assert(args.subrange(1, 1) =~= e);
+        assert(spine_app(f2, e) == f2);
+    } else {
+        let init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        assert(args =~= init.push(last));
+        spine_app_compose_last(f, init, last);
+        assert(spine_app(f, args) == ExprSpec::App(Box::new(spine_app(f, init)), Box::new(last)));
+        assert(init[0] == a0);
+        spine_app_front(f, init);
+        let rest = args.subrange(1, args.len() as int);
+        let rest_init = init.subrange(1, init.len() as int);
+        assert(spine_app(f, init) == spine_app(f2, rest_init));
+        assert(rest =~= rest_init.push(last));
+        spine_app_compose_last(f2, rest_init, last);
+        assert(spine_app(f2, rest) == ExprSpec::App(Box::new(spine_app(f2, rest_init)), Box::new(last)));
+    }
+}
+
+/// A syntactic binder telescope survives substitution at its base offset:
+/// `spine_bind(subst_full(h, s, o), k) == Some(subst_full(body, s, o + k))`.
+pub proof fn spine_bind_subst_full(h: ExprSpec, k: nat, body: ExprSpec, s: Seq<ExprSpec>, o: nat)
+    requires spine_bind(h, k) == Some(body)
+    ensures spine_bind(subst_full(h, s, o), k) == Some(subst_full(body, s, (o + k) as nat))
+    decreases k
+{
+    if k == 0 {
+    } else {
+        match h {
+            ExprSpec::Bind(ty, b) => {
+                spine_bind_subst_full(*b, (k - 1) as nat, body, s, (o + 1) as nat);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// THE TELESCOPE: a function whose type is a syntactic binder telescope of
+/// `args.len()` binders, applied to `args`, has the multi-substitution type
+/// -- by iterating the single-application rule from the front
+/// (`spine_app_front`), where each peeled binder is a reduction-free
+/// (`pstep_star_refl`) instance and `subst_full_compose` folds the
+/// substitutions.
+pub proof fn types_to_spine(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, fty: ExprSpec, args: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
+    requires
+        types_to(dty, denv, lctx, f, fty, fuel),
+        spine_bind(fty, args.len()) == Some(body),
+        nlbv(fty) <= 0,
+        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) <= 0,
+    ensures types_to(dty, denv, lctx, spine_app(f, args), subst_full(body, args, 0), fuel)
+    decreases args.len()
+{
+    if args.len() == 0 {
+        assert(fty == body);
+        assert(args =~= Seq::<ExprSpec>::empty());
+        subst_full_empty(body, 0);
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        let n = args.len();
+        // fty == Bind(aty, r0) with spine_bind(r0, n-1) == Some(body)
+        match fty {
+            ExprSpec::Bind(aty, r0) => {
+                let ft2 = subst_full(*r0, seq![a0], 0);
+                pstep_star_refl(denv, fty);
+                types_to_app(dty, denv, lctx, f, a0, fty, *aty, *r0, fuel);
+                let f2 = ExprSpec::App(Box::new(f), Box::new(a0));
+                assert(types_to(dty, denv, lctx, f2, ft2, fuel));
+                spine_bind_subst_full(*r0, (n - 1) as nat, body, seq![a0], 0);
+                let body2 = subst_full(body, seq![a0], (n - 1) as nat);
+                assert(spine_bind(ft2, rest.len()) == Some(body2));
+                // closedness of the peeled telescope
+                assert(nlbv(*r0) <= 1);
+                subst_full_nlbv_bound(*r0, a0, 0);
+                assert(nlbv(ft2) <= 0);
+                assert forall |i: int| 0 <= i < rest.len() implies nlbv(#[trigger] rest[i]) <= 0 by {
+                    assert(rest[i] == args[i + 1]);
+                }
+                types_to_spine(dty, denv, lctx, f2, ft2, rest, body2, fuel);
+                spine_app_front(f, args);
+                assert(spine_app(f, args) == spine_app(f2, rest));
+                // fold the substitutions: body[a0 @ n-1][rest @ 0] == body[args @ 0]
+                spine_bind_nlbv(fty, n, body, 0);
+                assert(nlbv(body) <= n);
+                subst_full_compose(body, a0, rest, (n - 1) as nat, 0);
+                assert(seq![a0] + rest =~= args);
+            }
+            _ => { assert(false); }
+        }
+    }
 }
 
 pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, fuel: nat)

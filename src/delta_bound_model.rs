@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair};
+use crate::tc_model::{deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -1020,6 +1020,7 @@ pub fn verified_infer_app_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
         env_global_cap(*env) <= d,
+        local_type_cap() <= d,
         d <= 60000,
         depth(to_model(x)) <= dd,
         nlbv(to_model(x)) <= 0,
@@ -1027,8 +1028,9 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         Some(r) => {
             &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
                 to_model(x) == spine_app(to_model(fun), args_model)
-                && is_const_shape(fun)
+                && (is_const_shape(fun) || is_local_shape(fun))
                 && to_model(r) == subst_full(body, args_model, 0)
+            &&& infer_types_to(*env, x, r, fuel as nat)
             &&& depth(to_model(r)) <= d + dd
             &&& nlbv(to_model(r)) <= 0
         },
@@ -1039,8 +1041,8 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         Some(p) => p,
         None => return None,
     };
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
-        let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
         assert(to_model(x) == spine_app(to_model(fun), args_model));
         spine_app_depth_decompose(to_model(fun), args_model);
         spine_app_nlbv_decompose(to_model(fun), args_model);
@@ -1054,19 +1056,60 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
             assert(nlbv(args_model[i]) <= nlbv(spine_app(to_model(fun), args_model)));
             assert(nlbv(spine_app(to_model(fun), args_model)) == nlbv(to_model(x)));
         }
+        assert forall |i: int| 0 <= i < args_model.len() implies nlbv(#[trigger] args_model[i]) <= 0 by {
+            assert(args_model[i] == to_model(args@[i]));
+        }
     }
     let fun_el = ctx.read_expr(fun);
-    let (c_name, c_uparams) = match expr_as_const(fun, &fun_el) {
-        Some(p) => p,
-        None => return None,
-    };
-    let fun_ty = match verified_infer_const_bounded(ctx, env, c_name, c_uparams, fuel) {
-        Some(t) => t,
-        None => return None,
+    // the function's type: a constant's instantiated declared type, or a local's binder type
+    let fun_ty = if let Some((c_name, c_uparams)) = expr_as_const(fun, &fun_el) {
+        match verified_infer_const(ctx, env, c_name, c_uparams, fuel) {
+            Some(t) => {
+                proof {
+                    is_const_shape_model(fun);
+                    const_levels_vec_model(fun);
+                    assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+                    assert(const_id(fun) == name_id(c_name));
+                    let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+                        to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+                        && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(t));
+                    types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(fun), const_levels_vec(fun), to_model(t), fuel as nat);
+                    assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(t), fuel as nat));
+                }
+                t
+            }
+            None => return None,
+        }
+    } else if let Some((_, lt)) = expr_as_local(fun, &fun_el) {
+        proof {
+            local_type_wf(fun);
+            is_local_shape_model(fun);
+            arena_lctx_local(fun);
+            types_to_free(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), expr_id(fun), fuel as nat);
+            assert(arena_lctx()[expr_id(fun)] == to_model(lt));
+            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(lt), fuel as nat));
+        }
+        lt
+    } else {
+        return None;
     };
     assert(depth(to_model(fun_ty)) <= d);
     assert(nlbv(to_model(fun_ty)) == 0);
-    verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, Ghost(d), Ghost(dd))
+    match verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), fuel, Ghost(d), Ghost(dd)) {
+        Some(r) => {
+            proof {
+                let body = choose |body: ExprSpec|
+                    spine_bind(to_model(fun_ty), args.len() as nat) == Some(body)
+                    && to_model(r) == subst_full(body, Seq::new(args@.len(), |i: int| to_model(args@[i])), 0);
+                assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model);
+                types_to_spine(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(fun_ty), args_model, body, fuel as nat);
+                assert(infer_types_to(*env, x, r, fuel as nat));
+            }
+            Some(r)
+        }
+        None => None,
+    }
 }
 
 /// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in
@@ -1109,7 +1152,7 @@ pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
             && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)))
     ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
             to_model(e) == spine_app(to_model(fun), args_model)
-            && is_const_shape(fun)
+            && (is_const_shape(fun) || is_local_shape(fun))
             && to_model(r) == subst_full(body, args_model, 0))
     ||| (is_nat_lit_shape(e) && is_const_shape(r) && const_id(r) == nat_type_id())
     ||| (is_string_lit_shape(e) && is_const_shape(r) && const_id(r) == string_type_id())
@@ -1340,16 +1383,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                 assert(depth(to_model(r)) <= d + dd);
                 assert(depth(to_model(r)) <= d + dd + 1);
                 assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
-                proof {
-                    let (fun, args_model, body) = choose |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
-                        to_model(e) == spine_app(to_model(fun), args_model)
-                        && is_const_shape(fun)
-                        && to_model(r) == subst_full(body, args_model, 0);
-                    is_const_shape_model(fun);
-                    assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-                    types_to_app(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(fun), const_levels_vec(fun), args_model, body, fuel as nat);
-                    assert(infer_types_to(*env, e, r, fuel as nat));
-                }
+                assert(infer_types_to(*env, e, r, fuel as nat));
                 return Some(r);
             }
             None => return None,
