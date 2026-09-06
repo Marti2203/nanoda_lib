@@ -2711,7 +2711,7 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 {
     let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
     let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
-    if sx > 500 || sy > 500 {
+    if sx > 1500 || sy > 1500 {
         return None;
     }
     if ctx.num_loose_bvars(x) != 0 {

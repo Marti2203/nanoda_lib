@@ -977,13 +977,13 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         decreases rounds - i
     {
         let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
-        if sc > 500 {
+        if sc > 1500 {
             return cur;
         }
         proof {
             depth_le_size(to_model(cur));
             nlbv_bound_implies_max_var_below(to_model(cur), 0);
-            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 1500);
         }
         // P4: a measured PROJECTION-aware no-unfolding sub-step first
         // (beta/zeta/iota, `verified_whnf_no_unfolding_step_with_proj`
@@ -994,7 +994,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         // `%(instAddNat).0 x y`-shaped term BEFORE the proj-delta producer
         // below could run -- the single largest blocker of shadow
         // certification on Init.Core); treat it as "no change" and go on.
-        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(500 as nat), Ghost(500 as nat)) {
+        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(1500 as nat), Ghost(1500 as nat)) {
             Some(v) => v,
             None => {
                 proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
@@ -1022,19 +1022,19 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             None => {}
         }
         let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
-        if sc2 > 500 {
+        if sc2 > 1500 {
             return cur;
         }
         proof {
             depth_le_size(to_model(cur));
             nlbv_bound_implies_max_var_below(to_model(cur), 0);
-            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 500);
+            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 1500);
             reveal_with_fuel(whnf_fixpoint_ok, 2);
-            assert(whnf_fixpoint_ok(500, 500, 1));
+            assert(whnf_fixpoint_ok(1500, 1500, 1));
             reveal_with_fuel(whnf_fixpoint_final_bound, 2);
             reveal_with_fuel(whnf_fixpoint_final_d, 2);
         }
-        let r1 = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(500 as nat), Ghost(500 as nat), 1, Ghost(whnf_fixpoint_final_bound(500 as nat, 500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(500 as nat, 1 as nat))) {
+        let r1 = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(1500 as nat), Ghost(1500 as nat), 1, Ghost(whnf_fixpoint_final_bound(1500 as nat, 1500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(1500 as nat, 1 as nat))) {
             Some(v) => v,
             None => return cur,
         };
