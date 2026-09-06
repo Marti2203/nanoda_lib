@@ -2760,6 +2760,12 @@ fn conv_stat(kind: u8) {
 
 /// Experiment knob (no contract; a round count is a pure budget --
 /// `verified_defeq_whnf_capped`'s claim holds for every value).
+/// Diagnostics-only trace bridge (no contract).
+#[verifier::external_body]
+fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
+    crate::tc::route_stats::conv_trace(tag, x.raw_bits(), y.raw_bits(), budget);
+}
+
 #[verifier::external_body]
 fn conv_join_rounds() -> u32 {
     crate::tc::route_stats::conv_join_rounds()
@@ -2922,6 +2928,82 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     Some(true)
 }
 
+/// The kernel's `lazy_delta_step` loop over the CAPPED model: up to
+/// `max_rounds` lazy-delta rounds, each re-gated on size 500 (so the
+/// round's depth/bound requires hold), accumulating the `pstep_star`
+/// facts; stops at the first round that is not a strict `Continue`.
+/// Returns the final reducts (`x`/`y` themselves when nothing moved).
+pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, max_rounds: u32) -> (r: (ExprPtr<'t>, ExprPtr<'t>))
+    requires
+        k <= 500,
+        nlbv(to_model(x)) <= 0,
+        nlbv(to_model(y)) <= 0,
+    ensures ({
+        let (cx, cy) = r;
+        &&& (cx == x || pstep_star(env_model_capped(*env, k as nat), to_model(x), to_model(cx)))
+        &&& (cy == y || pstep_star(env_model_capped(*env, k as nat), to_model(y), to_model(cy)))
+        &&& nlbv(to_model(cx)) <= 0
+        &&& nlbv(to_model(cy)) <= 0
+    })
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    let mut cx = x;
+    let mut cy = y;
+    let mut j: u32 = 0;
+    while j < max_rounds
+        invariant
+            k <= 500,
+            cm == env_model_capped(*env, k as nat),
+            cx == x || pstep_star(cm, to_model(x), to_model(cx)),
+            cy == y || pstep_star(cm, to_model(y), to_model(cy)),
+            nlbv(to_model(cx)) <= 0,
+            nlbv(to_model(cy)) <= 0,
+        decreases max_rounds - j
+    {
+        let sx = match verified_size(ctx, cx, fuel) { Some(v) => v, None => return (cx, cy) };
+        let sy = match verified_size(ctx, cy, fuel) { Some(v) => v, None => return (cx, cy) };
+        if sx > 500 || sy > 500 {
+            return (cx, cy);
+        }
+        proof {
+            depth_le_size(to_model(cx));
+            depth_le_size(to_model(cy));
+            nlbv_bound_implies_max_var_below(to_model(cx), 0);
+            nlbv_bound_implies_max_var_below(to_model(cy), 0);
+            max_var_below_mono(to_model(cx), depth(to_model(cx)) as nat, 500);
+            max_var_below_mono(to_model(cy), depth(to_model(cy)) as nat, 500);
+            assert(500 + k <= 1000);
+            assert(k + 500 + 500 <= 1500);
+        }
+        match verified_lazy_delta_round_capped(ctx, env, cx, cy, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat)) {
+            Some(DeltaRoundResult::Continue(x2, y2)) => {
+                if expr_ptr_eq(x2, cx) && expr_ptr_eq(y2, cy) {
+                    return (cx, cy);
+                }
+                proof {
+                    if x2 != cx {
+                        if cx != x {
+                            pstep_star_trans(cm, to_model(x), to_model(cx), to_model(x2));
+                        }
+                    }
+                    if y2 != cy {
+                        if cy != y {
+                            pstep_star_trans(cm, to_model(y), to_model(cy), to_model(y2));
+                        }
+                    }
+                }
+                cx = x2;
+                cy = y2;
+            }
+            _ => {
+                return (cx, cy);
+            }
+        }
+        j = j + 1;
+    }
+    (cx, cy)
+}
+
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires k <= 500,
     ensures match result {
@@ -2938,6 +3020,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     if budget == 0 {
         return None;
     }
+    conv_trace(0, x, y, budget);
     // --- leaves: Sort / Const by level equivalence ---
     match verified_def_eq_sort(ctx, x, y, fuel) {
         Some(true) => {
@@ -3080,10 +3163,12 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     if ctx.num_loose_bvars(x) != 0 {
         conv_stat(7);
+        conv_trace(1, x, y, budget);
         return None;
     }
     if ctx.num_loose_bvars(y) != 0 {
         conv_stat(7);
+        conv_trace(1, x, y, budget);
         return None;
     }
     let ghost cm = env_model_capped(*env, k as nat);
@@ -3098,36 +3183,41 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         assert(500 + k <= 1000);
         assert(k + 500 + 500 <= 1500);
     }
-    // one lazy-delta round, then recurse on the reducts
-    match verified_lazy_delta_round_capped(ctx, env, x, y, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat)) {
-        Some(DeltaRoundResult::Continue(x2, y2)) => {
-            if !(expr_ptr_eq(x2, x) && expr_ptr_eq(y2, y)) {
-                if let Some(true) = verified_conv(ctx, env, x2, y2, fuel, k, budget - 1) {
-                    proof {
-                        if x2 == x {
-                            deq_any_refl(em, to_model(x));
-                        } else {
-                            pstep_star_env_weaken(cm, em, to_model(x), to_model(x2));
-                            defeq_of_pstep_star(em, to_model(x), to_model(x2));
-                            deq_any_of_defeq(em, to_model(x), to_model(x2));
-                        }
-                        if y2 == y {
-                            deq_any_refl(em, to_model(y));
-                        } else {
-                            pstep_star_env_weaken(cm, em, to_model(y), to_model(y2));
-                            defeq_of_pstep_star(em, to_model(y), to_model(y2));
-                            deq_any_of_defeq(em, to_model(y), to_model(y2));
-                        }
-                        deq_any_trans(em, to_model(x), to_model(x2), to_model(y2));
-                        deq_any_symm(em, to_model(y), to_model(y2));
-                        deq_any_trans(em, to_model(x), to_model(y2), to_model(y));
-                    }
-                    conv_stat(5);
-                    return Some(true);
+    // LAZY-DELTA CHAIN (2026-09-05): the kernel's `lazy_delta_step` LOOPS
+    // unfolding rounds until the pair is decided or exhausted; one round per
+    // conv level spent a budget unit per unfolding, so a chain such as
+    // `Add.add -> instAddNat -> Nat.add -> Nat.add._f -> brecOn -> Nat.rec`
+    // ran out of budget before its reducts could be compared. Run the rounds
+    // in a loop here (bounded by `conv_join_rounds() * 8`, not the budget),
+    // then recurse ONCE on the final reducts.
+    let (cx, cy) = verified_delta_chain(ctx, env, x, y, fuel, k, 32);
+    if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
+        conv_trace(2, cx, cy, budget);
+        if let Some(true) = verified_conv(ctx, env, cx, cy, fuel, k, budget - 1) {
+            proof {
+                if cx == x {
+                    deq_any_refl(em, to_model(x));
+                } else {
+                    pstep_star_env_weaken(cm, em, to_model(x), to_model(cx));
+                    defeq_of_pstep_star(em, to_model(x), to_model(cx));
+                    deq_any_of_defeq(em, to_model(x), to_model(cx));
                 }
+                if cy == y {
+                    deq_any_refl(em, to_model(y));
+                } else {
+                    pstep_star_env_weaken(cm, em, to_model(y), to_model(cy));
+                    defeq_of_pstep_star(em, to_model(y), to_model(cy));
+                    deq_any_of_defeq(em, to_model(y), to_model(cy));
+                }
+                deq_any_trans(em, to_model(x), to_model(cx), to_model(cy));
+                deq_any_symm(em, to_model(y), to_model(cy));
+                deq_any_trans(em, to_model(x), to_model(cy), to_model(y));
             }
+            conv_stat(5);
+            return Some(true);
         }
-        _ => {}
+    } else {
+        conv_trace(3, x, y, budget);
     }
     // last leaf: the capped whnf of BOTH sides, then (a) the pointer-equal
     // join, or (b) -- new 2026-09-04 -- one recursive `conv` on the REDUCTS
@@ -3152,6 +3242,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         conv_stat(6);
         return Some(true);
     }
+    conv_trace(4, rx, ry, budget);
     if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
         if let Some(true) = verified_conv(ctx, env, rx, ry, fuel, k, budget - 1) {
             proof {
@@ -3167,6 +3258,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             return Some(true);
         }
     }
+    conv_trace(5, x, y, budget);
     None
 }
 

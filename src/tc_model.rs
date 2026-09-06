@@ -989,9 +989,17 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         // (beta/zeta/iota, `verified_whnf_no_unfolding_step_with_proj`
         // -- a genuine pstep_star now that iota is a first-class rule),
         // then the beta/zeta+delta round on the RE-MEASURED result.
+        // A `None` from the cheap projection-aware step is NOT a reason to
+        // abort the round (2026-09-05: it aborted the whole whnf on every
+        // `%(instAddNat).0 x y`-shaped term BEFORE the proj-delta producer
+        // below could run -- the single largest blocker of shadow
+        // certification on Init.Core); treat it as "no change" and go on.
         let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(500 as nat), Ghost(500 as nat)) {
             Some(v) => v,
-            None => return cur,
+            None => {
+                proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
+                cur
+            }
         };
         proof {
             assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies

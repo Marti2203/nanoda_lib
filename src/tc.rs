@@ -221,6 +221,15 @@ pub mod route_stats {
     pub fn conv_fail_note(a: u32, b: u32, budget: u32) {
         CONV_FAIL.with(|c| { let mut m = c.borrow_mut(); let e = m.entry((a, b)).or_insert(0); if budget > *e { *e = budget; } });
     }
+    /// Opt-in conv trace (`NANODA_CONV_TRACE=1`): one line per conv stage
+    /// outcome; `tag` 0 enter, 1 loose-bvar give-up, 2 delta-round continue,
+    /// 3 delta-round exhausted/none, 4 retry reducts differ, 5 final None.
+    pub fn conv_trace(tag: u8, x: u32, y: u32, budget: u32) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *ON.get_or_init(|| std::env::var_os("NANODA_CONV_TRACE").is_some()) {
+            eprintln!("CONVTRACE tag={} budget={} x={:#x} y={:#x}", tag, budget, x, y);
+        }
+    }
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }
