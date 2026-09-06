@@ -239,21 +239,29 @@ pub mod route_stats {
     pub fn knob(name: &'static str, default: u32) -> u32 {
         std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     }
+    /// Environment cap for the conversion route (its proof bounds assume
+    /// k <= 500; never raise this one without re-verifying conv).
     pub fn cap_k() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         *V.get_or_init(|| knob("NANODA_CAP_K", 500))
     }
+    /// Environment cap for the whnf-join route only (k <= 60000 in its
+    /// contract; the delta and conv routes assume k <= 500). Shadow-only cost.
+    pub fn cap_k_join() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *V.get_or_init(|| knob("NANODA_CAP_K_JOIN", 2000))
+    }
     pub fn whnf_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 8))
+        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 32))
     }
     pub fn conv_budget() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 8))
+        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 16))
     }
     pub fn conv_join_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 2))
+        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 32))
     }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
@@ -1170,7 +1178,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let certified = matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true))
             || matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true))
-            || matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::whnf_rounds()), Some(true))
+            || matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true))
             || (route_stats::conv_enabled()
                 && matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)));
         if certified {
