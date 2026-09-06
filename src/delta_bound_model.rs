@@ -123,7 +123,9 @@ use crate::tc_model::{deq_leaf, deq_any_refl, deq_any_of_leaf, deq_any_app_congr
 use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
-use crate::expr_arena_bridge::verified_size;
+use crate::expr_arena_bridge::{verified_size, verified_depth};
+#[cfg(verus_only)]
+use crate::expr_model::subst_full_noop;
 #[cfg(verus_only)]
 use crate::beta_model::{depth_le_size, size};
 #[cfg(verus_only)]
@@ -1108,8 +1110,134 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
             }
             Some(r)
         }
-        None => None,
+        None => {
+            let ghost head_ok = is_const_shape(fun) || is_local_shape(fun);
+            match verified_infer_app_whnf_loop(ctx, env, fun, fun_ty, args.as_slice(), x, fuel, Ghost(d), Ghost(dd)) {
+                Some(r) => {
+                    proof {
+                        // the shape-only conjunct: a closed result is its own body under the whole spine
+                        subst_full_noop(to_model(r), args_model, 0);
+                        assert(to_model(x) == spine_app(to_model(fun), args_model)
+                            && head_ok
+                            && to_model(r) == subst_full(to_model(r), args_model, 0));
+                    }
+                    Some(r)
+                }
+                None => None,
+            }
+        }
     }
+}
+
+/// Fallback for `verified_infer_app_bounded_multi` when the syntactic
+/// telescope stops early: instantiate the function type ONE argument at a
+/// time, weak-head normalizing the residual (measured rounds, cap 2000)
+/// whenever it isn't a syntactic `Pi` -- the kernel `infer_app` shape for
+/// motive applications `(fun δ => Pi ...) σ`, which was every sampled
+/// constant-headed inference decline on Init.Core (2026-09-06). Each step
+/// is `types_to_app` (the typing relation's reduction-aware application
+/// rule). The dispatcher's `d + dd` result-depth bound is enforced at
+/// RUNTIME: the result's depth may not exceed depth(x) + depth(fun_ty),
+/// both of which the requires bound by `dd` and `d`.
+#[verifier::spinoff_prover]
+pub fn verified_infer_app_whnf_loop<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, fun: ExprPtr<'t>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], x: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        env_global_cap(*env) <= d,
+        d <= 60000,
+        depth(to_model(fun_ty)) <= d,
+        nlbv(to_model(fun_ty)) <= 0,
+        depth(to_model(x)) <= dd,
+        nlbv(to_model(x)) <= 0,
+        to_model(x) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
+        forall |i: int| 0 <= i < args@.len() ==> nlbv(to_model(#[trigger] args@[i])) <= 0,
+        types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(fun_ty), fuel as nat),
+    ensures match result {
+        Some(r) => infer_types_to(*env, x, r, fuel as nat) && depth(to_model(r)) <= d + dd && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    let ghost dty = to_model_of_declar_ty(*env);
+    let ghost denv = to_model_of_env(*env);
+    let ghost lctx = arena_lctx();
+    let k: u32 = 2000;
+    let mut cur_ty = fun_ty;
+    let mut i: usize = 0;
+    proof {
+        assert(args_model.take(0) =~= Seq::<ExprSpec>::empty());
+        assert(spine_app(to_model(fun), args_model.take(0)) == to_model(fun));
+    }
+    while i < args.len()
+        invariant
+            0 <= i <= args.len(),
+            args_model == Seq::new(args@.len(), |j: int| to_model(args@[j])),
+            denv == to_model_of_env(*env),
+            dty == to_model_of_declar_ty(*env),
+            lctx == arena_lctx(),
+            k == 2000,
+            env_global_cap(*env) <= d,
+            d <= 60000,
+            forall |j: int| 0 <= j < args@.len() ==> nlbv(to_model(#[trigger] args@[j])) <= 0,
+            nlbv(to_model(cur_ty)) <= 0,
+            types_to(dty, denv, lctx, spine_app(to_model(fun), args_model.take(i as int)), to_model(cur_ty), fuel as nat),
+        decreases args.len() - i
+    {
+        let el = ctx.read_expr(cur_ty);
+        let (w, bt, body) = if let Some((_, _, bt0, body0)) = expr_as_pi(&el) {
+            proof { pstep_star_refl(denv, to_model(cur_ty)); }
+            (cur_ty, bt0, body0)
+        } else {
+            let w0 = verified_whnf_measured_rounds_capped(ctx, env, cur_ty, 32, 32, k);
+            let wl = ctx.read_expr(w0);
+            match expr_as_pi(&wl) {
+                Some((_, _, bt0, body0)) => {
+                    proof {
+                        env_model_capped_sub(*env, k as nat);
+                        pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(cur_ty), to_model(w0));
+                    }
+                    (w0, bt0, body0)
+                }
+                None => return None,
+            }
+        };
+        assert(pstep_star(denv, to_model(cur_ty), to_model(w)));
+        assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body))));
+        // the instantiation needs a depth ceiling on the (possibly reduced) body
+        let sw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return None };
+        proof {
+            depth_le_size(to_model(w));
+            assert(depth(to_model(body)) < depth(to_model(w)));
+        }
+        let arg_slice: &[ExprPtr<'t>] = &args[i..i + 1];
+        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return None };
+        proof {
+            assert(arg_slice@.len() == 1);
+            assert(arg_slice@[0] == args@[i as int]);
+            assert(Seq::new(arg_slice@.len(), |j: int| to_model(arg_slice@[j])) =~= seq![to_model(args@[i as int])]);
+            assert(to_model(new_ty) == subst_full(to_model(body), seq![to_model(args@[i as int])], 0));
+            assert(nlbv(to_model(body)) <= 1);
+            subst_full_nlbv_bound(to_model(body), to_model(args@[i as int]), 0);
+            types_to_app(dty, denv, lctx, spine_app(to_model(fun), args_model.take(i as int)), to_model(args@[i as int]), to_model(cur_ty), to_model(bt), to_model(body), fuel as nat);
+            assert(args_model.take(i as int + 1).subrange(0, i as int) =~= args_model.take(i as int));
+            assert(args_model.take(i as int + 1)[i as int] == to_model(args@[i as int]));
+            assert(spine_app(to_model(fun), args_model.take(i as int + 1))
+                == ExprSpec::App(Box::new(spine_app(to_model(fun), args_model.take(i as int))), Box::new(to_model(args@[i as int]))));
+        }
+        cur_ty = new_ty;
+        i = i + 1;
+    }
+    proof {
+        assert(args_model.take(args.len() as int) =~= args_model);
+        assert(types_to(dty, denv, lctx, to_model(x), to_model(cur_ty), fuel as nat));
+    }
+    let dr = match verified_depth(ctx, cur_ty, 100000) { Some(v) => v, None => return None };
+    let dx = match verified_depth(ctx, x, 100000) { Some(v) => v, None => return None };
+    let df = match verified_depth(ctx, fun_ty, 100000) { Some(v) => v, None => return None };
+    if (dr as u64) > (dx as u64) + (df as u64) {
+        return None;
+    }
+    assert(depth(to_model(cur_ty)) <= d + dd);
+    Some(cur_ty)
 }
 
 /// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in

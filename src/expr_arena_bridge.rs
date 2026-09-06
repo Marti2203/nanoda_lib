@@ -931,6 +931,105 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
     None
 }
 
+/// Exec mirror of `depth` (`expr_model.rs`), sibling of `verified_size`:
+/// `Some(n)` is the exact depth. Depth never exceeds size, so the
+/// `u32` arithmetic is safe whenever the term is walkable at all (2026-09-06,
+/// for the whnf-retry application arm's runtime depth check).
+pub fn verified_depth<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u32>)
+    ensures match result {
+        Some(n) => n as nat == depth(to_model(e)) && n <= 60000,
+        None => true,
+    }
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let el = ctx.read_expr(e);
+    if let Some((f, a)) = expr_as_app(&el) {
+        let nf = match verified_depth(ctx, f, fuel - 1) { Some(v) => v, None => return None };
+        let na = match verified_depth(ctx, a, fuel - 1) { Some(v) => v, None => return None };
+        let m: u32 = if nf >= na { nf } else { na };
+        if m >= 60000 {
+            return None;
+        }
+        assert(depth(to_model(e)) == 1 + if depth(to_model(f)) >= depth(to_model(a)) { depth(to_model(f)) } else { depth(to_model(a)) });
+        return Some(m + 1);
+    }
+    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
+        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
+        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let m: u32 = if nt >= nb { nt } else { nb };
+        if m >= 60000 {
+            return None;
+        }
+        assert(depth(to_model(e)) == 1 + if depth(to_model(ty)) >= depth(to_model(body)) { depth(to_model(ty)) } else { depth(to_model(body)) });
+        return Some(m + 1);
+    }
+    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
+        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
+        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let m: u32 = if nt >= nb { nt } else { nb };
+        if m >= 60000 {
+            return None;
+        }
+        assert(depth(to_model(e)) == 1 + if depth(to_model(ty)) >= depth(to_model(body)) { depth(to_model(ty)) } else { depth(to_model(body)) });
+        return Some(m + 1);
+    }
+    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
+        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v2) => v2, None => return None };
+        let nv = match verified_depth(ctx, v, fuel - 1) { Some(v2) => v2, None => return None };
+        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v2) => v2, None => return None };
+        let tv: u32 = if nt >= nv { nt } else { nv };
+        let m: u32 = if tv >= nb { tv } else { nb };
+        if m >= 60000 {
+            return None;
+        }
+        assert(depth(to_model(e)) == {
+            let tvs = if depth(to_model(ty)) >= depth(to_model(v)) { depth(to_model(ty)) } else { depth(to_model(v)) };
+            1 + if tvs >= depth(to_model(body)) { tvs } else { depth(to_model(body)) }
+        });
+        return Some(m + 1);
+    }
+    if let Some((_, _, st)) = expr_as_proj(&el) {
+        let ns = match verified_depth(ctx, st, fuel - 1) { Some(v) => v, None => return None };
+        if ns >= 60000 {
+            return None;
+        }
+        assert(depth(to_model(e)) == 1 + depth(to_model(st)));
+        return Some(ns + 1);
+    }
+    if expr_as_var(&el).is_some() {
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    if expr_as_sort(&el).is_some() {
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    if expr_as_const(e, &el).is_some() {
+        proof { is_const_shape_model(e); }
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    if expr_as_local(e, &el).is_some() {
+        proof { is_local_shape_model(e); }
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    if expr_as_nat_lit(e, &el).is_some() {
+        proof { is_nat_lit_shape_model(e); }
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    if expr_as_string_lit(e, &el) {
+        proof { is_string_lit_shape_model(e); }
+        assert(depth(to_model(e)) == 0);
+        return Some(0);
+    }
+    None
+}
+
 /// Freshness walker for the binder fresh-instance rule: `Some(true)`
 /// certifies `fv_absent(to_model(e), expr_id(local))` by POINTER
 /// comparison at every `Local` node (`expr_id` is injective on pointers,
