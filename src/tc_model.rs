@@ -1029,7 +1029,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
                 max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
             }
-            let r1 = match verified_unfold_def_step_capped(ctx, env, cur, fuel, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+            let r1 = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
                 Some(v) => v,
                 None => return cur,
             };
@@ -1069,7 +1069,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         // `%(instAddNat).0 x y`-shaped term BEFORE the proj-delta producer
         // below could run -- the single largest blocker of shadow
         // certification on Init.Core); treat it as "no change" and go on.
-        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, fuel, Ghost(1500 as nat), Ghost(1500 as nat)) {
+        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, 100000, Ghost(1500 as nat), Ghost(1500 as nat)) {
             Some(v) => v,
             None => {
                 proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
@@ -1105,7 +1105,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
                 max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
             }
-            let rb = match verified_unfold_def_step_capped(ctx, env, cur, fuel, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+            let rb = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
                 Some(v) => v,
                 None => return cur,
             };
@@ -1126,7 +1126,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             reveal_with_fuel(whnf_fixpoint_final_bound, 2);
             reveal_with_fuel(whnf_fixpoint_final_d, 2);
         }
-        let r1 = match verified_whnf_step_capped(ctx, env, cur, fuel, k, Ghost(1500 as nat), Ghost(1500 as nat), 1, Ghost(whnf_fixpoint_final_bound(1500 as nat, 1500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(1500 as nat, 1 as nat))) {
+        let r1 = match verified_whnf_step_capped(ctx, env, cur, 100000, k, Ghost(1500 as nat), Ghost(1500 as nat), 1, Ghost(whnf_fixpoint_final_bound(1500 as nat, 1500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(1500 as nat, 1 as nat))) {
             Some(v) => v,
             None => return cur,
         };
@@ -2705,6 +2705,12 @@ pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr
 /// <= 64, rule value size <= 500). The claim is ONE genuine parallel
 /// recursor step after the congruence-star that reduced the major, under
 /// the capped model.
+/// Diagnostics counter for the recursor producer's early exits (codes 40+).
+#[verifier::external_body]
+fn rec_stat(kind: u8) {
+    crate::tc::route_stats::conv_leaf(kind);
+}
+
 pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
@@ -2716,16 +2722,16 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     decreases fuel
 {
     let ghost cm = env_model_capped(*env, k as nat);
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => { rec_stat(40); return None; } };
     let fun_el = ctx.read_expr(fun);
-    let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
-    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
+    let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => { rec_stat(41); return None; } };
+    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => { rec_stat(42); return None; } };
     if args.len() > 64 || major_idx >= args.len() {
-        return None;
+        { rec_stat(49); return None; }
     }
     let nprefix: usize = (np as usize) + (nm as usize) + (nmin as usize);
     if nprefix > major_idx {
-        return None;
+        { rec_stat(50); return None; }
     }
     let major = args[major_idx];
     proof {
@@ -2734,7 +2740,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         assert(nlbv(to_model(major)) <= 0);
     }
     if fuel == 0 {
-        return None;
+        { rec_stat(51); return None; }
     }
     let majw0 = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 32, k);
     // A literal major converts to its constructor form (`Nat.zero` /
@@ -2755,33 +2761,54 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
                 }
                 c
             }
-            None => return None,
+            None => { rec_stat(43); return None; },
         },
         None => majw0,
     };
-    let (chead, cargs) = match verified_unfold_apps(ctx, majw, 100000) { Some(p) => p, None => return None };
+    let (chead, cargs) = match verified_unfold_apps(ctx, majw, 100000) { Some(p) => p, None => { rec_stat(44); return None; } };
     let chead_el = ctx.read_expr(chead);
-    let (cname, _clevels) = match expr_as_const(chead, &chead_el) { Some(p) => p, None => return None };
+    let (cname, _clevels) = match expr_as_const(chead, &chead_el) {
+        Some(p) => p,
+        None => {
+            if expr_as_local(chead, &chead_el).is_some() { rec_stat(45); }
+            else if expr_as_lambda(&chead_el).is_some() { rec_stat(56); }
+            else if expr_as_proj(&chead_el).is_some() { rec_stat(57); }
+            else if expr_as_nat_lit(chead, &chead_el).is_some() { rec_stat(58); }
+            else { rec_stat(59); }
+            return None;
+        }
+    };
     if cargs.len() > 64 {
-        return None;
+        { rec_stat(52); return None; }
     }
-    let rule = match verified_find_rec_rule(&rules, cname) { Some(rr) => rr, None => return None };
+    let rule = match verified_find_rec_rule(&rules, cname) {
+        Some(rr) => rr,
+        None => {
+            match env.get_declar_val(&cname) {
+                Some(_) => { rec_stat(60); }
+                None => {
+                    match get_recursor_data(env, &cname) { Some(_) => { rec_stat(61); } None => { rec_stat(46); } }
+                }
+            }
+            return None;
+        }
+    };
     let nf: usize = rec_rule_ctor_telescope_size_wo_params(&rule) as usize;
     if nf > cargs.len() {
-        return None;
+        { rec_stat(53); return None; }
     }
     let rhs = rec_rule_val(&rule);
-    let sz = match verified_size(ctx, rhs, 100000) { Some(v) => v, None => return None };
+    let sz = match verified_size(ctx, rhs, 100000) { Some(v) => v, None => { rec_stat(47); return None; } };
     if sz > 500 {
-        return None;
+        { rec_stat(54); return None; }
     }
     let uv = read_levels_vec(ctx, uparams);
     let lvv = read_levels_vec(ctx, rlevels);
     if uv.len() != lvv.len() {
-        return None;
+        { rec_stat(55); return None; }
     }
     assert(to_model_of_levels(uparams).len() == to_model_of_levels(rlevels).len());
-    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) { Some(b) => b, None => return None };
+    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) { Some(b) => b, None => { rec_stat(48); return None; } };
     let prefix_args = &args[0..nprefix];
     let field_args = &cargs[(cargs.len() - nf)..cargs.len()];
     let post_args = &args[(major_idx + 1)..args.len()];
