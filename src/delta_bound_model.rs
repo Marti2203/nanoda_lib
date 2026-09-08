@@ -3285,6 +3285,13 @@ fn conv_fail_note<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
     crate::tc::route_stats::conv_fail_note(x.raw_bits(), y.raw_bits(), budget);
 }
 
+/// The configured top-level conversion budget (`NANODA_CONV_BUDGET`), for
+/// budget-relative gates inside the conversion.
+#[verifier::external_body]
+fn conv_budget_total() -> u32 {
+    crate::tc::route_stats::conv_budget()
+}
+
 /// The `_p` (proof-irrelevance-aware) family's failure cache: the same map,
 /// keyed 1000 budget units above the reduction-only family's entries.
 #[verifier::external_body]
@@ -4799,8 +4806,9 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     // deq_p whnf retry (2026-09-08): both sides normalized with the deq_p
     // whnf (K-like majors reduce), then joined or compared once more.
-    // TOP LEVELS ONLY (budget >= 14): at every node it cost 5x runtime.
-    if budget < 14 {
+    // TOP THREE LEVELS ONLY: at every node it cost 5x runtime.
+    let total = conv_budget_total();
+    if total >= 3 && budget < total - 2 {
         conv_trace(5, x, y, budget);
         return None;
     }
