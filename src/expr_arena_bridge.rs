@@ -3210,6 +3210,116 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
     }
 }
 
+/// PLAIN (gate-free) beta/zeta step (2026-09-08): the same two primitives
+/// as `verified_whnf_no_unfolding_step`, but the contract keeps only the
+/// reduction claim and closedness -- no growth-bound bookkeeping, hence no
+/// cubic ceiling on the input. Lets the measured whnf keep reducing terms
+/// above its 1500 size gate (well-founded-recursion unfoldings, large
+/// decidability instances), which was the largest remaining def_eq wall.
+pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        depth(to_model(e)) <= 60000,
+    ensures match result {
+        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let ghost bound: nat = 60000;
+    proof {
+        nlbv_bound_implies_max_var_below(to_model(e), 0);
+        max_var_below_mono(to_model(e), (depth(to_model(e)) + 0) as nat, bound);
+    }
+    match verified_unfold_apps(ctx, e, fuel) {
+        Some((e_fun, args)) => {
+            let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+            proof {
+                assert(to_model(e) == spine_app(to_model(e_fun), args_model));
+                spine_app_decompose(to_model(e_fun), args_model, bound);
+                assert forall|i: int| 0 <= i < args@.len() implies
+                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound)
+                by {
+                    assert(args_model[i] == to_model(args@[i]));
+                }
+            }
+            let e_fun_el = ctx.read_expr(e_fun);
+            if args.len() > 0 {
+                if let Some(_) = expr_as_lambda(&e_fun_el) {
+                    return match verified_whnf_beta_step(ctx, e_fun, &args, fuel, Ghost(bound)) {
+                        Some(r) => {
+                            proof {
+                                assert(to_model(e) == spine_app(to_model(e_fun), args_model));
+                                assert(nlbv(to_model(e_fun)) <= 0);
+                                let ghost n = choose|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
+                                    && spine_bind(to_model(e_fun), n) is Some
+                                    && to_model(r) == spine_app(
+                                        spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
+                                        Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                                    );
+                                assert(n <= args_model.len());
+                                let ghost prefix = args_model.subrange(0, n as int);
+                                let ghost suffix = args_model.subrange(n as int, args_model.len() as int);
+                                assert(prefix =~= Seq::new(n, |i: int| to_model(args@[i])));
+                                assert(suffix =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
+                                assert(to_model(r) == spine_app(spine_reduce(to_model(e_fun), prefix), suffix));
+                                assert forall|i: int| 0 <= i < prefix.len() implies
+                                    nlbv(prefix[i]) <= 0 && max_var_below(prefix[i], bound)
+                                by { assert(prefix[i] == args_model[i]); }
+                                assert forall|i: int| 0 <= i < suffix.len() implies nlbv(suffix[i]) <= 0
+                                by { assert(suffix[i] == args_model[n as int + i]); }
+                                assert(spine_bind(to_model(e_fun), n) is Some);
+                                let ghost peeled_model = spine_bind(to_model(e_fun), n)->0;
+                                assert(spine_bind(to_model(e_fun), n) == Some(peeled_model));
+                                spine_bind_nlbv(to_model(e_fun), n, peeled_model, 0);
+                                assert(nlbv(peeled_model) <= n);
+                                subst_full_nlbv_bound_n(peeled_model, prefix, 0);
+                                spine_reduce_eq_subst_full(to_model(e_fun), prefix, peeled_model, bound);
+                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(peeled_model, prefix, 0));
+                                assert(nlbv(spine_reduce(to_model(e_fun), prefix)) <= 0);
+                                spine_app_nlbv(spine_reduce(to_model(e_fun), prefix), suffix);
+                                assert(nlbv(to_model(r)) <= 0);
+                            }
+                            Some(r)
+                        }
+                        None => None,
+                    };
+                }
+            }
+            if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
+                assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
+                proof {
+                    assert(nlbv(to_model(val)) <= 0);
+                    assert(nlbv(to_model(body)) <= 1);
+                    assert(depth(to_model(body)) < depth(to_model(e_fun)));
+                    assert(max_var_below(to_model(val), bound));
+                }
+                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, Ghost(bound)) {
+                    Some(r) => {
+                        proof {
+                            assert(to_model(e) == spine_app(to_model(e_fun), args_model));
+                            assert(to_model(r) == spine_app(subst1(to_model(body), to_model(val)), args_model));
+                            subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
+                            assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                            subst_full_nlbv_bound(to_model(body), to_model(val), 0);
+                            assert(nlbv(subst_full(to_model(body), seq![to_model(val)], 0)) <= 0);
+                            assert(nlbv(subst1(to_model(body), to_model(val))) <= 0);
+                            spine_app_nlbv(subst1(to_model(body), to_model(val)), args_model);
+                            assert(nlbv(to_model(r)) <= 0);
+                        }
+                        Some(r)
+                    }
+                    None => None,
+                };
+            }
+            proof {
+                pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
+            }
+            Some(e)
+        }
+        None => None,
+    }
+}
+
 /// `verified_whnf_no_unfolding_step`'s own growth formula, one call's
 /// worth: `d` (a depth cap) becomes `d*d + 4*d + 1`, `bound` becomes
 /// `bound + d*d*d + d*d`. Named so the fixpoint below can thread them

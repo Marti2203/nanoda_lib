@@ -43,7 +43,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_peel_pis};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_peel_pis, verified_whnf_no_unfolding_step_plain};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
@@ -980,7 +980,69 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
     {
         let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
         if sc > 1500 {
-            return cur;
+            // (2026-09-08) above the growth-bound gate: the PLAIN beta/zeta
+            // step, then definition unfolding at the arena ceiling, then the
+            // rec / proj-delta producers -- the same round without the
+            // measured-fixpoint bookkeeping (its ensures needs none of it).
+            proof {
+                depth_le_size(to_model(cur));
+                nlbv_bound_implies_max_var_below(to_model(cur), 0);
+                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
+            }
+            let rp = match verified_whnf_no_unfolding_step_plain(ctx, cur, fuel) {
+                Some(v) => v,
+                None => {
+                    proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
+                    cur
+                }
+            };
+            proof {
+                assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
+                    env_model_capped(*env, k as nat).contains_key(j)
+                    && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == env_model_capped(*env, k as nat)[j]
+                by {}
+                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(cur), to_model(rp));
+                pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rp));
+            }
+            cur = rp;
+            match (if fuel == 0 { None } else { verified_nat_fold_step_capped(ctx, env, cur, (fuel - 1) as u32, k) }) {
+                Some(v) => {
+                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(v)); }
+                    cur = v;
+                }
+                None => {}
+            }
+            let scb = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+            proof {
+                depth_le_size(to_model(cur));
+                nlbv_bound_implies_max_var_below(to_model(cur), 0);
+                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
+            }
+            let r1 = match verified_unfold_def_step_capped(ctx, env, cur, fuel, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+                Some(v) => v,
+                None => return cur,
+            };
+            let r2 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
+                Some(v) => {
+                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r1), to_model(v)); }
+                    v
+                }
+                None => r1,
+            };
+            let r = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, r2, (fuel - 1) as u32, k) }) {
+                Some(v) => {
+                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r2), to_model(v)); }
+                    v
+                }
+                None => r2,
+            };
+            if expr_ptr_eq(r, cur) {
+                return cur;
+            }
+            proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(r)); }
+            cur = r;
+            i = i + 1;
+            continue;
         }
         proof {
             depth_le_size(to_model(cur));
@@ -1025,7 +1087,24 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         }
         let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
         if sc2 > 1500 {
-            return cur;
+            // (2026-09-08) grew past the gate mid-round: unfold at the ceiling
+            // instead of giving up; the next round takes the plain path.
+            proof {
+                depth_le_size(to_model(cur));
+                nlbv_bound_implies_max_var_below(to_model(cur), 0);
+                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
+            }
+            let rb = match verified_unfold_def_step_capped(ctx, env, cur, fuel, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+                Some(v) => v,
+                None => return cur,
+            };
+            if expr_ptr_eq(rb, cur) {
+                return cur;
+            }
+            proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rb)); }
+            cur = rb;
+            i = i + 1;
+            continue;
         }
         proof {
             depth_le_size(to_model(cur));
