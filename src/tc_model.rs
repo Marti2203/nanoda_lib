@@ -1137,6 +1137,82 @@ pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>, fu
     }
 }
 
+/// Operand evaluation for the fold producer WITH reduction inside successor
+/// spines (2026-09-08): the kernel's `get_nat_val` whnf's under `Nat.succ`
+/// too, so `Nat.succ (OfNat.ofNat Nat 55296 inst)` evaluates; the one-shot
+/// whnf + structural read (`nat_operand_value`) stopped at the constructor.
+/// Returns the reduced operand `r` (a value shape) and its number.
+pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, v: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
+    requires
+        nlbv(to_model(v)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some((r, b)) =>
+            pstep_star(env_model_capped(*env, k as nat), to_model(v), to_model(r))
+            && nlbv(to_model(r)) <= 0
+            && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
+        None => true,
+    }
+    decreases fuel
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    if fuel == 0 {
+        return None;
+    }
+    let w = verified_whnf_measured_rounds_capped(ctx, env, v, (fuel - 1) as u32, 32, k);
+    let el = ctx.read_expr(w);
+    if let Some(pn) = expr_as_nat_lit(w, &el) {
+        match read_bignum_value(ctx, pn) {
+            Some(b) => {
+                proof { is_nat_lit_shape_model(w); }
+                return Some((w, b));
+            }
+            None => return None,
+        }
+    }
+    if ctx.is_nat_zero(w) {
+        proof {
+            is_const_shape_model(w);
+            const_levels_vec_model(w);
+            nat_zero_arity_is_zero(w);
+            assert(to_model(w) == ExprSpec::Const(const_id(w), const_levels_vec(w)));
+            assert(const_levels_vec(w).len() == 0);
+        }
+        return Some((w, <num_bigint::BigUint as num_traits::Zero>::zero()));
+    }
+    match ctx.pred_of_nat_succ(w) {
+        Some(p) => {
+            let ghost fun = choose |fun: ExprPtr<'t>|
+                to_model(w) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
+                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+            proof {
+                assert(nlbv(to_model(p)) <= nlbv(to_model(w)));
+            }
+            match verified_nat_operand_reduce(ctx, env, p, (fuel - 1) as u32, k) {
+                Some((rp, bp)) => {
+                    let (f_exec, _) = match expr_as_app(&el) { Some(pr) => pr, None => return None };
+                    let r = ctx.mk_app(f_exec, rp);
+                    proof {
+                        assert(to_model(w) == ExprSpec::App(Box::new(to_model(f_exec)), Box::new(to_model(p))));
+                        assert(to_model(f_exec) == to_model(fun));
+                        is_const_shape_model(fun);
+                        const_levels_vec_model(fun);
+                        nat_succ_arity_is_zero(fun);
+                        assert(to_model(fun) == ExprSpec::Const(nat_succ_id(), const_levels_vec(fun)));
+                        assert(const_levels_vec(fun).len() == 0);
+                        pstep_star_app_arg_congr(cm, to_model(f_exec), to_model(p), to_model(rp));
+                        pstep_star_trans(cm, to_model(v), to_model(w), to_model(r));
+                        assert(nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(bp) + 1));
+                    }
+                    Some((r, crate::nat_lit_model::biguint_succ(bp)))
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// NAT-LITERAL FOLD producer (rec-iota P3, 2026-09-05): the kernel's
 /// `try_reduce_nat`/`do_nat_bin` as a `pstep_star` -- a nat-op constant
 /// applied to exactly two operands, both operands whnf'd with the capped
@@ -1177,10 +1253,8 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         assert(args_model[0] == to_model(x));
         assert(args_model[1] == to_model(y));
     }
-    let vx = verified_whnf_measured_rounds_capped(ctx, env, x, (fuel - 1) as u32, 32, k);
-    let vy = verified_whnf_measured_rounds_capped(ctx, env, y, (fuel - 1) as u32, 32, k);
-    let bx = match nat_operand_value(ctx, vx, fuel) { Some(b) => b, None => return None };
-    let by = match nat_operand_value(ctx, vy, fuel) { Some(b) => b, None => return None };
+    let (vx, bx) = match verified_nat_operand_reduce(ctx, env, x, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
+    let (vy, by) = match verified_nat_operand_reduce(ctx, env, y, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
     let ghost a = crate::nat_lit_model::to_nat(bx);
     let ghost b = crate::nat_lit_model::to_nat(by);
     let r_opt = if op == 0 {
