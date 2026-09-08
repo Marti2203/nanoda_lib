@@ -1029,9 +1029,14 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
                 max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
             }
+            // (2026-09-08) a head that does not unfold is NOT the end of the
+            // round: recursor / projection heads go on to their producers.
             let r1 = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
                 Some(v) => v,
-                None => return cur,
+                None => {
+                    proof { pstep_star_refl(env_model_capped(*env, k as nat), to_model(cur)); }
+                    cur
+                }
             };
             let r2 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
                 Some(v) => {
@@ -1105,9 +1110,26 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
                 max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
             }
-            let rb = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+            let rb0 = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
                 Some(v) => v,
-                None => return cur,
+                None => {
+                    proof { pstep_star_refl(env_model_capped(*env, k as nat), to_model(cur)); }
+                    cur
+                }
+            };
+            let rb1 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, rb0, (fuel - 1) as u32, k) }) {
+                Some(v) => {
+                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(rb0), to_model(v)); }
+                    v
+                }
+                None => rb0,
+            };
+            let rb = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, rb1, (fuel - 1) as u32, k) }) {
+                Some(v) => {
+                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(rb1), to_model(v)); }
+                    v
+                }
+                None => rb1,
             };
             if expr_ptr_eq(rb, cur) {
                 return cur;
