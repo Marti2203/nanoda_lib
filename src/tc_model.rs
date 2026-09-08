@@ -308,7 +308,7 @@ pub fn verified_unfold_def_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         return None;
     }
     assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
         Some(def_val) => {
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
@@ -411,7 +411,7 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         return None;
     }
     assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
         Some(def_val) => {
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
@@ -494,7 +494,7 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         None => true,
     }
 {
-    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
+    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) {
         Some(p) => p,
         None => return None,
     };
@@ -513,7 +513,7 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         None => return None,
     };
     // Per-definition certification (the capped model's membership test).
-    let sv = match verified_size(ctx, def_value, fuel) { Some(v) => v, None => return None };
+    let sv = match verified_size(ctx, def_value, 100000) { Some(v) => v, None => return None };
     if sv > k {
         return None;
     }
@@ -526,7 +526,7 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         return None;
     }
     assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
         Some(def_val) => {
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
@@ -978,7 +978,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             k <= 60000,
         decreases rounds - i
     {
-        let sc = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        let sc = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
         if sc > 1500 {
             // (2026-09-08) above the growth-bound gate: the PLAIN beta/zeta
             // step, then definition unfolding at the arena ceiling, then the
@@ -989,7 +989,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
                 max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
             }
-            let rp = match verified_whnf_no_unfolding_step_plain(ctx, cur, fuel) {
+            let rp = match verified_whnf_no_unfolding_step_plain(ctx, cur, 100000) {
                 Some(v) => v,
                 None => {
                     proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
@@ -1012,7 +1012,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 }
                 None => {}
             }
-            let scb = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+            let scb = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
             proof {
                 depth_le_size(to_model(cur));
                 nlbv_bound_implies_max_var_below(to_model(cur), 0);
@@ -1085,7 +1085,7 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             }
             None => {}
         }
-        let sc2 = match verified_size(ctx, cur, fuel) { Some(v) => v, None => return cur };
+        let sc2 = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
         if sc2 > 1500 {
             // (2026-09-08) grew past the gate mid-round: unfold at the ceiling
             // instead of giving up; the next round takes the plain path.
@@ -1310,7 +1310,7 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
     decreases fuel
 {
     let ghost cm = env_model_capped(*env, k as nat);
-    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (name, levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
     let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
@@ -1429,7 +1429,7 @@ pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     decreases fuel
 {
     let ghost cm = env_model_capped(*env, k as nat);
-    let (head, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
     let head_el = ctx.read_expr(head);
     let (_, idx, structure) = match expr_as_proj(&head_el) { Some(p) => p, None => return None };
     if idx > 0xFFFF_0000 {
@@ -1446,7 +1446,7 @@ pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         return None;
     }
     let s2 = verified_whnf_measured_rounds_capped(ctx, env, structure, (fuel - 1) as u32, 32, k);
-    let (fun, cargs) = match verified_unfold_apps(ctx, s2, fuel) { Some(p) => p, None => return None };
+    let (fun, cargs) = match verified_unfold_apps(ctx, s2, 100000) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
     let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
@@ -2470,7 +2470,7 @@ pub fn verified_reduce_rec_core<'t, 'p: 't>(
         None => true,
     }
 {
-    match verified_subst_expr_levels(ctx, rec_rule_val, uparams, const_levels, fuel) {
+    match verified_subst_expr_levels(ctx, rec_rule_val, uparams, const_levels, 100000) {
         Some(subst_val) => {
             let r1 = verified_foldl_apps(ctx, subst_val, prefix_args);
             let r2 = verified_foldl_apps(ctx, r1, ctor_args_wo_params);
@@ -2695,7 +2695,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     decreases fuel
 {
     let ghost cm = env_model_capped(*env, k as nat);
-    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) { Some(p) => p, None => return None };
+    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
     let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
@@ -2738,7 +2738,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         },
         None => majw0,
     };
-    let (chead, cargs) = match verified_unfold_apps(ctx, majw, fuel) { Some(p) => p, None => return None };
+    let (chead, cargs) = match verified_unfold_apps(ctx, majw, 100000) { Some(p) => p, None => return None };
     let chead_el = ctx.read_expr(chead);
     let (cname, _clevels) = match expr_as_const(chead, &chead_el) { Some(p) => p, None => return None };
     if cargs.len() > 64 {
@@ -2750,7 +2750,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         return None;
     }
     let rhs = rec_rule_val(&rule);
-    let sz = match verified_size(ctx, rhs, fuel) { Some(v) => v, None => return None };
+    let sz = match verified_size(ctx, rhs, 100000) { Some(v) => v, None => return None };
     if sz > 500 {
         return None;
     }
@@ -2760,7 +2760,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         return None;
     }
     assert(to_model_of_levels(uparams).len() == to_model_of_levels(rlevels).len());
-    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, fuel) { Some(b) => b, None => return None };
+    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) { Some(b) => b, None => return None };
     let prefix_args = &args[0..nprefix];
     let field_args = &cargs[(cargs.len() - nf)..cargs.len()];
     let post_args = &args[(major_idx + 1)..args.len()];
@@ -6534,7 +6534,7 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     if uparams_vec.len() != c_uparams_vec.len() {
         return None;
     }
-    match verified_subst_expr_levels(ctx, ty, uparams, c_uparams, fuel) {
+    match verified_subst_expr_levels(ctx, ty, uparams, c_uparams, 100000) {
         Some(r) => {
             let ghost id = name_id(c_name);
             let ghost ks = level_names(to_model_of_levels(uparams));

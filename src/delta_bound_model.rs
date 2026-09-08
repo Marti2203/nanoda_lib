@@ -208,7 +208,7 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     proof {
         spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
     }
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, fuel) {
+    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
         Some(def_val) => {
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
@@ -313,7 +313,7 @@ pub fn verified_infer_const_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
     if uparams_vec.len() != c_uparams_vec.len() {
         return None;
     }
-    match verified_subst_expr_levels(ctx, ty, uparams, c_uparams, fuel) {
+    match verified_subst_expr_levels(ctx, ty, uparams, c_uparams, 100000) {
         Some(r) => {
             let ghost id = name_id(c_name);
             let ghost ks = level_names(to_model_of_levels(uparams));
@@ -398,7 +398,7 @@ pub fn verified_infer_proj_ctor_ty<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     if ctor_uparams_vec.len() != struct_ty_levels_vec.len() {
         return None;
     }
-    match verified_subst_expr_levels(ctx, ctor_ty_raw, ctor_uparams, struct_ty_levels, fuel) {
+    match verified_subst_expr_levels(ctx, ctor_ty_raw, ctor_uparams, struct_ty_levels, 100000) {
         Some(r) => {
             let ghost id = name_id(ctor_name);
             let ghost ks = level_names(to_model_of_levels(ctor_uparams));
@@ -3314,8 +3314,8 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     decreases budget, 2int
 {
     let ghost em = to_model_of_env(*env);
-    let sb1 = match verified_size(ctx, b1, fuel) { Some(v) => v, None => return None };
-    let sb2 = match verified_size(ctx, b2, fuel) { Some(v) => v, None => return None };
+    let sb1 = match verified_size(ctx, b1, 100000) { Some(v) => v, None => return None };
+    let sb2 = match verified_size(ctx, b2, 100000) { Some(v) => v, None => return None };
     proof {
         depth_le_size(to_model(b1));
         depth_le_size(to_model(b2));
@@ -3323,10 +3323,10 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let local = ctx.mk_dbj_level(name, style, t1);
     let substs: [ExprPtr<'t>; 1] = [local];
     let mut ok = false;
-    let ib1 = verified_inst(ctx, b1, &substs, 0, fuel);
-    let ib2 = verified_inst(ctx, b2, &substs, 0, fuel);
+    let ib1 = verified_inst(ctx, b1, &substs, 0, 100000);
+    let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
     if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
-        if verified_fv_absent(ctx, b1, local, fuel) == Some(true) && verified_fv_absent(ctx, b2, local, fuel) == Some(true) {
+        if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
             if let Some(true) = verified_conv(ctx, env, ib1, ib2, fuel, k, budget) {
                 proof {
                     let kk = expr_id(local);
@@ -3364,8 +3364,8 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost lcm = arena_lctx();
-    let sb1 = match verified_size(ctx, b1, fuel) { Some(v) => v, None => return None };
-    let sb2 = match verified_size(ctx, b2, fuel) { Some(v) => v, None => return None };
+    let sb1 = match verified_size(ctx, b1, 100000) { Some(v) => v, None => return None };
+    let sb2 = match verified_size(ctx, b2, 100000) { Some(v) => v, None => return None };
     proof {
         depth_le_size(to_model(b1));
         depth_le_size(to_model(b2));
@@ -3373,10 +3373,10 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let local = ctx.mk_dbj_level(name, style, t1);
     let substs: [ExprPtr<'t>; 1] = [local];
     let mut ok = false;
-    let ib1 = verified_inst(ctx, b1, &substs, 0, fuel);
-    let ib2 = verified_inst(ctx, b2, &substs, 0, fuel);
+    let ib1 = verified_inst(ctx, b1, &substs, 0, 100000);
+    let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
     if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
-        if verified_fv_absent(ctx, b1, local, fuel) == Some(true) && verified_fv_absent(ctx, b2, local, fuel) == Some(true) {
+        if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
             if let Some(true) = verified_conv_p(ctx, env, ib1, ib2, fuel, k, budget) {
                 proof {
                     let kk = expr_id(local);
@@ -3435,8 +3435,8 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     if budget == 0 {
         return None;
     }
-    let (h1, args1) = match verified_unfold_apps(ctx, x, fuel) { Some(p) => p, None => return None };
-    let (h2, args2) = match verified_unfold_apps(ctx, y, fuel) { Some(p) => p, None => return None };
+    let (h1, args1) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let (h2, args2) = match verified_unfold_apps(ctx, y, 100000) { Some(p) => p, None => return None };
     if args1.len() == 0 || args1.len() != args2.len() {
         return None;
     }
@@ -4073,8 +4073,8 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     if budget == 0 {
         return None;
     }
-    let (h1, args1) = match verified_unfold_apps(ctx, x, fuel) { Some(p) => p, None => return None };
-    let (h2, args2) = match verified_unfold_apps(ctx, y, fuel) { Some(p) => p, None => return None };
+    let (h1, args1) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let (h2, args2) = match verified_unfold_apps(ctx, y, 100000) { Some(p) => p, None => return None };
     if args1.len() == 0 || args1.len() != args2.len() {
         return None;
     }

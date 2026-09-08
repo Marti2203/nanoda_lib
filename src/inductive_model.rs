@@ -564,7 +564,7 @@ pub fn verified_replace_if_nested_ctor_loop<'t, 'p: 't, 'x>(
                 }
                 match verified_replace_pfx(ctx, j_ctor_name, nested_container_name, aux_nested_container_name, fuel) {
                     Some(auxj_ctor_name) => {
-                        match verified_subst_expr_levels(ctx, j_ctor_ty, j_ctor_uparams, i_levels, fuel) {
+                        match verified_subst_expr_levels(ctx, j_ctor_ty, j_ctor_uparams, i_levels, 100000) {
                             Some(auxj_ctor_type1) => {
                                 proof {
                                     let ghost ks = level_names(to_model_of_levels(j_ctor_uparams));
@@ -719,7 +719,7 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
                             let (aux_nested_container_name, winning_idx) = verified_mk_unique_name(ctx, env, base, unique_start);
                             assert(winning_idx as nat <= unique_start as nat + old_declar_names(*env).len());
                             let next_unique_start = winning_idx + 1;
-                            match verified_subst_expr_levels(ctx, container_ty, container_uparams, i_levels, fuel) {
+                            match verified_subst_expr_levels(ctx, container_ty, container_uparams, i_levels, 100000) {
                                 Some(base_ty) => {
                                     proof {
                                         let ghost ks = level_names(to_model_of_levels(container_uparams));
