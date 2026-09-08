@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
+use crate::tc_model::{deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -3336,6 +3336,56 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     if ok { conv_stat(8); Some(true) } else { None }
 }
 
+/// (`_p` twin, 2026-09-08: proof irrelevance under binders) The binder case of `verified_conv_p` by the FRESH-INSTANCE rule: open
+/// both bodies with one fresh local (`mk_dbj_level`, balanced by
+/// `replace_dbj_level` before returning), certify at run time that the
+/// local occurs in neither body (`verified_fv_absent`, pointer
+/// comparison), and compare the opened bodies -- closed terms now, so
+/// every reduction route applies. The claim composes through
+/// `deq_any_bind_fresh`.
+pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires
+        k <= 500,
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(t1), to_model(t2)),
+    ensures match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
+        _ => true,
+    }
+    decreases budget, 2int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    let sb1 = match verified_size(ctx, b1, fuel) { Some(v) => v, None => return None };
+    let sb2 = match verified_size(ctx, b2, fuel) { Some(v) => v, None => return None };
+    proof {
+        depth_le_size(to_model(b1));
+        depth_le_size(to_model(b2));
+    }
+    let local = ctx.mk_dbj_level(name, style, t1);
+    let substs: [ExprPtr<'t>; 1] = [local];
+    let mut ok = false;
+    let ib1 = verified_inst(ctx, b1, &substs, 0, fuel);
+    let ib2 = verified_inst(ctx, b2, &substs, 0, fuel);
+    if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
+        if verified_fv_absent(ctx, b1, local, fuel) == Some(true) && verified_fv_absent(ctx, b2, local, fuel) == Some(true) {
+            if let Some(true) = verified_conv_p(ctx, env, ib1, ib2, fuel, k, budget) {
+                proof {
+                    let kk = expr_id(local);
+                    let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
+                    assert(sm =~= seq![ExprSpec::Free(kk)]);
+                    assert(to_model(ib1) == inst_free(to_model(b1), kk));
+                    assert(to_model(ib2) == inst_free(to_model(b2), kk));
+                    deq_p_any_bind_fresh(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2), kk);
+                }
+                ok = true;
+            }
+        }
+    }
+    ctx.replace_dbj_level(local);
+    if ok { conv_stat(8); Some(true) } else { None }
+}
+
 /// `verified_conv` with the per-checker failure cache around it: pairs
 /// this checker already failed on are not re-searched (the recursion
 /// revisits the same sub-pairs from many contexts).
@@ -4194,11 +4244,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
-                    if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
-                        proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(y)); }
-                        return Some(true);
-                    }
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                    return Some(true);
                 }
             }
         }
@@ -4212,11 +4259,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv(ctx, env, t1, t2, fuel, k, budget - 1) {
-                    if let Some(true) = verified_conv_bind_fresh(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
-                        proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(y)); }
-                        return Some(true);
-                    }
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                    return Some(true);
                 }
             }
         }
