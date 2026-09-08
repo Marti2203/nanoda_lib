@@ -127,6 +127,14 @@ use crate::expr_arena_bridge::{verified_size, verified_depth};
 #[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
 #[cfg(verus_only)]
+use crate::beta_model::shift;
+#[cfg(verus_only)]
+use crate::beta_model::nlbv_shift_noop;
+#[cfg(verus_only)]
+use crate::tc_model::eta_expands_to;
+#[cfg(verus_only)]
+use crate::tc_model::deq_any_of_eta;
+#[cfg(verus_only)]
 use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
 #[cfg(verus_only)]
 use crate::env_model::{struct_ctor_of_agrees, ctor_num_params_of_agrees};
@@ -4260,6 +4268,55 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                     return Some(true);
                 }
                 if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    // --- eta (2026-09-08): the kernel's `def_eq_eta` -- exactly one side a
+    // lambda `fun (a : t) => body`, the other side `f` closed: compare the
+    // lambda with `fun (a : t) => f a` (the model's `eta_expands_to`, a
+    // closed `f` being its own shift). Claim: deq_p(x, eta f) then the eta
+    // leaf `deq_eta(eta f, f)` lifted through the reduction-only relation.
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((n1, s1, t1, _)), None) => {
+            if ctx.num_loose_bvars(y) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(y, v0);
+                let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
+                if let Some(true) = verified_conv_p(ctx, env, x, new_lambda, fuel, k, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(y));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(y)));
+                        assert(deq_eta(to_model(new_lambda), to_model(y)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(y));
+                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(y));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(12);
+                    return Some(true);
+                }
+            }
+        }
+        (None, Some((n2, s2, t2, _))) => {
+            if ctx.num_loose_bvars(x) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(x, v0);
+                let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
+                if let Some(true) = verified_conv_p(ctx, env, new_lambda, y, fuel, k, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(x));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(x)));
+                        assert(deq_eta(to_model(new_lambda), to_model(x)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(x));
+                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(x));
+                        deq_p_any_symm(dtym, em, lcm, to_model(new_lambda), to_model(x));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(12);
                     return Some(true);
                 }
             }
