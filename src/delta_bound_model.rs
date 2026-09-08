@@ -4248,6 +4248,218 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     Some(r)
 }
 
+/// The K-like constructor synthesis, factored out of `verified_k_like_step_p`
+/// (2026-09-08): for a K-like recursor `rname` and a closed major premise
+/// `major`, build `c lv params` from the major's type and certify
+/// `major ~ c lv params` by proof irrelevance.
+#[verifier::spinoff_prover]
+pub fn verified_k_ctor_for_major<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, rname: NamePtr<'t>, major: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(major)) <= 0,
+        k <= 500,
+    ensures match result {
+        Some(c) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(major), to_model(c)) && nlbv(to_model(c)) <= 0,
+        None => true,
+    }
+{
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost em = to_model_of_env(*env);
+    let ghost lcm = arena_lctx();
+    match get_recursor_is_k(env, &rname) {
+        Some(true) => {}
+        _ => return None,
+    }
+    let (_np, _nm, _nmin, _major_idx, _uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
+    let ctor_name = match first_rule_ctor_name(&rules) { Some(c) => c, None => return None };
+    let cnp = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return None };
+    if ctx.num_loose_bvars(major) != 0 {
+        return None;
+    }
+    let mty = match verified_infer_shadow(ctx, env, major) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(mty) != 0 {
+        return None;
+    }
+    let w = verified_whnf_measured_rounds_capped(ctx, env, mty, 32, 32, k);
+    let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
+    if (cnp as usize) > iargs.len() {
+        return None;
+    }
+    let c = ctx.mk_const(ctor_name, ilv);
+    let params: &[ExprPtr<'t>] = &iargs[0..cnp as usize];
+    let ctor_app = verified_foldl_apps(ctx, c, params);
+    if ctx.num_loose_bvars(ctor_app) != 0 {
+        return None;
+    }
+    match verified_proof_irrel_shadow(ctx, env, major, ctor_app, fuel, k) {
+        Some(true) => {}
+        _ => return None,
+    }
+    proof {
+        proof_irrel_pair_of_shadow_claim(*env, major, ctor_app);
+        deq_p_any_of_irrel(dtym, em, lcm, to_model(major), to_model(ctor_app));
+    }
+    Some(ctor_app)
+}
+
+/// Recursor step under the deq_p relation (2026-09-08): normalize the major
+/// premise with the deq_p whnf (`verified_whnf_p_rounds`, recursion through
+/// `fuel`), if it is still not a constructor and the recursor is K-like
+/// synthesize the constructor by proof irrelevance, rewrite the spine
+/// (`deq_p_any_spine_update`) and fire the certified iota producer on it.
+/// This is what lets `Eq.rec` / `Acc.rec` majors nested inside
+/// well-founded-recursion unfoldings reduce, as the kernel does.
+#[verifier::spinoff_prover]
+pub fn verified_rec_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 500,
+    ensures match result {
+        Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+    decreases fuel, 0int
+{
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost em = to_model_of_env(*env);
+    let ghost lcm = arena_lctx();
+    let ghost cm = env_model_capped(*env, k as nat);
+    if fuel == 0 {
+        return None;
+    }
+    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    proof {
+        assert(to_model(e) == spine_app(to_model(head), args_model));
+        spine_app_nlbv_decompose(to_model(head), args_model);
+    }
+    let hl = ctx.read_expr(head);
+    let (rname, _rlevels) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let (_np, _nm, _nmin, major_idx, _uparams, _rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
+    if major_idx >= args.len() {
+        return None;
+    }
+    let major = args[major_idx];
+    proof {
+        assert(args_model[major_idx as int] == to_model(major));
+        assert(nlbv(args_model[major_idx as int]) <= nlbv(spine_app(to_model(head), args_model)));
+    }
+    let m1 = verified_whnf_p_rounds(ctx, env, major, (fuel - 1) as u32, 8, k);
+    let is_ctor_spine = match verified_unfold_const_apps(ctx, m1, 100000) { Some(_) => true, None => false };
+    let m2 = if is_ctor_spine {
+        m1
+    } else {
+        match verified_k_ctor_for_major(ctx, env, rname, m1, fuel, k) {
+            Some(c) => {
+                proof { deq_p_any_trans(dtym, em, lcm, to_model(major), to_model(m1), to_model(c)); }
+                c
+            }
+            None => return None,
+        }
+    };
+    if expr_ptr_eq(m2, major) {
+        return None;
+    }
+    let mut args2: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len()
+        invariant
+            i <= args.len(),
+            major_idx < args.len(),
+            args2@.len() == i,
+            forall |j: int| 0 <= j < i ==> args2@[j] == (if j == major_idx as int { m2 } else { args@[j] }),
+        decreases args.len() - i
+    {
+        if i == major_idx {
+            args2.push(m2);
+        } else {
+            args2.push(args[i]);
+        }
+        i = i + 1;
+    }
+    let spine2 = verified_foldl_apps(ctx, head, args2.as_slice());
+    let ghost args2_model = Seq::new(args2@.len(), |j: int| to_model(args2@[j]));
+    proof {
+        assert(args2_model =~= args_model.update(major_idx as int, to_model(m2)));
+        deq_p_any_spine_update(dtym, em, lcm, to_model(head), args_model, major_idx as int, to_model(m2));
+        assert(deq_p_any(dtym, em, lcm, to_model(e), to_model(spine2)));
+        assert forall |j: int| 0 <= j < args2_model.len() implies nlbv(#[trigger] args2_model[j]) <= 0 by {
+            if j == major_idx as int {
+                assert(args2_model[j] == to_model(m2));
+            } else {
+                assert(args2_model[j] == args_model[j]);
+                assert(nlbv(args_model[j]) <= nlbv(spine_app(to_model(head), args_model)));
+            }
+        }
+        spine_app_nlbv(to_model(head), args2_model);
+    }
+    let r = match verified_rec_step_capped(ctx, env, spine2, fuel, k) { Some(v) => v, None => return None };
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(cm, em, to_model(spine2), to_model(r));
+        defeq_of_pstep_star(em, to_model(spine2), to_model(r));
+        deq_p_any_of_defeq(dtym, em, lcm, to_model(spine2), to_model(r));
+        deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(spine2), to_model(r));
+    }
+    Some(r)
+}
+
+/// Multi-round whnf under the deq_p relation (2026-09-08): each round is the
+/// certified measured round (a `pstep_star`, lifted) followed by the deq_p
+/// recursor step; stops when nothing changes.
+#[verifier::spinoff_prover]
+pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32, k: u32) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 500,
+    ensures
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+    decreases fuel, 1int
+{
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost em = to_model_of_env(*env);
+    let ghost lcm = arena_lctx();
+    let ghost cm = env_model_capped(*env, k as nat);
+    let mut cur = e;
+    let mut i: u32 = 0;
+    proof { deq_p_any_refl(dtym, em, lcm, to_model(e)); }
+    while i < rounds
+        invariant
+            dtym == to_model_of_declar_ty(*env),
+            em == to_model_of_env(*env),
+            lcm == arena_lctx(),
+            cm == env_model_capped(*env, k as nat),
+            k <= 500,
+            deq_p_any(dtym, em, lcm, to_model(e), to_model(cur)),
+            nlbv(to_model(cur)) <= 0,
+        decreases rounds - i
+    {
+        let r1 = verified_whnf_measured_rounds_capped(ctx, env, cur, 32, 1, k);
+        proof {
+            env_model_capped_sub(*env, k as nat);
+            pstep_star_env_weaken(cm, em, to_model(cur), to_model(r1));
+            defeq_of_pstep_star(em, to_model(cur), to_model(r1));
+            deq_p_any_of_defeq(dtym, em, lcm, to_model(cur), to_model(r1));
+            deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(cur), to_model(r1));
+        }
+        let r2 = if fuel == 0 { None } else { verified_rec_step_p(ctx, env, r1, (fuel - 1) as u32, k) };
+        match r2 {
+            Some(v) => {
+                proof { deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(r1), to_model(v)); }
+                cur = v;
+            }
+            None => {
+                if expr_ptr_eq(r1, cur) {
+                    return cur;
+                }
+                cur = r1;
+            }
+        }
+        i = i + 1;
+    }
+    cur
+}
+
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires k <= 500,
     ensures match result {
@@ -4582,6 +4794,34 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                 deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
             }
             conv_stat(10);
+            return Some(true);
+        }
+    }
+    // deq_p whnf retry (2026-09-08): both sides normalized with the deq_p
+    // whnf (K-like majors reduce), then joined or compared once more.
+    // TOP LEVELS ONLY (budget >= 14): at every node it cost 5x runtime.
+    if budget < 14 {
+        conv_trace(5, x, y, budget);
+        return None;
+    }
+    let px = verified_whnf_p_rounds(ctx, env, x, fuel, conv_join_rounds(), k);
+    let py = verified_whnf_p_rounds(ctx, env, y, fuel, conv_join_rounds(), k);
+    if expr_ptr_eq(px, py) {
+        proof {
+            deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(py));
+            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(px), to_model(y));
+        }
+        conv_stat(14);
+        return Some(true);
+    }
+    if !(expr_ptr_eq(px, x) && expr_ptr_eq(py, y)) {
+        if let Some(true) = verified_conv_p(ctx, env, px, py, fuel, k, budget - 1) {
+            proof {
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(px), to_model(py));
+                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(py));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(py), to_model(y));
+            }
+            conv_stat(14);
             return Some(true);
         }
     }
