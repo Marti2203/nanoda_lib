@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -124,6 +124,7 @@ use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
 use crate::expr_arena_bridge::{verified_size, verified_depth};
+use crate::tc_model::{verified_rec_step_capped, first_rule_ctor_name};
 #[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
 #[cfg(verus_only)]
@@ -4131,6 +4132,122 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     Some(true)
 }
 
+/// K-LIKE RECURSOR LEAF (2026-09-08): the kernel's `to_ctor_when_k` --
+/// for a K-like recursor (`Eq.rec`, `Acc.rec`, ...) whose major premise is
+/// not a constructor, synthesize the nullary constructor application from
+/// the major's TYPE (`I lv params idx` gives `c lv params`), and reduce
+/// with it. No new model rule: the major and the synthesized constructor
+/// are two PROOFS of convertible propositions (proof irrelevance on the
+/// major), the rewritten spine steps by ordinary iota, and `deq_p_any`
+/// composes the two. `k <= 500` is the proof-irrelevance route's own cap.
+#[verifier::spinoff_prover]
+pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        k <= 500,
+    ensures match result {
+        Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost em = to_model_of_env(*env);
+    let ghost lcm = arena_lctx();
+    let ghost cm = env_model_capped(*env, k as nat);
+    let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    proof {
+        assert(to_model(x) == spine_app(to_model(head), args_model));
+        spine_app_nlbv_decompose(to_model(head), args_model);
+    }
+    let hl = ctx.read_expr(head);
+    let (rname, _rlevels) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    match get_recursor_is_k(env, &rname) {
+        Some(true) => {}
+        _ => return None,
+    }
+    let (_np, _nm, _nmin, major_idx, _uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => return None };
+    if major_idx >= args.len() {
+        return None;
+    }
+    let major = args[major_idx];
+    proof {
+        assert(args_model[major_idx as int] == to_model(major));
+        assert(nlbv(args_model[major_idx as int]) <= nlbv(spine_app(to_model(head), args_model)));
+    }
+    let ctor_name = match first_rule_ctor_name(&rules) { Some(c) => c, None => return None };
+    let cnp = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return None };
+    if ctx.num_loose_bvars(major) != 0 {
+        return None;
+    }
+    let mty = match verified_infer_shadow(ctx, env, major) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(mty) != 0 {
+        return None;
+    }
+    let w = verified_whnf_measured_rounds_capped(ctx, env, mty, 32, 32, k);
+    let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
+    if (cnp as usize) > iargs.len() {
+        return None;
+    }
+    let c = ctx.mk_const(ctor_name, ilv);
+    let params: &[ExprPtr<'t>] = &iargs[0..cnp as usize];
+    let ctor_app = verified_foldl_apps(ctx, c, params);
+    if ctx.num_loose_bvars(ctor_app) != 0 {
+        return None;
+    }
+    match verified_proof_irrel_shadow(ctx, env, major, ctor_app, fuel, k) {
+        Some(true) => {}
+        _ => return None,
+    }
+    proof {
+        proof_irrel_pair_of_shadow_claim(*env, major, ctor_app);
+        deq_p_any_of_irrel(dtym, em, lcm, to_model(major), to_model(ctor_app));
+    }
+    // the spine with the synthesized constructor in the major position
+    let mut args2: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len()
+        invariant
+            i <= args.len(),
+            major_idx < args.len(),
+            args2@.len() == i,
+            forall |j: int| 0 <= j < i ==> args2@[j] == (if j == major_idx as int { ctor_app } else { args@[j] }),
+        decreases args.len() - i
+    {
+        if i == major_idx {
+            args2.push(ctor_app);
+        } else {
+            args2.push(args[i]);
+        }
+        i = i + 1;
+    }
+    let spine2 = verified_foldl_apps(ctx, head, args2.as_slice());
+    let ghost args2_model = Seq::new(args2@.len(), |j: int| to_model(args2@[j]));
+    proof {
+        assert(args2_model =~= args_model.update(major_idx as int, to_model(ctor_app)));
+        deq_p_any_spine_update(dtym, em, lcm, to_model(head), args_model, major_idx as int, to_model(ctor_app));
+        assert(deq_p_any(dtym, em, lcm, to_model(x), to_model(spine2)));
+        assert forall |j: int| 0 <= j < args2_model.len() implies nlbv(#[trigger] args2_model[j]) <= 0 by {
+            if j == major_idx as int {
+                assert(args2_model[j] == to_model(ctor_app));
+            } else {
+                assert(args2_model[j] == args_model[j]);
+                assert(nlbv(args_model[j]) <= nlbv(spine_app(to_model(head), args_model)));
+            }
+        }
+        spine_app_nlbv(to_model(head), args2_model);
+    }
+    let r = match verified_rec_step_capped(ctx, env, spine2, fuel, k) { Some(v) => v, None => return None };
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(cm, em, to_model(spine2), to_model(r));
+        defeq_of_pstep_star(em, to_model(spine2), to_model(r));
+        deq_p_any_of_defeq(dtym, em, lcm, to_model(spine2), to_model(r));
+        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(spine2), to_model(r));
+    }
+    Some(r)
+}
+
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires k <= 500,
     ensures match result {
@@ -4322,6 +4439,29 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             }
         }
         _ => {}
+    }
+    // --- K-like recursor (2026-09-08): reduce a K-like recursor application
+    // whose major premise is a proof term, then compare the reduct.
+    if ctx.num_loose_bvars(x) == 0 {
+        if let Some(rx) = verified_k_like_step_p(ctx, env, x, fuel, k) {
+            if let Some(true) = verified_conv_p(ctx, env, rx, y, fuel, k, budget - 1) {
+                proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
+                conv_stat(13);
+                return Some(true);
+            }
+        }
+    }
+    if ctx.num_loose_bvars(y) == 0 {
+        if let Some(ry) = verified_k_like_step_p(ctx, env, y, fuel, k) {
+            if let Some(true) = verified_conv_p(ctx, env, x, ry, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                }
+                conv_stat(13);
+                return Some(true);
+            }
+        }
     }
     match (expr_as_proj(&xe), expr_as_proj(&ye)) {
         (Some((_, i1, s1)), Some((_, i2, s2))) => {

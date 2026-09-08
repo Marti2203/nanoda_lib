@@ -98,6 +98,8 @@ use crate::env_model::ctor_num_params_of_agrees;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
 #[cfg(verus_only)]
+use crate::beta_model::spine_app_concat;
+#[cfg(verus_only)]
 use crate::env_model::{env_global_wf_ty, env_global_wf, env_global_cap};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_declar_ty;
@@ -119,6 +121,13 @@ use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_fu
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
     r.ctor_name
+}
+
+/// First rule's constructor name (exec-only gate for the K-like leaf; its
+/// correctness is certified downstream by proof irrelevance + iota).
+#[allow(dead_code)]
+pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) -> Option<NamePtr<'t>> {
+    rules.get(0).map(|r| r.ctor_name)
 }
 
 #[allow(dead_code)]
@@ -156,6 +165,8 @@ pub uninterp spec fn rec_rule_ctor_name_of<'a>(r: RecRule<'a>) -> NamePtr<'a>;
 
 pub assume_specification<'t> [rec_rule_ctor_name] (r: &RecRule<'t>) -> (result: NamePtr<'t>)
     ensures result == rec_rule_ctor_name_of(*r);
+
+pub assume_specification<'t> [first_rule_ctor_name] (rules: &std::sync::Arc<[RecRule<'t>]>) -> (result: Option<NamePtr<'t>>);
 
 /// Small helper so `verified_reduce_rec_step`'s `ensures` can use `.
 /// subrange(...)` (a valid quantifier trigger) instead of a fresh
@@ -5779,6 +5790,51 @@ pub proof fn deq_p_any_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<
     deq_p_mono(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h2, hm);
     deq_p_bind_fresh(dty, env, lctx, t1, t2, b1, b2, k, hm);
     assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
+}
+
+/// `deq_p_any` congruence along a spine of unchanged arguments (2026-09-08,
+/// K-like recursor leaf): `x ~ y` gives `x args ~ y args`.
+pub proof fn deq_p_any_spine_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, rest: Seq<ExprSpec>)
+    requires deq_p_any(dty, env, lctx, x, y)
+    ensures deq_p_any(dty, env, lctx, spine_app(x, rest), spine_app(y, rest))
+    decreases rest.len()
+{
+    if rest.len() == 0 {
+        assert(spine_app(x, rest) == x);
+        assert(spine_app(y, rest) == y);
+    } else {
+        let front = rest.subrange(0, rest.len() as int - 1);
+        let last = rest[rest.len() as int - 1];
+        assert(rest =~= front.push(last));
+        spine_app_compose_last(x, front, last);
+        spine_app_compose_last(y, front, last);
+        deq_p_any_spine_congr(dty, env, lctx, x, y, front);
+        deq_p_any_refl(dty, env, lctx, last);
+        deq_p_any_app_congr(dty, env, lctx, spine_app(x, front), spine_app(y, front), last, last);
+    }
+}
+
+/// One argument of a spine replaced by a `deq_p_any`-related term (the
+/// `pstep_star_spine_update` twin).
+pub proof fn deq_p_any_spine_update(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, head: ExprSpec, args: Seq<ExprSpec>, i: int, y: ExprSpec)
+    requires
+        0 <= i < args.len(),
+        deq_p_any(dty, env, lctx, args[i], y),
+    ensures deq_p_any(dty, env, lctx, spine_app(head, args), spine_app(head, args.update(i, y)))
+{
+    let args2 = args.update(i, y);
+    let pre = args.subrange(0, i);
+    let rest = args.subrange(i + 1, args.len() as int);
+    assert(args =~= pre.push(args[i]) + rest);
+    assert(args2 =~= pre.push(y) + rest);
+    let x = spine_app(head, pre);
+    spine_app_concat(head, pre.push(args[i]), rest);
+    spine_app_concat(head, pre.push(y), rest);
+    spine_app_compose_last(head, pre, args[i]);
+    spine_app_compose_last(head, pre, y);
+    deq_p_any_refl(dty, env, lctx, x);
+    deq_p_any_app_congr(dty, env, lctx, x, x, args[i], y);
+    deq_p_any_spine_congr(dty, env, lctx, ExprSpec::App(Box::new(x), Box::new(args[i])), ExprSpec::App(Box::new(x), Box::new(y)), rest);
 }
 
 pub proof fn deq_p_any_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec)
