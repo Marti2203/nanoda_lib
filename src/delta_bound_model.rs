@@ -4441,7 +4441,7 @@ pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             nlbv(to_model(cur)) <= 0,
         decreases rounds - i
     {
-        let r1 = verified_whnf_measured_rounds_capped(ctx, env, cur, 32, 1, k);
+        let r1 = verified_whnf_measured_rounds_capped(ctx, env, cur, fuel, 1, k);
         proof {
             env_model_capped_sub(*env, k as nat);
             pstep_star_env_weaken(cm, em, to_model(cur), to_model(r1));
