@@ -511,6 +511,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         else if Some(name) == nc.nat_gcd { Some(6) }
         else if Some(name) == nc.nat_beq { Some(7) }
         else if Some(name) == nc.nat_ble { Some(8) }
+        else if Some(name) == nc.nat_land { Some(9) }
+        else if Some(name) == nc.nat_lor { Some(10) }
+        else if Some(name) == nc.nat_xor { Some(11) }
+        else if Some(name) == nc.nat_shl { Some(12) }
+        else if Some(name) == nc.nat_shr { Some(13) }
         else { None }
     }
 

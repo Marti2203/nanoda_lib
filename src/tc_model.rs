@@ -1365,6 +1365,16 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         ctx.bool_to_expr(crate::nat_lit_model::biguint_eq(&bx, &by))
     } else if op == 8 {
         ctx.bool_to_expr(crate::nat_lit_model::biguint_le(&bx, &by))
+    } else if op == 9 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_land(bx, by))
+    } else if op == 10 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_lor(bx, by))
+    } else if op == 11 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_xor(&bx, &by))
+    } else if op == 12 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shl(bx, by))
+    } else if op == 13 {
+        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shr(bx, by))
     } else {
         return None;
     };

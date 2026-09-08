@@ -98,6 +98,26 @@ pub(crate) fn biguint_gcd(x: &BigUint, y: &BigUint) -> BigUint {
     crate::util::nat_gcd(x, y)
 }
 
+pub(crate) fn biguint_land(x: BigUint, y: BigUint) -> BigUint {
+    crate::util::nat_land(x, y)
+}
+
+pub(crate) fn biguint_lor(x: BigUint, y: BigUint) -> BigUint {
+    crate::util::nat_lor(x, y)
+}
+
+pub(crate) fn biguint_xor(x: &BigUint, y: &BigUint) -> BigUint {
+    crate::util::nat_xor(x, y)
+}
+
+pub(crate) fn biguint_shl(x: BigUint, y: BigUint) -> BigUint {
+    crate::util::nat_shl(x, y)
+}
+
+pub(crate) fn biguint_shr(x: BigUint, y: BigUint) -> BigUint {
+    crate::util::nat_shr(x, y)
+}
+
 pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
     x + y
 }
@@ -163,6 +183,25 @@ pub assume_specification [biguint_pow] (x: BigUint, y: BigUint) -> (result: BigU
 
 pub assume_specification [biguint_gcd] (x: &BigUint, y: &BigUint) -> (result: BigUint)
     ensures to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y));
+
+/// Bitwise/shift bridges (2026-09-08): `num_bigint`'s `&`/`|`/`^` and the
+/// kernel's own `nat_shl`/`nat_shr` (`x * 2^y`, `x / 2^y`) against the
+/// model's binary-recursion specs -- the same disclosed trust as the
+/// arithmetic bridges above.
+pub assume_specification [biguint_land] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_land(to_nat(x), to_nat(y));
+
+pub assume_specification [biguint_lor] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_lor(to_nat(x), to_nat(y));
+
+pub assume_specification [biguint_xor] (x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_xor(to_nat(*x), to_nat(*y));
+
+pub assume_specification [biguint_shl] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) * crate::beta_model::nat_pow(2, to_nat(y));
+
+pub assume_specification [biguint_shr] (x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) / crate::beta_model::nat_pow(2, to_nat(y));
 
 pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + to_nat(y);

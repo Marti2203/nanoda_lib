@@ -645,6 +645,27 @@ pub open spec fn nat_gcd(a: nat, b: nat) -> nat
     if b == 0 { a } else { nat_gcd(b, a % b) }
 }
 
+/// Bitwise operations on naturals by binary recursion (2026-09-08, kernel
+/// fold set extended: `Nat.land`/`Nat.lor`/`Nat.xor`, the bignum bridges
+/// axiomatize `&`/`|`/`^` against these). Shifts are `a * 2^b` / `a / 2^b`.
+pub open spec fn nat_land(a: nat, b: nat) -> nat
+    decreases a
+{
+    if a == 0 || b == 0 { 0nat } else { 2 * nat_land(a / 2, b / 2) + (a % 2) * (b % 2) }
+}
+
+pub open spec fn nat_lor(a: nat, b: nat) -> nat
+    decreases a + b
+{
+    if a == 0 { b } else if b == 0 { a } else { 2 * nat_lor(a / 2, b / 2) + (if a % 2 == 1 || b % 2 == 1 { 1nat } else { 0nat }) }
+}
+
+pub open spec fn nat_xor(a: nat, b: nat) -> nat
+    decreases a + b
+{
+    if a == 0 { b } else if b == 0 { a } else { 2 * nat_xor(a / 2, b / 2) + (((a % 2 + b % 2) % 2) as nat) }
+}
+
 /// The kernel's `do_nat_bin` arithmetic (`tc.rs`), op codes as in
 /// `nat_bin_op_of`: saturating `sub`, `div`/`mod` by zero as `0`/`a`
 /// (`nat_div`/`nat_mod`), `pow`, `gcd`. `beq`/`ble` are handled by
@@ -657,6 +678,11 @@ pub open spec fn nat_bin_op_eval(op: u8, a: nat, b: nat) -> nat {
     else if op == 4 { if b == 0 { a } else { a % b } }
     else if op == 5 { nat_pow(a, b) }
     else if op == 6 { nat_gcd(a, b) }
+    else if op == 9 { nat_land(a, b) }
+    else if op == 10 { nat_lor(a, b) }
+    else if op == 11 { nat_xor(a, b) }
+    else if op == 12 { a * nat_pow(2, b) }
+    else if op == 13 { a / nat_pow(2, b) }
     else { 0 }
 }
 
