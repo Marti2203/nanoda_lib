@@ -1004,6 +1004,13 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 // kernel bounds by termination of reduction.
 // ===========================================================================
 
+#[verifier::external_body]
+fn whnf_seen_note<'t>(e: ExprPtr<'t>, k: u32) {
+    if std::env::var_os("NANODA_MEMO_STATS").is_some() {
+        crate::tc::route_stats::whnf_seen_note(e.raw_bits(), k);
+    }
+}
+
 /// `whnf_no_unfolding_aux`'s mirror: beta/zeta (the gate-free primitive),
 /// projection iota (through delta on the structure) and recursor iota, one
 /// step per recursion.
@@ -1079,6 +1086,7 @@ pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 
 {
     let ghost cm = env_model_capped(*env, k as nat);
     proof { pstep_star_refl(cm, to_model(e)); }
+    whnf_seen_note(e, k);
     if fuel == 0 {
         return e;
     }

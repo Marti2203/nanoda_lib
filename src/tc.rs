@@ -212,6 +212,18 @@ pub mod route_stats {
     // in its budget), so a low-budget failure (e.g. inside the spine-wise
     // congruence loop) never poisons a later, higher-budget attempt, while a
     // top-budget failure still short-circuits every retry.
+    /// Diagnostics only (NANODA_MEMO_STATS=1): how often the certified whnf is
+    /// called on a (term, cap) pair it has already been called on in this
+    /// checker -- i.e. how much a memo would save.
+    pub static WHNF_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static WHNF_REPEATS: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static WHNF_SEEN: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+    }
+    pub fn whnf_seen_note(e: u32, k: u32) {
+        WHNF_CALLS.fetch_add(1, Ordering::Relaxed);
+        WHNF_SEEN.with(|m| { if !m.borrow_mut().insert((e, k)) { WHNF_REPEATS.fetch_add(1, Ordering::Relaxed); } });
+    }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
         CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
     }
@@ -348,7 +360,7 @@ pub mod route_stats {
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
             let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
             let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL),
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}\nwhnf calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&WHNF_CALLS), g(&WHNF_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &format!(
