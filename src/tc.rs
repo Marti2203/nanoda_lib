@@ -225,6 +225,15 @@ pub mod route_stats {
     thread_local! {
         static WHNF_SEEN: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
     }
+    pub static INFER_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static INFER_REPEATS: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static INFER_SEEN: std::cell::RefCell<rustc_hash::FxHashSet<u32>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+    }
+    pub fn infer_seen_note(e: u32) {
+        INFER_CALLS.fetch_add(1, Ordering::Relaxed);
+        INFER_SEEN.with(|m| { if !m.borrow_mut().insert(e) { INFER_REPEATS.fetch_add(1, Ordering::Relaxed); } });
+    }
     pub fn whnf_seen_note(e: u32, k: u32) {
         WHNF_CALLS.fetch_add(1, Ordering::Relaxed);
         WHNF_SEEN.with(|m| { if !m.borrow_mut().insert((e, k)) { WHNF_REPEATS.fetch_add(1, Ordering::Relaxed); } });
@@ -365,7 +374,7 @@ pub mod route_stats {
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
             let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
             let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}\nwhnf calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&WHNF_CALLS), g(&WHNF_REPEATS),
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &format!(
@@ -1721,6 +1730,7 @@ mod routed_tests {
             let redex = tc.ctx.mk_app(outer_lam, prop);
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "two beta steps must be def_eq to the reduct");
+            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
             assert_eq!(
                 crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
                 Some(true),
@@ -1751,8 +1761,9 @@ mod routed_tests {
             let consts = [bad];
             let arities = [0usize];
             let _ = anon;
-            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &consts, &arities, negative, 8), None, "a negative occurrence must not certify");
-            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &consts, &arities, positive, 8), Some(true), "a positive argument type must certify");
+            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
+            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &mut memo, &consts, &arities, negative, 8), None, "a negative occurrence must not certify");
+            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &mut memo, &consts, &arities, positive, 8), Some(true), "a positive argument type must certify");
         });
     }
 
@@ -1796,6 +1807,7 @@ mod routed_tests {
         assert!(tc.def_eq(c_foo, prop), "Const(foo) with foo := Sort 0 must be def_eq to Sort 0 via the delta route");
         // Direct attribution: the verified boundary itself confirms the
         // pair (so the routed `true` above did not need the legacy path).
+        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
             crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, &mut memo, c_foo, prop, 100, 500),
             Some(true),
@@ -1827,6 +1839,7 @@ mod routed_tests {
             let redex = tc.ctx.mk_app(lam, prop);
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
+            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
             assert_eq!(
                 crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
                 Some(true),
@@ -1876,6 +1889,7 @@ mod routed_tests {
         let applied = tc.ctx.mk_app(c_foo, prop);
         assert_ne!(applied, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
+        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
             crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, applied, prop, 100, 500, 8),
             Some(true),
@@ -1925,6 +1939,7 @@ mod routed_tests {
         let proj = tc.ctx.mk_proj(s_name, 1, mk_ab);
         assert_ne!(proj, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
+        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
             crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, proj, prop, 100, 500, 8),
             Some(true),

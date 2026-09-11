@@ -72,7 +72,8 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim};
+use crate::tc_model::InferCert;
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -1364,10 +1365,6 @@ pub proof fn infer_depth_fixpoint_ok_linear(dd: nat, fuel: nat)
 /// `types_to` instantiated the way `verified_infer` emits it: the real
 /// env's declaration-type and delta maps, the ambient arena local
 /// context. Non-recursive wrapper, inlines freely.
-pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool {
-    types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(e), to_model(r), fuel)
-}
-
 #[verifier::spinoff_prover]
 pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
     requires
@@ -3404,19 +3401,24 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     (cx, cy)
 }
 
-/// The claim of a shadow INFERENCE certificate: the verified inference
-/// derives a type `r` for `e` (`infer_types_to`, i.e. the model's typing
-/// relation `types_to` over the declaration types, the environment and the
-/// local context, at some fuel).
-pub open spec fn infer_shadow_claim<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>) -> bool {
-    exists |f: nat| #[trigger] infer_types_to(env, e, r, f)
-}
 
 /// Shadow type inference (2026-09-05): the verified inference on `e`, with
 /// the binder-recursion fuel chosen from `e`'s size so that
 /// `infer_depth_fixpoint_ok(size, fuel)` holds (the depth bound doubles per
 /// binder level: `size * 2^fuel <= 60000`). Ghost depth caps come from the
 /// disclosed ceilings. `None` above size 500 (honest incompleteness).
+#[verifier::external_body]
+fn infer_seen_note<'t>(e: ExprPtr<'t>) {
+    if std::env::var_os("NANODA_MEMO_STATS").is_some() {
+        crate::tc::route_stats::infer_seen_note(e.raw_bits());
+    }
+}
+
+/// The memoizing wrapper. Inference repeats itself even harder than whnf does
+/// (on `Init.Omega`, 1,979,104 calls against 58,105 distinct terms), because
+/// proof irrelevance infers both sides and both of their types at every
+/// conversion node. A hit returns the cached type together with its claim, so
+/// nothing here is trusted: `InferCert`'s type invariant carries the proof.
 pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
@@ -3425,6 +3427,30 @@ pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         None => true,
     }
 {
+    match memo.infer_get(e, env) {
+        Some(r) => Some(r),
+        None => {
+            let out = verified_infer_shadow_uncached(ctx, env, memo, e);
+            match out {
+                Some(r) => {
+                    memo.infer_put(InferCert::make(e, r, env));
+                    Some(r)
+                }
+                None => None,
+            }
+        }
+    }
+}
+
+fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    requires memo.wf(), memo.spec_env() == *env,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => infer_shadow_claim(*env, e, r),
+        None => true,
+    }
+{    infer_seen_note(e);
+
     let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return None };
     if sz == 0 || sz > 6000 || ctx.num_loose_bvars(e) != 0 {
         return None;

@@ -77,6 +77,8 @@ use crate::level_model::level_names;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::arena_lctx;
+#[cfg(verus_only)]
 use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
@@ -1086,6 +1088,7 @@ impl<'x, 't> WhnfCert<'x, 't> {
 /// in the type rather than compared at run time.
 pub struct WhnfMemo<'x, 't> {
     slots: Vec<Option<WhnfCert<'x, 't>>>,
+    islots: Vec<Option<InferCert<'x, 't>>>,
     env: Ghost<Env<'x, 't>>,
 }
 
@@ -1099,10 +1102,15 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// environment.
     pub closed spec fn wf(self) -> bool {
         self.slots@.len() == memo_slots()
-        && forall |i: int| 0 <= i < self.slots@.len() ==> match #[trigger] self.slots@[i] {
+        && (forall |i: int| 0 <= i < self.slots@.len() ==> match #[trigger] self.slots@[i] {
             Some(c) => c.spec_env() == self.env@,
             None => true,
-        }
+        })
+        && self.islots@.len() == memo_slots()
+        && (forall |i: int| 0 <= i < self.islots@.len() ==> match #[trigger] self.islots@[i] {
+            Some(c) => c.spec_env() == self.env@,
+            None => true,
+        })
     }
 
     /// What the table answers, as a function of its contents: the entry in the
@@ -1113,6 +1121,14 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     pub closed spec fn spec_get(self, e: ExprPtr<'t>, k: u32) -> Option<ExprPtr<'t>> {
         match self.slots@[(ptr_raw(e) % 8192) as int] {
             Some(c) => if c.spec_src() == e && c.spec_cap() == k as nat { Some(c.spec_dst()) } else { None },
+            None => None,
+        }
+    }
+
+    /// The inference table's contents, as a function, in the same style.
+    pub closed spec fn spec_get_infer(self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
+        match self.islots@[(ptr_raw(e) % 8192) as int] {
+            Some(c) => if c.spec_src() == e { Some(c.spec_dst()) } else { None },
             None => None,
         }
     }
@@ -1134,7 +1150,19 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             slots.push(None);
             i = i + 1;
         }
-        WhnfMemo { slots, env: Ghost(*env) }
+        let mut islots: Vec<Option<InferCert<'x, 't>>> = Vec::new();
+        let mut j: usize = 0;
+        while j < 8192
+            invariant
+                j <= 8192,
+                islots@.len() == j,
+                forall |q: int| 0 <= q < islots@.len() ==> (#[trigger] islots@[q]) is None,
+            decreases 8192 - j
+        {
+            islots.push(None);
+            j = j + 1;
+        }
+        WhnfMemo { slots, islots, env: Ghost(*env) }
     }
 
     /// A hit hands back the reduct together with its claim.
@@ -1182,6 +1210,109 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
         }
         self.slots.set(idx, Some(cert));
+    }
+
+    /// A hit hands back the inferred type together with its claim.
+    pub fn infer_get(&self, e: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
+        requires self.wf(), self.spec_env() == *env
+        ensures
+            result == self.spec_get_infer(e),
+            match result {
+                Some(r) => infer_shadow_claim(*env, e, r),
+                None => true,
+            }
+    {
+        let bits = ptr_bits(e);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(e));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
+        match &self.islots[idx] {
+            Some(c) => {
+                proof { use_type_invariant(c); }
+                if c.hit(e) {
+                    Some(c.dst())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn infer_put(&mut self, cert: InferCert<'x, 't>)
+        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
+        ensures
+            final(self).wf(),
+            final(self).spec_env() == old(self).spec_env(),
+            (*final(self)).spec_get_infer(cert.spec_src()) == Some(cert.spec_dst()),
+    {
+        let src = cert.src();
+        let bits = ptr_bits(src);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(src));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
+        self.islots.set(idx, Some(cert));
+    }
+}
+
+/// The claim of a shadow INFERENCE certificate: the verified inference
+/// derives a type `r` for `e` under the environment's declaration types and
+/// the arena's local context, at some fuel. Stated here (rather than in
+/// `delta_bound_model`, where inference itself lives) so that the certificate
+/// type below can carry it as its type invariant.
+pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool {
+    types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(e), to_model(r), fuel)
+}
+
+pub open spec fn infer_shadow_claim<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>) -> bool {
+    exists |f: nat| #[trigger] infer_types_to(env, e, r, f)
+}
+
+/// The inference counterpart of `WhnfCert`: an unforgeable record that `r` is
+/// an inferred type of `e`. The fuel is existentially quantified away by
+/// `infer_shadow_claim`, so unlike the whnf certificate this one needs no
+/// second key beyond the term itself.
+pub struct InferCert<'x, 't> {
+    e: ExprPtr<'t>,
+    r: ExprPtr<'t>,
+    env: Ghost<Env<'x, 't>>,
+}
+
+impl<'x, 't> InferCert<'x, 't> {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        infer_shadow_claim(self.env@, self.e, self.r)
+    }
+
+    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
+    pub closed spec fn spec_src(self) -> ExprPtr<'t> { self.e }
+    pub closed spec fn spec_dst(self) -> ExprPtr<'t> { self.r }
+
+    pub fn src(&self) -> (result: ExprPtr<'t>)
+        ensures result == self.spec_src()
+    { self.e }
+
+    pub fn dst(&self) -> (result: ExprPtr<'t>)
+        ensures result == self.spec_dst()
+    { self.r }
+
+    pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
+        ensures result == (self.spec_src() == e)
+    { expr_ptr_eq(self.e, e) }
+
+    /// The only constructor: the caller must already hold the claim.
+    pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
+        requires infer_shadow_claim(*env, e, r),
+        ensures
+            result.spec_env() == *env,
+            result.spec_src() == e,
+            result.spec_dst() == r,
+    {
+        InferCert { e, r, env: Ghost(*env) }
     }
 }
 
