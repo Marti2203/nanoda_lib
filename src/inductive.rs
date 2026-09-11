@@ -87,7 +87,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
             ctx.with_tc_and_env_ext(&ind_ty_ext1, env_limit, |tc| {
                 for ind in st.all_inductives_incl_specialized.iter() {
                     for ctor in ind.ctors.iter() {
-                        tc.check_ctor(&st, ind.name, ctor.ty)
+                        tc.check_ctor(&st, ind.name, ctor.ty);
+                        tc.shadow_check_ctor(&st, ind.name, ctor.ty);
                     }
                 }
             });
@@ -876,6 +877,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         None
+    }
+
+    /// Shadow-only (NANODA_SHADOW=1): run the certified constructor check
+    /// (`delta_bound_model::verified_ctor_ok`) on the same inputs the original
+    /// `check_ctor` just accepted, and count whether it certifies the same
+    /// verdict. Never affects a verdict.
+    pub(crate) fn shadow_check_ctor(&mut self, st: &InductiveCheckState<'t>, parent_ind_name: NamePtr<'t>, ctor_ty: ExprPtr<'t>) {
+        if !crate::tc::route_stats::shadow_enabled() {
+            return;
+        }
+        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_CTOR_TOTAL);
+        let arities: Vec<usize> = st.local_indices.iter().map(|ix| st.local_params.len() + ix.len()).collect();
+        let parent_pos = st.ind_consts.iter().position(|c| match self.ctx.read_expr(*c) { Const { name, .. } => name == parent_ind_name, _ => false });
+        let parent_arity = match parent_pos { Some(p) => arities[p], None => return };
+        let is_prop = st.is_zero.unwrap_or(false);
+        let codom = match st.block_codom { Some(c) => c, None => return };
+        let r = crate::delta_bound_model::verified_ctor_ok(self.ctx, self.env, st.ind_consts.as_ref(), &arities, st.local_params.len(), parent_ind_name, parent_arity, is_prop, codom, ctor_ty, 64);
+        if r == Some(true) {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_CTOR_CERT);
+        }
     }
 
     pub(crate) fn check_ctor(

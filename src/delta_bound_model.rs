@@ -126,6 +126,15 @@ use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_
 use crate::expr_arena_bridge::{verified_size, verified_depth};
 use crate::tc_model::{verified_rec_step_capped, first_rule_ctor_name};
 #[cfg(verus_only)]
+use crate::inductive_model::contains_const_named;
+use crate::inductive_model::verified_has_ind_occ;
+#[cfg(verus_only)]
+use crate::beta_model::spine_destruct_app;
+#[cfg(verus_only)]
+use crate::beta_model::spine_head;
+#[cfg(verus_only)]
+use crate::beta_model::spine_args;
+#[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
 #[cfg(verus_only)]
 use crate::beta_model::shift;
@@ -4472,6 +4481,298 @@ pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         i = i + 1;
     }
     cur
+}
+
+// ===========================================================================
+// CONSTRUCTOR CHECK CERTIFIER (2026-09-11): the kernel's `check_ctor`
+// (`inductive.rs`) as a claim over the model. For a constructor type: the
+// first `nparams` binders are opened with fresh locals; every further binder
+// type (a) infers to a sort whose level is below the block's codomain unless
+// the block lives in Prop (`ensure_infers_as_sort` + `leq`), and (b) passes
+// the positivity walk (`check_positivity1`: reduce, stop when the block's
+// inductives no longer occur, step through a Pi whose binder type has no
+// occurrence, or end at an application of one of the block's inductives with
+// its full arity); the telescope ends at an application of the parent
+// inductive with its full arity. Exec: the same walk over the capped whnf,
+// certified inference, and the certified level comparison. Shadow-only.
+// ===========================================================================
+
+/// Marker triggers for the claims' witnesses.
+pub open spec fn pos_marker<'t>(w: ExprPtr<'t>) -> bool { true }
+pub open spec fn open_marker<'t>(bt: ExprPtr<'t>, body: ExprPtr<'t>, l: ExprPtr<'t>, instd: ExprPtr<'t>) -> bool { true }
+pub open spec fn sort_marker<'t>(s: ExprPtr<'t>, lvl: LevelPtr<'t>, f: nat) -> bool { true }
+
+/// `e` is an application of the block's `i`-th inductive with exactly its
+/// arity (params + indices) many arguments.
+pub open spec fn block_ind_app(e: ExprSpec, ids: Seq<u64>, arities: Seq<nat>) -> bool {
+    exists |i: int| 0 <= i < ids.len()
+        && (match spine_head(e) { ExprSpec::Const(id, _) => id == #[trigger] ids[i], _ => false })
+        && spine_args(e).len() == arities[i]
+}
+
+/// The positivity walk on one constructor-argument type.
+pub open spec fn positive_arg_claim<'t, 'x>(env: Env<'x, 't>, ids: Seq<u64>, arities: Seq<nat>, ty: ExprPtr<'t>, fuel: nat) -> bool
+    decreases fuel
+{
+    exists |w: ExprPtr<'t>| #[trigger] pos_marker(w)
+        && pstep_star(to_model_of_env(env), to_model(ty), to_model(w))
+        && (!contains_const_named(to_model(w), ids)
+            || block_ind_app(to_model(w), ids, arities)
+            || (fuel > 0 && exists |bt: ExprPtr<'t>, body: ExprPtr<'t>, l: ExprPtr<'t>, instd: ExprPtr<'t>| #[trigger] open_marker(bt, body, l, instd)
+                && to_model(w) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body)))
+                && !contains_const_named(to_model(bt), ids)
+                && to_model(l) == ExprSpec::Free(expr_id(l))
+                && to_model(instd) == subst_full(to_model(body), seq![to_model(l)], 0)
+                && positive_arg_claim(env, ids, arities, instd, (fuel - 1) as nat)))
+}
+
+/// The constructor telescope: `nparams` parameter binders, then argument
+/// binders with the universe bound and the positivity walk, ending at the
+/// parent inductive applied to `parent_arity` arguments.
+pub open spec fn ctor_ok_claim<'t, 'x>(env: Env<'x, 't>, ids: Seq<u64>, arities: Seq<nat>, nparams: nat, parent_id: u64, parent_arity: nat, is_prop: bool, codom: LevelPtr<'t>, ty: ExprPtr<'t>, fuel: nat) -> bool
+    decreases fuel
+{
+    ||| (nparams == 0
+        && (match spine_head(to_model(ty)) { ExprSpec::Const(id, _) => id == parent_id, _ => false })
+        && spine_args(to_model(ty)).len() == parent_arity)
+    ||| (fuel > 0 && exists |bt: ExprPtr<'t>, body: ExprPtr<'t>, l: ExprPtr<'t>, instd: ExprPtr<'t>| #[trigger] open_marker(bt, body, l, instd)
+        && to_model(ty) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body)))
+        && to_model(l) == ExprSpec::Free(expr_id(l))
+        && to_model(instd) == subst_full(to_model(body), seq![to_model(l)], 0)
+        && (if nparams > 0 {
+                ctor_ok_claim(env, ids, arities, (nparams - 1) as nat, parent_id, parent_arity, is_prop, codom, instd, (fuel - 1) as nat)
+            } else {
+                (exists |s: ExprPtr<'t>, lvl: LevelPtr<'t>, f: nat| #[trigger] sort_marker(s, lvl, f)
+                    && infer_types_to(env, bt, s, f)
+                    && pstep_star(to_model_of_env(env), to_model(s), ExprSpec::Sort(level_to_model(lvl)))
+                    && (is_prop || forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lvl), rho) <= interp(level_to_model(codom), rho)))
+                && positive_arg_claim(env, ids, arities, bt, fuel)
+                && ctor_ok_claim(env, ids, arities, 0, parent_id, parent_arity, is_prop, codom, instd, (fuel - 1) as nat)
+            }))
+}
+
+/// Which block inductive (by name) heads this application, if any, and
+/// whether the arity matches: `Some(true)` certifies `block_ind_app`.
+fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, ind_consts: &[ExprPtr<'t>], arities: &[usize]) -> (result: Option<bool>)
+    requires
+        ind_consts@.len() == arities@.len(),
+        forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
+    ensures match result {
+        Some(true) => block_ind_app(to_model(e), Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat)),
+        _ => true,
+    }
+{
+    let ghost ids = Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i]));
+    let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
+    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let hl = ctx.read_expr(head);
+    let (hname, _hlv) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    proof {
+        is_const_shape_model(head);
+        const_levels_vec_model(head);
+        assert(to_model(e) == spine_app(to_model(head), args_model));
+        spine_destruct_app(to_model(head), args_model);
+    }
+    let mut i: usize = 0;
+    while i < ind_consts.len()
+        invariant i <= ind_consts@.len(), ind_consts@.len() == arities@.len(),
+            forall |j: int| 0 <= j < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[j]),
+            is_const_shape(head), const_name_of(head) == hname,
+            ids == Seq::new(ind_consts@.len(), |j: int| const_id(ind_consts@[j])),
+            ars == Seq::new(arities@.len(), |j: int| arities@[j] as nat),
+            args_model == Seq::new(args@.len(), |j: int| to_model(args@[j])),
+            to_model(e) == spine_app(to_model(head), args_model),
+            spine_head(to_model(e)) == to_model(head),
+            spine_args(to_model(e)) == args_model,
+            to_model(head) == ExprSpec::Const(const_id(head), const_levels_vec(head)),
+        decreases ind_consts.len() - i
+    {
+        let cl = ctx.read_expr(ind_consts[i]);
+        if let Some((cname, _)) = expr_as_const(ind_consts[i], &cl) {
+            if name_ptr_eq(cname, hname) && args.len() == arities[i] {
+                proof {
+                    is_const_shape_model(ind_consts@[i as int]);
+                    assert(const_name_of(ind_consts@[i as int]) == cname);
+                    assert(const_name_of(head) == hname);
+                    assert(const_id(ind_consts@[i as int]) == name_id(cname));
+                    assert(const_id(head) == name_id(hname));
+                    assert(const_id(ind_consts@[i as int]) == const_id(head));
+                    assert(ids[i as int] == const_id(head));
+                    assert(spine_head(to_model(e)) == to_model(head));
+                    assert(spine_args(to_model(e)) =~= args_model);
+                    assert(ars[i as int] == args@.len() as nat);
+                }
+                return Some(true);
+            }
+        }
+        i = i + 1;
+    }
+    None
+}
+
+/// The positivity walk (`check_positivity1`) on the capped whnf.
+#[verifier::spinoff_prover]
+pub fn verified_positive_arg<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ind_consts: &[ExprPtr<'t>], arities: &[usize], ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ty)) <= 0,
+        ind_consts@.len() == arities@.len(),
+        forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
+    ensures match result {
+        Some(true) => positive_arg_claim(*env, Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat), ty, fuel as nat),
+        _ => true,
+    }
+    decreases fuel
+{
+    let ghost ids = Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i]));
+    let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
+    let ghost em = to_model_of_env(*env);
+    let k: u32 = 2000;
+    let w = verified_whnf_measured_rounds_capped(ctx, env, ty, 32, 32, k);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
+        assert(pos_marker(w));
+    }
+    match verified_has_ind_occ(ctx, w, ind_consts, 100000) {
+        Some(false) => { return Some(true); }
+        Some(true) => {}
+        None => return None,
+    }
+    let wl = ctx.read_expr(w);
+    if let Some((bn, bs, bt, body)) = expr_as_pi(&wl) {
+        if fuel == 0 {
+            return None;
+        }
+        match verified_has_ind_occ(ctx, bt, ind_consts, 100000) {
+            Some(false) => {}
+            _ => return None,
+        }
+        assert(nlbv(to_model(body)) <= 1);
+        let sw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return None };
+        proof {
+            depth_le_size(to_model(w));
+            assert(depth(to_model(body)) < depth(to_model(w)));
+        }
+        let local = ctx.mk_dbj_level(bn, bs, bt);
+        let ls: &[ExprPtr<'t>] = &[local];
+        let instd = match verified_inst(ctx, body, ls, 0, 100000) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        proof {
+            assert(Seq::new(ls@.len(), |i: int| to_model(ls@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+        }
+        let r = verified_positive_arg(ctx, env, ind_consts, arities, instd, fuel - 1);
+        ctx.replace_dbj_level(local);
+        match r {
+            Some(true) => {
+                proof { assert(open_marker(bt, body, local, instd)); }
+                Some(true)
+            }
+            _ => None,
+        }
+    } else {
+        match verified_block_ind_app(ctx, w, ind_consts, arities) {
+            Some(true) => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// The constructor telescope (`check_ctor`) certifier.
+#[verifier::spinoff_prover]
+pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, ind_consts: &[ExprPtr<'t>], arities: &[usize], nparams: usize, parent: NamePtr<'t>, parent_arity: usize, is_prop: bool, codom: LevelPtr<'t>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        nlbv(to_model(ty)) <= 0,
+        ind_consts@.len() == arities@.len(),
+        forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
+    ensures match result {
+        Some(true) => ctor_ok_claim(*env, Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat), nparams as nat, name_id(parent), parent_arity as nat, is_prop, codom, ty, fuel as nat),
+        _ => true,
+    }
+    decreases fuel
+{
+    let ghost ids = Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i]));
+    let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
+    let ghost em = to_model_of_env(*env);
+    let tl = ctx.read_expr(ty);
+    if let Some((bn, bs, bt, body)) = expr_as_pi(&tl) {
+        if fuel == 0 {
+            return None;
+        }
+        assert(nlbv(to_model(bt)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
+        if nparams == 0 {
+            // universe bound: the binder type's sort is below the codomain
+            let s = match verified_infer_shadow(ctx, env, bt) { Some(v) => v, None => return None };
+            if ctx.num_loose_bvars(s) != 0 {
+                return None;
+            }
+            let lvl = match verified_sort_of_capped(ctx, env, s, 32) { Some(v) => v, None => return None };
+            if !is_prop {
+                if !verified_leq(ctx, lvl, codom, 100000) {
+                    return None;
+                }
+            }
+            proof {
+                let f = choose |f: nat| #[trigger] infer_types_to(*env, bt, s, f);
+                assert(sort_marker(s, lvl, f));
+            }
+            match verified_positive_arg(ctx, env, ind_consts, arities, bt, fuel) {
+                Some(true) => {}
+                _ => return None,
+            }
+        }
+        let sty = match verified_size(ctx, ty, 100000) { Some(v) => v, None => return None };
+        proof {
+            depth_le_size(to_model(ty));
+            assert(depth(to_model(body)) < depth(to_model(ty)));
+        }
+        let local = ctx.mk_dbj_level(bn, bs, bt);
+        let ls: &[ExprPtr<'t>] = &[local];
+        let instd = match verified_inst(ctx, body, ls, 0, 100000) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        proof {
+            assert(Seq::new(ls@.len(), |i: int| to_model(ls@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+        }
+        let next_np = if nparams > 0 { nparams - 1 } else { 0 };
+        let r = verified_ctor_ok(ctx, env, ind_consts, arities, next_np, parent, parent_arity, is_prop, codom, instd, fuel - 1);
+        ctx.replace_dbj_level(local);
+        match r {
+            Some(true) => {
+                proof { assert(open_marker(bt, body, local, instd)); }
+                Some(true)
+            }
+            _ => None,
+        }
+    } else {
+        if nparams != 0 {
+            return None;
+        }
+        let (head, args) = match verified_unfold_apps(ctx, ty, 100000) { Some(p) => p, None => return None };
+        let hl = ctx.read_expr(head);
+        let (hname, _) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+        if !name_ptr_eq(hname, parent) || args.len() != parent_arity {
+            return None;
+        }
+        proof {
+            is_const_shape_model(head);
+            const_levels_vec_model(head);
+            let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+            assert(to_model(ty) == spine_app(to_model(head), args_model));
+            spine_destruct_app(to_model(head), args_model);
+            assert(spine_args(to_model(ty)) =~= args_model);
+            assert(const_id(head) == name_id(parent));
+        }
+        Some(true)
+    }
 }
 
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
