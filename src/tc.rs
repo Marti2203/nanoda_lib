@@ -288,6 +288,9 @@ pub mod route_stats {
     pub static SHADOW_HDR_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECNAMES_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECNAMES_CERT: AtomicU64 = AtomicU64::new(0);
+    /// Which route certified each pair (index = `pair_certified`'s verdict):
+    /// 1 core, 2 lazy delta, 3 whnf join, 4 conversion, 5 proof irrelevance.
+    pub static ROUTE_HIT: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -356,7 +359,9 @@ pub mod route_stats {
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
             let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
             let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL))
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL),
+                ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
+                ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
@@ -1242,6 +1247,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return;
         }
         let which = self.pair_certified(x, y);
+        if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
         if which != 0 {
             if verdict {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);

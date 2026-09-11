@@ -4325,7 +4325,7 @@ pub fn verified_k_ctor_for_major<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 }
 
 /// Recursor step under the deq_p relation (2026-09-08): normalize the major
-/// premise with the deq_p whnf (`verified_whnf_p_rounds`, recursion through
+/// premise with the deq_p whnf (`verified_whnf_p`, recursion through
 /// `fuel`), if it is still not a constructor and the recursor is K-like
 /// synthesize the constructor by proof irrelevance, rewrite the spine
 /// (`deq_p_any_spine_update`) and fire the certified iota producer on it.
@@ -4366,7 +4366,7 @@ pub fn verified_rec_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         assert(args_model[major_idx as int] == to_model(major));
         assert(nlbv(args_model[major_idx as int]) <= nlbv(spine_app(to_model(head), args_model)));
     }
-    let m1 = verified_whnf_p_rounds(ctx, env, major, (fuel - 1) as u32, 8, k);
+    let m1 = verified_whnf_p(ctx, env, major, (fuel - 1) as u32, k);
     let is_ctor_spine = match verified_unfold_const_apps(ctx, m1, 100000) { Some(_) => true, None => false };
     let m2 = if is_ctor_spine {
         m1
@@ -4428,9 +4428,11 @@ pub fn verified_rec_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
 
 /// Multi-round whnf under the deq_p relation (2026-09-08): each round is the
 /// certified measured round (a `pstep_star`, lifted) followed by the deq_p
-/// recursor step; stops when nothing changes.
+/// `whnf`'s shape one level up, under the deq_p relation (2026-09-11, was a
+/// rounds loop): normalize with the certified whnf (lifted into deq_p), then
+/// try the deq_p recursor step; recurse when it fires, stop when it declines.
 #[verifier::spinoff_prover]
-pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32, k: u32) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
     requires
         nlbv(to_model(e)) <= 0,
         k <= 500,
@@ -4443,44 +4445,28 @@ pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let ghost em = to_model_of_env(*env);
     let ghost lcm = arena_lctx();
     let ghost cm = env_model_capped(*env, k as nat);
-    let mut cur = e;
-    let mut i: u32 = 0;
     proof { deq_p_any_refl(dtym, em, lcm, to_model(e)); }
-    while i < rounds
-        invariant
-            dtym == to_model_of_declar_ty(*env),
-            em == to_model_of_env(*env),
-            lcm == arena_lctx(),
-            cm == env_model_capped(*env, k as nat),
-            k <= 500,
-            deq_p_any(dtym, em, lcm, to_model(e), to_model(cur)),
-            nlbv(to_model(cur)) <= 0,
-        decreases rounds - i
-    {
-        let r1 = verified_whnf_rec(ctx, env, cur, fuel, k);
-        proof {
-            env_model_capped_sub(*env, k as nat);
-            pstep_star_env_weaken(cm, em, to_model(cur), to_model(r1));
-            defeq_of_pstep_star(em, to_model(cur), to_model(r1));
-            deq_p_any_of_defeq(dtym, em, lcm, to_model(cur), to_model(r1));
-            deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(cur), to_model(r1));
-        }
-        let r2 = if fuel == 0 { None } else { verified_rec_step_p(ctx, env, r1, (fuel - 1) as u32, k) };
-        match r2 {
-            Some(v) => {
-                proof { deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(r1), to_model(v)); }
-                cur = v;
-            }
-            None => {
-                if expr_ptr_eq(r1, cur) {
-                    return cur;
-                }
-                cur = r1;
-            }
-        }
-        i = i + 1;
+    if fuel == 0 {
+        return e;
     }
-    cur
+    let w = verified_whnf_rec(ctx, env, e, 256, k);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(cm, em, to_model(e), to_model(w));
+        defeq_of_pstep_star(em, to_model(e), to_model(w));
+        deq_p_any_of_defeq(dtym, em, lcm, to_model(e), to_model(w));
+    }
+    match verified_rec_step_p(ctx, env, w, (fuel - 1) as u32, k) {
+        Some(v) => {
+            let out = verified_whnf_p(ctx, env, v, (fuel - 1) as u32, k);
+            proof {
+                deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(w), to_model(v));
+                deq_p_any_trans(dtym, em, lcm, to_model(e), to_model(v), to_model(out));
+            }
+            out
+        }
+        None => w,
+    }
 }
 
 // ===========================================================================
@@ -5220,8 +5206,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         conv_trace(5, x, y, budget);
         return None;
     }
-    let px = verified_whnf_p_rounds(ctx, env, x, fuel, conv_join_rounds(), k);
-    let py = verified_whnf_p_rounds(ctx, env, y, fuel, conv_join_rounds(), k);
+    let px = verified_whnf_p(ctx, env, x, fuel, k);
+    let py = verified_whnf_p(ctx, env, y, fuel, k);
     if expr_ptr_eq(px, py) {
         proof {
             deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(py));
