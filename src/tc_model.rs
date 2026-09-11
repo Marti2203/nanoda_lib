@@ -1017,10 +1017,18 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 // Nothing here is trusted: no `external_body`, no assumed specification.
 // ===========================================================================
 
-/// The table index of a pointer. No specification at all: which slot an entry
-/// lands in cannot affect any claim, only whether a lookup hits.
+/// A pointer's packed representation, as a function of the pointer. The only
+/// thing assumed about it is that it IS a function -- the same pointer always
+/// gives the same bits -- which is what lets the table below have a
+/// specification at all. Nothing about any claim depends on it: a wrong answer
+/// here could only send a lookup to the wrong slot, and a lookup only ever
+/// returns a certificate that already carries its own proof.
+pub uninterp spec fn ptr_raw<'t>(e: ExprPtr<'t>) -> u32;
+
 #[verifier::external_body]
-fn ptr_bits<'t>(e: ExprPtr<'t>) -> u32 {
+fn ptr_bits<'t>(e: ExprPtr<'t>) -> (result: u32)
+    ensures result == ptr_raw(e)
+{
     e.raw_bits()
 }
 
@@ -1054,7 +1062,7 @@ impl<'x, 't> WhnfCert<'x, 't> {
 
     /// Does this entry answer the question being asked?
     pub fn hit(&self, e: ExprPtr<'t>, k: u32) -> (result: bool)
-        ensures result ==> self.spec_src() == e && self.spec_cap() == k as nat
+        ensures result == (self.spec_src() == e && self.spec_cap() == k as nat)
     { expr_ptr_eq(self.e, e) && self.k == k }
 
     /// The only constructor: the caller must already hold the claim.
@@ -1097,6 +1105,18 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         }
     }
 
+    /// What the table answers, as a function of its contents: the entry in the
+    /// slot this pointer indexes, if it is about that very term and cap. `get`
+    /// is proven to agree with this and `put` to make it answer with what was
+    /// just inserted, so the table is specified as a map rather than merely as
+    /// something that hands back proofs.
+    pub closed spec fn spec_get(self, e: ExprPtr<'t>, k: u32) -> Option<ExprPtr<'t>> {
+        match self.slots@[(ptr_raw(e) % 8192) as int] {
+            Some(c) => if c.spec_src() == e && c.spec_cap() == k as nat { Some(c.spec_dst()) } else { None },
+            None => None,
+        }
+    }
+
     pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
 
     pub fn new(env: &Env<'x, 't>) -> (result: Self)
@@ -1120,12 +1140,19 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// A hit hands back the reduct together with its claim.
     pub fn get(&self, e: ExprPtr<'t>, k: u32, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
         requires self.wf(), self.spec_env() == *env
-        ensures match result {
-            Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-            None => true,
-        }
+        ensures
+            result == self.spec_get(e, k),
+            match result {
+                Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+                None => true,
+            }
     {
-        let idx = (ptr_bits(e) as usize) % 8192;
+        let bits = ptr_bits(e);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(e));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
         match &self.slots[idx] {
             Some(c) => {
                 proof { use_type_invariant(c); }
@@ -1141,9 +1168,19 @@ impl<'x, 't> WhnfMemo<'x, 't> {
 
     pub fn put(&mut self, cert: WhnfCert<'x, 't>)
         requires old(self).wf(), cert.spec_env() == old(self).spec_env()
-        ensures final(self).wf(), final(self).spec_env() == old(self).spec_env()
+        ensures
+            final(self).wf(),
+            final(self).spec_env() == old(self).spec_env(),
+            (*final(self)).spec_get(cert.spec_src(), cert.spec_cap() as u32) == Some(cert.spec_dst()),
+
     {
-        let idx = (ptr_bits(cert.src()) as usize) % 8192;
+        let src = cert.src();
+        let bits = ptr_bits(src);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(src));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
         self.slots.set(idx, Some(cert));
     }
 }
