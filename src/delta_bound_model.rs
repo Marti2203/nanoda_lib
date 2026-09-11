@@ -5233,35 +5233,6 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             return Some(true);
         }
     }
-    // deq_p whnf retry (2026-09-08): both sides normalized with the deq_p
-    // whnf (K-like majors reduce), then joined or compared once more.
-    // TOP THREE LEVELS ONLY: at every node it cost 5x runtime.
-    let total = conv_budget_total();
-    if total >= 3 && budget < total - 2 {
-        conv_trace(5, x, y, budget);
-        return None;
-    }
-    let px = verified_whnf_p(ctx, env, memo, x, fuel, k);
-    let py = verified_whnf_p(ctx, env, memo, y, fuel, k);
-    if expr_ptr_eq(px, py) {
-        proof {
-            deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(py));
-            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(px), to_model(y));
-        }
-        conv_stat(14);
-        return Some(true);
-    }
-    if !(expr_ptr_eq(px, x) && expr_ptr_eq(py, y)) {
-        if let Some(true) = verified_conv_p(ctx, env, memo, px, py, fuel, k, budget - 1) {
-            proof {
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(px), to_model(py));
-                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(py));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(py), to_model(y));
-            }
-            conv_stat(14);
-            return Some(true);
-        }
-    }
     conv_trace(5, x, y, budget);
     None
 }
