@@ -66,6 +66,14 @@ use crate::expr_arena_bridge::local_type_cap;
 use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, nlbv_bound_implies_max_var_below, max_var_below_mono};
 use crate::level_arena_bridge::verified_leq;
 use crate::delta_bound_model::{verified_ensure_infers_as_sort, verified_infer_then_whnf};
+use crate::delta_bound_model::{verified_infer_shadow, verified_sort_of_capped};
+#[cfg(verus_only)]
+use crate::beta_model::subst_full_nlbv_bound;
+use crate::expr_arena_bridge::verified_size;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
+#[cfg(verus_only)]
+use crate::beta_model::depth_le_size;
 #[cfg(verus_only)]
 use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound};
 #[cfg(verus_only)]
@@ -1948,156 +1956,28 @@ pub open spec fn check_positivity_ok(cap: nat, bound: nat, d: nat, tel_fuel: nat
 
 
 
-/// Real-arena mirror of `large_elim_test_aux` (`inductive.rs:937-970`):
-/// walks a single constructor's type telescope, skipping the block's own
-/// `rem_params` leading binders untouched, then for each REMAINING
-/// (non-param) binder computes `ensure_infers_as_sort`/`is_zero` and
-/// records the binder's fresh local into `non_prop_elems` whenever it is
-/// NOT `Prop`-sorted -- exactly the real function's `non_prop_ctor_
-/// telescope_elems` accumulator, threaded through as a real `&mut Vec`
-/// (Verus handles mutable accumulator state through recursion the same
-/// way `&mut TcCtx` already threads through every other function here).
-/// Same "no `whnf`, syntactic `Pi`-peel only" shape as `check_ctor`'s own
-/// telescope loop, so -- same reasoning as `verified_check_ctor_
-/// telescope`'s own doc comment -- `bound`/`d`/`cap`/`infer_env_cap`/
-/// `infd_bound` all stay UNCHANGED across every recursive call; no growth
-/// bookkeeping needed. At the end of the telescope, `verified_unfold_
-/// apps` peels `parent_ind_const params* indices*` and the real function's
-/// final `.all(|arg| ind_ty_params_and_indices.contains(arg))` subset
-/// check is executed exactly as written (`ExprPtr`'s own `PartialEq`,
-/// same as the real code -- no new spec predicate needed for this one,
-/// unlike `id_subset`'s `NamePtr`-keyed version above, since this check
-/// never needs to be RELATED to anything else downstream; `ensures true`
-/// only needs the control-flow to type-check).
-pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
-    ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
-    ctor_type_cursor: ExprPtr<'t>,
-    rem_params: usize,
-    non_prop_elems: &mut Vec<ExprPtr<'t>>,
-    fuel: u32,
-    tel_fuel: u32,
-    cap: nat,
-    bound: nat,
-    d: nat,
-    infer_env_cap: nat,
-    infd_bound: nat,
-) -> (result: Option<bool>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(ctor_type_cursor)) <= 0,
-        max_var_below(to_model(ctor_type_cursor), bound),
-        depth(to_model(ctor_type_cursor)) <= d,
-        d <= 60000,
-        env_global_cap(*env) <= cap,
-        env_global_cap(*env) <= infer_env_cap,
-        local_type_cap() <= infer_env_cap,
-        infer_env_cap <= 60000,
-        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
-        infd_bound <= cap,
-        infer_depth_fixpoint_ok(d, fuel as nat),
-        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        true
-    decreases tel_fuel
-{
-    if tel_fuel == 0 {
-        return None;
-    }
-    let tel_fuel1 = tel_fuel - 1;
-    let el = ctx.read_expr(ctor_type_cursor);
-    if expr_is_bind_shape(&el) {
-        assert(matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
-        if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-            assert(to_model(ctor_type_cursor) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-            assert(nlbv(to_model(binder_type)) == 0) by {
-                assert(nlbv(to_model(ctor_type_cursor)) == 0);
-            }
-            assert(max_var_below(to_model(binder_type), bound)) by {
-                assert(max_var_below(to_model(ctor_type_cursor), bound));
-            }
-            assert(depth(to_model(binder_type)) <= d) by {
-                assert(depth(to_model(ctor_type_cursor)) <= d);
-            }
-            let local = ctx.mk_unique(binder_name, binder_style, binder_type);
-            let locals: [ExprPtr<'t>; 1] = [local];
-            match verified_inst(ctx, body, &locals, 0, fuel) {
-                Some(next_cursor) => {
-                    let ghost substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
-                    assert(substs_model.len() == 1);
-                    assert(substs_model[0] == to_model(local));
-                    assert(to_model(next_cursor) == subst_full(to_model(body), substs_model, 0));
-                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] nlbv(substs_model[i]) <= 0 by {
-                        assert(i == 0);
-                    }
-                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] depth(substs_model[i]) <= 0 by {
-                        assert(i == 0);
-                    }
-                    assert forall |i: int| 0 <= i < substs_model.len() implies #[trigger] max_var_below(substs_model[i], bound) by {
-                        assert(i == 0);
-                    }
-                    proof {
-                        subst_full_nlbv_bound_n(to_model(body), substs_model, 0);
-                        subst_full_depth_bound_n(to_model(body), substs_model, 0, 0);
-                        subst_full_max_var_below_bound_n(to_model(body), substs_model, 0, bound);
-                    }
-                    assert(nlbv(to_model(next_cursor)) <= 0);
-                    assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
-                    assert(max_var_below(to_model(next_cursor), bound));
-                    if rem_params != 0 {
-                        verified_large_elim_test_aux(ctx, env, memo, next_cursor, rem_params - 1, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
-                    } else {
-                        match verified_ensure_infers_as_sort(ctx, env, memo, binder_type, fuel, infer_env_cap, d, cap, infd_bound) {
-                            Some(level) => {
-                                let z = ctx.zero();
-                                let is_z = verified_leq(ctx, level, z, fuel);
-                                if !is_z {
-                                    non_prop_elems.push(local);
-                                }
-                                verified_large_elim_test_aux(ctx, env, memo, next_cursor, 0, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
-                            }
-                            None => None,
-                        }
-                    }
-                }
-                None => None,
-            }
-        } else {
-            None
-        }
-    } else {
-        assert(!matches!(to_model(ctor_type_cursor), ExprSpec::Bind(_, _)));
-        match verified_unfold_apps(ctx, ctor_type_cursor, fuel) {
-            Some((_base, ind_ty_params_and_indices)) => {
-                let mut j: usize = 0;
-                while j < non_prop_elems.len()
-                    invariant memo.wf(), memo.spec_env() == *env, j <= non_prop_elems.len(),
-                    decreases non_prop_elems.len() - j
-                {
-                    if !expr_ptr_in_slice(ind_ty_params_and_indices.as_slice(), non_prop_elems[j]) {
-                        return Some(false);
-                    }
-                    j += 1;
-                }
-                Some(true)
-            }
-            None => None,
-        }
-    }
-}
-
 /// Manual real-pointer-equality membership scan, standing in for `slice::
 /// contains` (unsupported by this Verus fork directly on arbitrary `T:
 /// PartialEq` -- `assume_specification` only covers it when `T` already
 /// has a recognized `PartialEq` bridge, which `ExprPtr` doesn't here).
 /// Used by `verified_large_elim_test_aux`'s own final subset check, same
 /// role `name_in_slice` plays for `NamePtr`s elsewhere in this file.
+/// "`needle` occurs in `haystack`", as a named predicate rather than a bare
+/// `exists`: a quantifier written out twice in two places is two quantifiers
+/// as far as instantiation goes, and the subset claim below needs this one
+/// under another quantifier.
+pub open spec fn ptr_in_seq<'t>(haystack: Seq<ExprPtr<'t>>, needle: ExprPtr<'t>) -> bool {
+    exists |j: int| 0 <= j < haystack.len() && #[trigger] haystack[j] == needle
+}
+
 pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (result: bool)
-    ensures true
+    ensures result == ptr_in_seq(haystack@, needle)
 {
     let mut i: usize = 0;
     while i < haystack.len()
-        invariant i <= haystack.len(),
+        invariant
+            i <= haystack.len(),
+            forall |j: int| 0 <= j < i ==> #[trigger] haystack@[j] != needle,
         decreases haystack.len() - i
     {
         if expr_ptr_eq(haystack[i], needle) {
@@ -2108,20 +1988,114 @@ pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (
     false
 }
 
-/// Real-arena mirror of `large_elim_test` (`inductive.rs:972-995`), the
-/// thin dispatcher around `large_elim_test_aux` above. Takes the FLATTENED
-/// facts the real function actually reads off `InductiveCheckState`/
-/// `IndTyHeader`/`CtorHeader` (`is_nonzero`, the block's own inductive/
-/// constructor counts, and the singleton constructor's own `ty` when
-/// applicable) as direct scalar/`Option` parameters rather than the whole
-/// (private-field) structs -- exactly `verified_init_k_target`'s own
-/// established convention for this same "real struct has no accessor
-/// surface yet" situation, not a new pattern. `num_ctors`/`only_ctor_ty`
-/// are only MEANINGFUL when `num_inductives == 1` (mirroring the real
-/// function's own `match ... { [ind_ty] => match ind_ty.ctors.as_slice()
-/// ... }` nesting) -- a caller outside that case may pass anything, since
-/// the corresponding branch is never reached.
-pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
+/// The subset test `large_elim_test_aux` ends on, lifted out so the decision
+/// it makes can be STATED rather than merely executed: the answer is `true`
+/// exactly when every recorded non-`Prop` telescope element occurs among the
+/// arguments the constructor's result type applies to the inductive, i.e. its
+/// parameters and indices. That equivalence is this function's postcondition,
+/// so a `true` here is a claim about the two lists and not just a control-flow
+/// outcome.
+pub fn verified_all_in_slice<'t>(haystack: &[ExprPtr<'t>], needles: &Vec<ExprPtr<'t>>) -> (result: bool)
+    ensures result == (forall |i: int| 0 <= i < needles@.len()
+        ==> #[trigger] ptr_in_seq(haystack@, needles@[i]))
+{
+    let mut i: usize = 0;
+    while i < needles.len()
+        invariant
+            i <= needles@.len(),
+            forall |q: int| 0 <= q < i ==> #[trigger] ptr_in_seq(haystack@, needles@[q]),
+        decreases needles.len() - i
+    {
+        if !expr_ptr_in_slice(haystack, needles[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// EXEC-REACHABLE mirror of `large_elim_test_aux` (`inductive.rs:988`).
+///
+/// The older `verified_large_elim_test_aux` below takes its depth/universe
+/// ceilings as bare `nat` parameters, which exec code cannot originate, so
+/// nothing outside the proof could ever call it. This one takes the same
+/// route `verified_ctor_ok` takes for the same job: `verified_infer_shadow`
+/// derives its own fuel from the term's size, and `verified_sort_of_capped`
+/// reads the sort off the inferred type, so the walk needs no ceiling
+/// parameters at all and the kernel can call it directly.
+///
+/// Walks the constructor's telescope, skips the block's `rem_params` leading
+/// parameter binders, records every remaining binder whose type is not
+/// `Prop`-sorted, and ends on `verified_all_in_slice`, whose postcondition
+/// states what the answer MEANS: `true` exactly when every recorded non-`Prop`
+/// element occurs among the arguments the result type applies to the
+/// inductive, i.e. its parameters and indices.
+pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
+    cursor: ExprPtr<'t>,
+    rem_params: usize,
+    non_prop_elems: &mut Vec<ExprPtr<'t>>,
+    fuel: u32,
+) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env, nlbv(to_model(cursor)) <= 0,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    decreases fuel
+{
+    if fuel == 0 {
+        return None;
+    }
+    let el = ctx.read_expr(cursor);
+    if let Some((bn, bs, bt, body)) = expr_as_pi(&el) {
+        assert(nlbv(to_model(bt)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
+        let mut record = false;
+        if rem_params == 0 {
+            let s = match verified_infer_shadow(ctx, env, memo, bt) { Some(v) => v, None => return None };
+            if ctx.num_loose_bvars(s) != 0 {
+                return None;
+            }
+            let lvl = match verified_sort_of_capped(ctx, env, memo, s, 32) { Some(v) => v, None => return None };
+            let z = ctx.zero();
+            record = !verified_leq(ctx, lvl, z, 100000);
+        }
+        // depth ceiling for `verified_inst`, taken the way `verified_ctor_ok`
+        // takes it: the term's own size bounds its depth.
+        let sz = match verified_size(ctx, cursor, 100000) { Some(v) => v, None => return None };
+        if sz > 50000 {
+            return None;
+        }
+        proof {
+            depth_le_size(to_model(cursor));
+            assert(depth(to_model(body)) < depth(to_model(cursor)));
+        }
+        let local = ctx.mk_unique(bn, bs, bt);
+        let ls: &[ExprPtr<'t>] = &[local];
+        let instd = match verified_inst(ctx, body, ls, 0, 100000) { Some(v) => v, None => return None };
+        proof {
+            assert(Seq::new(ls@.len(), |i: int| to_model(ls@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+        }
+        if record {
+            non_prop_elems.push(local);
+        }
+        let next_params = if rem_params > 0 { rem_params - 1 } else { 0 };
+        verified_large_elim_walk(ctx, env, memo, instd, next_params, non_prop_elems, (fuel - 1) as u32)
+    } else {
+        match verified_unfold_apps(ctx, cursor, 100000) {
+            Some((_base, args)) => Some(verified_all_in_slice(args.as_slice(), non_prop_elems)),
+            None => None,
+        }
+    }
+}
+
+/// EXEC-REACHABLE mirror of `large_elim_test` (`inductive.rs:1023`): the same
+/// dispatch the kernel makes, over the walk above. A type in `Type n` is
+/// large-eliminating outright; an inductive proposition is large-eliminating
+/// when it is not mutual and either has no constructors or has exactly one
+/// whose non-`Prop` telescope elements are all parameters or indices.
+pub fn verified_large_elim_ok<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     is_nonzero: bool,
@@ -2129,36 +2103,11 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
     num_ctors: usize,
     only_ctor_ty: Option<ExprPtr<'t>>,
     local_params_len: usize,
-    non_prop_elems: &mut Vec<ExprPtr<'t>>,
     fuel: u32,
-    tel_fuel: u32,
-    cap: nat,
-    bound: nat,
-    d: nat,
-    infer_env_cap: nat,
-    infd_bound: nat,
 ) -> (result: Option<bool>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
-            Some(ty) => {
-                &&& nlbv(to_model(ty)) <= 0
-                &&& max_var_below(to_model(ty), bound)
-                &&& depth(to_model(ty)) <= d
-            },
-            None => false,
-        },
-        d <= 60000,
-        env_global_cap(*env) <= cap,
-        env_global_cap(*env) <= infer_env_cap,
-        local_type_cap() <= infer_env_cap,
-        infer_env_cap <= 60000,
-        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
-        infd_bound <= cap,
-        infer_depth_fixpoint_ok(d, fuel as nat),
-        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+    requires memo.wf(), memo.spec_env() == *env,
+        match only_ctor_ty { Some(ty) => nlbv(to_model(ty)) <= 0, None => true },
     ensures final(memo).wf(), final(memo).spec_env() == *env,
-        true
 {
     if is_nonzero {
         return Some(true);
@@ -2176,7 +2125,10 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
         return Some(false);
     }
     match only_ctor_ty {
-        Some(ty) => verified_large_elim_test_aux(ctx, env, memo, ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound),
+        Some(ty) => {
+            let mut elems: Vec<ExprPtr<'t>> = Vec::new();
+            verified_large_elim_walk(ctx, env, memo, ty, local_params_len, &mut elems, fuel)
+        }
         None => None,
     }
 }
@@ -2200,7 +2152,10 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, p: Na
         i as nat <= to_model_of_levels(uparams).len() + 1,
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
         forall |i2: int| #![trigger append_index_after_id(p, i2 as u64)] 1 <= i2 < i ==> exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j] == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
-    ensures true
+    ensures
+        // FRESHNESS: what the search exists to guarantee -- the name it
+        // returns is not already a universe parameter of the inductive.
+        forall |j: int| !(0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(result))),
     decreases (to_model_of_levels(uparams).len() + 1 - i as nat)
 {
     let candidate = ctx.append_index_after(p, i);
@@ -2222,7 +2177,11 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, p: Na
 /// search above.
 pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: LevelsPtr<'t>) -> (result: NamePtr<'t>)
     requires to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat
-    ensures true
+    ensures
+        // FRESHNESS, carried up from the search: the elimination universe
+        // this mints collides with none of the inductive's own parameters,
+        // which is the entire reason `gen_elim_level` exists.
+        forall |j: int| !(0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(result)))
 {
     let p = ctx.str1("u");
     if !ctx.contains_param(uparams, p) {
@@ -2231,22 +2190,15 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Lev
     verified_gen_elim_level_search(ctx, p, uparams, 1)
 }
 
-/// Real-arena mirror of `mk_elim_level` (`inductive.rs:1013-1032`): the
-/// thin dispatcher tying `verified_large_elim_test` and `verified_gen_
-/// elim_level` together -- both already independently bridged above, so
-/// this composes them exactly as the real function does, needing only
-/// `TcCtx::alloc_levels_slice` (already bridged, `level_arena_bridge.rs`)
-/// as new infrastructure. Large-eliminating: mint a fresh `Param` level
-/// via `gen_elim_level`, then build `rec_uparams` as `[elim_level] ++
-/// uparams` (mirroring the real code's own "push `elim_level` to the
-/// front" `Vec`-then-`alloc_levels` construction). Not large-eliminating:
-/// `elim_level` is `zero`, `rec_uparams` is `uparams` itself unchanged --
-/// exactly the real `else` branch. Returns `(elim_level, rec_uparams)`
-/// for the caller (which still holds the real, private `InductiveCheckState`)
-/// to write back into `st.elim_level`/`st.rec_uparams`, same "flatten,
-/// let the caller assemble" convention as every other `InductiveCheckState`-
-/// touching bridge in this file. `None` only propagates `verified_large_
-/// elim_test`'s own fuel/infer incompleteness case.
+/// EXEC-REACHABLE mirror of `mk_elim_level` (`inductive.rs:1065`): the
+/// dispatcher that ties the elimination-level test to the fresh universe.
+/// Large-eliminating, it mints a universe parameter and puts it in front of
+/// the inductive's own; otherwise the elimination level is `Prop` and the
+/// recursor's universe parameters are the inductive's unchanged.
+///
+/// The postcondition states both halves of that, which is the part of this
+/// decision that can go wrong silently: a minted elimination universe that
+/// collided with one of the inductive's own parameters would capture it.
 pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
@@ -2255,40 +2207,26 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
     num_ctors: usize,
     only_ctor_ty: Option<ExprPtr<'t>>,
     local_params_len: usize,
-    non_prop_elems: &mut Vec<ExprPtr<'t>>,
     uparams: LevelsPtr<'t>,
     fuel: u32,
-    tel_fuel: u32,
-    cap: nat,
-    bound: nat,
-    d: nat,
-    infer_env_cap: nat,
-    infd_bound: nat,
-) -> (result: Option<(LevelPtr<'t>, LevelsPtr<'t>)>)
+) -> (result: Option<(LevelPtr<'t>, LevelsPtr<'t>, bool)>)
     requires
         memo.wf(), memo.spec_env() == *env,
-        num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
-            Some(ty) => {
-                &&& nlbv(to_model(ty)) <= 0
-                &&& max_var_below(to_model(ty), bound)
-                &&& depth(to_model(ty)) <= d
-            },
-            None => false,
-        },
-        d <= 60000,
-        env_global_cap(*env) <= cap,
-        env_global_cap(*env) <= infer_env_cap,
-        local_type_cap() <= infer_env_cap,
-        infer_env_cap <= 60000,
-        infd_bound == infer_result_depth_bound(d, infer_env_cap, fuel as nat),
-        infd_bound <= cap,
-        infer_depth_fixpoint_ok(d, fuel as nat),
-        whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
+        match only_ctor_ty { Some(ty) => nlbv(to_model(ty)) <= 0, None => true },
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
-        true
+        match result {
+            // large-eliminating: the minted universe is FRESH -- it is none
+            // of the inductive's own universe parameters
+            Some((lvl, _, true)) => forall |j: int| 0 <= j < to_model_of_levels(uparams).len()
+                ==> #[trigger] to_model_of_levels(uparams)[j] != level_to_model(lvl),
+            // not large-eliminating: the elimination level is exactly `Prop`
+            // and the recursor's universes are the inductive's own
+            Some((lvl, rec_uparams, false)) => level_to_model(lvl) == LevelSpec::Zero && rec_uparams == uparams,
+            None => true,
+        }
 {
-    match verified_large_elim_test(ctx, env, memo, is_nonzero, num_inductives, num_ctors, only_ctor_ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound) {
+    match verified_large_elim_ok(ctx, env, memo, is_nonzero, num_inductives, num_ctors, only_ctor_ty, local_params_len, fuel) {
         Some(true) => {
             let elim_level_name = verified_gen_elim_level(ctx, uparams);
             let elim_level = ctx.param(elim_level_name);
@@ -2304,11 +2242,11 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
                 i += 1;
             }
             let rec_levels = ctx.alloc_levels_slice(base.as_slice());
-            Some((elim_level, rec_levels))
+            Some((elim_level, rec_levels, true))
         }
         Some(false) => {
             let z = ctx.zero();
-            Some((z, uparams))
+            Some((z, uparams, false))
         }
         None => None,
     }

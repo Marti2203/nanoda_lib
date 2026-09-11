@@ -1062,7 +1062,46 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
+    /// Shadow-only (NANODA_SHADOW=1): run the certified elimination-level
+    /// test (`inductive_model::verified_large_elim_ok`) on the same inductive
+    /// block the original `large_elim_test` is about to decide, and count
+    /// whether the two agree. Never affects a verdict; the original decision
+    /// below is untouched.
+    fn shadow_check_elim_level(&mut self, st: &InductiveCheckState<'t>) {
+        if !crate::tc::route_stats::shadow_enabled() {
+            return;
+        }
+        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_TOTAL);
+        let is_nonzero = match st.is_nonzero { Some(b) => b, None => return };
+        let n_ind = st.all_inductives_incl_specialized.len();
+        let (n_ctors, only_ctor_ty) = if n_ind == 1 {
+            let ctors = &st.all_inductives_incl_specialized[0].ctors;
+            (ctors.len(), if ctors.len() == 1 { Some(ctors[0].ty) } else { None })
+        } else {
+            (0, None)
+        };
+        if let Some(ty) = only_ctor_ty {
+            if self.ctx.num_loose_bvars(ty) != 0 {
+                return;
+            }
+        }
+        let mut memo = crate::tc_model::WhnfMemo::new(self.env);
+        // the composed decision, so what is certified is not just the test's
+        // boolean but the elimination universe it leads to: fresh when large-
+        // eliminating, exactly `Prop` when not.
+        let verified = crate::inductive_model::verified_mk_elim_level(
+            self.ctx, self.env, &mut memo, is_nonzero, n_ind, n_ctors, only_ctor_ty,
+            st.local_params.len(), st.uparams, 256);
+        let kernel = self.large_elim_test(st);
+        match verified {
+            Some((_, _, v)) if v == kernel => crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_CERT),
+            Some(_) => crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_DISAGREE),
+            None => {}
+        }
+    }
+
     fn mk_elim_level(&mut self, st: &mut InductiveCheckState<'t>) {
+        self.shadow_check_elim_level(st);
         if self.large_elim_test(st) {
             let elim_level = self.gen_elim_level(st);
             let elim_level = self.ctx.param(elim_level);
