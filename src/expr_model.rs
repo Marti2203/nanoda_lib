@@ -839,6 +839,64 @@ pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
     }
 }
 
+/// With no universe parameters the level substitution is the identity:
+/// `find_level_idx([], q)` is `None`, so every `Param` stays; the other
+/// level and expression cases are structural. Lets the exec unfolding step
+/// skip the substitution walk for definitions without `uparams`.
+/// Relation form of the same identity (the bound lemmas take the relation).
+pub proof fn subst_expr_levels_rel_empty(e: ExprSpec)
+    ensures subst_expr_levels_rel(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty(), e)
+    decreases e
+{
+    let ks = Seq::<u64>::empty();
+    let vs = Seq::<LevelSpec>::empty();
+    assert forall |rho: Map<nat, nat>| #[trigger] crate::level_model::subst_env(rho, ks, vs) == rho by {
+        assert(ks.len() == 0);
+    }
+    match e {
+        ExprSpec::App(f, a) => { subst_expr_levels_rel_empty(*f); subst_expr_levels_rel_empty(*a); }
+        ExprSpec::Bind(t, b) => { subst_expr_levels_rel_empty(*t); subst_expr_levels_rel_empty(*b); }
+        ExprSpec::Let(t, v, b) => { subst_expr_levels_rel_empty(*t); subst_expr_levels_rel_empty(*v); subst_expr_levels_rel_empty(*b); }
+        ExprSpec::Proj(_, s) => { subst_expr_levels_rel_empty(*s); }
+        _ => {}
+    }
+}
+
+pub proof fn subst_level_spec_empty(l: LevelSpec)
+    ensures crate::level_model::subst_level_spec(l, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) == l
+    decreases l
+{
+    match l {
+        LevelSpec::Succ(a) => { subst_level_spec_empty(*a); }
+        LevelSpec::Max(a, b) => { subst_level_spec_empty(*a); subst_level_spec_empty(*b); }
+        LevelSpec::IMax(a, b) => { subst_level_spec_empty(*a); subst_level_spec_empty(*b); }
+        _ => {}
+    }
+}
+
+pub proof fn subst_levels_spec_empty(ls: Seq<LevelSpec>)
+    ensures crate::level_model::subst_levels_spec(ls, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) =~= ls
+{
+    assert forall |i: int| 0 <= i < ls.len() implies #[trigger] crate::level_model::subst_levels_spec(ls, Seq::<u64>::empty(), Seq::<LevelSpec>::empty())[i] == ls[i] by {
+        subst_level_spec_empty(ls[i]);
+    }
+}
+
+pub proof fn subst_expr_levels_empty(e: ExprSpec)
+    ensures subst_expr_levels(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) == e
+    decreases e
+{
+    match e {
+        ExprSpec::Sort(l) => { subst_level_spec_empty(l); }
+        ExprSpec::Const(id, ls) => { subst_levels_spec_empty(ls); }
+        ExprSpec::App(f, a) => { subst_expr_levels_empty(*f); subst_expr_levels_empty(*a); }
+        ExprSpec::Bind(t, b) => { subst_expr_levels_empty(*t); subst_expr_levels_empty(*b); }
+        ExprSpec::Let(t, v, b) => { subst_expr_levels_empty(*t); subst_expr_levels_empty(*v); subst_expr_levels_empty(*b); }
+        ExprSpec::Proj(_, s) => { subst_expr_levels_empty(*s); }
+        _ => {}
+    }
+}
+
 
 }
 

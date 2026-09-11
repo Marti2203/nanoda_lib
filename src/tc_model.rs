@@ -92,6 +92,8 @@ use crate::expr_arena_bridge::bignum_ptr_value;
 use crate::beta_model::size;
 #[cfg(verus_only)]
 use crate::expr_model::has_fv;
+#[cfg(verus_only)]
+use crate::expr_model::{subst_expr_levels_empty, subst_expr_levels_rel_empty, subst_expr_levels};
 use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular, get_declar_info_ty};
 #[cfg(verus_only)]
 use crate::env_model::ctor_num_params_of_agrees;
@@ -537,7 +539,23 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         return None;
     }
     assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
+    // (2026-09-11) no universe parameters: the value is its own instance --
+    // skip the substitution walk (it was ~10% of the shadow's runtime).
+    let subst_res = if uparams_vec.len() == 0 {
+        proof {
+            assert(to_model_of_levels(def_uparams) =~= Seq::<LevelSpec>::empty());
+            assert(level_names(to_model_of_levels(def_uparams)) =~= Seq::<u64>::empty());
+            assert(to_model_of_levels(levels) =~= Seq::<LevelSpec>::empty());
+            subst_expr_levels_empty(to_model(def_value));
+            subst_expr_levels_rel_empty(to_model(def_value));
+            assert(subst_expr_levels(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels)) == to_model(def_value));
+            assert(subst_expr_levels_rel(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels), to_model(def_value)));
+        }
+        Some(def_value)
+    } else {
+        verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000)
+    };
+    match subst_res {
         Some(def_val) => {
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
@@ -982,6 +1000,9 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
     proof {
         pstep_star_refl(env_model_capped(*env, k as nat), to_model(e));
     }
+    if whnf_nf_seen(e, k) {
+        return e;
+    }
     while i < rounds
         invariant
             pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(cur)),
@@ -989,6 +1010,13 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             k <= 60000,
         decreases rounds - i
     {
+        // (2026-09-10) the round's exit test compares against the term at the
+        // START of the round: comparing against `cur` after the first step
+        // had already advanced it ended the loop whenever only that step
+        // made progress -- every chain that needed more than one round of
+        // beta/zeta before a delta or iota stopped one step short.
+        let round_start = cur;
+        let full = whnf_full_rounds();
         let sc = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
         if sc > 1500 {
             // (2026-09-08) above the growth-bound gate: the PLAIN beta/zeta
@@ -1052,7 +1080,10 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 }
                 None => r2,
             };
-            if expr_ptr_eq(r, cur) {
+            if expr_ptr_eq(r, round_start) || (!full && expr_ptr_eq(r, cur)) {
+                if expr_ptr_eq(r, round_start) {
+                    whnf_nf_note(cur, k);
+                }
                 return cur;
             }
             proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(r)); }
@@ -1131,7 +1162,8 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
                 }
                 None => rb1,
             };
-            if expr_ptr_eq(rb, cur) {
+            if expr_ptr_eq(rb, round_start) {
+                whnf_nf_note(cur, k);
                 return cur;
             }
             proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rb)); }
@@ -1177,7 +1209,10 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
             }
             None => r2,
         };
-        if expr_ptr_eq(r, cur) {
+        if expr_ptr_eq(r, round_start) || (!full && expr_ptr_eq(r, cur)) {
+            if expr_ptr_eq(r, round_start) {
+                whnf_nf_note(cur, k);
+            }
             return cur;
         }
         proof {
@@ -2727,6 +2762,25 @@ pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr
 /// <= 64, rule value size <= 500). The claim is ONE genuine parallel
 /// recursor step after the congruence-star that reduced the major, under
 /// the capped model.
+/// `NANODA_WHNF_FULL=1`: the round's exit test compares against the term at
+/// the START of the round (exhaustive fixpoint, +0.2-0.3% certification,
+/// ~20x runtime); default: against the term after the first step (cheap).
+#[verifier::external_body]
+fn whnf_full_rounds() -> bool {
+    crate::tc::route_stats::whnf_full_rounds()
+}
+
+/// Normal-form cache probes (sound: a hit only returns the term unchanged).
+#[verifier::external_body]
+fn whnf_nf_seen<'t>(e: ExprPtr<'t>, k: u32) -> bool {
+    crate::tc::route_stats::whnf_nf_seen(e.raw_bits(), k)
+}
+
+#[verifier::external_body]
+fn whnf_nf_note<'t>(e: ExprPtr<'t>, k: u32) {
+    crate::tc::route_stats::whnf_nf_note(e.raw_bits(), k);
+}
+
 /// Diagnostics counter for the recursor producer's early exits (codes 40+).
 #[verifier::external_body]
 fn rec_stat(kind: u8) {

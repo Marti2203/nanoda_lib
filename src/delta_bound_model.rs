@@ -3292,6 +3292,13 @@ fn conv_budget_total() -> u32 {
     crate::tc::route_stats::conv_budget()
 }
 
+/// Per-pair work limit tick (diagnostics-grade, no contract): `true` once the
+/// configured number of inner-conversion nodes has been spent on this pair.
+#[verifier::external_body]
+fn conv_work_exceeded() -> bool {
+    crate::tc::route_stats::conv_work_exceeded()
+}
+
 /// The `_p` (proof-irrelevance-aware) family's failure cache: the same map,
 /// keyed 1000 budget units above the reduction-only family's entries.
 #[verifier::external_body]
@@ -4483,6 +4490,9 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         return Some(true);
     }
     if budget == 0 {
+        return None;
+    }
+    if conv_work_exceeded() {
         return None;
     }
     conv_trace(0, x, y, budget);
