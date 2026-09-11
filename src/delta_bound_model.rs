@@ -3101,10 +3101,18 @@ fn conv_budget_total() -> u32 {
 /// a hit only makes the route answer `None`. It stands in for the memo caches
 /// the kernel does have (`tc_cache`'s `eq_cache`, `whnf_cache` and
 /// `whnf_no_unfolding_cache`), which this route cannot reuse because a cached
-/// positive answer would have to carry its proof. Measured 2026-09-11:
-/// removing it takes Init.Omega from 15 s to over 10 minutes. The principled
-/// replacement is a proof-carrying memo, a cache whose entries are
-/// certificates whose type invariant holds the claim; until then this stays.
+/// positive answer would have to carry its proof. Nothing here is trusted:
+/// it is `external_body` with no `ensures`, and a hit only produces `None`,
+/// which carries no claim, so it costs completeness and never soundness.
+///
+/// Measured 2026-09-11, before shape dispatch: removing it takes Init.Omega
+/// from 15 s to over 10 minutes. Re-measured the same day WITH shape
+/// dispatch (`NANODA_NO_CONV_FAIL=1`): still over 10 minutes against 4 s.
+/// Dispatch was the last structural difference from `def_eq`, so the cache
+/// is not standing in for a missing shape decision. What blows up is that
+/// this route explores alternatives where `def_eq` commits to a verdict it
+/// may report as false, and a failed sub-pair is otherwise re-searched from
+/// every rule that can reach it.
 #[verifier::external_body]
 fn conv_fail_seen_p<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) -> bool {
     crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits(), budget.wrapping_add(1000))
@@ -4913,12 +4921,31 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         conv_stat(1);
         return Some(true);
     }
+    // --- SHAPE DISPATCH (2026-09-11): read both head shapes ONCE and run
+    // only the rules that can fire on them, the way `def_eq` commits to one
+    // move per shape instead of trying every rule in turn. A binder or a sort
+    // is already in weak-head normal form, is never a proof (a `Pi`'s type is
+    // a sort, whose own type is a sort, never `Prop`), heads no spine, and
+    // carries no constant to unfold -- so on a binder/sort pair the nat
+    // leaves, proof irrelevance, lazy delta, quotient and recursor reduction,
+    // spine congruence and both whnf steps are all dead weight. Skipping them
+    // costs no soundness (every `Some(true)` still carries its own proof) and
+    // no completeness (none of those rules could have fired).
+    let xe_sh = ctx.read_expr(x);
+    let ye_sh = ctx.read_expr(y);
+    let x_rigid = expr_as_pi(&xe_sh).is_some() || expr_as_lambda(&xe_sh).is_some() || expr_as_sort(&xe_sh).is_some();
+    let y_rigid = expr_as_pi(&ye_sh).is_some() || expr_as_lambda(&ye_sh).is_some() || expr_as_sort(&ye_sh).is_some();
+    let x_app_sh = expr_as_app(&xe_sh).is_some();
+    let y_app_sh = expr_as_app(&ye_sh).is_some();
+    let both_rigid = x_rigid && y_rigid;
+    let either_rigid = x_rigid || y_rigid;
+
     // --- the kernel's own next move (`def_eq`, tc.rs): weak-head normalize
     // BOTH sides without unfolding, then decide on the reducts. Everything
     // below this point therefore compares weak-head normal forms, which is
     // the discipline `def_eq` follows; before 2026-09-11 this route tried
     // congruence on unreduced terms first and reduced only as a last resort.
-    if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
+    if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
         let ghost cmn = env_model_capped(*env, k as nat);
         let nx = verified_whnf_no_unfolding_rec(ctx, env, memo, x, 256, k);
         let ny = verified_whnf_no_unfolding_rec(ctx, env, memo, y, 256, k);
@@ -4954,7 +4981,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // --- nat-literal leaves (rec-iota P2c): two zero representations, or
     // two successor representations with convertible predecessors (a
     // literal counts as the successor of the literal below it) ---
-    if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
+    if !either_rigid && ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
         proof {
             nat_repr_is_zero_reaches_canonical(em, x);
             nat_repr_is_zero_reaches_canonical(em, y);
@@ -4964,8 +4991,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         conv_stat(9);
         return Some(true);
     }
-    let xp_opt = ctx.pred_of_nat_succ(x);
-    let yp_opt = ctx.pred_of_nat_succ(y);
+    let xp_opt = if either_rigid { None } else { ctx.pred_of_nat_succ(x) };
+    let yp_opt = if either_rigid { None } else { ctx.pred_of_nat_succ(y) };
     if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
         if let Some(true) = verified_conv_p(ctx, env, memo, xp, yp, fuel, k, budget - 1) {
             proof {
@@ -4991,18 +5018,20 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // (`verified_proof_irrel_shadow`: infer both types, their types must be
     // Prop-level sorts, the types convertible over the reduction-only route).
     // This is the leaf that distinguishes the `_p` family from `verified_conv`.
-    if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel, k) {
-        proof {
-            proof_irrel_pair_of_shadow_claim(*env, x, y);
-            deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
+    if !either_rigid {
+        if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel, k) {
+            proof {
+                proof_irrel_pair_of_shadow_claim(*env, x, y);
+                deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
+            }
+            conv_stat(11);
+            return Some(true);
         }
-        conv_stat(11);
-        return Some(true);
     }
     // --- LAZY DELTA (the kernel's `lazy_delta_step`, which `def_eq` runs
     // BEFORE any congruence): unfold both heads until the pair is decided or
     // the chain is exhausted, then recurse once on the reducts.
-    if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
+    if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
         let ghost cm = env_model_capped(*env, k as nat);
         proof { env_model_capped_sub(*env, k as nat); }
         let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, k, 32);
@@ -5059,8 +5088,9 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // below spent one budget unit per application layer, so a 10-argument
     // spine exhausted the budget walking down its own head. Here every
     // head/argument pair is checked at the SAME budget level.
-    if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, k, budget) {
+    if x_app_sh && y_app_sh { if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, k, budget) {
         return Some(true);
+    }
     }
     match (expr_as_app(&xe), expr_as_app(&ye)) {
         (Some((f1, a1)), Some((f2, a2))) => {
@@ -5105,7 +5135,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         _ => {}
     }
     // --- quotient computation (the kernel's `reduce_quot`) ---
-    if ctx.num_loose_bvars(x) == 0 {
+    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
         if let Some(rx) = verified_quot_step(ctx, env, memo, x, k) {
             if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
                 proof {
@@ -5117,7 +5147,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             }
         }
     }
-    if ctx.num_loose_bvars(y) == 0 {
+    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
         if let Some(ry) = verified_quot_step(ctx, env, memo, y, k) {
             if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
                 proof {
@@ -5181,7 +5211,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     // --- K-like recursor (2026-09-08): reduce a K-like recursor application
     // whose major premise is a proof term, then compare the reduct.
-    if ctx.num_loose_bvars(x) == 0 {
+    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
         if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, k) {
             if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
                 proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
@@ -5190,7 +5220,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             }
         }
     }
-    if ctx.num_loose_bvars(y) == 0 {
+    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
         if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, k) {
             if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
                 proof {
@@ -5223,6 +5253,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // the nat-literal leaf get to see `NLit(0)` vs `Nat.zero`, `Nat.succ
     // (..)` vs a literal, and a constructor spine vs its unfolded twin
     // (the real `def_eq`'s whnf_core-then-retry shape).
+    if both_rigid {
+        conv_trace(5, x, y, budget);
+        return None;
+    }
     let kr0 = conv_retry_cap();
     let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
     let ghost cmr = env_model_capped(*env, kr as nat);

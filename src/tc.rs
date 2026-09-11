@@ -238,7 +238,14 @@ pub mod route_stats {
         WHNF_CALLS.fetch_add(1, Ordering::Relaxed);
         WHNF_SEEN.with(|m| { if !m.borrow_mut().insert((e, k)) { WHNF_REPEATS.fetch_add(1, Ordering::Relaxed); } });
     }
+    /// Diagnostic knob (`NANODA_NO_CONV_FAIL=1`): bypass the conversion
+    /// failure cache, to measure what the search costs without it.
+    pub fn conv_fail_off() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV_FAIL").is_some())
+    }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
+        if conv_fail_off() { return false; }
         CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
     }
     pub fn conv_fail_note(a: u32, b: u32, budget: u32) {
