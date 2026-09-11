@@ -158,6 +158,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// of new recursors that don't belong.
     fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>) {
         let from_parser = self.export_file.ind_name_to_recursor_names.get(ind_name).unwrap();
+        // Shadow-only: the certified set equality on the same two name lists.
+        if crate::tc::route_stats::shadow_enabled() {
+            let a: Vec<NamePtr<'t>> = derived.iter().copied().collect();
+            let b: Vec<NamePtr<'t>> = from_parser.iter().copied().collect();
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECNAMES_TOTAL);
+            if crate::inductive_model::verified_id_set_eq(&a, &b) {
+                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECNAMES_CERT);
+            }
+        }
         if &derived == from_parser {
             return
         } else {
