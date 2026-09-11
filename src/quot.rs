@@ -85,6 +85,17 @@ pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<
             let alpha = ctx.mk_unique(alpha_name, Implicit, uparam);
             let inner = arrow!(in ctx; alpha, alpha, prop);
             let expected = pi_telescope!(in ctx; alpha, inner);
+            // Shadow-only: the certified construction of the same expected
+            // type must coincide (hash-consed) with the one built here; the
+            // kernel's def_eq against the declared type is certified by the
+            // def_eq shadow. Never affects a verdict.
+            if crate::tc::route_stats::shadow_enabled() {
+                let anon = ctx.anonymous();
+                let u = match ctx.read_levels(info.uparams).as_ref() { &[u] => u, _ => unreachable!() };
+                let certified = crate::quot_model::verified_check_eq_type_shape(ctx, u, alpha_name, anon, Implicit, Default);
+                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_TOTAL);
+                if certified == expected { crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT); }
+            }
             let mut tc = TypeChecker::new(ctx, &env, Some(info));
             tc.assert_def_eq(info.ty, expected);
             match all_ctor_names.as_ref() {
@@ -203,6 +214,12 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     };
 
     if declar.info().name == ctx.str1("Quot") {
+        if crate::tc::route_stats::shadow_enabled() {
+            let anon = ctx.anonymous();
+            let certified = crate::quot_model::verified_check_quot_type_shape(ctx, u_level, A_name, r_name, anon, Implicit, Default, Default);
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_TOTAL);
+            if certified == expected_quot.info().ty { crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT); }
+        }
         let env = ctx.export_file.new_env(EnvLimit::ByName(quot_name));
         let mut tc = TypeChecker::new(ctx, &env, Some(*declar.info()));
         tc.assert_def_eq(declar.info().ty, expected_quot.info().ty);
