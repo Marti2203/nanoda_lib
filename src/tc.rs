@@ -295,6 +295,8 @@ pub mod route_stats {
     pub static SHADOW_INFER_UNEQUAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_CTOR_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_CTOR_CERT: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_INDTY_TOTAL: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_INDTY_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -361,7 +363,9 @@ pub mod route_stats {
             let ishare = if it > 0 { 100.0 * ic as f64 / it as f64 } else { 0.0 };
             let (ct, cc) = (g(&SHADOW_CTOR_TOTAL), g(&SHADOW_CTOR_CERT));
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%)", ic, it, ishare, iu, cc, ct, cshare)
+            let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
+            let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%)", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare)
         } else { String::new() }) + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),

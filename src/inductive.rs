@@ -524,6 +524,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         assert_eq!(st.all_inductives_incl_specialized.len(), nbefore);
         assert_eq!(st.all_inductives_incl_specialized.len(), st.local_indices.len());
+        self.shadow_check_inductive_specs(st);
+    }
+
+    /// Shadow-only (NANODA_SHADOW=1): certify each block member's type shape
+    /// (`delta_bound_model::verified_ind_ty_ok`) on the inputs the original
+    /// checks just accepted. Never affects a verdict.
+    fn shadow_check_inductive_specs(&mut self, st: &InductiveCheckState<'t>) {
+        if !crate::tc::route_stats::shadow_enabled() {
+            return;
+        }
+        let codom = match st.block_codom { Some(c) => c, None => return };
+        for i in 0..st.all_inductives_incl_specialized.len() {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_TOTAL);
+            let ty = st.all_inductives_incl_specialized[i].ty;
+            let nb = st.local_params.len() + st.local_indices[i].len();
+            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, nb, codom, ty, 64) == Some(true) {
+                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_CERT);
+            }
+        }
     }
 
     fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> Option<InductiveData<'t>> {

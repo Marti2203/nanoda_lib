@@ -4775,6 +4775,103 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
     }
 }
 
+// ===========================================================================
+// INDUCTIVE TYPE SPECIFICATION CERTIFIER (2026-09-11): the shape part of the
+// kernel's `check_inductive_spec_0th` / `check_inductive_specs_mutual1`: an
+// inductive's type, reduced at every step, is a telescope of `nbinders`
+// (params + indices) Pis ending in a `Sort` whose level is equivalent to the
+// block's codomain. (The parameter-type equalities and the binders' own
+// sorts are checked by the kernel through def_eq / infer, which the other
+// shadow components already certify.)
+// ===========================================================================
+
+pub open spec fn ind_ty_ok_claim<'t, 'x>(env: Env<'x, 't>, nbinders: nat, codom: LevelPtr<'t>, ty: ExprPtr<'t>, fuel: nat) -> bool
+    decreases fuel
+{
+    exists |w: ExprPtr<'t>| #[trigger] pos_marker(w)
+        && pstep_star(to_model_of_env(env), to_model(ty), to_model(w))
+        && (if nbinders == 0 {
+                exists |lvl: LevelPtr<'t>| #[trigger] sort_marker(w, lvl, 0)
+                    && to_model(w) == ExprSpec::Sort(level_to_model(lvl))
+                    && (forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lvl), rho) == interp(level_to_model(codom), rho))
+            } else {
+                fuel > 0 && exists |bt: ExprPtr<'t>, body: ExprPtr<'t>, l: ExprPtr<'t>, instd: ExprPtr<'t>| #[trigger] open_marker(bt, body, l, instd)
+                    && to_model(w) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body)))
+                    && to_model(l) == ExprSpec::Free(expr_id(l))
+                    && to_model(instd) == subst_full(to_model(body), seq![to_model(l)], 0)
+                    && ind_ty_ok_claim(env, (nbinders - 1) as nat, codom, instd, (fuel - 1) as nat)
+            })
+}
+
+#[verifier::spinoff_prover]
+pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, nbinders: usize, codom: LevelPtr<'t>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires nlbv(to_model(ty)) <= 0,
+    ensures match result {
+        Some(true) => ind_ty_ok_claim(*env, nbinders as nat, codom, ty, fuel as nat),
+        _ => true,
+    }
+    decreases fuel
+{
+    let ghost em = to_model_of_env(*env);
+    let k: u32 = 2000;
+    let w = verified_whnf_measured_rounds_capped(ctx, env, ty, 32, 32, k);
+    proof {
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
+        assert(pos_marker(w));
+    }
+    let wl = ctx.read_expr(w);
+    if nbinders == 0 {
+        match expr_as_sort(&wl) {
+            Some(lvl) => {
+                let le1 = verified_leq(ctx, lvl, codom, 100000);
+                let le2 = verified_leq(ctx, codom, lvl, 100000);
+                if le1 && le2 {
+                    proof { assert(sort_marker(w, lvl, 0)); }
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    } else {
+        if fuel == 0 {
+            return None;
+        }
+        if let Some((bn, bs, bt, body)) = expr_as_pi(&wl) {
+            assert(nlbv(to_model(body)) <= 1);
+            let sw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return None };
+            proof {
+                depth_le_size(to_model(w));
+                assert(depth(to_model(body)) < depth(to_model(w)));
+            }
+            let local = ctx.mk_dbj_level(bn, bs, bt);
+            let ls: &[ExprPtr<'t>] = &[local];
+            let instd = match verified_inst(ctx, body, ls, 0, 100000) {
+                Some(v) => v,
+                None => { ctx.replace_dbj_level(local); return None; }
+            };
+            proof {
+                assert(Seq::new(ls@.len(), |i: int| to_model(ls@[i])) =~= seq![to_model(local)]);
+                assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+                subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+            }
+            let r = verified_ind_ty_ok(ctx, env, nbinders - 1, codom, instd, fuel - 1);
+            ctx.replace_dbj_level(local);
+            match r {
+                Some(true) => {
+                    proof { assert(open_marker(bt, body, local, instd)); }
+                    Some(true)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+}
+
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires k <= 500,
     ensures match result {
