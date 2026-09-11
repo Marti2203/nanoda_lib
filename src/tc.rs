@@ -1661,6 +1661,33 @@ mod routed_tests {
         });
     }
 
+    /// Vacuity guard for the constructor-check certifier: the positivity walk
+    /// must REJECT a non-positive occurrence (`Pi (x : Bad), Sort 0` as a
+    /// constructor-argument type of `Bad`) and ACCEPT a positive one
+    /// (`Pi (x : Sort 0), Bad`, ending at the inductive itself).
+    #[test]
+    fn certified_positivity_rejects_negative_occurrence() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        export.with_tc(crate::env::EnvLimit::PpUnlimited, |tc| {
+            let z = tc.ctx.zero();
+            let anon = tc.ctx.anonymous();
+            let bad_name = tc.ctx.str1("Bad");
+            let ls = tc.ctx.alloc_levels_slice(&[]);
+            let bad = tc.ctx.mk_const(bad_name, ls);
+            let sort0 = tc.ctx.mk_sort(z);
+            let x = tc.ctx.str1("x");
+            let negative = tc.ctx.mk_pi(x, crate::expr::BinderStyle::Default, bad, sort0);
+            let positive = tc.ctx.mk_pi(x, crate::expr::BinderStyle::Default, sort0, bad);
+            let consts = [bad];
+            let arities = [0usize];
+            let _ = anon;
+            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &consts, &arities, negative, 8), None, "a negative occurrence must not certify");
+            assert_eq!(crate::delta_bound_model::verified_positive_arg(tc.ctx, tc.env, &consts, &arities, positive, 8), Some(true), "a positive argument type must certify");
+        });
+    }
+
     /// End-to-end smoke test exercising the verified DELTA route in
     /// `def_eq`: with `foo := Sort 0` in the environment, the pair
     /// `Const(foo, [])` vs `Sort 0` is unanswerable by the quick check
