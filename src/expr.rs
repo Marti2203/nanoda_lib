@@ -499,6 +499,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// name-cache dispatch `tc.rs::try_reduce_nat` performs), or `None`:
     /// 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq, 8 ble.
     /// Bridged to `expr_arena_bridge::nat_bin_op_of`.
+    /// The quotient primitive a constant name denotes (the same name-cache
+    /// dispatch `tc.rs::reduce_quot` performs): 0 `Quot.lift`, 1 `Quot.ind`,
+    /// 2 `Quot.mk`. Bridged to `expr_arena_bridge::quot_kind_of`.
+    pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> Option<u8> {
+        let nc = &self.export_file.name_cache;
+        if Some(name) == nc.quot_lift { Some(0) }
+        else if Some(name) == nc.quot_ind { Some(1) }
+        else if Some(name) == nc.quot_mk { Some(2) }
+        else { None }
+    }
+
     pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> Option<u8> {
         let nc = &self.export_file.name_cache;
         if !self.export_file.config.nat_extension { return None }

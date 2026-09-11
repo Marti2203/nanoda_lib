@@ -135,6 +135,20 @@ use crate::beta_model::spine_head;
 #[cfg(verus_only)]
 use crate::beta_model::spine_args;
 #[cfg(verus_only)]
+use crate::tc_model::{deq_quot, deq_quot_intro};
+#[cfg(verus_only)]
+use crate::tc_model::quot_ready;
+#[cfg(verus_only)]
+use crate::tc_model::quot_result;
+#[cfg(verus_only)]
+use crate::tc_model::quot_major_idx;
+#[cfg(verus_only)]
+use crate::tc_model::quot_mk_spine;
+#[cfg(verus_only)]
+use crate::tc_model::deq_any_of_quot;
+#[cfg(verus_only)]
+use crate::beta_model::pstep_star_spine_update;
+#[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
 #[cfg(verus_only)]
 use crate::beta_model::shift;
@@ -4858,6 +4872,113 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     }
 }
 
+/// QUOTIENT COMPUTATION producer (2026-09-11): `tc.rs::reduce_quot`'s
+/// mirror. `Quot.lift A r B f h q rest..` (`q` at index 5) and
+/// `Quot.ind A r B p q rest..` (`q` at index 4) contract, once `q` reduces
+/// to a `Quot.mk` spine, to the function at index 3 applied to `Quot.mk`'s
+/// last argument and then the trailing arguments -- exactly what the kernel
+/// builds. The claim composes the major premise's reduction (a `pstep_star`
+/// through the certified whnf) with the `deq_quot` leaf on the rebuilt spine.
+#[verifier::spinoff_prover]
+pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(x)) <= 0,
+        k <= 60000,
+    ensures match result {
+        Some(r) => deq_any(to_model_of_env(*env), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost cm = env_model_capped(*env, k as nat);
+    let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+    proof {
+        assert(to_model(x) == spine_app(to_model(head), args_model));
+        spine_app_nlbv_decompose(to_model(head), args_model);
+    }
+    let hl = ctx.read_expr(head);
+    let (hname, _hlv) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let kind = match ctx.quot_kind_code(hname) { Some(c) => c, None => return None };
+    let qi: usize = if kind == 0 { 5 } else if kind == 1 { 4 } else { return None };
+    if args.len() <= qi {
+        return None;
+    }
+    proof {
+        is_const_shape_model(head);
+        const_levels_vec_model(head);
+        assert(to_model(head) == ExprSpec::Const(const_id(head), const_levels_vec(head)));
+        assert(const_id(head) == name_id(hname));
+        spine_destruct_app(to_model(head), args_model);
+        assert(args_model[qi as int] == to_model(args@[qi as int]));
+        assert(nlbv(args_model[qi as int]) <= nlbv(spine_app(to_model(head), args_model)));
+    }
+    // the kernel `whnf`s the major premise before matching `Quot.mk`
+    let major = args[qi];
+    let mw = verified_whnf_rec(ctx, env, major, 256, k);
+    let ghost args2_model = args_model.update(qi as int, to_model(mw));
+    proof {
+        pstep_star_spine_update(cm, to_model(head), args_model, qi as int, to_model(mw));
+        env_model_capped_sub(*env, k as nat);
+        pstep_star_env_weaken(cm, em, to_model(x), spine_app(to_model(head), args2_model));
+        defeq_of_pstep_star(em, to_model(x), spine_app(to_model(head), args2_model));
+        deq_any_of_defeq(em, to_model(x), spine_app(to_model(head), args2_model));
+    }
+    // the reduced major must be `Quot.mk A r a`
+    let (mkhead, mkargs) = match verified_unfold_apps(ctx, mw, 100000) { Some(p) => p, None => return None };
+    let mkl = ctx.read_expr(mkhead);
+    let (mkname, _mklv) = match expr_as_const(mkhead, &mkl) { Some(p) => p, None => return None };
+    match ctx.quot_kind_code(mkname) {
+        Some(2) => {}
+        _ => return None,
+    }
+    if mkargs.len() != 3 {
+        return None;
+    }
+    let ghost mkargs_model = Seq::new(mkargs@.len(), |i: int| to_model(mkargs@[i]));
+    proof {
+        is_const_shape_model(mkhead);
+        const_levels_vec_model(mkhead);
+        assert(to_model(mw) == spine_app(to_model(mkhead), mkargs_model));
+        assert(to_model(mkhead) == ExprSpec::Const(const_id(mkhead), const_levels_vec(mkhead)));
+        assert(const_id(mkhead) == name_id(mkname));
+        spine_destruct_app(to_model(mkhead), mkargs_model);
+        spine_app_nlbv_decompose(to_model(mkhead), mkargs_model);
+    }
+    // `f a rest..`
+    let f = args[3];
+    let a = mkargs[2];
+    let appd = ctx.mk_app(f, a);
+    let rest: &[ExprPtr<'t>] = &args[(qi + 1)..args.len()];
+    let r = verified_foldl_apps(ctx, appd, rest);
+    let ghost rest_model = Seq::new(rest@.len(), |i: int| to_model(rest@[i]));
+    proof {
+        let sp = spine_app(to_model(head), args2_model);
+        assert(args2_model[qi as int] == to_model(mw));
+        assert(to_model(mw) == spine_app(to_model(mkhead), mkargs_model));
+        assert(quot_major_idx(sp) == Some(qi as nat)) by {
+            spine_destruct_app(to_model(head), args2_model);
+        }
+        assert(args2_model[3int] == to_model(f));
+        assert(rest_model =~= args2_model.skip(qi as int + 1));
+        assert(to_model(r) == spine_app(ExprSpec::App(Box::new(args2_model[3int]), Box::new(mkargs_model[2int])), args2_model.skip(qi as int + 1)));
+        deq_quot_intro(to_model(head), args2_model, qi as nat, to_model(mkhead), mkargs_model, to_model(r));
+        deq_any_of_quot(em, sp, to_model(r));
+        deq_any_trans(em, to_model(x), sp, to_model(r));
+    }
+    proof {
+        assert forall |i: int| 0 <= i < rest_model.len() implies nlbv(#[trigger] rest_model[i]) <= 0 by {
+            assert(rest_model[i] == args_model[qi as int + 1 + i]);
+            assert(nlbv(args_model[qi as int + 1 + i]) <= nlbv(spine_app(to_model(head), args_model)));
+        }
+        assert(nlbv(args_model[3int]) <= nlbv(spine_app(to_model(head), args_model)));
+        spine_app_nlbv_decompose(to_model(mkhead), mkargs_model);
+        assert(nlbv(mkargs_model[2int]) <= nlbv(spine_app(to_model(mkhead), mkargs_model)));
+        spine_app_nlbv(ExprSpec::App(Box::new(to_model(f)), Box::new(to_model(a))), rest_model);
+    }
+    Some(r)
+}
+
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires k <= 500,
     ensures match result {
@@ -5003,6 +5124,32 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             }
         }
         _ => {}
+    }
+    // --- quotient computation (the kernel's `reduce_quot`) ---
+    if ctx.num_loose_bvars(x) == 0 {
+        if let Some(rx) = verified_quot_step(ctx, env, x, k) {
+            if let Some(true) = verified_conv_p(ctx, env, rx, y, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(rx));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
+                }
+                conv_stat(15);
+                return Some(true);
+            }
+        }
+    }
+    if ctx.num_loose_bvars(y) == 0 {
+        if let Some(ry) = verified_quot_step(ctx, env, y, k) {
+            if let Some(true) = verified_conv_p(ctx, env, x, ry, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                }
+                conv_stat(15);
+                return Some(true);
+            }
+        }
     }
     // --- eta (2026-09-08): the kernel's `def_eq_eta` -- exactly one side a
     // lambda `fun (a : t) => body`, the other side `f` closed: compare the

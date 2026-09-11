@@ -636,6 +636,12 @@ pub assume_specification<'t, 'p> [get_eager_mode] (ctx: &TcCtx<'t, 'p>) -> (resu
 /// mirrors this for the predecessor: either peel `Nat.succ`off an `App`,
 /// or decrement a nonzero `NatLit` in place (`biguint_pred`, previous
 /// commit).
+/// Arena-global identity of the quotient primitives (0 `Quot.lift`,
+/// 1 `Quot.ind`, 2 `Quot.mk`), tied to the real name cache by the
+/// `quot_kind_code` specification below -- same convention as
+/// `nat_bin_op_of`.
+pub uninterp spec fn quot_kind_of(id: u64) -> Option<u8>;
+
 pub uninterp spec fn nat_zero_id() -> u64;
 pub uninterp spec fn nat_succ_id() -> u64;
 
@@ -1485,6 +1491,12 @@ pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
     ensures result == nat_repr_is_zero(e);
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::quot_kind_code] (ctx: &TcCtx<'t, 'p>, name: NamePtr<'t>) -> (result: Option<u8>) where 'p: 't
+    ensures match result {
+        Some(kind) => quot_kind_of(name_id(name)) == Some(kind),
+        None => true,
+    };
 
 /// `expr.rs::TcCtx::nat_bin_op_code`'s identity: the name-cache dispatch
 /// agrees with the arena-global `nat_bin_op_of` (a `Some` verdict is the

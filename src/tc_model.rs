@@ -98,7 +98,7 @@ use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar
 #[cfg(verus_only)]
 use crate::env_model::ctor_num_params_of_agrees;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
+use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, quot_kind_of};
 #[cfg(verus_only)]
 use crate::beta_model::spine_app_concat;
 #[cfg(verus_only)]
@@ -4616,12 +4616,95 @@ pub open spec fn fresh_marker(k: u32) -> bool {
     true
 }
 
+/// QUOTIENT COMPUTATION (2026-09-11), the kernel's `reduce_quot`
+/// (`tc.rs`): `Quot.lift A r B f h (Quot.mk A r a) rest..` and
+/// `Quot.ind A r B p (Quot.mk A r a) rest..` contract to `f a rest..` /
+/// `p a rest..`. Lean's quotient constants are AXIOMS, so this rule is a
+/// primitive of the theory rather than a consequence of delta/beta/iota:
+/// it enters the model as a LEAF of definitional equality, exactly as
+/// `deq_eta` does, not as a reduction rule (`pstep` has no case for it and
+/// the confluence family is untouched). Disclosed trust of the same
+/// character as the constructor/recursor data bridges.
+pub open spec fn quot_mk_spine(e: ExprSpec) -> bool {
+    match spine_head(e) {
+        ExprSpec::Const(id, _) => quot_kind_of(id) == Some(2u8) && spine_args(e).len() == 3,
+        _ => false,
+    }
+}
+
+/// Index of the major premise (the `Quot.mk` argument) and of the first
+/// trailing argument: `Quot.lift` takes `{A} {r} {B} f h q`, `Quot.ind`
+/// takes `{A} {r} {B} p q`; both take the function at index 3.
+pub open spec fn quot_major_idx(s: ExprSpec) -> Option<nat> {
+    match spine_head(s) {
+        ExprSpec::Const(id, _) => match quot_kind_of(id) {
+            Some(0u8) => Some(5nat),
+            Some(1u8) => Some(4nat),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub open spec fn quot_ready(s: ExprSpec) -> bool {
+    match quot_major_idx(s) {
+        Some(qi) => {
+            let args = spine_args(s);
+            args.len() > qi && quot_mk_spine(args[qi as int])
+        }
+        None => false,
+    }
+}
+
+pub open spec fn quot_result(s: ExprSpec) -> ExprSpec {
+    let args = spine_args(s);
+    let qi = quot_major_idx(s)->Some_0;
+    let a = spine_args(args[qi as int])[2];
+    spine_app(ExprSpec::App(Box::new(args[3int]), Box::new(a)), args.skip(qi as int + 1))
+}
+
+/// The symmetric leaf, shaped like `deq_eta`.
+pub open spec fn deq_quot(x: ExprSpec, y: ExprSpec) -> bool {
+    (quot_ready(x) && y == quot_result(x)) || (quot_ready(y) && x == quot_result(y))
+}
+
+/// Introduction for the quotient leaf: from the spine shapes alone, the
+/// contracted term is `quot_result`. Extracted from the exec producer,
+/// whose single query exceeded the resource limit with this inline.
+#[verifier::spinoff_prover]
+pub proof fn deq_quot_intro(head_m: ExprSpec, args2: Seq<ExprSpec>, qi: nat, mk_head: ExprSpec, mk_args: Seq<ExprSpec>, r: ExprSpec)
+    requires
+        matches!(head_m, ExprSpec::Const(_, _)),
+        quot_major_idx(spine_app(head_m, args2)) == Some(qi),
+        args2.len() > qi,
+        qi >= 4,
+        matches!(mk_head, ExprSpec::Const(_, _)),
+        quot_kind_of(mk_head->Const_0) == Some(2u8),
+        args2[qi as int] == spine_app(mk_head, mk_args),
+        mk_args.len() == 3,
+        r == spine_app(ExprSpec::App(Box::new(args2[3int]), Box::new(mk_args[2int])), args2.skip(qi as int + 1)),
+    ensures deq_quot(spine_app(head_m, args2), r)
+{
+    let sp = spine_app(head_m, args2);
+    spine_destruct_app(head_m, args2);
+    assert(spine_head(sp) == head_m);
+    assert(spine_args(sp) =~= args2);
+    spine_destruct_app(mk_head, mk_args);
+    assert(spine_head(args2[qi as int]) == mk_head);
+    assert(spine_args(args2[qi as int]) =~= mk_args);
+    assert(quot_mk_spine(args2[qi as int]));
+    assert(quot_ready(sp));
+    assert(spine_args(args2[qi as int])[2] == mk_args[2int]);
+    assert(quot_result(sp) == r);
+}
+
 pub open spec fn deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
     decreases h, 0int
 {
     ||| defeq(env, x, y)
     ||| deq_leaf(x, y)
     ||| deq_eta(x, y)
+    ||| deq_quot(x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
             deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat),
@@ -4675,7 +4758,7 @@ pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
     ensures deq_c(env, x, y, h2)
     decreases h1, 0int
 {
-    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) {
+    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -4738,6 +4821,8 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
         assert(deq_leaf(y, x));
     } else if deq_eta(x, y) {
         assert(deq_eta(y, x));
+    } else if deq_quot(x, y) {
+        assert(deq_quot(y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -4819,6 +4904,21 @@ pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 }
 
 /// Constructor lemma: an eta pair is `deq` at any height.
+pub proof fn deq_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires deq_quot(x, y)
+    ensures deq(env, x, y, h)
+{
+    deq_of_deq_c(env, x, y, h);
+}
+
+pub proof fn deq_any_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+    requires deq_quot(x, y)
+    ensures deq_any(env, x, y)
+{
+    deq_of_quot(env, x, y, 0);
+    assert(deq(env, x, y, 0));
+}
+
 pub proof fn deq_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
     requires deq_eta(x, y)
     ensures deq(env, x, y, h)
