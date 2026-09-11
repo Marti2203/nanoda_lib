@@ -4937,6 +4937,22 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             conv_trace(3, x, y, budget);
         }
     }
+    // --- projection congruence (`def_eq_proj`, which `def_eq` tries with
+    // the constant and local leaves, before the congruence group) ---
+    let xe_proj = ctx.read_expr(x);
+    let ye_proj = ctx.read_expr(y);
+    match (expr_as_proj(&xe_proj), expr_as_proj(&ye_proj)) {
+        (Some((_, i1, s1)), Some((_, i2, s2))) => {
+            if i1 == i2 {
+                if let Some(true) = verified_conv_p(ctx, env, s1, s2, fuel, k, budget) {
+                    proof { deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2)); }
+                    conv_stat(4);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
     // --- structural congruence (real-shape gated) ---
     let xe = ctx.read_expr(x);
     let ye = ctx.read_expr(y);
@@ -5087,18 +5103,6 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                 return Some(true);
             }
         }
-    }
-    match (expr_as_proj(&xe), expr_as_proj(&ye)) {
-        (Some((_, i1, s1)), Some((_, i2, s2))) => {
-            if i1 == i2 {
-                if let Some(true) = verified_conv_p(ctx, env, s1, s2, fuel, k, budget) {
-                    proof { deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2)); }
-                    conv_stat(4);
-                    return Some(true);
-                }
-            }
-        }
-        _ => {}
     }
     // --- reduction: closed, size-gated terms only ---
     // (No entry size gate any more, 2026-09-05: it rejected every large
