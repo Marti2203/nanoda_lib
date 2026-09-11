@@ -265,7 +265,7 @@ pub mod route_stats {
     }
     pub fn conv_budget() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 20))
+        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 36))
     }
     pub fn conv_join_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();

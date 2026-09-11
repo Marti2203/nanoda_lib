@@ -4857,6 +4857,55 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             return Some(true);
         }
     }
+    // --- proof irrelevance (2026-09-06): the kernel's `is_def_eq_proof_irrel`
+    // at EVERY recursive comparison -- two proofs of convertible propositions
+    // (`verified_proof_irrel_shadow`: infer both types, their types must be
+    // Prop-level sorts, the types convertible over the reduction-only route).
+    // This is the leaf that distinguishes the `_p` family from `verified_conv`.
+    if let Some(true) = verified_proof_irrel_shadow(ctx, env, x, y, fuel, k) {
+        proof {
+            proof_irrel_pair_of_shadow_claim(*env, x, y);
+            deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(11);
+        return Some(true);
+    }
+    // --- LAZY DELTA (the kernel's `lazy_delta_step`, which `def_eq` runs
+    // BEFORE any congruence): unfold both heads until the pair is decided or
+    // the chain is exhausted, then recurse once on the reducts.
+    if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
+        let ghost cm = env_model_capped(*env, k as nat);
+        proof { env_model_capped_sub(*env, k as nat); }
+        let (cx, cy) = verified_delta_chain(ctx, env, x, y, fuel, k, 32);
+        if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
+            conv_trace(2, cx, cy, budget);
+            if let Some(true) = verified_conv_p(ctx, env, cx, cy, fuel, k, budget - 1) {
+                proof {
+                    if cx == x {
+                        deq_p_any_refl(dtym, em, lcm, to_model(x));
+                    } else {
+                        pstep_star_env_weaken(cm, em, to_model(x), to_model(cx));
+                        defeq_of_pstep_star(em, to_model(x), to_model(cx));
+                        deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(cx));
+                    }
+                    if cy == y {
+                        deq_p_any_refl(dtym, em, lcm, to_model(y));
+                    } else {
+                        pstep_star_env_weaken(cm, em, to_model(y), to_model(cy));
+                        defeq_of_pstep_star(em, to_model(y), to_model(cy));
+                        deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(cy));
+                    }
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cx), to_model(cy));
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(cy));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cy), to_model(y));
+                }
+                conv_stat(5);
+                return Some(true);
+            }
+        } else {
+            conv_trace(3, x, y, budget);
+        }
+    }
     // --- structural congruence (real-shape gated) ---
     let xe = ctx.read_expr(x);
     let ye = ctx.read_expr(y);
@@ -5020,19 +5069,6 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         }
         _ => {}
     }
-    // --- proof irrelevance (2026-09-06): the kernel's `is_def_eq_proof_irrel`
-    // at EVERY recursive comparison -- two proofs of convertible propositions
-    // (`verified_proof_irrel_shadow`: infer both types, their types must be
-    // Prop-level sorts, the types convertible over the reduction-only route).
-    // This is the leaf that distinguishes the `_p` family from `verified_conv`.
-    if let Some(true) = verified_proof_irrel_shadow(ctx, env, x, y, fuel, k) {
-        proof {
-            proof_irrel_pair_of_shadow_claim(*env, x, y);
-            deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
-        }
-        conv_stat(11);
-        return Some(true);
-    }
     // --- reduction: closed, size-gated terms only ---
     // (No entry size gate any more, 2026-09-05: it rejected every large
     // proof term before spine congruence -- which needs no size bound --
@@ -5047,46 +5083,6 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         conv_stat(7);
         conv_trace(1, x, y, budget);
         return None;
-    }
-    let ghost cm = env_model_capped(*env, k as nat);
-    proof {
-        env_model_capped_sub(*env, k as nat);
-    }
-    // LAZY-DELTA CHAIN (2026-09-05): the kernel's `lazy_delta_step` LOOPS
-    // unfolding rounds until the pair is decided or exhausted; one round per
-    // conv level spent a budget unit per unfolding, so a chain such as
-    // `Add.add -> instAddNat -> Nat.add -> Nat.add._f -> brecOn -> Nat.rec`
-    // ran out of budget before its reducts could be compared. Run the rounds
-    // in a loop here (bounded by `conv_join_rounds() * 8`, not the budget),
-    // then recurse ONCE on the final reducts.
-    let (cx, cy) = verified_delta_chain(ctx, env, x, y, fuel, k, 32);
-    if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
-        conv_trace(2, cx, cy, budget);
-        if let Some(true) = verified_conv_p(ctx, env, cx, cy, fuel, k, budget - 1) {
-            proof {
-                if cx == x {
-                    deq_p_any_refl(dtym, em, lcm, to_model(x));
-                } else {
-                    pstep_star_env_weaken(cm, em, to_model(x), to_model(cx));
-                    defeq_of_pstep_star(em, to_model(x), to_model(cx));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(cx));
-                }
-                if cy == y {
-                    deq_p_any_refl(dtym, em, lcm, to_model(y));
-                } else {
-                    pstep_star_env_weaken(cm, em, to_model(y), to_model(cy));
-                    defeq_of_pstep_star(em, to_model(y), to_model(cy));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(cy));
-                }
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cx), to_model(cy));
-                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(cy));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cy), to_model(y));
-            }
-            conv_stat(5);
-            return Some(true);
-        }
-    } else {
-        conv_trace(3, x, y, budget);
     }
     // last leaf: the capped whnf of BOTH sides, then (a) the pointer-equal
     // join, or (b) -- new 2026-09-04 -- one recursive `conv` on the REDUCTS
