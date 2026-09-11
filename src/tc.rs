@@ -223,22 +223,6 @@ pub mod route_stats {
     }
     pub fn conv_work_reset() { CONV_WORK.store(0, Ordering::Relaxed); }
     pub fn conv_work_exceeded() -> bool { CONV_WORK.fetch_add(1, Ordering::Relaxed) >= conv_work_limit() }
-    /// Sound normal-form cache for the measured whnf (2026-09-11): a term
-    /// whose whnf round made no change under cap `k` is remembered; a hit lets
-    /// the loop return the term at once (reflexivity is always a valid
-    /// claim), so nested re-reductions of already-normal major premises
-    /// stop costing rounds. Only prunes; never manufactures a reduction.
-    /// Cleared with the conversion failure cache (per checker).
-    thread_local! {
-        static WHNF_NF: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    pub fn whnf_nf_seen(e: u32, k: u32) -> bool { WHNF_NF.with(|m| m.borrow().contains(&(e, k))) }
-    pub fn whnf_nf_note(e: u32, k: u32) { WHNF_NF.with(|m| { m.borrow_mut().insert((e, k)); }); }
-    pub fn whnf_full_rounds() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NANODA_WHNF_FULL").is_some())
-    }
-    pub fn whnf_nf_clear() { WHNF_NF.with(|m| m.borrow_mut().clear()); }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
         CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
     }
@@ -255,7 +239,6 @@ pub mod route_stats {
         }
     }
     pub fn conv_fail_clear() {
-        whnf_nf_clear();
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }
     /// Set NANODA_NO_CONV to skip the conversion route (A/B measurement).
@@ -278,7 +261,7 @@ pub mod route_stats {
     }
     pub fn whnf_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 32))
+        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 256))
     }
     pub fn conv_budget() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -286,7 +269,7 @@ pub mod route_stats {
     }
     pub fn conv_join_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 32))
+        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 256))
     }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);

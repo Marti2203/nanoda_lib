@@ -985,8 +985,29 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 }
 
 /// Delta-lift CM: `verified_whnf_measured_rounds` over the capped model
-/// (`k` replaces the global cap; no certificate needed).
-pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, rounds: u32, k: u32) -> (result: ExprPtr<'t>)
+
+// ===========================================================================
+// KERNEL-SHAPED WHNF (2026-09-11). Mirrors `tc.rs`'s own two functions
+// instead of approximating them with a rounds loop:
+//
+//   `whnf_no_unfolding_aux`: fire ONE no-unfolding step and tail-call
+//   yourself on the result; return the term when no step applies.
+//   `whnf`: normalize without unfolding, then try the nat fold and delta;
+//   stop exactly when both decline.
+//
+// The kernel asks no "did the term change?" question at the loop level and
+// has no size gates: each recursion follows an actual reduction. So does
+// this. What the retired rounds loop needed and this does not: a growth
+// ceiling (1500) with a second gate-free path above it, whole-round retries,
+// and a knob choosing between an exhaustive and a cheap exit. The one honest
+// difference from the kernel is `fuel`, which bounds the recursion the
+// kernel bounds by termination of reduction.
+// ===========================================================================
+
+/// `whnf_no_unfolding_aux`'s mirror: beta/zeta (the gate-free primitive),
+/// projection iota (through delta on the structure) and recursor iota, one
+/// step per recursion.
+pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
     requires
         nlbv(to_model(e)) <= 0,
         k <= 60000,
@@ -995,234 +1016,108 @@ pub fn verified_whnf_measured_rounds_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 
         nlbv(to_model(result)) <= 0,
     decreases fuel
 {
-    let mut cur = e;
-    let mut i: u32 = 0;
-    proof {
-        pstep_star_refl(env_model_capped(*env, k as nat), to_model(e));
-    }
-    if whnf_nf_seen(e, k) {
+    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+    proof { pstep_star_refl(cm, to_model(e)); }
+    if fuel == 0 {
         return e;
     }
-    while i < rounds
-        invariant
-            pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(cur)),
-            nlbv(to_model(cur)) <= 0,
-            k <= 60000,
-        decreases rounds - i
-    {
-        // (2026-09-10) the round's exit test compares against the term at the
-        // START of the round: comparing against `cur` after the first step
-        // had already advanced it ended the loop whenever only that step
-        // made progress -- every chain that needed more than one round of
-        // beta/zeta before a delta or iota stopped one step short.
-        let round_start = cur;
-        let full = whnf_full_rounds();
-        let sc = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
-        if sc > 1500 {
-            // (2026-09-08) above the growth-bound gate: the PLAIN beta/zeta
-            // step, then definition unfolding at the arena ceiling, then the
-            // rec / proj-delta producers -- the same round without the
-            // measured-fixpoint bookkeeping (its ensures needs none of it).
-            proof {
-                depth_le_size(to_model(cur));
-                nlbv_bound_implies_max_var_below(to_model(cur), 0);
-                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
-            }
-            let rp = match verified_whnf_no_unfolding_step_plain(ctx, cur, 100000) {
-                Some(v) => v,
-                None => {
-                    proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
-                    cur
-                }
-            };
-            proof {
-                assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
-                    env_model_capped(*env, k as nat).contains_key(j)
-                    && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == env_model_capped(*env, k as nat)[j]
-                by {}
-                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(cur), to_model(rp));
-                pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rp));
-            }
-            cur = rp;
-            match (if fuel == 0 { None } else { verified_nat_fold_step_capped(ctx, env, cur, (fuel - 1) as u32, k) }) {
-                Some(v) => {
-                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(v)); }
-                    cur = v;
-                }
-                None => {}
-            }
-            let scb = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
-            proof {
-                depth_le_size(to_model(cur));
-                nlbv_bound_implies_max_var_below(to_model(cur), 0);
-                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
-            }
-            // (2026-09-08) a head that does not unfold is NOT the end of the
-            // round: recursor / projection heads go on to their producers.
-            let r1 = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
-                Some(v) => v,
-                None => {
-                    proof { pstep_star_refl(env_model_capped(*env, k as nat), to_model(cur)); }
-                    cur
-                }
-            };
-            let r2 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
-                Some(v) => {
-                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r1), to_model(v)); }
-                    v
-                }
-                None => r1,
-            };
-            let r = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, r2, (fuel - 1) as u32, k) }) {
-                Some(v) => {
-                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r2), to_model(v)); }
-                    v
-                }
-                None => r2,
-            };
-            if expr_ptr_eq(r, round_start) || (!full && expr_ptr_eq(r, cur)) {
-                if expr_ptr_eq(r, round_start) {
-                    whnf_nf_note(cur, k);
-                }
-                return cur;
-            }
-            proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(r)); }
-            cur = r;
-            i = i + 1;
-            continue;
-        }
-        proof {
-            depth_le_size(to_model(cur));
-            nlbv_bound_implies_max_var_below(to_model(cur), 0);
-            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 1500);
-        }
-        // P4: a measured PROJECTION-aware no-unfolding sub-step first
-        // (beta/zeta/iota, `verified_whnf_no_unfolding_step_with_proj`
-        // -- a genuine pstep_star now that iota is a first-class rule),
-        // then the beta/zeta+delta round on the RE-MEASURED result.
-        // A `None` from the cheap projection-aware step is NOT a reason to
-        // abort the round (2026-09-05: it aborted the whole whnf on every
-        // `%(instAddNat).0 x y`-shaped term BEFORE the proj-delta producer
-        // below could run -- the single largest blocker of shadow
-        // certification on Init.Core); treat it as "no change" and go on.
-        let rp = match verified_whnf_no_unfolding_step_with_proj(ctx, env, cur, 100000, Ghost(1500 as nat), Ghost(1500 as nat)) {
-            Some(v) => v,
-            None => {
-                proof { pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(cur)); }
-                cur
-            }
-        };
-        proof {
-            assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
-                env_model_capped(*env, k as nat).contains_key(k)
-                && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
-            by {}
-            pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(cur), to_model(rp));
-            pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rp));
-        }
-        cur = rp;
-        // nat-fold (P3): the kernel tries `try_reduce_nat` BEFORE any
-        // delta unfolding in every whnf round; mirror that order.
-        match (if fuel == 0 { None } else { verified_nat_fold_step_capped(ctx, env, cur, (fuel - 1) as u32, k) }) {
-            Some(v) => {
+    // depth ceiling for the arena primitives (the kernel needs none; our
+    // `verified_inst`/`verified_peel_lambdas` carry an arena-wide bound)
+    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return e };
+    proof { depth_le_size(to_model(e)); }
+    // --- beta / zeta ---
+    match verified_whnf_no_unfolding_step_plain(ctx, e, 100000) {
+        Some(r) => {
+            if !expr_ptr_eq(r, e) {
                 proof {
-                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(v));
+                    assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
+                    pstep_star_env_weaken(mt, cm, to_model(e), to_model(r));
                 }
-                cur = v;
+                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
+                return out;
             }
-            None => {}
         }
-        let sc2 = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
-        if sc2 > 1500 {
-            // (2026-09-08) grew past the gate mid-round: unfold at the ceiling
-            // instead of giving up; the next round takes the plain path.
-            proof {
-                depth_le_size(to_model(cur));
-                nlbv_bound_implies_max_var_below(to_model(cur), 0);
-                max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 60000);
-            }
-            let rb0 = match verified_unfold_def_step_capped(ctx, env, cur, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
-                Some(v) => v,
-                None => {
-                    proof { pstep_star_refl(env_model_capped(*env, k as nat), to_model(cur)); }
-                    cur
-                }
-            };
-            let rb1 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, rb0, (fuel - 1) as u32, k) }) {
-                Some(v) => {
-                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(rb0), to_model(v)); }
-                    v
-                }
-                None => rb0,
-            };
-            let rb = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, rb1, (fuel - 1) as u32, k) }) {
-                Some(v) => {
-                    proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(rb1), to_model(v)); }
-                    v
-                }
-                None => rb1,
-            };
-            if expr_ptr_eq(rb, round_start) {
-                whnf_nf_note(cur, k);
-                return cur;
-            }
-            proof { pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(rb)); }
-            cur = rb;
-            i = i + 1;
-            continue;
-        }
-        proof {
-            depth_le_size(to_model(cur));
-            nlbv_bound_implies_max_var_below(to_model(cur), 0);
-            max_var_below_mono(to_model(cur), (depth(to_model(cur)) + 0) as nat, 1500);
-            reveal_with_fuel(whnf_fixpoint_ok, 2);
-            assert(whnf_fixpoint_ok(1500, 1500, 1));
-            reveal_with_fuel(whnf_fixpoint_final_bound, 2);
-            reveal_with_fuel(whnf_fixpoint_final_d, 2);
-        }
-        let r1 = match verified_whnf_step_capped(ctx, env, cur, 100000, k, Ghost(1500 as nat), Ghost(1500 as nat), 1, Ghost(whnf_fixpoint_final_bound(1500 as nat, 1500 as nat, 1 as nat)), Ghost(whnf_fixpoint_final_d(1500 as nat, 1 as nat))) {
-            Some(v) => v,
-            None => return cur,
-        };
-        // rec-iota P2: one recursor step on the round's result (major
-        // premise whnf'd inside, rule certified at run time).
-        let r2 = match (if fuel == 0 { None } else { verified_rec_step_capped(ctx, env, r1, (fuel - 1) as u32, k) }) {
-            Some(v) => {
-                proof {
-                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r1), to_model(v));
-                }
-                v
-            }
-            None => r1,
-        };
-        // proj-delta (2026-09-04): a `Proj`-headed spine whose structure
-        // needs DELTA (an instance constant) before its constructor head
-        // shows -- the real `reduce_proj(cheap=false)` `whnf`s the
-        // structure fully; this mirrors that with the capped multi-round
-        // whnf (recursion through `fuel`).
-        let r = match (if fuel == 0 { None } else { verified_proj_delta_step_capped(ctx, env, r2, (fuel - 1) as u32, k) }) {
-            Some(v) => {
-                proof {
-                    pstep_star_trans(env_model_capped(*env, k as nat), to_model(cur), to_model(r2), to_model(v));
-                }
-                v
-            }
-            None => r2,
-        };
-        if expr_ptr_eq(r, round_start) || (!full && expr_ptr_eq(r, cur)) {
-            if expr_ptr_eq(r, round_start) {
-                whnf_nf_note(cur, k);
-            }
-            return cur;
-        }
-        proof {
-            pstep_star_trans(env_model_capped(*env, k as nat), to_model(e), to_model(cur), to_model(r));
-        }
-        cur = r;
-        i = i + 1;
+        None => {}
     }
-    cur
+    // --- projection iota (delta on the structure, as `reduce_proj` does) ---
+    match verified_proj_delta_step_capped(ctx, env, e, (fuel - 1) as u32, k) {
+        Some(r) => {
+            if !expr_ptr_eq(r, e) {
+                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
+                return out;
+            }
+        }
+        None => {}
+    }
+    // --- recursor iota ---
+    match verified_rec_step_capped(ctx, env, e, (fuel - 1) as u32, k) {
+        Some(r) => {
+            if !expr_ptr_eq(r, e) {
+                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
+                return out;
+            }
+        }
+        None => {}
+    }
+    e
 }
+
+/// `whnf`'s mirror: normalize without unfolding, then the nat fold, then
+/// delta; stop when both decline.
+pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures
+        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+    decreases fuel
+{
+    let ghost cm = env_model_capped(*env, k as nat);
+    proof { pstep_star_refl(cm, to_model(e)); }
+    if fuel == 0 {
+        return e;
+    }
+    let w = verified_whnf_no_unfolding_rec(ctx, env, e, (fuel - 1) as u32, k);
+    // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
+    match verified_nat_fold_step_capped(ctx, env, w, (fuel - 1) as u32, k) {
+        Some(r) => {
+            let out = verified_whnf_rec(ctx, env, r, (fuel - 1) as u32, k);
+            proof {
+                pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
+                pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
+            }
+            return out;
+        }
+        None => {}
+    }
+    // --- delta ---
+    let szw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return w };
+    proof {
+        depth_le_size(to_model(w));
+        nlbv_bound_implies_max_var_below(to_model(w), 0);
+        max_var_below_mono(to_model(w), (depth(to_model(w)) + 0) as nat, 60000);
+    }
+    match verified_unfold_def_step_capped(ctx, env, w, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
+        Some(r) => {
+            if !expr_ptr_eq(r, w) {
+                let out = verified_whnf_rec(ctx, env, r, (fuel - 1) as u32, k);
+                proof {
+                    pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
+                    pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
+                }
+                return out;
+            }
+        }
+        None => {}
+    }
+    w
+}
+
 
 
 /// The numeral VALUE of a whnf'd operand: `NatLit`, `Nat.zero`, or a
@@ -1306,7 +1201,7 @@ pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     if fuel == 0 {
         return None;
     }
-    let w = verified_whnf_measured_rounds_capped(ctx, env, v, (fuel - 1) as u32, 32, k);
+    let w = verified_whnf_rec(ctx, env, v, (fuel - 1) as u32, k);
     let el = ctx.read_expr(w);
     if let Some(pn) = expr_as_nat_lit(w, &el) {
         match read_bignum_value(ctx, pn) {
@@ -1523,7 +1418,7 @@ pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     if fuel == 0 {
         return None;
     }
-    let s2 = verified_whnf_measured_rounds_capped(ctx, env, structure, (fuel - 1) as u32, 32, k);
+    let s2 = verified_whnf_rec(ctx, env, structure, (fuel - 1) as u32, k);
     let (fun, cargs) = match verified_unfold_apps(ctx, s2, 100000) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
@@ -2762,25 +2657,6 @@ pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr
 /// <= 64, rule value size <= 500). The claim is ONE genuine parallel
 /// recursor step after the congruence-star that reduced the major, under
 /// the capped model.
-/// `NANODA_WHNF_FULL=1`: the round's exit test compares against the term at
-/// the START of the round (exhaustive fixpoint, +0.2-0.3% certification,
-/// ~20x runtime); default: against the term after the first step (cheap).
-#[verifier::external_body]
-fn whnf_full_rounds() -> bool {
-    crate::tc::route_stats::whnf_full_rounds()
-}
-
-/// Normal-form cache probes (sound: a hit only returns the term unchanged).
-#[verifier::external_body]
-fn whnf_nf_seen<'t>(e: ExprPtr<'t>, k: u32) -> bool {
-    crate::tc::route_stats::whnf_nf_seen(e.raw_bits(), k)
-}
-
-#[verifier::external_body]
-fn whnf_nf_note<'t>(e: ExprPtr<'t>, k: u32) {
-    crate::tc::route_stats::whnf_nf_note(e.raw_bits(), k);
-}
-
 /// Diagnostics counter for the recursor producer's early exits (codes 40+).
 #[verifier::external_body]
 fn rec_stat(kind: u8) {
@@ -2818,7 +2694,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     if fuel == 0 {
         { rec_stat(51); return None; }
     }
-    let majw0 = verified_whnf_measured_rounds_capped(ctx, env, major, (fuel - 1) as u32, 32, k);
+    let majw0 = verified_whnf_rec(ctx, env, major, (fuel - 1) as u32, k);
     // A literal major converts to its constructor form (`Nat.zero` /
     // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
     let majw0_el = ctx.read_expr(majw0);

@@ -154,7 +154,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_measured_rounds_capped, verified_unfold_def_step_capped};
+use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_rec, verified_unfold_def_step_capped};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -1209,7 +1209,7 @@ pub fn verified_infer_app_whnf_loop<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
             proof { pstep_star_refl(denv, to_model(cur_ty)); }
             (cur_ty, bt0, body0)
         } else {
-            let w0 = verified_whnf_measured_rounds_capped(ctx, env, cur_ty, 32, 32, k);
+            let w0 = verified_whnf_rec(ctx, env, cur_ty, 256, k);
             let wl = ctx.read_expr(w0);
             match expr_as_pi(&wl) {
                 Some((_, _, bt0, body0)) => {
@@ -1900,7 +1900,7 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         proof { pstep_star_refl(to_model_of_env(*env), to_model(cur)); }
         return Some((cur, bt0, body0));
     }
-    let w0 = verified_whnf_measured_rounds_capped(ctx, env, cur, 32, 32, k);
+    let w0 = verified_whnf_rec(ctx, env, cur, 256, k);
     let wl = ctx.read_expr(w0);
     match expr_as_pi(&wl) {
         Some((_, _, bt0, body0)) => {
@@ -1955,7 +1955,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let sty = match verified_infer(ctx, env, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return None };
     assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
     let k: u32 = 2000;
-    let w = verified_whnf_measured_rounds_capped(ctx, env, sty, 32, 32, k);
+    let w = verified_whnf_rec(ctx, env, sty, 256, k);
     proof {
         env_model_capped_sub(*env, k as nat);
         pstep_star_env_weaken(env_model_capped(*env, k as nat), denv, to_model(sty), to_model(w));
@@ -2398,7 +2398,7 @@ pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     }
 {
     let k: u32 = 2000;
-    let r = verified_whnf_measured_rounds_capped(ctx, env, ty, fuel, 32, k);
+    let r = verified_whnf_rec(ctx, env, ty, 256, k);
     let rel = ctx.read_expr(r);
     if let Some(l) = expr_as_sort(&rel) {
         proof {
@@ -3223,8 +3223,8 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if ctx.num_loose_bvars(y) != 0 {
         return None;
     }
-    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, rounds, k);
-    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, rounds, k);
+    let rx = verified_whnf_rec(ctx, env, x, rounds, k);
+    let ry = verified_whnf_rec(ctx, env, y, rounds, k);
     if expr_ptr_eq(rx, ry) {
         proof {
             let cm = env_model_capped(*env, k as nat);
@@ -3690,7 +3690,7 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         _ => true,
     }
 {
-    let r = verified_whnf_measured_rounds_capped(ctx, env, ty, fuel, 32, k);
+    let r = verified_whnf_rec(ctx, env, ty, 256, k);
     let rel = ctx.read_expr(r);
     if let Some(level) = expr_as_sort(&rel) {
         let zero = ctx.zero();
@@ -3977,8 +3977,8 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     let kr0 = conv_retry_cap();
     let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
     let ghost cmr = env_model_capped(*env, kr as nat);
-    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), kr);
-    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), kr);
+    let rx = verified_whnf_rec(ctx, env, x, conv_join_rounds(), kr);
+    let ry = verified_whnf_rec(ctx, env, y, conv_join_rounds(), kr);
     proof {
         env_model_capped_sub(*env, kr as nat);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
@@ -4207,7 +4207,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     if ctx.num_loose_bvars(mty) != 0 {
         return None;
     }
-    let w = verified_whnf_measured_rounds_capped(ctx, env, mty, 32, 32, k);
+    let w = verified_whnf_rec(ctx, env, mty, 256, k);
     let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
     if (cnp as usize) > iargs.len() {
         return None;
@@ -4302,7 +4302,7 @@ pub fn verified_k_ctor_for_major<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     if ctx.num_loose_bvars(mty) != 0 {
         return None;
     }
-    let w = verified_whnf_measured_rounds_capped(ctx, env, mty, 32, 32, k);
+    let w = verified_whnf_rec(ctx, env, mty, 256, k);
     let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
     if (cnp as usize) > iargs.len() {
         return None;
@@ -4457,7 +4457,7 @@ pub fn verified_whnf_p_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             nlbv(to_model(cur)) <= 0,
         decreases rounds - i
     {
-        let r1 = verified_whnf_measured_rounds_capped(ctx, env, cur, fuel, 1, k);
+        let r1 = verified_whnf_rec(ctx, env, cur, fuel, k);
         proof {
             env_model_capped_sub(*env, k as nat);
             pstep_star_env_weaken(cm, em, to_model(cur), to_model(r1));
@@ -4628,7 +4628,7 @@ pub fn verified_positive_arg<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
     let ghost em = to_model_of_env(*env);
     let k: u32 = 2000;
-    let w = verified_whnf_measured_rounds_capped(ctx, env, ty, 32, 32, k);
+    let w = verified_whnf_rec(ctx, env, ty, 256, k);
     proof {
         env_model_capped_sub(*env, k as nat);
         pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
@@ -4814,7 +4814,7 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 {
     let ghost em = to_model_of_env(*env);
     let k: u32 = 2000;
-    let w = verified_whnf_measured_rounds_capped(ctx, env, ty, 32, 32, k);
+    let w = verified_whnf_rec(ctx, env, ty, 256, k);
     proof {
         env_model_capped_sub(*env, k as nat);
         pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
@@ -5179,8 +5179,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     let kr0 = conv_retry_cap();
     let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
     let ghost cmr = env_model_capped(*env, kr as nat);
-    let rx = verified_whnf_measured_rounds_capped(ctx, env, x, fuel, conv_join_rounds(), kr);
-    let ry = verified_whnf_measured_rounds_capped(ctx, env, y, fuel, conv_join_rounds(), kr);
+    let rx = verified_whnf_rec(ctx, env, x, conv_join_rounds(), kr);
+    let ry = verified_whnf_rec(ctx, env, y, conv_join_rounds(), kr);
     proof {
         env_model_capped_sub(*env, kr as nat);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
