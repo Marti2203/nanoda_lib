@@ -168,7 +168,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_rec, verified_unfold_def_step_capped};
+use crate::tc_model::{verified_whnf_measured_rounds, verified_whnf_rec, verified_whnf_no_unfolding_rec, verified_unfold_def_step_capped};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -4783,6 +4783,44 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         }
         conv_stat(1);
         return Some(true);
+    }
+    // --- the kernel's own next move (`def_eq`, tc.rs): weak-head normalize
+    // BOTH sides without unfolding, then decide on the reducts. Everything
+    // below this point therefore compares weak-head normal forms, which is
+    // the discipline `def_eq` follows; before 2026-09-11 this route tried
+    // congruence on unreduced terms first and reduced only as a last resort.
+    if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
+        let ghost cmn = env_model_capped(*env, k as nat);
+        let nx = verified_whnf_no_unfolding_rec(ctx, env, x, 256, k);
+        let ny = verified_whnf_no_unfolding_rec(ctx, env, y, 256, k);
+        if !(expr_ptr_eq(nx, x) && expr_ptr_eq(ny, y)) {
+            proof {
+                env_model_capped_sub(*env, k as nat);
+                pstep_star_env_weaken(cmn, em, to_model(x), to_model(nx));
+                pstep_star_env_weaken(cmn, em, to_model(y), to_model(ny));
+            }
+            if expr_ptr_eq(nx, ny) {
+                proof {
+                    assert(defeq(em, to_model(x), to_model(y)));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+                }
+                conv_stat(16);
+                return Some(true);
+            }
+            if let Some(true) = verified_conv_p(ctx, env, nx, ny, fuel, k, budget - 1) {
+                proof {
+                    defeq_of_pstep_star(em, to_model(x), to_model(nx));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(nx));
+                    defeq_of_pstep_star(em, to_model(y), to_model(ny));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ny));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(nx), to_model(ny));
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ny));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ny), to_model(y));
+                }
+                conv_stat(16);
+                return Some(true);
+            }
+        }
     }
     // --- nat-literal leaves (rec-iota P2c): two zero representations, or
     // two successor representations with convertible predecessors (a
