@@ -1019,6 +1019,7 @@ impl<'x, 't> WhnfCert<'x, 't> {
 pub struct WhnfMemo<'x, 't> {
     slots: Vec<Option<WhnfCert<'x, 't>>>,
     islots: Vec<Option<InferCert<'x, 't>>>,
+    cslots: Vec<Option<ConvCert<'x, 't>>>,
     env: Ghost<Env<'x, 't>>,
 }
 
@@ -1038,6 +1039,11 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         })
         && self.islots@.len() == memo_slots()
         && (forall |i: int| 0 <= i < self.islots@.len() ==> match #[trigger] self.islots@[i] {
+            Some(c) => c.spec_env() == self.env@,
+            None => true,
+        })
+        && self.cslots@.len() == memo_slots()
+        && (forall |i: int| 0 <= i < self.cslots@.len() ==> match #[trigger] self.cslots@[i] {
             Some(c) => c.spec_env() == self.env@,
             None => true,
         })
@@ -1092,7 +1098,19 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             islots.push(None);
             j = j + 1;
         }
-        WhnfMemo { slots, islots, env: Ghost(*env) }
+        let mut cslots: Vec<Option<ConvCert<'x, 't>>> = Vec::new();
+        let mut m: usize = 0;
+        while m < 8192
+            invariant
+                m <= 8192,
+                cslots@.len() == m,
+                forall |q: int| 0 <= q < cslots@.len() ==> (#[trigger] cslots@[q]) is None,
+            decreases 8192 - m
+        {
+            cslots.push(None);
+            m = m + 1;
+        }
+        WhnfMemo { slots, islots, cslots, env: Ghost(*env) }
     }
 
     /// A hit hands back the reduct together with its claim.
@@ -1187,6 +1205,42 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         }
         self.islots.set(idx, Some(cert));
     }
+
+    /// A hit means the pair is already certified convertible; the claim comes
+    /// back with it, so the caller may return `Some(true)` on the strength of
+    /// the certificate alone.
+    pub fn conv_get(&self, x: ExprPtr<'t>, y: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: bool)
+        requires self.wf(), self.spec_env() == *env
+        ensures result ==> deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y))
+    {
+        let bits = ptr_bits(x);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(x));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
+        match &self.cslots[idx] {
+            Some(c) => {
+                proof { use_type_invariant(c); }
+                c.hit(x, y)
+            }
+            None => false,
+        }
+    }
+
+    pub fn conv_put(&mut self, cert: ConvCert<'x, 't>)
+        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
+        ensures final(self).wf(), final(self).spec_env() == old(self).spec_env(),
+    {
+        let src = cert.left();
+        let bits = ptr_bits(src);
+        let idx = (bits as usize) % 8192;
+        proof {
+            assert(bits == ptr_raw(src));
+            assert((bits as usize) % 8192 == (bits % 8192) as usize) by (nonlinear_arith);
+        }
+        self.cslots.set(idx, Some(cert));
+    }
 }
 
 /// The claim of a shadow INFERENCE certificate: the verified inference
@@ -1243,6 +1297,43 @@ impl<'x, 't> InferCert<'x, 't> {
             result.spec_dst() == r,
     {
         InferCert { e, r, env: Ghost(*env) }
+    }
+}
+
+/// The conversion counterpart of `WhnfCert` and `InferCert`: an unforgeable
+/// record that two terms are definitionally equal over the model, the claim
+/// `verified_conv_p` returns. This is the proof-carrying version of what the
+/// kernel keeps in `tc_cache`'s `eq_cache`: a cached positive answer that
+/// hands back its own proof, so caching costs no trust.
+pub struct ConvCert<'x, 't> {
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    env: Ghost<Env<'x, 't>>,
+}
+
+impl<'x, 't> ConvCert<'x, 't> {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        deq_p_any(to_model_of_declar_ty(self.env@), to_model_of_env(self.env@), arena_lctx(),
+                  to_model(self.x), to_model(self.y))
+    }
+
+    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
+    pub closed spec fn spec_x(self) -> ExprPtr<'t> { self.x }
+    pub closed spec fn spec_y(self) -> ExprPtr<'t> { self.y }
+
+    pub fn left(&self) -> (result: ExprPtr<'t>) ensures result == self.spec_x() { self.x }
+
+    pub fn hit(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+        ensures result == (self.spec_x() == x && self.spec_y() == y)
+    { expr_ptr_eq(self.x, x) && expr_ptr_eq(self.y, y) }
+
+    /// The only constructor: the caller must already hold the claim.
+    pub fn make(x: ExprPtr<'t>, y: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
+        requires deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        ensures result.spec_env() == *env, result.spec_x() == x, result.spec_y() == y,
+    {
+        ConvCert { x, y, env: Ghost(*env) }
     }
 }
 

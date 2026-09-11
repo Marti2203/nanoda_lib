@@ -73,7 +73,7 @@ use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
 use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim};
-use crate::tc_model::InferCert;
+use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
@@ -3891,12 +3891,20 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
     // step, and the tier orders the three functions of this family.
     decreases budget, size(to_model(x)) + size(to_model(y)), 2int
 {
+    // the kernel's `eq_cache`, with its proof: a hit is a certificate whose
+    // type invariant already holds the claim this function promises.
+    if memo.conv_get(x, y, env) {
+        return Some(true);
+    }
     if conv_fail_seen_p(x, y, budget) {
         return None;
     }
     let r = verified_conv_inner_p(ctx, env, memo, x, y, fuel, k, budget);
     match r {
-        Some(true) => Some(true),
+        Some(true) => {
+            memo.conv_put(ConvCert::make(x, y, env));
+            Some(true)
+        }
         _ => {
             conv_fail_note_p(x, y, budget);
             None
