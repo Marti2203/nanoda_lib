@@ -3068,15 +3068,17 @@ fn conv_budget_total() -> u32 {
     crate::tc::route_stats::conv_budget()
 }
 
-/// Per-pair work limit tick (diagnostics-grade, no contract): `true` once the
-/// configured number of inner-conversion nodes has been spent on this pair.
-#[verifier::external_body]
-fn conv_work_exceeded() -> bool {
-    crate::tc::route_stats::conv_work_exceeded()
-}
-
 /// The `_p` (proof-irrelevance-aware) family's failure cache: the same map,
 /// keyed 1000 budget units above the reduction-only family's entries.
+///
+/// This has no counterpart in `def_eq`, and it is not there for soundness --
+/// a hit only makes the route answer `None`. It stands in for the memo caches
+/// the kernel does have (`tc_cache`'s `eq_cache`, `whnf_cache` and
+/// `whnf_no_unfolding_cache`), which this route cannot reuse because a cached
+/// positive answer would have to carry its proof. Measured 2026-09-11:
+/// removing it takes Init.Omega from 15 s to over 10 minutes. The principled
+/// replacement is a proof-carrying memo, a cache whose entries are
+/// certificates whose type invariant holds the claim; until then this stays.
 #[verifier::external_body]
 fn conv_fail_seen_p<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) -> bool {
     crate::tc::route_stats::conv_fail_seen(x.raw_bits(), y.raw_bits(), budget.wrapping_add(1000))
@@ -4774,9 +4776,6 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         return Some(true);
     }
     if budget == 0 {
-        return None;
-    }
-    if conv_work_exceeded() {
         return None;
     }
     conv_trace(0, x, y, budget);

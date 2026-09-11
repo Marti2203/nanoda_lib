@@ -212,17 +212,6 @@ pub mod route_stats {
     // in its budget), so a low-budget failure (e.g. inside the spine-wise
     // congruence loop) never poisons a later, higher-budget attempt, while a
     // top-budget failure still short-circuits every retry.
-    /// Per-pair work limit for the conversion search (`NANODA_CONV_WORK`,
-    /// default 200000 inner-conversion nodes): reset at every certification
-    /// call, the `_p` conversion answers `None` once it is exceeded. Sound
-    /// (only prunes); keeps a pathological pair from taking minutes.
-    pub static CONV_WORK: AtomicU64 = AtomicU64::new(0);
-    pub fn conv_work_limit() -> u64 {
-        static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_WORK", 200000) as u64)
-    }
-    pub fn conv_work_reset() { CONV_WORK.store(0, Ordering::Relaxed); }
-    pub fn conv_work_exceeded() -> bool { CONV_WORK.fetch_add(1, Ordering::Relaxed) >= conv_work_limit() }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
         CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
     }
@@ -1223,7 +1212,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Does some verified route certify `x == y`? (0 = none; 1..5 = the
     /// route: core, delta, join, conv, proof-irrelevance.)
     fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
-        route_stats::conv_work_reset();
         if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
         if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
         if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
