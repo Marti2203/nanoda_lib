@@ -114,7 +114,6 @@ impl<'p> ExportFile<'p> {
                 }
                 let recursor_idx = self.declars.get_index_of(&recursor_data.info.name).unwrap();
                 for ind_name in recursor_data.all_inductives.iter() {
-                    assert!(self.declars.get(ind_name).is_some())
                     // Shadow-only observation (never a verdict): the original
                     // checker does not require an inductive to be exported
                     // before its recursor; report it when the shadow is on.
@@ -127,7 +126,8 @@ impl<'p> ExportFile<'p> {
                                         ctx.debug_print(recursor_data.info.name), recursor_idx, ctx.debug_print(*ind_name), ind_idx
                                     )
                                 });
-                            }
+                                assert!(self.declars.get(ind_name).is_some())
+                }
                         }
                     }
                 }
