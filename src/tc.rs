@@ -1690,6 +1690,39 @@ mod routed_tests {
         });
     }
 
+    /// Regression guard for the whnf restructure (2026-09-11): TWO successive
+    /// beta steps with nothing else in between. The retired rounds loop fired
+    /// one beta step per round and then stopped, because every other producer
+    /// declined and its exit test compared against the term the beta step had
+    /// already advanced -- so it returned `(fun y => y) Prop` rather than
+    /// `Prop`. The kernel-shaped recursion follows each step with another.
+    #[test]
+    fn routed_whnf_join_route_confirms_two_beta_steps() {
+        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
+        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
+        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
+        export.with_tc(crate::env::EnvLimit::PpUnlimited, |tc| {
+            let anon = tc.ctx.anonymous();
+            let prop = tc.ctx.prop();
+            let zero = tc.ctx.zero();
+            let one = tc.ctx.succ(zero);
+            let ty = tc.ctx.mk_sort(one);
+            let v0 = tc.ctx.mk_var(0);
+            // `fun y => y`, then `fun x => (fun y => y) x`, applied to `Prop`
+            let id_lam = tc.ctx.mk_lambda(anon, crate::expr::BinderStyle::Default, ty, v0);
+            let inner_app = tc.ctx.mk_app(id_lam, v0);
+            let outer_lam = tc.ctx.mk_lambda(anon, crate::expr::BinderStyle::Default, ty, inner_app);
+            let redex = tc.ctx.mk_app(outer_lam, prop);
+            assert_ne!(redex, prop, "distinct pointers required to exercise the route");
+            assert!(tc.def_eq(redex, prop), "two beta steps must be def_eq to the reduct");
+            assert_eq!(
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500, 8),
+                Some(true),
+                "the whnf-join boundary must follow BOTH beta steps"
+            );
+        });
+    }
+
     /// Vacuity guard for the constructor-check certifier: the positivity walk
     /// must REJECT a non-positive occurrence (`Pi (x : Bad), Sort 0` as a
     /// constructor-argument type of `Bad`) and ACCEPT a positive one
