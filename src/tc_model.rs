@@ -1004,6 +1004,150 @@ pub fn verified_whnf_measured_rounds<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 // kernel bounds by termination of reduction.
 // ===========================================================================
 
+
+// ===========================================================================
+// PROOF-CARRYING WHNF MEMO (2026-09-11). `tc.rs` keeps `whnf_cache` and
+// `whnf_no_unfolding_cache` because 99% of the reduction work it is asked for
+// has been done before (measured: Init.Omega, 8.0M certified whnf calls for
+// 63k distinct term/cap pairs). The certified side cannot simply remember a
+// pointer pair: a cached answer has to come with its claim. So a cache entry
+// IS the claim -- a `WhnfCert` whose type invariant states the reduction, with
+// no runtime representation beyond the two pointers and the cap, and no way to
+// forge one because the fields are private and the only constructor is below.
+// Nothing here is trusted: no `external_body`, no assumed specification.
+// ===========================================================================
+
+/// The table index of a pointer. No specification at all: which slot an entry
+/// lands in cannot affect any claim, only whether a lookup hits.
+#[verifier::external_body]
+fn ptr_bits<'t>(e: ExprPtr<'t>) -> u32 {
+    e.raw_bits()
+}
+
+pub struct WhnfCert<'x, 't> {
+    e: ExprPtr<'t>,
+    r: ExprPtr<'t>,
+    k: u32,
+    env: Ghost<Env<'x, 't>>,
+}
+
+impl<'x, 't> WhnfCert<'x, 't> {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        self.k <= 60000
+            && pstep_star(env_model_capped(self.env@, self.k as nat), to_model(self.e), to_model(self.r))
+            && nlbv(to_model(self.r)) <= 0
+    }
+
+    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
+    pub closed spec fn spec_src(self) -> ExprPtr<'t> { self.e }
+    pub closed spec fn spec_dst(self) -> ExprPtr<'t> { self.r }
+    pub closed spec fn spec_cap(self) -> nat { self.k as nat }
+
+    pub fn src(&self) -> (result: ExprPtr<'t>)
+        ensures result == self.spec_src()
+    { self.e }
+
+    pub fn dst(&self) -> (result: ExprPtr<'t>)
+        ensures result == self.spec_dst()
+    { self.r }
+
+    /// Does this entry answer the question being asked?
+    pub fn hit(&self, e: ExprPtr<'t>, k: u32) -> (result: bool)
+        ensures result ==> self.spec_src() == e && self.spec_cap() == k as nat
+    { expr_ptr_eq(self.e, e) && self.k == k }
+
+    /// The only constructor: the caller must already hold the claim.
+    pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, k: u32, env: &Env<'x, 't>) -> (result: Self)
+        requires
+            k <= 60000,
+            pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)),
+            nlbv(to_model(r)) <= 0,
+        ensures
+            result.spec_env() == *env,
+            result.spec_src() == e,
+            result.spec_dst() == r,
+            result.spec_cap() == k as nat,
+    {
+        WhnfCert { e, r, k, env: Ghost(*env) }
+    }
+}
+
+/// A fixed-size direct-mapped table of those certificates, one per checker,
+/// mirroring the lifetime of `tc.rs`'s own caches. The environment is tracked
+/// in the type rather than compared at run time.
+pub struct WhnfMemo<'x, 't> {
+    slots: Vec<Option<WhnfCert<'x, 't>>>,
+    env: Ghost<Env<'x, 't>>,
+}
+
+pub open spec fn memo_slots() -> nat { 8192 }
+
+impl<'x, 't> WhnfMemo<'x, 't> {
+    /// Well-formedness carried explicitly rather than as a type invariant:
+    /// `Vec::set` may not take a `&mut` of a field of a type-invariant struct.
+    /// The proof content still rides on `WhnfCert`'s own invariant; this only
+    /// says the table has its slots and that every entry belongs to this
+    /// environment.
+    pub closed spec fn wf(self) -> bool {
+        self.slots@.len() == memo_slots()
+        && forall |i: int| 0 <= i < self.slots@.len() ==> match #[trigger] self.slots@[i] {
+            Some(c) => c.spec_env() == self.env@,
+            None => true,
+        }
+    }
+
+    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
+
+    pub fn new(env: &Env<'x, 't>) -> (result: Self)
+        ensures result.spec_env() == *env, result.wf()
+    {
+        let mut slots: Vec<Option<WhnfCert<'x, 't>>> = Vec::new();
+        let mut i: usize = 0;
+        while i < 8192
+            invariant
+                i <= 8192,
+                slots@.len() == i,
+                forall |j: int| 0 <= j < slots@.len() ==> (#[trigger] slots@[j]) is None,
+            decreases 8192 - i
+        {
+            slots.push(None);
+            i = i + 1;
+        }
+        WhnfMemo { slots, env: Ghost(*env) }
+    }
+
+    /// A hit hands back the reduct together with its claim.
+    pub fn get(&self, e: ExprPtr<'t>, k: u32, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
+        requires self.wf(), self.spec_env() == *env
+        ensures match result {
+            Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+            None => true,
+        }
+    {
+        let idx = (ptr_bits(e) as usize) % 8192;
+        match &self.slots[idx] {
+            Some(c) => {
+                proof { use_type_invariant(c); }
+                if c.hit(e, k) {
+                    Some(c.dst())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn put(&mut self, cert: WhnfCert<'x, 't>)
+        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
+        ensures final(self).wf(), final(self).spec_env() == old(self).spec_env()
+    {
+        let idx = (ptr_bits(cert.src()) as usize) % 8192;
+        self.slots.set(idx, Some(cert));
+    }
+}
+
 #[verifier::external_body]
 fn whnf_seen_note<'t>(e: ExprPtr<'t>, k: u32) {
     if std::env::var_os("NANODA_MEMO_STATS").is_some() {
@@ -1014,14 +1158,16 @@ fn whnf_seen_note<'t>(e: ExprPtr<'t>, k: u32) {
 /// `whnf_no_unfolding_aux`'s mirror: beta/zeta (the gate-free primitive),
 /// projection iota (through delta on the structure) and recursor iota, one
 /// step per recursion.
-pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
         k <= 60000,
     ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
         pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
-    decreases fuel
+    decreases fuel, 1int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
@@ -1041,7 +1187,7 @@ pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
                     assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
                     pstep_star_env_weaken(mt, cm, to_model(e), to_model(r));
                 }
-                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
                 proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
                 return out;
             }
@@ -1049,10 +1195,10 @@ pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         None => {}
     }
     // --- projection iota (delta on the structure, as `reduce_proj` does) ---
-    match verified_proj_delta_step_capped(ctx, env, e, (fuel - 1) as u32, k) {
+    match verified_proj_delta_step_capped(ctx, env, memo, e, (fuel - 1) as u32, k) {
         Some(r) => {
             if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
                 proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
                 return out;
             }
@@ -1060,10 +1206,10 @@ pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         None => {}
     }
     // --- recursor iota ---
-    match verified_rec_step_capped(ctx, env, e, (fuel - 1) as u32, k) {
+    match verified_rec_step_capped(ctx, env, memo, e, (fuel - 1) as u32, k) {
         Some(r) => {
             if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_rec(ctx, env, r, (fuel - 1) as u32, k);
+                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
                 proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
                 return out;
             }
@@ -1074,15 +1220,42 @@ pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
 }
 
 /// `whnf`'s mirror: normalize without unfolding, then the nat fold, then
-/// delta; stop when both decline.
-pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
+/// The memoized face of the certified whnf: a hit returns the remembered
+/// reduct together with the claim its certificate carries, and every computed
+/// result is recorded. This is what `tc.rs` gets from `whnf_cache`, with the
+/// difference that an entry here cannot be believed without its proof.
+pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
         k <= 60000,
     ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
         pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
-    decreases fuel
+    decreases fuel, 2int
+{
+    match memo.get(e, k, env) {
+        Some(r) => r,
+        None => {
+            let out = verified_whnf_rec_uncached(ctx, env, memo, e, fuel, k);
+            memo.put(WhnfCert::make(e, out, k, env));
+            out
+        }
+    }
+}
+
+/// delta; stop when both decline.
+pub fn verified_whnf_rec_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
+    requires
+        memo.wf(), memo.spec_env() == *env,
+        nlbv(to_model(e)) <= 0,
+        k <= 60000,
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+    decreases fuel, 1int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     proof { pstep_star_refl(cm, to_model(e)); }
@@ -1090,11 +1263,11 @@ pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 
     if fuel == 0 {
         return e;
     }
-    let w = verified_whnf_no_unfolding_rec(ctx, env, e, (fuel - 1) as u32, k);
+    let w = verified_whnf_no_unfolding_rec(ctx, env, memo, e, (fuel - 1) as u32, k);
     // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
-    match verified_nat_fold_step_capped(ctx, env, w, (fuel - 1) as u32, k) {
+    match verified_nat_fold_step_capped(ctx, env, memo, w, (fuel - 1) as u32, k) {
         Some(r) => {
-            let out = verified_whnf_rec(ctx, env, r, (fuel - 1) as u32, k);
+            let out = verified_whnf_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
             proof {
                 pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
                 pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
@@ -1113,7 +1286,7 @@ pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 
     match verified_unfold_def_step_capped(ctx, env, w, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
         Some(r) => {
             if !expr_ptr_eq(r, w) {
-                let out = verified_whnf_rec(ctx, env, r, (fuel - 1) as u32, k);
+                let out = verified_whnf_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
                 proof {
                     pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
                     pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
@@ -1192,24 +1365,27 @@ pub fn nat_operand_value<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, v: ExprPtr<'t>, fu
 /// too, so `Nat.succ (OfNat.ofNat Nat 55296 inst)` evaluates; the one-shot
 /// whnf + structural read (`nat_operand_value`) stopped at the constructor.
 /// Returns the reduced operand `r` (a value shape) and its number.
-pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, v: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
+pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, v: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(v)) <= 0,
         k <= 60000,
-    ensures match result {
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
         Some((r, b)) =>
             pstep_star(env_model_capped(*env, k as nat), to_model(v), to_model(r))
             && nlbv(to_model(r)) <= 0
             && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
         None => true,
     }
-    decreases fuel
+    decreases fuel, 0int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     if fuel == 0 {
         return None;
     }
-    let w = verified_whnf_rec(ctx, env, v, (fuel - 1) as u32, k);
+    let w = verified_whnf_rec(ctx, env, memo, v, (fuel - 1) as u32, k);
     let el = ctx.read_expr(w);
     if let Some(pn) = expr_as_nat_lit(w, &el) {
         match read_bignum_value(ctx, pn) {
@@ -1238,7 +1414,7 @@ pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
             proof {
                 assert(nlbv(to_model(p)) <= nlbv(to_model(w)));
             }
-            match verified_nat_operand_reduce(ctx, env, p, (fuel - 1) as u32, k) {
+            match verified_nat_operand_reduce(ctx, env, memo, p, (fuel - 1) as u32, k) {
                 Some((rp, bp)) => {
                     let (f_exec, _) = match expr_as_app(&el) { Some(pr) => pr, None => return None };
                     let r = ctx.mk_app(f_exec, rp);
@@ -1270,15 +1446,18 @@ pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
 /// bridged bignum arithmetic (`add`/`sub`/`mul`/`div`/`mod`/`pow`/`gcd`;
 /// `beq`/`ble` give `Bool` constants). The claim composes two
 /// spine-argument reductions with ONE parallel fold step.
-pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
         k <= 60000,
-    ensures match result {
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
         Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0 && depth(to_model(r)) == 0,
         None => true,
     }
-    decreases fuel
+    decreases fuel, 0int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
@@ -1303,8 +1482,8 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         assert(args_model[0] == to_model(x));
         assert(args_model[1] == to_model(y));
     }
-    let (vx, bx) = match verified_nat_operand_reduce(ctx, env, x, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
-    let (vy, by) = match verified_nat_operand_reduce(ctx, env, y, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
+    let (vx, bx) = match verified_nat_operand_reduce(ctx, env, memo, x, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
+    let (vy, by) = match verified_nat_operand_reduce(ctx, env, memo, y, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
     let ghost a = crate::nat_lit_model::to_nat(bx);
     let ghost b = crate::nat_lit_model::to_nat(by);
     let r_opt = if op == 0 {
@@ -1399,15 +1578,18 @@ pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 /// field and the outer args are re-applied. `pstep_star` composes as
 /// congruence-through-`Proj` (`pstep_star_proj_congr`) + one iota step
 /// (`pstep_star_iota`) + spine congruence (`pstep_spine_app_star`).
-pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
         k <= 60000,
-    ensures match result {
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
         Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
     }
-    decreases fuel
+    decreases fuel, 0int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
@@ -1426,7 +1608,7 @@ pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     if fuel == 0 {
         return None;
     }
-    let s2 = verified_whnf_rec(ctx, env, structure, (fuel - 1) as u32, k);
+    let s2 = verified_whnf_rec(ctx, env, memo, structure, (fuel - 1) as u32, k);
     let (fun, cargs) = match verified_unfold_apps(ctx, s2, 100000) { Some(p) => p, None => return None };
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
@@ -2671,15 +2853,18 @@ fn rec_stat(kind: u8) {
     crate::tc::route_stats::conv_leaf(kind);
 }
 
-pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
         k <= 60000,
-    ensures match result {
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
         Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
     }
-    decreases fuel
+    decreases fuel, 0int
 {
     let ghost cm = env_model_capped(*env, k as nat);
     let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => { rec_stat(40); return None; } };
@@ -2702,7 +2887,7 @@ pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     if fuel == 0 {
         { rec_stat(51); return None; }
     }
-    let majw0 = verified_whnf_rec(ctx, env, major, (fuel - 1) as u32, k);
+    let majw0 = verified_whnf_rec(ctx, env, memo, major, (fuel - 1) as u32, k);
     // A literal major converts to its constructor form (`Nat.zero` /
     // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
     let majw0_el = ctx.read_expr(majw0);

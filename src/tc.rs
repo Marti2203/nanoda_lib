@@ -68,6 +68,11 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// of different struct fields are exclusive, but it can't analyze what fields of a given
     /// field's type are being exclusively borrowed.
     pub(crate) env: &'x Env<'x, 't>,
+    /// Shadow-only (`NANODA_SHADOW=1`): the certified whnf's memo, whose
+    /// entries are certificates carrying their own reduction claim. Same
+    /// lifetime as `tc_cache`, for the same reason -- weak head normal forms
+    /// depend on the environment. Never read by the verdict path.
+    pub(crate) shadow_memo: crate::tc_model::WhnfMemo<'x, 't>,
     /// The caches for things like inference, reduction, and equality checking.
     pub(crate) tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
@@ -377,7 +382,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
         assert_eq!(dag.dbj_level_counter, 0);
         route_stats::conv_fail_clear();
-        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info } 
+        let shadow_memo = crate::tc_model::WhnfMemo::new(env);
+        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info, shadow_memo } 
     }
 
     /// Conduct the preliminary checks done on all declarations; a declaration
@@ -1225,11 +1231,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// route: core, delta, join, conv, proof-irrelevance.)
     fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
         if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
-        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
-        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
+        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
+        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
         if route_stats::conv_enabled()
-            && matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
-        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, x, y, 100, route_stats::cap_k()), Some(true)) {
+            && matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
+        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
             return 5;
         }
@@ -1272,15 +1278,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return;
         }
         route_stats::bump(&route_stats::SHADOW_SORT_TOTAL);
-        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, ty) { Some(v) => v, None => return };
+        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, ty) { Some(v) => v, None => return };
         if self.ctx.num_loose_bvars(vty) != 0 {
             return;
         }
         if must_be_prop {
-            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, vty, 100, 2000) == Some(true) {
+            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100, 2000) == Some(true) {
                 route_stats::bump(&route_stats::SHADOW_SORT_CERT);
             }
-        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, vty, 32).is_some() {
+        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 32).is_some() {
             route_stats::bump(&route_stats::SHADOW_SORT_CERT);
         }
     }
@@ -1290,7 +1296,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return;
         }
         route_stats::bump(&route_stats::SHADOW_INFER_TOTAL);
-        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, e) {
+        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e) {
             Some(vty) => {
                 if std::ptr::eq(vty.raw_bits() as *const u8, kernel_ty.raw_bits() as *const u8) || self.pair_certified(vty, kernel_ty) != 0 {
                     route_stats::bump(&route_stats::SHADOW_INFER_CERT);
@@ -1716,7 +1722,7 @@ mod routed_tests {
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "two beta steps must be def_eq to the reduct");
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500, 8),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
                 Some(true),
                 "the whnf-join boundary must follow BOTH beta steps"
             );
@@ -1791,7 +1797,7 @@ mod routed_tests {
         // Direct attribution: the verified boundary itself confirms the
         // pair (so the routed `true` above did not need the legacy path).
         assert_eq!(
-            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, c_foo, prop, 100, 500),
+            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, &mut memo, c_foo, prop, 100, 500),
             Some(true),
             "the delta boundary must confirm Const(foo) == Sort 0 on its own"
         );
@@ -1822,7 +1828,7 @@ mod routed_tests {
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, redex, prop, 100, 500, 8),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
                 Some(true),
                 "the whnf-join boundary must confirm the beta redex on its own"
             );
@@ -1871,7 +1877,7 @@ mod routed_tests {
         assert_ne!(applied, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, applied, prop, 100, 500, 8),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, applied, prop, 100, 500, 8),
             Some(true),
             "the whnf-join boundary must confirm the delta-then-beta pair on its own"
         );
@@ -1920,7 +1926,7 @@ mod routed_tests {
         assert_ne!(proj, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, proj, prop, 100, 500, 8),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, proj, prop, 100, 500, 8),
             Some(true),
             "the whnf-join boundary must confirm the projection pair on its own"
         );

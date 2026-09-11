@@ -548,7 +548,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_TOTAL);
             let ty = st.all_inductives_incl_specialized[i].ty;
             let nb = st.local_params.len() + st.local_indices[i].len();
-            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, nb, codom, ty, 64) == Some(true) {
+            let mut memo = crate::tc_model::WhnfMemo::new(self.env);
+            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, &mut memo, nb, codom, ty, 64) == Some(true) {
                 crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_CERT);
             }
         }
@@ -921,7 +922,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let parent_arity = match parent_pos { Some(p) => arities[p], None => return };
         let is_prop = st.is_zero.unwrap_or(false);
         let codom = match st.block_codom { Some(c) => c, None => return };
-        let r = crate::delta_bound_model::verified_ctor_ok(self.ctx, self.env, st.ind_consts.as_ref(), &arities, st.local_params.len(), parent_ind_name, parent_arity, is_prop, codom, ctor_ty, 64);
+        let mut memo = crate::tc_model::WhnfMemo::new(self.env);
+        let r = crate::delta_bound_model::verified_ctor_ok(self.ctx, self.env, &mut memo, st.ind_consts.as_ref(), &arities, st.local_params.len(), parent_ind_name, parent_arity, is_prop, codom, ctor_ty, 64);
         if r == Some(true) {
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_CTOR_CERT);
         }

@@ -51,7 +51,7 @@ use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, ind_num_params, en
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
 use crate::tc_model::mk_rec_rule;
-use crate::tc_model::{rec_rule_ctor_name, rec_rule_val, rec_rule_ctor_telescope_size_wo_params};
+use crate::tc_model::{WhnfMemo, rec_rule_ctor_name, rec_rule_val, rec_rule_ctor_telescope_size_wo_params};
 #[cfg(verus_only)]
 use crate::tc_model::rec_rule_val_of;
 use crate::tc_model::verified_whnf_multi_round_bounded;
@@ -802,7 +802,7 @@ pub fn verified_replace_if_nested_one_sibling<'t, 'p: 't, 'x>(
 /// via the fix `8794297` made specifically for this.
 pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     e: ExprPtr<'t>,
     tracked_names: &[NamePtr<'t>],
     outgoing_param_locals: &[ExprPtr<'t>],
@@ -817,6 +817,7 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
     js_d: nat,
 ) -> (result: Option<(Option<ExprPtr<'t>>, Vec<(NamePtr<'t>, ExprPtr<'t>)>, Vec<(NamePtr<'t>, ExprPtr<'t>, Vec<(NamePtr<'t>, ExprPtr<'t>)>)>, u64, Option<NamePtr<'t>>)>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         env_global_cap(*env) <= cap,
         cap <= 60000,
         cap + outgoing_param_locals@.len() as nat <= 60000,
@@ -830,7 +831,8 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
             let m = to_model(#[trigger] outgoing_param_locals@[i]);
             matches!(m, ExprSpec::Free(_))
         },
-    ensures match result {
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
         // `attributed` is the SINGLE real declaration name that `new_
         // hdrs`' entire contents -- however many mutual-block siblings
         // the fan-out produced -- are attributable to, matching `nested_
@@ -1035,7 +1037,7 @@ pub fn verified_replace_if_nested<'t, 'p: 't, 'x>(
 /// unsoundness.
 pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     e: ExprPtr<'t>,
     tracked_names: &mut Vec<NamePtr<'t>>,
     outgoing_param_locals: &[ExprPtr<'t>],
@@ -1053,6 +1055,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     js_d: nat,
 ) -> (result: Option<(ExprPtr<'t>, u64, u64)>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         env_global_cap(*env) <= cap,
         cap <= 60000,
         cap + outgoing_param_locals@.len() as nat <= 60000,
@@ -1067,6 +1070,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
             matches!(m, ExprSpec::Free(_))
         },
     ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
         forall |k: int| 0 <= k < final(pushed_attributions)@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(final(pushed_attributions)@[k])),
     decreases fuel
 {
@@ -1076,7 +1080,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
     let fuel1 = fuel - 1;
     let node_budget1 = node_budget - 1;
     match verified_replace_if_nested(
-        ctx, env, e, tracked_names.as_slice(), outgoing_param_locals, local_params, uparams,
+        ctx, env, memo, e, tracked_names.as_slice(), outgoing_param_locals, local_params, uparams,
         cache.as_slice(), unique_start, seed, fuel, cap, args_d, js_d,
     ) {
         Some((replacement, new_cache_entries, new_hdrs, next_start, attributed)) => {
@@ -1113,9 +1117,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                 None => {
                     let el = ctx.read_expr(e);
                     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, memo, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, memo, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((body2, next_start3, budget3)) => {
                                         let result = ctx.mk_pi(binder_name, binder_style, binder_type2, body2);
                                         Some((result, next_start3, budget3))
@@ -1126,9 +1130,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, memo, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, memo, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((body2, next_start3, budget3)) => {
                                         let result = ctx.mk_lambda(binder_name, binder_style, binder_type2, body2);
                                         Some((result, next_start3, budget3))
@@ -1139,11 +1143,11 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
-                        match verified_replace_all_nested(ctx, env, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, memo, binder_type, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((binder_type2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, val, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, memo, val, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((val2, next_start3, budget3)) => {
-                                        match verified_replace_all_nested(ctx, env, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start3, budget3, seed, fuel1, cap, args_d, js_d) {
+                                        match verified_replace_all_nested(ctx, env, memo, body, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start3, budget3, seed, fuel1, cap, args_d, js_d) {
                                             Some((body2, next_start4, budget4)) => {
                                                 let result = ctx.mk_let(binder_name, binder_type2, val2, body2, nondep);
                                                 Some((result, next_start4, budget4))
@@ -1157,9 +1161,9 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((fun, arg)) = expr_as_app(&el) {
-                        match verified_replace_all_nested(ctx, env, fun, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, memo, fun, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((fun2, next_start2, budget2)) => {
-                                match verified_replace_all_nested(ctx, env, arg, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
+                                match verified_replace_all_nested(ctx, env, memo, arg, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start2, budget2, seed, fuel1, cap, args_d, js_d) {
                                     Some((arg2, next_start3, budget3)) => {
                                         let result = ctx.mk_app(fun2, arg2);
                                         Some((result, next_start3, budget3))
@@ -1170,7 +1174,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
                             None => None,
                         }
                     } else if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-                        match verified_replace_all_nested(ctx, env, structure, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
+                        match verified_replace_all_nested(ctx, env, memo, structure, tracked_names, outgoing_param_locals, local_params, uparams, cache, new_headers, pushed_attributions, next_start, node_budget1, seed, fuel1, cap, args_d, js_d) {
                             Some((structure2, next_start2, budget2)) => {
                                 let result = ctx.mk_proj(ty_name, idx, structure2);
                                 Some((result, next_start2, budget2))
@@ -1201,7 +1205,7 @@ pub fn verified_replace_all_nested<'t, 'p: 't, 'x>(
 /// `param_locals` `verified_get_local_params` mints fresh each call.
 pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ctor_ty: ExprPtr<'t>,
     ctor_name: NamePtr<'t>,
     num_params: u16,
@@ -1222,6 +1226,7 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
     js_d: nat,
 ) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, u64, u64)>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(ctor_ty)) <= 0,
         max_var_below(to_model(ctor_ty), bound),
         depth(to_model(ctor_ty)) <= d,
@@ -1236,6 +1241,7 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
         old_declar_names(*env).finite(),
         node_budget >= 1 ==> unique_start as nat + (node_budget as nat) * (mutual_block_cap(*env) * (old_declar_names(*env).len() + 1)) + old_declar_names(*env).len() + 1 <= u64::MAX as nat,
     ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
         forall |k: int| 0 <= k < final(pushed_attributions)@.len() ==> env_nested_reachable(*env, *seed).contains(#[trigger] name_id(final(pushed_attributions)@[k])),
 {
     let mut param_locals: Vec<ExprPtr<'t>> = Vec::new();
@@ -1245,8 +1251,7 @@ pub fn verified_specialize_nested_one_ctor<'t, 'p: 't, 'x>(
                 get_local_params_result_depth_bound(cap, bound, d, num_params as nat, to_model(ctor_type_instd));
                 assert(depth(to_model(ctor_type_instd)) <= args_d);
             }
-            match verified_replace_all_nested(
-                ctx, env, ctor_type_instd, tracked_names, &param_locals, block_local_params, uparams,
+            match verified_replace_all_nested(ctx, env, memo, ctor_type_instd, tracked_names, &param_locals, block_local_params, uparams,
                 cache, new_headers, pushed_attributions, unique_start, node_budget, seed, fuel, cap, args_d, js_d,
             ) {
                 Some((replaced_wo_params, next_start, remaining_budget)) => {
@@ -1966,7 +1971,7 @@ pub open spec fn check_positivity_ok(cap: nat, bound: nat, d: nat, tel_fuel: nat
 /// only needs the control-flow to type-check).
 pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ctor_type_cursor: ExprPtr<'t>,
     rem_params: usize,
     non_prop_elems: &mut Vec<ExprPtr<'t>>,
@@ -1979,6 +1984,7 @@ pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
     infd_bound: nat,
 ) -> (result: Option<bool>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(ctor_type_cursor)) <= 0,
         max_var_below(to_model(ctor_type_cursor), bound),
         depth(to_model(ctor_type_cursor)) <= d,
@@ -1991,7 +1997,8 @@ pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
         infd_bound <= cap,
         infer_depth_fixpoint_ok(d, fuel as nat),
         whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
     decreases tel_fuel
 {
     if tel_fuel == 0 {
@@ -2038,16 +2045,16 @@ pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
                     assert(depth(to_model(next_cursor)) <= depth(to_model(body)));
                     assert(max_var_below(to_model(next_cursor), bound));
                     if rem_params != 0 {
-                        verified_large_elim_test_aux(ctx, env, next_cursor, rem_params - 1, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
+                        verified_large_elim_test_aux(ctx, env, memo, next_cursor, rem_params - 1, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
                     } else {
-                        match verified_ensure_infers_as_sort(ctx, env, binder_type, fuel, infer_env_cap, d, cap, infd_bound) {
+                        match verified_ensure_infers_as_sort(ctx, env, memo, binder_type, fuel, infer_env_cap, d, cap, infd_bound) {
                             Some(level) => {
                                 let z = ctx.zero();
                                 let is_z = verified_leq(ctx, level, z, fuel);
                                 if !is_z {
                                     non_prop_elems.push(local);
                                 }
-                                verified_large_elim_test_aux(ctx, env, next_cursor, 0, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
+                                verified_large_elim_test_aux(ctx, env, memo, next_cursor, 0, non_prop_elems, fuel, tel_fuel1, cap, bound, d, infer_env_cap, infd_bound)
                             }
                             None => None,
                         }
@@ -2064,7 +2071,7 @@ pub fn verified_large_elim_test_aux<'t, 'p: 't, 'x>(
             Some((_base, ind_ty_params_and_indices)) => {
                 let mut j: usize = 0;
                 while j < non_prop_elems.len()
-                    invariant j <= non_prop_elems.len(),
+                    invariant memo.wf(), memo.spec_env() == *env, j <= non_prop_elems.len(),
                     decreases non_prop_elems.len() - j
                 {
                     if !expr_ptr_in_slice(ind_ty_params_and_indices.as_slice(), non_prop_elems[j]) {
@@ -2116,7 +2123,7 @@ pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (
 /// the corresponding branch is never reached.
 pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     is_nonzero: bool,
     num_inductives: usize,
     num_ctors: usize,
@@ -2132,6 +2139,7 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
     infd_bound: nat,
 ) -> (result: Option<bool>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
             Some(ty) => {
                 &&& nlbv(to_model(ty)) <= 0
@@ -2149,7 +2157,8 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
         infd_bound <= cap,
         infer_depth_fixpoint_ok(d, fuel as nat),
         whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
     if is_nonzero {
         return Some(true);
@@ -2167,7 +2176,7 @@ pub fn verified_large_elim_test<'t, 'p: 't, 'x>(
         return Some(false);
     }
     match only_ctor_ty {
-        Some(ty) => verified_large_elim_test_aux(ctx, env, ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound),
+        Some(ty) => verified_large_elim_test_aux(ctx, env, memo, ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound),
         None => None,
     }
 }
@@ -2240,7 +2249,7 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Lev
 /// elim_test`'s own fuel/infer incompleteness case.
 pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     is_nonzero: bool,
     num_inductives: usize,
     num_ctors: usize,
@@ -2257,6 +2266,7 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
     infd_bound: nat,
 ) -> (result: Option<(LevelPtr<'t>, LevelsPtr<'t>)>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         num_inductives == 1 && num_ctors == 1 ==> match only_ctor_ty {
             Some(ty) => {
                 &&& nlbv(to_model(ty)) <= 0
@@ -2275,9 +2285,10 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
         infer_depth_fixpoint_ok(d, fuel as nat),
         whnf_multi_round_ok(cap, infd_bound, infd_bound, 1),
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
-    match verified_large_elim_test(ctx, env, is_nonzero, num_inductives, num_ctors, only_ctor_ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound) {
+    match verified_large_elim_test(ctx, env, memo, is_nonzero, num_inductives, num_ctors, only_ctor_ty, local_params_len, non_prop_elems, fuel, tel_fuel, cap, bound, d, infer_env_cap, infd_bound) {
         Some(true) => {
             let elim_level_name = verified_gen_elim_level(ctx, uparams);
             let elim_level = ctx.param(elim_level_name);
@@ -2957,7 +2968,7 @@ pub fn verified_get_i_indices<'t, 'p: 't>(
 /// THIS function (not once per `rec_ctor_arg`), matching that.
 pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ind_consts: &[ExprPtr<'t>],
     local_indices_lens: &[usize],
     local_params: &[ExprPtr<'t>],
@@ -2976,6 +2987,7 @@ pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
     zero_dd: nat,
 ) -> (result: Option<Vec<ExprPtr<'t>>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         forall |i: int| #![trigger rec_ctor_args@[i]] 0 <= i < rec_ctor_args@.len() ==> nlbv(to_model(rec_ctor_args@[i])) <= 0,
         forall |i: int| #![trigger rec_ctor_args@[i]] 0 <= i < rec_ctor_args@.len() ==> depth(to_model(rec_ctor_args@[i])) <= 0,
         env_global_cap(*env) <= infer_env_cap,
@@ -2989,7 +3001,8 @@ pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
         aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
         aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
         check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
     let mut out: Vec<ExprPtr<'t>> = Vec::new();
     let mut i: usize = 0;
@@ -3014,7 +3027,7 @@ pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
         let rec_ctor_arg = rec_ctor_args[i];
         assert(nlbv(to_model(rec_ctor_arg)) <= 0);
         assert(depth(to_model(rec_ctor_arg)) <= 0);
-        match verified_infer_then_whnf(ctx, env, rec_ctor_arg, fuel, infer_env_cap, zero_dd, infer_env_cap, infd_bound) {
+        match verified_infer_then_whnf(ctx, env, memo, rec_ctor_arg, fuel, infer_env_cap, zero_dd, infer_env_cap, infd_bound) {
             Some(u_i_ty) => {
                 let mut xs: Vec<ExprPtr<'t>> = Vec::new();
                 match verified_handle_rec_args_aux(ctx, env, u_i_ty, &mut xs, fuel, tel_fuel, infer_env_cap, aux_bound, aux_d) {
@@ -3077,7 +3090,7 @@ pub fn verified_handle_rec_ctor_args_rec_rule<'t, 'p: 't, 'x>(
 /// fields are all public, unlike `CtorHeader`/`IndTyHeader`).
 pub fn verified_mk_rec_rule1<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ind_consts: &[ExprPtr<'t>],
     local_indices_lens: &[usize],
     local_params: &[ExprPtr<'t>],
@@ -3102,6 +3115,7 @@ pub fn verified_mk_rec_rule1<'t, 'p: 't, 'x>(
     pi_fuel: u32,
 ) -> (result: Option<RecRule<'t>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
         forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
         forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
@@ -3133,13 +3147,14 @@ pub fn verified_mk_rec_rule1<'t, 'p: 't, 'x>(
         aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
         aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
         check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
     let mut all_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
     let mut rec_ctor_args: Vec<ExprPtr<'t>> = Vec::new();
     match verified_sep_nonrec_params(ctx, env, ind_consts, local_indices_lens, local_params, local_params, ctor_ty, 0, &mut all_ctor_args, &mut rec_ctor_args, fuel, tel_fuel, pos_tel_fuel, cap, bound, d) {
         Some(_stripped) => {
-            match verified_handle_rec_ctor_args_rec_rule(ctx, env, ind_consts, local_indices_lens, local_params, local_params.len(), ind_names, rec_uparams, motives, flat_mapped_minors, rec_ctor_args.as_slice(), fuel, infer_env_cap, infd_bound, tel_fuel, aux_bound, aux_d, zero_dd) {
+            match verified_handle_rec_ctor_args_rec_rule(ctx, env, memo, ind_consts, local_indices_lens, local_params, local_params.len(), ind_names, rec_uparams, motives, flat_mapped_minors, rec_ctor_args.as_slice(), fuel, infer_env_cap, infd_bound, tel_fuel, aux_bound, aux_d, zero_dd) {
                 Some(handled_rec_args) => {
                     let comp_rhs = verified_foldl_apps(ctx, this_minor, all_ctor_args.as_slice());
                     let comp_rhs = verified_foldl_apps(ctx, comp_rhs, handled_rec_args.as_slice());
@@ -3187,7 +3202,7 @@ pub fn verified_mk_rec_rule1<'t, 'p: 't, 'x>(
 /// honest fallback for a shape mismatch, same convention as elsewhere.
 pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ind_consts: &[ExprPtr<'t>],
     local_indices_lens: &[usize],
     local_params: &[ExprPtr<'t>],
@@ -3211,6 +3226,7 @@ pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
     pi_fuel: u32,
 ) -> (result: Option<Vec<Vec<RecRule<'t>>>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         all_ctor_names.len() == all_ctor_tys.len(),
         forall |g: int| #![trigger all_ctor_names@[g]] 0 <= g < all_ctor_names@.len() ==> all_ctor_names@[g]@.len() == all_ctor_tys@[g]@.len(),
         forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
@@ -3244,7 +3260,8 @@ pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
         aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
         aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
         check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
     let mut rec_rules: Vec<Vec<RecRule<'t>>> = Vec::new();
     let mut overall_ctor_idx: usize = 0;
@@ -3339,7 +3356,7 @@ pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
             assert(depth(to_model(tys@[c as int])) <= d);
             if overall_ctor_idx < flat_mapped_minors.len() {
                 let this_minor = flat_mapped_minors[overall_ctor_idx];
-                match verified_mk_rec_rule1(ctx, env, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, names[c], tys[c], this_minor, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
+                match verified_mk_rec_rule1(ctx, env, memo, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, names[c], tys[c], this_minor, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
                     Some(rr) => {
                         grp.push(rr);
                     }
@@ -3455,7 +3472,7 @@ pub fn verified_mk_recursor_aux<'t, 'p: 't>(
 /// unchanged.
 pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>,
+    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     ind_consts: &[ExprPtr<'t>],
     local_indices_lens: &[usize],
     local_params: &[ExprPtr<'t>],
@@ -3482,6 +3499,7 @@ pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
     pi_fuel: u32,
 ) -> (result: Option<Vec<Declar<'t>>>)
     requires
+        memo.wf(), memo.spec_env() == *env,
         all_ctor_names.len() == all_ctor_tys.len(),
         ind_names.len() == motives.len(),
         ind_names.len() == majors.len(),
@@ -3526,14 +3544,16 @@ pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
         aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
         aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
         check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
-    ensures true
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        true
 {
-    match verified_mk_rec_rules(ctx, env, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, all_ctor_names, all_ctor_tys, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
+    match verified_mk_rec_rules(ctx, env, memo, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, all_ctor_names, all_ctor_tys, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
         Some(rec_rules) => {
             let mut recursors: Vec<Declar<'t>> = Vec::new();
             let mut i: usize = 0;
             while i < ind_names.len()
                 invariant
+                    memo.wf(), memo.spec_env() == *env,
                     i <= ind_names.len(),
                     ind_names.len() == motives.len(),
                     ind_names.len() == majors.len(),
