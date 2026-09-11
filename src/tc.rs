@@ -299,6 +299,8 @@ pub mod route_stats {
     pub static SHADOW_INDTY_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_QUOT_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_QUOT_CERT: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_SORT_TOTAL: AtomicU64 = AtomicU64::new(0);
+    pub static SHADOW_SORT_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -367,7 +369,7 @@ pub mod route_stats {
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
             let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
             let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL))
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL))
         } else { String::new() }) + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
@@ -395,6 +397,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert!(!self.ctx.has_fvars(info.ty));
         let inferred_type = self.infer(info.ty, Check);
         self.shadow_infer(info.ty, inferred_type);
+        self.shadow_ensure_sort(info.ty, matches!(d, Declar::Theorem { .. }));
         let sort = self.ensure_sort(inferred_type);
 
         // This is sort of a "soft" check in terms of soundness, but for theorems, ensure 
@@ -1262,6 +1265,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// confirms the two types. Counts: attempted / certified / verified type
     /// produced but not shown equal (informative, not an alarm: the equality
     /// routes are incomplete).
+    /// Shadow-only: certify that a declaration type's (certified) type reduces
+    /// to a sort, and for theorems to `Prop` (`check_declar_info`'s
+    /// `ensure_sort` / `is_zero`). Never affects a verdict.
+    pub(crate) fn shadow_ensure_sort(&mut self, ty: ExprPtr<'t>, must_be_prop: bool) {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        route_stats::bump(&route_stats::SHADOW_SORT_TOTAL);
+        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, ty) { Some(v) => v, None => return };
+        if self.ctx.num_loose_bvars(vty) != 0 {
+            return;
+        }
+        if must_be_prop {
+            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, vty, 100, 2000) == Some(true) {
+                route_stats::bump(&route_stats::SHADOW_SORT_CERT);
+            }
+        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, vty, 32).is_some() {
+            route_stats::bump(&route_stats::SHADOW_SORT_CERT);
+        }
+    }
+
     pub(crate) fn shadow_infer(&mut self, e: ExprPtr<'t>, kernel_ty: ExprPtr<'t>) {
         if !route_stats::shadow_enabled() {
             return;
