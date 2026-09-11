@@ -1303,60 +1303,6 @@ pub proof fn specialized_ctor_wf(ty: ExprSpec, bound: nat, d: nat)
 }
 
 
-/// Real-arena mirror of `get_nested_if_aux_ctor` (`inductive.rs:1454-
-/// 1463`): looks up a constructor's own parent inductive, then checks
-/// whether THAT parent is one of the specialized nested containers (a
-/// hit means `c` is itself an auxiliary constructor like
-/// `_nested.Array_1.mk`, not an original one). `nested_to_unspecialized_
-/// ty_nofvars` is a snapshot of `st`'s own real, private map of the same
-/// name -- same "caller supplies a snapshot" convention as `cache` in
-/// `verified_replace_if_nested`. Pure lookup composition (`ensures
-/// true`) -- nothing downstream needs a semantic claim about the result
-/// beyond it being a real, well-typed pair.
-pub fn verified_get_nested_if_aux_ctor<'t, 'p: 't, 'x>(
-    env: &Env<'x, 't>,
-    nested_to_unspecialized_ty_nofvars: &[(NamePtr<'t>, ExprPtr<'t>)],
-    c: NamePtr<'t>,
-) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>)>)
-    requires
-        forall |i: int| 0 <= i < nested_to_unspecialized_ty_nofvars@.len() ==>
-            depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[i].1)) <= 60000,
-    ensures match result {
-        Some((unspecialized_ty, _)) => depth(to_model(unspecialized_ty)) <= 60000,
-        None => true,
-    }
-{
-    match get_constructor_inductive_name(env, &c) {
-        Some(inductive_name) => {
-            let mut i: usize = 0;
-            let mut found: Option<ExprPtr<'t>> = None;
-            while i < nested_to_unspecialized_ty_nofvars.len()
-                invariant
-                    i <= nested_to_unspecialized_ty_nofvars.len(),
-                    forall |k: int| 0 <= k < nested_to_unspecialized_ty_nofvars@.len() ==>
-                        depth(to_model(#[trigger] nested_to_unspecialized_ty_nofvars@[k].1)) <= 60000,
-                    match found {
-                        Some(x) => depth(to_model(x)) <= 60000,
-                        None => true,
-                    },
-                decreases nested_to_unspecialized_ty_nofvars.len() - i
-            {
-                if name_ptr_eq(nested_to_unspecialized_ty_nofvars[i].0, inductive_name) {
-                    found = Some(nested_to_unspecialized_ty_nofvars[i].1);
-                    assert(depth(to_model(nested_to_unspecialized_ty_nofvars@[i as int].1)) <= 60000);
-                    break;
-                }
-                i += 1;
-            }
-            match found {
-                Some(unspecialized_ty) => Some((unspecialized_ty, inductive_name)),
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
-
 
 
 
@@ -1501,27 +1447,6 @@ pub fn verified_ctor_names_have_self_ref<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, env: &
     }
     assert(ctor_ids.subrange(i as int, ctor_ids.len() as int) =~= Seq::<u64>::empty());
     Some(false)
-}
-
-/// Real-arena mirror of `is_recursive` (`inductive.rs:8-32`) itself: does
-/// SOME constructor of `ind_name` have a self-referencing occurrence in its
-/// type telescope? Takes `env: &Env` explicitly rather than reaching into
-/// `ExportFile.declars` directly (the real function's own access path) --
-/// same "caller supplies the environment" convention every other function
-/// in this whole arc already follows; `ExportFile::new_env` builds one from
-/// the same underlying `declars` map the real function reads.
-pub fn verified_is_recursive<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, env: &Env<'_, 't>, ind_name: &NamePtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
-        Some(r) => r == ctor_names_have_self_ref(*env, ind_all_ctor_names(*env, *ind_name), ind_all_ind_names(*env, *ind_name)),
-        None => true,
-    }
-{
-    match get_inductive_all_names(env, ind_name) {
-        Some((ind_names_vec, ctor_names_vec)) => {
-            verified_ctor_names_have_self_ref(ctx, env, &ctor_names_vec, &ind_names_vec, fuel)
-        }
-        None => None,
-    }
 }
 
 /// `has_ind_occ`'s (`inductive.rs:841-850`) own predicate: unlike `is_
@@ -1894,33 +1819,6 @@ pub open spec fn aux_data_ck_spec(
     && self_is_nested == temp_is_nested
     && id_set_eq_bidirectional(self_ctor_names, temp_ctor_names)
     && if temp_is_nested { id_subset(self_ind_names, temp_ind_names) } else { id_set_eq_bidirectional(self_ind_names, temp_ind_names) }
-}
-
-/// Real-code mirror of `InductiveData::aux_data_ck` (`env.rs:88-100`),
-/// proven equal to `aux_data_ck_spec` above.
-pub fn verified_aux_data_ck<'t>(
-    self_name: NamePtr<'t>, self_num_params: u16, self_num_indices: u16, self_is_nested: bool, self_ctor_names: &[NamePtr<'t>], self_ind_names: &[NamePtr<'t>],
-    temp_name: NamePtr<'t>, temp_num_params: u16, temp_num_indices: u16, temp_is_nested: bool, temp_ctor_names: &[NamePtr<'t>], temp_ind_names: &[NamePtr<'t>],
-) -> (result: bool)
-    ensures result == aux_data_ck_spec(
-        self_name, self_num_params, self_num_indices, self_is_nested, self_ctor_names@, self_ind_names@,
-        temp_name, temp_num_params, temp_num_indices, temp_is_nested, temp_ctor_names@, temp_ind_names@,
-    )
-{
-    if !name_ptr_eq(self_name, temp_name) {
-        return false;
-    }
-    if self_num_params != temp_num_params || self_num_indices != temp_num_indices || self_is_nested != temp_is_nested {
-        return false;
-    }
-    if !verified_id_set_eq(self_ctor_names, temp_ctor_names) {
-        return false;
-    }
-    if temp_is_nested {
-        verified_id_subset(self_ind_names, temp_ind_names)
-    } else {
-        verified_id_set_eq(self_ind_names, temp_ind_names)
-    }
 }
 
 
@@ -3395,150 +3293,6 @@ pub fn verified_mk_recursor_aux<'t, 'p: 't>(
             Err(_) => None,
         },
         Err(_) => None,
-    }
-}
-
-/// Real-arena mirror of `mk_recursors` (`inductive.rs:1386-1406`), the
-/// TOP-LEVEL entry point for this whole recursor-construction arc: builds
-/// ALL the block's `RecRule` groups (`verified_mk_rec_rules`) once, then
-/// one FULL `Declar::Recursor` per inductive-in-block (`verified_mk_
-/// recursor_aux`), matching the real function's own `mk_rec_rules` call
-/// followed by a `for (i, ind) in ..` loop over `majors`/`motives`/
-/// `local_indices` in lockstep. `all_local_indices` is `st.local_indices`
-/// itself, one `Vec` of index locals per inductive -- the SAME parameter
-/// `verified_mk_majors`/`verified_mk_motives` already take, reused here
-/// unchanged.
-pub fn verified_mk_recursors<'t, 'p: 't, 'x>(
-    ctx: &mut TcCtx<'t, 'p>,
-    env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
-    ind_consts: &[ExprPtr<'t>],
-    local_indices_lens: &[usize],
-    local_params: &[ExprPtr<'t>],
-    ind_names: &[NamePtr<'t>],
-    rec_uparams: LevelsPtr<'t>,
-    motives: &[ExprPtr<'t>],
-    majors: &[ExprPtr<'t>],
-    all_local_indices: &[Vec<ExprPtr<'t>>],
-    flat_mapped_minors: &[ExprPtr<'t>],
-    all_ctor_names: &[Vec<NamePtr<'t>>],
-    all_ctor_tys: &[Vec<ExprPtr<'t>>],
-    k_target: bool,
-    fuel: u32,
-    tel_fuel: u32,
-    pos_tel_fuel: u32,
-    cap: nat,
-    bound: nat,
-    d: nat,
-    infer_env_cap: nat,
-    infd_bound: nat,
-    aux_bound: nat,
-    aux_d: nat,
-    zero_dd: nat,
-    pi_fuel: u32,
-) -> (result: Option<Vec<Declar<'t>>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        all_ctor_names.len() == all_ctor_tys.len(),
-        ind_names.len() == motives.len(),
-        ind_names.len() == majors.len(),
-        ind_names.len() == all_local_indices.len(),
-        forall |g: int| #![trigger all_ctor_names@[g]] 0 <= g < all_ctor_names@.len() ==> all_ctor_names@[g]@.len() == all_ctor_tys@[g]@.len(),
-        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> nlbv(to_model(local_params@[i])) <= 0,
-        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> depth(to_model(local_params@[i])) <= 0,
-        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> {
-            let m = to_model(local_params@[i]);
-            matches!(m, ExprSpec::Free(_))
-        },
-        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> {
-            let m = to_model(motives@[i]);
-            matches!(m, ExprSpec::Free(_))
-        },
-        forall |i: int| #![trigger majors@[i]] 0 <= i < majors@.len() ==> {
-            let m = to_model(majors@[i]);
-            matches!(m, ExprSpec::Free(_))
-        },
-        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> {
-            let m = to_model(flat_mapped_minors@[i]);
-            matches!(m, ExprSpec::Free(_))
-        },
-        forall |g: int| #![trigger all_local_indices@[g]] 0 <= g < all_local_indices@.len() ==> forall |i: int| #![trigger all_local_indices@[g]@[i]] 0 <= i < all_local_indices@[g]@.len() ==> {
-            let m = to_model(all_local_indices@[g]@[i]);
-            matches!(m, ExprSpec::Free(_))
-        },
-        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> nlbv(to_model(all_ctor_tys@[g]@[i])) <= 0,
-        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> max_var_below(to_model(all_ctor_tys@[g]@[i]), bound),
-        forall |g: int| #![trigger all_ctor_tys@[g]] 0 <= g < all_ctor_tys@.len() ==> forall |i: int| #![trigger all_ctor_tys@[g]@[i]] 0 <= i < all_ctor_tys@[g]@.len() ==> depth(to_model(all_ctor_tys@[g]@[i])) <= d,
-        d <= 60000,
-        env_global_cap(*env) <= cap,
-        check_positivity_ok(cap, bound, d, pos_tel_fuel as nat),
-        env_global_cap(*env) <= infer_env_cap,
-        local_type_cap() <= infer_env_cap,
-        infer_env_cap <= 60000,
-        zero_dd == 0,
-        infd_bound == infer_result_depth_bound(zero_dd, infer_env_cap, fuel as nat),
-        infd_bound <= infer_env_cap,
-        infer_depth_fixpoint_ok(zero_dd, fuel as nat),
-        whnf_multi_round_ok(infer_env_cap, infd_bound, infd_bound, 1),
-        aux_bound == whnf_multi_round_final_bound(infer_env_cap, infd_bound, infd_bound, 1),
-        aux_d == whnf_multi_round_final_d(infer_env_cap, infd_bound, infd_bound, 1),
-        check_positivity_ok(infer_env_cap, aux_bound, aux_d, tel_fuel as nat),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        true
-{
-    match verified_mk_rec_rules(ctx, env, memo, ind_consts, local_indices_lens, local_params, ind_names, rec_uparams, motives, flat_mapped_minors, all_ctor_names, all_ctor_tys, fuel, tel_fuel, pos_tel_fuel, cap, bound, d, infer_env_cap, infd_bound, aux_bound, aux_d, zero_dd, pi_fuel) {
-        Some(rec_rules) => {
-            let mut recursors: Vec<Declar<'t>> = Vec::new();
-            let mut i: usize = 0;
-            while i < ind_names.len()
-                invariant
-                    memo.wf(), memo.spec_env() == *env,
-                    i <= ind_names.len(),
-                    ind_names.len() == motives.len(),
-                    ind_names.len() == majors.len(),
-                    ind_names.len() == all_local_indices.len(),
-                    ind_names.len() == rec_rules.len(),
-                    forall |k: int| #![trigger local_params@[k]] 0 <= k < local_params@.len() ==> {
-                        let m = to_model(local_params@[k]);
-                        matches!(m, ExprSpec::Free(_))
-                    },
-                    forall |k: int| #![trigger motives@[k]] 0 <= k < motives@.len() ==> {
-                        let m = to_model(motives@[k]);
-                        matches!(m, ExprSpec::Free(_))
-                    },
-                    forall |k: int| #![trigger majors@[k]] 0 <= k < majors@.len() ==> {
-                        let m = to_model(majors@[k]);
-                        matches!(m, ExprSpec::Free(_))
-                    },
-                    forall |k: int| #![trigger flat_mapped_minors@[k]] 0 <= k < flat_mapped_minors@.len() ==> {
-                        let m = to_model(flat_mapped_minors@[k]);
-                        matches!(m, ExprSpec::Free(_))
-                    },
-                    forall |g: int| #![trigger all_local_indices@[g]] 0 <= g < all_local_indices@.len() ==> forall |k: int| #![trigger all_local_indices@[g]@[k]] 0 <= k < all_local_indices@[g]@.len() ==> {
-                        let m = to_model(all_local_indices@[g]@[k]);
-                        matches!(m, ExprSpec::Free(_))
-                    },
-                decreases ind_names.len() - i
-            {
-                let motive = motives[i];
-                let major = majors[i];
-                let local_indices = all_local_indices[i].as_slice();
-                assert(local_indices@ =~= all_local_indices@[i as int]@);
-                assert(forall |k: int| #![trigger local_indices@[k]] 0 <= k < local_indices@.len() ==> {
-                    let m = to_model(local_indices@[k]);
-                    matches!(m, ExprSpec::Free(_))
-                });
-                let rr_slice = rec_rules[i].as_slice();
-                match verified_mk_recursor_aux(ctx, local_params, motives, rec_uparams, k_target, ind_names[i], motive, major, local_indices, flat_mapped_minors, rr_slice, ind_names) {
-                    Some(decl) => {
-                        recursors.push(decl);
-                    }
-                    None => return None,
-                }
-                i += 1;
-            }
-            Some(recursors)
-        }
-        None => None,
     }
 }
 
