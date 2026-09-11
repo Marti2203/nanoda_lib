@@ -147,6 +147,12 @@ use crate::tc_model::quot_mk_spine;
 #[cfg(verus_only)]
 use crate::tc_model::deq_any_of_quot;
 #[cfg(verus_only)]
+use crate::beta_model::spine_app_size;
+#[cfg(verus_only)]
+use crate::beta_model::spine_app_size_elem;
+#[cfg(verus_only)]
+use crate::beta_model::args_size_sum;
+#[cfg(verus_only)]
 use crate::beta_model::pstep_star_spine_update;
 #[cfg(verus_only)]
 use crate::expr_model::subst_full_noop;
@@ -3144,9 +3150,12 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
         _ => true,
     }
-    decreases budget, 2int
+    decreases budget, size(ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1)))) + size(ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))), 0int
 {
     let ghost em = to_model_of_env(*env);
+    if budget == 0 {
+        return None;
+    }
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost lcm = arena_lctx();
     let sb1 = match verified_size(ctx, b1, 100000) { Some(v) => v, None => return None };
@@ -3162,7 +3171,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
     if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
         if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
-            if let Some(true) = verified_conv_p(ctx, env, ib1, ib2, fuel, k, budget) {
+            if let Some(true) = verified_conv_p(ctx, env, ib1, ib2, fuel, k, budget - 1) {
                 proof {
                     let kk = expr_id(local);
                     let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
@@ -3824,7 +3833,12 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
     }
-    decreases budget, 1int
+    // The kernel's `def_eq` recursion is structural where it compares
+    // subterms and semantic (it rests on normalization) where it reduces.
+    // The measure says exactly that: `budget` falls only on a reduction or
+    // instantiation step, the term-size component falls on every congruence
+    // step, and the tier orders the three functions of this family.
+    decreases budget, size(to_model(x)) + size(to_model(y)), 2int
 {
     if conv_fail_seen_p(x, y, budget) {
         return None;
@@ -3850,7 +3864,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
     }
-    decreases budget, 1int
+    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
@@ -3865,7 +3879,16 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     let ghost am1 = Seq::new(args1@.len(), |i: int| to_model(args1@[i]));
     let ghost am2 = Seq::new(args2@.len(), |i: int| to_model(args2@[i]));
-    if let Some(true) = verified_conv_p(ctx, env, h1, h2, fuel, k, budget - 1) {
+    // the head is a strict subterm of the spine (both sides have >= 1 arg),
+    // so the congruence recursion descends structurally
+    proof {
+        spine_app_size(to_model(h1), am1);
+        spine_app_size(to_model(h2), am2);
+        assert(am1.len() > 0 && am2.len() > 0);
+        assert(args_size_sum(am1) > 0);
+        assert(args_size_sum(am2) > 0);
+    }
+    if let Some(true) = verified_conv_p(ctx, env, h1, h2, fuel, k, budget) {
     } else {
         return None;
     }
@@ -3886,12 +3909,21 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             dtym == to_model_of_declar_ty(*env),
             lcm == arena_lctx(),
             deq_p_any(dtym, em, lcm, spine_app(to_model(h1), am1.subrange(0, i as int)), spine_app(to_model(h2), am2.subrange(0, i as int))),
+            // needed inside the body for the structural (size) measure
+            to_model(x) == spine_app(to_model(h1), am1),
+            to_model(y) == spine_app(to_model(h2), am2),
             k <= 500, budget >= 1,
         decreases n - i
     {
         let a1 = args1[i];
         let a2 = args2[i];
-        if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget - 1) {
+        proof {
+            spine_app_size_elem(to_model(h1), am1, i as int);
+            spine_app_size_elem(to_model(h2), am2, i as int);
+            assert(am1[i as int] == to_model(a1));
+            assert(am2[i as int] == to_model(a2));
+        }
+        if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget) {
             proof {
                 let p1 = am1.subrange(0, i as int);
                 let p2 = am2.subrange(0, i as int);
@@ -4732,7 +4764,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
     }
-    decreases budget, 0int
+    decreases budget, size(to_model(x)) + size(to_model(y)), 1int
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
@@ -4914,13 +4946,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // below spent one budget unit per application layer, so a 10-argument
     // spine exhausted the budget walking down its own head. Here every
     // head/argument pair is checked at the SAME budget level.
-    if let Some(true) = verified_conv_spine_p(ctx, env, x, y, fuel, k, budget - 1) {
+    if let Some(true) = verified_conv_spine_p(ctx, env, x, y, fuel, k, budget) {
         return Some(true);
     }
     match (expr_as_app(&xe), expr_as_app(&ye)) {
         (Some((f1, a1)), Some((f2, a2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, f1, f2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, f1, f2, fuel, k, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, a1, a2, fuel, k, budget) {
                     proof { deq_p_any_app_congr(dtym, em, lcm, to_model(f1), to_model(f2), to_model(a1), to_model(a2)); }
                     conv_stat(2);
                     return Some(true);
@@ -4931,13 +4963,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     match (expr_as_pi(&xe), expr_as_pi(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget) {
                     proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget) {
                     return Some(true);
                 }
             }
@@ -4946,13 +4978,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, t1, t2, fuel, k, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, b1, b2, fuel, k, budget) {
                     proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, n1, s1, t1, t2, b1, b2, fuel, k, budget) {
                     return Some(true);
                 }
             }
@@ -5060,7 +5092,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     match (expr_as_proj(&xe), expr_as_proj(&ye)) {
         (Some((_, i1, s1)), Some((_, i2, s2))) => {
             if i1 == i2 {
-                if let Some(true) = verified_conv_p(ctx, env, s1, s2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, s1, s2, fuel, k, budget) {
                     proof { deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2)); }
                     conv_stat(4);
                     return Some(true);
