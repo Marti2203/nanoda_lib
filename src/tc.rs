@@ -204,7 +204,15 @@ pub mod route_stats {
     /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
     /// recursive confirmation, not just top-level ones.
     pub static CONV_LEAF: [AtomicU64; 64] = [const { AtomicU64::new(0) }; 64];
-    pub fn conv_leaf(kind: u8) { if (kind as usize) < 64 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
+    thread_local! {
+        /// Diagnostic: the last conversion-leaf code recorded, so the
+        /// uncertified-pair print can say where the route gave up.
+        pub static LAST_LEAF: std::cell::Cell<u8> = const { std::cell::Cell::new(255) };
+    }
+    pub fn last_leaf() -> u8 { LAST_LEAF.with(|c| c.get()) }
+    pub fn clear_last_leaf() { LAST_LEAF.with(|c| c.set(255)); }
+    pub fn conv_leaf(kind: u8) {
+        LAST_LEAF.with(|c| c.set(kind)); if (kind as usize) < 64 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
     thread_local! {
         /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
@@ -267,6 +275,12 @@ pub mod route_stats {
     pub fn uncertified_budget() -> bool {
         let cap = knob("NANODA_UNCERTIFIED", 0) as u64;
         cap > 0 && UNCERTIFIED_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
+    }
+
+    pub static CONVFAIL_SHOWN: AtomicU64 = AtomicU64::new(0);
+    pub fn conv_fail_print_budget() -> bool {
+        let cap = knob("NANODA_CONV_FAIL_PRINT", 0) as u64;
+        cap > 0 && CONVFAIL_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
     }
 
     pub fn conv_fail_clear() {
@@ -1286,11 +1300,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if !route_stats::shadow_enabled() {
             return;
         }
+        route_stats::clear_last_leaf();
         let which = self.pair_certified(x, y);
         if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
         if which == 0 && verdict && route_stats::uncertified_budget() {
-            eprintln!("UNCERTIFIED (original says equal, no verified route confirms)\n  X: {:?}\n  Y: {:?}",
-                self.ctx.debug_print(x), self.ctx.debug_print(y));
+            eprintln!("UNCERTIFIED (original says equal, no verified route confirms) last-leaf={}\n  X: {:?}\n  Y: {:?}",
+                route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y));
         }
         if which != 0 {
             if verdict {

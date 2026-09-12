@@ -3021,6 +3021,20 @@ fn conv_stat(kind: u8) {
 /// Experiment knob (no contract; a round count is a pure budget --
 /// `verified_defeq_whnf_capped`'s claim holds for every value).
 /// Diagnostics-only trace bridge (no contract).
+/// Diagnostic (`NANODA_CONV_FAIL_PRINT=N`): print the first N pairs the
+/// conversion route gives up on, smallest first -- the DEEPEST failures are
+/// the atomic blockers, the ones no rule could take a step on.
+#[verifier::external_body]
+fn conv_fail_print<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>) {
+    if crate::tc::route_stats::conv_fail_print_budget() {
+        let sx = format!("{:?}", ctx.debug_print(x));
+        let sy = format!("{:?}", ctx.debug_print(y));
+        if sx.len() < 400 && sy.len() < 400 {
+            eprintln!("CONVFAIL\n  X: {}\n  Y: {}", sx, sy);
+        }
+    }
+}
+
 #[verifier::external_body]
 fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
     crate::tc::route_stats::conv_trace(tag, x.raw_bits(), y.raw_bits(), budget);
@@ -5007,7 +5021,12 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 // with the real constructor application is ordinary conversion. Gated on
 // the other side really being a constructor application, as the kernel
 // gates it, since expanding costs two inferences and a reduction.
-    if is_ctor_app(ctx, env, y) {
+    // Never expand a side that is ALREADY a constructor application: doing so
+    // rebuilds `Ctor (x.0)` from `Ctor a`, and the next level rebuilds it
+    // again, burning the whole budget on a regress. (Measured 2026-09-12: the
+    // deepest conversion failures on Init.Core were nested `LT.mk %(LT.mk
+    // %(..).0).0` towers produced by exactly this.)
+    if is_ctor_app(ctx, env, y) && !is_ctor_app(ctx, env, x) {
         if let Some(ex) = verified_eta_struct_shadow(ctx, env, memo, x, k) {
             if !expr_ptr_eq(ex, x) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, k, budget - 1) {
@@ -5022,7 +5041,7 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
             }
         }
     }
-    if is_ctor_app(ctx, env, x) {
+    if is_ctor_app(ctx, env, x) && !is_ctor_app(ctx, env, y) {
         if let Some(ey) = verified_eta_struct_shadow(ctx, env, memo, y, k) {
             if !expr_ptr_eq(ey, y) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, k, budget - 1) {
@@ -5595,6 +5614,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         }
     }
     conv_trace(5, x, y, budget);
+    conv_fail_print(ctx, x, y);
     None
 }
 
