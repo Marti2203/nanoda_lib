@@ -722,7 +722,27 @@ pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, 
         None => true,
     };
 
-pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>);
+/// Constructor -> its field count, keyed the same way as
+/// `to_model_of_struct_ctor` above, because `def_eq_unit` relates two
+/// separate reads of it (the route's own check and the leaf's claim) and so
+/// needs them to agree on one ground truth.
+pub uninterp spec fn to_model_of_ctor_num_fields<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
+
+/// Same disclosed trust as `struct_ctor_of_agrees`: a constructor visible in
+/// SOME env has the arena-global field count its env reports.
+#[verifier::external_body]
+pub proof fn ctor_num_fields_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    requires to_model_of_ctor_num_fields(env).contains_key(id)
+    ensures crate::expr_arena_bridge::ctor_num_fields_of(id) == Some(to_model_of_ctor_num_fields(env)[id])
+{
+}
+
+pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
+    ensures match result {
+        Some(k) => to_model_of_ctor_num_fields(*env).contains_key(name_id(*n))
+            && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
+        None => true,
+    };
 
 pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
 

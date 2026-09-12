@@ -666,6 +666,12 @@ pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
 /// typing model's `Proj` rule reads it (2026-09-06).
 pub uninterp spec fn struct_ctor_of(id: u64) -> Option<u64>;
 
+/// Constructor -> how many FIELDS it takes (its telescope beyond the
+/// inductive's parameters), `name_id`-keyed. The kernel's `def_eq_unit`
+/// turns on this being zero: a structure whose single constructor takes no
+/// fields has exactly one element, so any two of its elements are equal.
+pub uninterp spec fn ctor_num_fields_of(id: u64) -> Option<u16>;
+
 /// NAT-LITERAL FOLDING (rec-iota P3, 2026-09-04): the kernel's `nat_
 /// extension` dispatch (`tc.rs::try_reduce_nat`) keyed by name id, as an
 /// ARENA-GLOBAL uninterpreted op code -- same "one declaration per name

@@ -100,7 +100,7 @@ use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar
 #[cfg(verus_only)]
 use crate::env_model::ctor_num_params_of_agrees;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, quot_kind_of};
+use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, ctor_num_fields_of, quot_kind_of};
 #[cfg(verus_only)]
 use crate::beta_model::spine_app_concat;
 #[cfg(verus_only)]
@@ -4036,6 +4036,50 @@ pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map
         && deq_any(denv, tx, ty2)
 }
 
+/// Marker trigger for `unit_pair`'s witnesses, the same device
+/// `irrel_marker` plays for proof irrelevance.
+pub open spec fn unit_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool { true }
+
+/// "This constant names a structure with one constructor that takes no
+/// fields" -- a type with exactly one element.
+pub open spec fn unit_like_head(id: u64) -> bool {
+    exists |c: u64| #[trigger] struct_ctor_of(id) == Some(c) && ctor_num_fields_of(c) == Some(0u16)
+}
+
+/// The same, up to reduction: the kernel whnfs the inferred type before
+/// looking at its head, so the rule's real side condition is that the type
+/// REDUCES to such a structure.
+pub open spec fn unit_like_type_m(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec) -> bool {
+    exists |r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
+}
+
+/// "This type is such a structure, applied to whatever parameters."
+pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
+    exists |id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>|
+        #[trigger] spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
+}
+
+/// THE UNIT RULE, the kernel's `def_eq_unit`: if `x`'s type is a structure
+/// whose single constructor takes no fields, and `y`'s type is convertible
+/// to it, then `x` and `y` are definitionally equal -- the type has one
+/// element, so there is nothing to distinguish them. Like proof
+/// irrelevance, this is a rule ABOUT TYPING rather than about reduction,
+/// so it lives in the `_p` family beside `proof_irrel_pair` and is stated
+/// the same way, with a marker trigger over its four witnesses.
+pub open spec fn unit_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+        #[trigger] unit_marker(tx, ty2, fx, fy)
+        && types_to(dty, denv, lctx, x, tx, fx)
+        && types_to(dty, denv, lctx, y, ty2, fy)
+        // EITHER side being the unit-like one is enough, and stating it that
+        // way keeps the leaf symmetric, which `deq_p_c_symm` inverts. The
+        // kernel only ever inspects `x`'s type, but the rule is symmetric in
+        // truth: the two types are convertible, so if one has a single
+        // element so does the other.
+        && (unit_like_type_m(denv, tx) || unit_like_type_m(denv, ty2))
+        && deq_any(denv, tx, ty2)
+}
+
 /// The NON-REDUCTION leaf equalities of definitional equality: two
 /// `Sort`s whose levels agree under every level-variable assignment, or
 /// two `Const`s with the same id and pointwise interp-equal level lists.
@@ -4868,6 +4912,7 @@ pub open spec fn deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
 {
     ||| deq_c(env, x, y, h)
     ||| proof_irrel_pair(dty, env, lctx, x, y)
+    ||| unit_pair(dty, env, lctx, x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
             deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat),
@@ -4937,6 +4982,7 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
     } else if proof_irrel_pair(dty, env, lctx, x, y) {
+    } else if unit_pair(dty, env, lctx, x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -5006,6 +5052,16 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
         deq_any_symm(env, tx, ty2);
         assert(irrel_marker(ty2, tx, fy, fx));
         assert(proof_irrel_pair(dty, env, lctx, y, x));
+    } else if unit_pair(dty, env, lctx, x, y) {
+        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+            #[trigger] unit_marker(tx, ty2, fx, fy)
+            && types_to(dty, env, lctx, x, tx, fx)
+            && types_to(dty, env, lctx, y, ty2, fy)
+            && (unit_like_type_m(env, tx) || unit_like_type_m(env, ty2))
+            && deq_any(env, tx, ty2);
+        deq_any_symm(env, tx, ty2);
+        assert(unit_marker(ty2, tx, fy, fx));
+        assert(unit_pair(dty, env, lctx, y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -5091,6 +5147,24 @@ pub proof fn deq_p_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (
     ensures deq_p(dty, env, lctx, x, y, h)
 {
     deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+}
+
+/// The unit rule lifts into `deq_p` at any height, exactly as proof
+/// irrelevance does: it is a leaf of `deq_p_c`, and a leaf is a length-2
+/// chain.
+pub proof fn deq_p_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires unit_pair(dty, env, lctx, x, y)
+    ensures deq_p(dty, env, lctx, x, y, h)
+{
+    deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+}
+
+pub proof fn deq_p_any_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires unit_pair(dty, env, lctx, x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    deq_p_of_unit(dty, env, lctx, x, y, 0);
+    assert(deq_p(dty, env, lctx, x, y, 0));
 }
 
 /// `deq_p` is reflexive at every height: the length-1 chain.

@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
@@ -166,9 +166,9 @@ use crate::tc_model::eta_expands_to;
 #[cfg(verus_only)]
 use crate::tc_model::deq_any_of_eta;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of};
+use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, ctor_num_fields_of};
 #[cfg(verus_only)]
-use crate::env_model::{struct_ctor_of_agrees, ctor_num_params_of_agrees};
+use crate::env_model::{struct_ctor_of_agrees, ctor_num_params_of_agrees, ctor_num_fields_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{depth_le_size, size};
 #[cfg(verus_only)]
@@ -3529,6 +3529,99 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 /// ceilings `env_global_cap_bounded`/`local_type_cap_bounded`), confirm
 /// both are `Prop`s (`verified_is_prop_capped`) and convertible
 /// (`verified_conv`). Honest incompleteness: terms above size 500 give
+/// The claim of a shadow UNIT certificate, the kernel's `def_eq_unit`: both
+/// terms have a type, `x`'s type reduces to a structure whose single
+/// constructor takes no fields, and the two types are convertible. Such a
+/// type has exactly one element, so its inhabitants are definitionally
+/// equal. Like proof irrelevance this is a rule about typing rather than
+/// reduction, and it is stated the same way.
+pub open spec fn unit_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    exists |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
+        #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
+        infer_types_to(env, x, xt, fx)
+        && infer_types_to(env, y, yt, fy)
+        && unit_like_type_m(to_model_of_env(env), to_model(xt))
+        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt))
+}
+
+pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires unit_shadow_claim(env, x, y)
+    ensures unit_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y))
+{
+    let (xt, yt, fx, fy) = choose |xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
+        #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
+        infer_types_to(env, x, xt, fx)
+        && infer_types_to(env, y, yt, fy)
+        && unit_like_type_m(to_model_of_env(env), to_model(xt))
+        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt));
+    assert(unit_marker(to_model(xt), to_model(yt), fx, fy));
+}
+
+/// The producer: infer both types, reduce `x`'s, check its head names a
+/// structure whose one constructor has no fields, and certify the two types
+/// convertible over the reduction-only route.
+pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => unit_shadow_claim(*env, x, y),
+        _ => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    if ctx.num_loose_bvars(x) != 0 || ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    let xt = match verified_infer_shadow(ctx, env, memo, x) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(xt) != 0 {
+        return None;
+    }
+    let kr: u32 = if k > 60000 { 60000 } else { k };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let xtw = verified_whnf_rec(ctx, env, memo, xt, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
+    }
+    let (hd, name, _levels, _args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+        Some(p) => p,
+        None => return None,
+    };
+    let ctor = match get_structure_first_ctor(env, &name, false) { Some(c) => c, None => return None };
+    match get_constructor_num_fields(env, &ctor) {
+        Some(0) => {}
+        _ => return None,
+    }
+    proof {
+        struct_ctor_of_agrees(*env, name_id(name));
+        ctor_num_fields_of_agrees(*env, name_id(ctor));
+        assert(struct_ctor_of(name_id(name)) == Some(name_id(ctor)));
+        assert(ctor_num_fields_of(name_id(ctor)) == Some(0u16));
+        assert(unit_like_head(name_id(name)));
+        is_const_shape_model(hd);
+        const_levels_vec_model(hd);
+        assert(to_model(hd) == ExprSpec::Const(const_id(hd), const_levels_vec(hd)));
+        assert(const_id(hd) == name_id(name));
+        assert(unit_like_type(to_model(xtw)));
+        assert(pstep_star(em, to_model(xt), to_model(xtw)));
+        assert(unit_like_type_m(em, to_model(xt)));
+    }
+    let yt = match verified_infer_shadow(ctx, env, memo, y) { Some(v) => v, None => return None };
+    match verified_conv(ctx, env, memo, xt, yt, fuel, k, 16) {
+        Some(true) => {
+            proof {
+                let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
+                let fy = choose |f: nat| #[trigger] infer_types_to(*env, y, yt, f);
+                assert(infer_types_to(*env, x, xt, fx) && infer_types_to(*env, y, yt, fy));
+            }
+            Some(true)
+        }
+        _ => None,
+    }
+}
+
+
 /// `None`.
 pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
@@ -4997,6 +5090,19 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                 deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
             }
             conv_stat(11);
+            return Some(true);
+        }
+    }
+    // --- the unit rule (the kernel's `def_eq_unit`): both sides inhabit a
+    // structure whose single constructor takes no fields, so the type has one
+    // element and they are equal. Like proof irrelevance, a rule about typing.
+    if !either_rigid {
+        if let Some(true) = verified_unit_shadow(ctx, env, memo, x, y, fuel, k) {
+            proof {
+                unit_pair_of_shadow_claim(*env, x, y);
+                deq_p_any_of_unit(dtym, em, lcm, to_model(x), to_model(y));
+            }
+            conv_stat(17);
             return Some(true);
         }
     }
