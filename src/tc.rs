@@ -211,6 +211,27 @@ pub mod route_stats {
     }
     pub fn last_leaf() -> u8 { LAST_LEAF.with(|c| c.get()) }
     pub fn clear_last_leaf() { LAST_LEAF.with(|c| c.set(255)); }
+    pub static INFER_EXIT: [AtomicU64; 32] = [const { AtomicU64::new(0) }; 32];
+    pub fn infer_exit(kind: u8) {
+        if (kind as usize) < 32 { INFER_EXIT[kind as usize].fetch_add(1, Ordering::Relaxed); }
+    }
+    pub fn infer_exit_snapshot() -> [u64; 32] {
+        let mut out = [0u64; 32];
+        for i in 0..32 { out[i] = INFER_EXIT[i].load(Ordering::Relaxed); }
+        out
+    }
+    pub fn infer_exit_delta(before: [u64; 32]) -> String {
+        let v: Vec<String> = (0..32)
+            .filter(|i| INFER_EXIT[*i].load(Ordering::Relaxed) > before[*i])
+            .map(|i| format!("{}:+{}", i, INFER_EXIT[i].load(Ordering::Relaxed) - before[i]))
+            .collect();
+        v.join(" ")
+    }
+    pub fn infer_exit_report() -> String {
+        let v: Vec<String> = (0..32).filter(|i| INFER_EXIT[*i].load(Ordering::Relaxed) > 0)
+            .map(|i| format!("{}:{}", i, INFER_EXIT[i].load(Ordering::Relaxed))).collect();
+        format!("\ninfer declines (1 lam inst | 2 lam body | 3 lam nlbv | 4 pi | 5 let | 6 proj | 8 dispatch | 9 size | 10 size gate | 11 loose bvars | 12/13 fuel arith | 14 infer said no): {}", v.join(" "))
+    }
     pub fn conv_leaf(kind: u8) {
         LAST_LEAF.with(|c| c.set(kind)); if (kind as usize) < 64 { CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed); } }
     thread_local! {
@@ -437,7 +458,7 @@ pub mod route_stats {
             format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {} | elimination level: {} of {} agree, {} disagree | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_ELIM_CERT), g(&SHADOW_ELIM_TOTAL), g(&SHADOW_ELIM_DISAGREE), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
-        } else { String::new() }) + &format!(
+        } else { String::new() }) + &infer_exit_report() + &format!(
             "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
             CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
             CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed)) + &{
@@ -1317,6 +1338,32 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// disagreements (a verified confirmation of a pair the original code
     /// rejected -- never expected; would mean either an unsound bridge
     /// axiom or a legacy incompleteness). Never touches `tc_cache`.
+    /// Diagnostic: the SMALLEST subterm of `e` on which the verified
+    /// inference declines. Inference is compositional, so the smallest
+    /// failing subterm names the shape that is actually unsupported.
+    fn smallest_infer_failure(&mut self, e: ExprPtr<'t>, depth: u32) -> Option<ExprPtr<'t>> {
+        if depth == 0 {
+            return None;
+        }
+        if crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e).is_some() {
+            return None;
+        }
+        let kids: Vec<ExprPtr<'t>> = match self.ctx.read_expr(e) {
+            crate::expr::Expr::App { fun, arg, .. } => vec![fun, arg],
+            crate::expr::Expr::Pi { binder_type, body, .. } => vec![binder_type, body],
+            crate::expr::Expr::Lambda { binder_type, body, .. } => vec![binder_type, body],
+            crate::expr::Expr::Let { binder_type, val, body, .. } => vec![binder_type, val, body],
+            crate::expr::Expr::Proj { structure, .. } => vec![structure],
+            _ => vec![],
+        };
+        for k in kids {
+            if let Some(inner) = self.smallest_infer_failure(k, depth - 1) {
+                return Some(inner);
+            }
+        }
+        Some(e)
+    }
+
     fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool) {
         if !route_stats::shadow_enabled() {
             return;
@@ -1344,6 +1391,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let pir_leaf = route_stats::last_leaf();
             let szx = crate::expr_arena_bridge::verified_size(self.ctx, x, 100000);
             let szy = crate::expr_arena_bridge::verified_size(self.ctx, y, 100000);
+            if !ix {
+                let before = route_stats::infer_exit_snapshot();
+                let _ = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
+                eprintln!("  INFER-EXITS-FOR-X: {}", route_stats::infer_exit_delta(before));
+                if let Some(bad) = self.smallest_infer_failure(x, 40) {
+                    eprintln!("  INFER-FAILS-ON: {:?}", self.ctx.debug_print(bad));
+                }
+            }
+            if !iy {
+                if let Some(bad) = self.smallest_infer_failure(y, 40) {
+                    eprintln!("  INFER-FAILS-ON: {:?}", self.ctx.debug_print(bad));
+                }
+            }
             eprintln!("  DIAG: infer_x={} infer_y={} proof_irrel={:?} (exit {}) size_x={:?} size_y={:?}", ix, iy, pir, pir_leaf, szx, szy);
             eprintln!("UNCERTIFIED last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
                 route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),

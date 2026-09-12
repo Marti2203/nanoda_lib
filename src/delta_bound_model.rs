@@ -938,7 +938,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 {
     let (fun, args) = match verified_unfold_apps(ctx, x, 100000) {
         Some(p) => p,
-        None => return None,
+        None => return { infer_exit(18); None },
     };
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
@@ -978,7 +978,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
                 }
                 t
             }
-            None => return None,
+            None => return { infer_exit(19); None },
         }
     } else if let Some((_, lt)) = expr_as_local(fun, &fun_el) {
         proof {
@@ -991,7 +991,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         }
         lt
     } else {
-        return None;
+        return { infer_exit(20); None };
     };
     assert(depth(to_model(fun_ty)) <= d);
     assert(nlbv(to_model(fun_ty)) == 0);
@@ -1020,7 +1020,7 @@ pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
                     }
                     Some(r)
                 }
-                None => None,
+                None => { infer_exit(17); None },
             }
         }
     }
@@ -1448,7 +1448,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
                 assert(infer_types_to(*env, e, r, fuel as nat));
                 return Some(r);
             }
-            None => return None,
+            None => return { infer_exit(15); None },
         }
     }
     if expr_as_nat_lit(e, &el).is_some() {
@@ -1498,6 +1498,7 @@ pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>
     if expr_as_proj(&el).is_some() {
         return verified_infer_proj_arm(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd));
     }
+    infer_exit(8);
     None
 }
 
@@ -1537,7 +1538,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return None; }
+            None => { ctx.replace_dbj_level(local); infer_exit(1); return None; }
         };
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
@@ -1551,7 +1552,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         }
         let infd = match verified_infer(ctx, env, memo, instd, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return None; }
+            None => { ctx.replace_dbj_level(local); infer_exit(2); return None; }
         };
         let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
         ctx.replace_dbj_level(local);
@@ -1559,6 +1560,7 @@ pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
         let result_nlbv = ctx.num_loose_bvars(result);
         if result_nlbv != 0 {
+            infer_exit(3);
             return None;
         }
         proof {
@@ -1621,11 +1623,11 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(nlbv(to_model(body)) <= 1);
         let bt_ty = match verified_infer(ctx, env, memo, binder_type, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
-            None => return None,
+            None => return { infer_exit(4); None },
         };
         let dom_univ = match verified_sort_of_capped(ctx, env, memo, bt_ty, fuel) {
             Some(v) => v,
-            None => return None,
+            None => return { infer_exit(4); None },
         };
         proof {
             let dom_sort = choose |r: ExprPtr<'t>|
@@ -1641,7 +1643,7 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(nlbv(to_model(local)) == 0);
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return None; }
+            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
         };
         proof {
             assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
@@ -1655,11 +1657,11 @@ pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         }
         let instd_ty = match verified_infer(ctx, env, memo, instd, fuel - 1, Ghost(d), Ghost(dd)) {
             Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return None; }
+            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
         };
         let cod_univ = match verified_sort_of_capped(ctx, env, memo, instd_ty, fuel) {
             Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return None; }
+            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
         };
         proof {
             let cod_sort = choose |r: ExprPtr<'t>|
@@ -1828,7 +1830,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     decreases fuel, 0int
 {
     let el = ctx.read_expr(e);
-    let (idx, structure) = match expr_as_proj(&el) { Some((_, i, s)) => (i, s), None => return None };
+    let (idx, structure) = match expr_as_proj(&el) { Some((_, i, s)) => (i, s), None => return { infer_exit(6); None } };
     assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
     assert(depth(to_model(structure)) < depth(to_model(e)));
     assert(nlbv(to_model(structure)) <= 0);
@@ -1838,7 +1840,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let ghost f2: nat = (fuel - 1) as nat;
     let ghost s_m = to_model(structure);
     let ghost idxn: nat = idx as nat;
-    let sty = match verified_infer(ctx, env, memo, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return None };
+    let sty = match verified_infer(ctx, env, memo, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return { infer_exit(6); None } };
     assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
     let k: u32 = 2000;
     let w = verified_whnf_rec(ctx, env, memo, sty, 256, k);
@@ -1846,7 +1848,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         env_model_capped_sub(*env, k as nat);
         pstep_star_env_weaken(env_model_capped(*env, k as nat), denv, to_model(sty), to_model(w));
     }
-    let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return None };
+    let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
     let args_s: &[ExprPtr<'t>] = args.as_slice();
     let ghost args_model = Seq::new(args_s@.len(), |i: int| to_model(args_s@[i]));
     let ghost ind_id = name_id(ind_name);
@@ -1865,22 +1867,22 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
             assert(nlbv(args_model[j]) <= nlbv(spine_app(ExprSpec::Const(ind_id, ls), args_model)));
         }
     }
-    let ctor_name = match get_structure_first_ctor(env, &ind_name, true) { Some(c) => c, None => return None };
+    let ctor_name = match get_structure_first_ctor(env, &ind_name, true) { Some(c) => c, None => return { infer_exit(6); None } };
     let ghost ctor_id = name_id(ctor_name);
     proof {
         struct_ctor_of_agrees(*env, ind_id);
         assert(struct_ctor_of(ind_id) == Some(ctor_id));
     }
-    let np = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return None };
+    let np = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return { infer_exit(6); None } };
     proof {
         ctor_num_params_of_agrees(*env, ctor_id);
         assert(ctor_num_params_of(ctor_id) == Some(np));
     }
     if (np as usize) > args_s.len() {
-        return None;
+        return { infer_exit(6); None };
     }
     let ghost npn: nat = np as nat;
-    let ctor_ty0 = match verified_infer_const(ctx, env, ctor_name, ind_levels, 100000) { Some(t) => t, None => return None };
+    let ctor_ty0 = match verified_infer_const(ctx, env, ctor_name, ind_levels, 100000) { Some(t) => t, None => return { infer_exit(6); None } };
     proof {
         let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
             to_model_of_declar_ty(*env).contains_key(name_id(ctor_name))
@@ -1912,15 +1914,15 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases np as usize - i
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
-        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
+        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             depth_le_size(to_model(w2));
             assert(depth(to_model(body)) < depth(to_model(w2)));
             assert(nlbv(to_model(body)) <= 1);
         }
         let arg_slice: &[ExprPtr<'t>] = &args_s[i..i + 1];
-        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return None };
+        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             assert(arg_slice@.len() == 1);
             assert(arg_slice@[0] == args_s@[i as int]);
@@ -1966,8 +1968,8 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases idx - j
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
-        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
+        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             depth_le_size(to_model(w2));
             assert(depth(to_model(body)) < depth(to_model(w2)));
@@ -1975,7 +1977,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         }
         let pj = ctx.mk_proj(ind_name, j, structure);
         let pj_slice: &[ExprPtr<'t>] = &[pj];
-        let new_ty = match verified_inst(ctx, body, pj_slice, 0, 100000) { Some(v) => v, None => return None };
+        let new_ty = match verified_inst(ctx, body, pj_slice, 0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             assert(to_model(pj) == ExprSpec::Proj(j, Box::new(s_m)));
             assert(nlbv(to_model(pj)) <= 0);
@@ -1990,7 +1992,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         cur = new_ty;
         j = j + 1;
     }
-    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
+    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
     proof {
         proj_field_type_final(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), idx, s_m);
         assert(j == idx);
@@ -2004,11 +2006,11 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         assert(infer_spec(*env, structure, sty, f2));
         assert(infer_spec(*env, e, bt, fuel as nat));
     }
-    let dr = match verified_depth(ctx, bt, 100000) { Some(v) => v, None => return None };
-    let de = match verified_depth(ctx, e, 100000) { Some(v) => v, None => return None };
-    let dc = match verified_depth(ctx, ctor_ty0, 100000) { Some(v) => v, None => return None };
+    let dr = match verified_depth(ctx, bt, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
+    let de = match verified_depth(ctx, e, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
+    let dc = match verified_depth(ctx, ctor_ty0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
     if (dr as u64) > (de as u64) + (dc as u64) {
-        return None;
+        return { infer_exit(6); None };
     }
     assert(depth(to_model(ctor_ty0)) <= d);
     assert(depth(to_model(bt)) <= d + dd);
@@ -3014,6 +3016,11 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// Diagnostics-only bridge into `tc::route_stats` (no contract; the
 /// counters are never read by verified code).
 #[verifier::external_body]
+fn infer_exit(code: u8) {
+    crate::tc::route_stats::infer_exit(code);
+}
+
+#[verifier::external_body]
 fn conv_stat(kind: u8) {
     crate::tc::route_stats::conv_leaf(kind);
 }
@@ -3450,20 +3457,27 @@ fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     }
 {    infer_seen_note(e);
 
-    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return None };
-    if sz == 0 || sz > 6000 || ctx.num_loose_bvars(e) != 0 {
+    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => { infer_exit(9); return None; } };
+    if sz == 0 || sz > 6000 {
+        infer_exit(10);
+        return None;
+    }
+    if ctx.num_loose_bvars(e) != 0 {
+        infer_exit(11);
         return None;
     }
     // Linear fuel budget: `sz * (fuel + 1) <= 60000` (size 500 -> fuel 119,
     // size 6000 -> fuel 9); the runtime check makes the product fact exec-visible.
     let q: u64 = 60000 / (sz as u64);
     if q < 2 || q > 60000 {
+        infer_exit(12);
         return None;
     }
     proof {
         assert((q as int) * (sz as int) <= 60000int * 60000int) by (nonlinear_arith) requires q <= 60000, sz <= 60000;
     }
     if q * (sz as u64) > 60000 {
+        infer_exit(13);
         return None;
     }
     let fuel: u32 = (q - 1) as u32;
@@ -3481,7 +3495,7 @@ fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
             proof { assert(infer_types_to(*env, e, ty, fuel as nat)); }
             Some(ty)
         }
-        None => None,
+        None => { infer_exit(14); None }
     }
 }
 
