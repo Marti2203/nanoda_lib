@@ -5603,6 +5603,15 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                             defeq_of_pstep_star(em, to_model(ry), to_model(ryw));
                             deq_p_any_of_defeq(dtym, em, lcm, to_model(ry), to_model(ryw));
                         }
+                        // A rewrite only helps if reducing it actually gets
+                        // somewhere: if both reducts are where they already
+                        // were, iota did not fire and the whole conversion
+                        // subtree below would be wasted. This filter is what
+                        // makes the step affordable at every recursion level --
+                        // a memoized whnf instead of a conversion subtree.
+                        if expr_ptr_eq(rxw, w) && expr_ptr_eq(ryw, wy) {
+                            return None;
+                        }
                         if let Some(true) = verified_conv_p(ctx, env, memo, rxw, ryw, fuel, k, (budget - 1) as u32) {
                             proof {
                                 deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(rx));
@@ -5625,6 +5634,13 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         Some(r) => {
             if expr_ptr_eq(r, x) {
                 return None;
+            }
+            // same filter on the one-sided path
+            if ctx.num_loose_bvars(r) == 0 {
+                let rw = verified_whnf_rec(ctx, env, memo, r, conv_join_rounds(), kr);
+                if expr_ptr_eq(rw, w) {
+                    return None;
+                }
             }
             match verified_conv_p(ctx, env, memo, r, y, fuel, k, (budget - 1) as u32) {
                 Some(true) => {
@@ -6382,7 +6398,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // Measured: top-only leaves 102 of Init.Omega's pairs uncertified, one
     // level down brings it to 81 -- the same as allowing it everywhere -- at
     // 3.6s instead of 211s.
-    if !either_rigid && budget as u64 + 1 >= conv_budget_total() as u64 {
+    if !either_rigid && budget as u64 + 4 >= conv_budget_total() as u64 {
         if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, k, budget) {
             return Some(true);
         }
