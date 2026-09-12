@@ -304,6 +304,24 @@ pub mod route_stats {
         cap > 0 && CONVFAIL_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
     }
 
+    thread_local! {
+        /// Which branch of the original `def_eq` decided the pair, so an
+        /// uncertified pair can name the kernel rule the certifier is
+        /// missing. Diagnostics only.
+        static LEGACY_BRANCH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    }
+    pub fn legacy_branch(tag: u8) {
+        if shadow_enabled() { LEGACY_BRANCH.with(|c| c.set(tag)); }
+    }
+    pub fn legacy_branch_name() -> &'static str {
+        match LEGACY_BRANCH.with(|c| c.get()) {
+            2 => "bool_true", 3 => "quick2", 4 => "proof_irrel", 5 => "lazy_delta",
+            6 => "const/local/proj leaf", 7 => "whnf-retry recursion", 8 => "def_eq_app",
+            9 => "eta", 10 => "eta_struct", 11 => "string_lit", 12 => "unit", 13 => "all failed",
+            _ => "?",
+        }
+    }
+
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }
@@ -334,9 +352,13 @@ pub mod route_stats {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 256))
     }
+    /// Conversion search budget. 60 rather than 20: measured 2026-09-12 on
+    /// Init.Data.BitVec.Lemmas, 20 leaves 81 pairs uncertified and 60 leaves
+    /// 76, at the same runtime (215s either way). It plateaus there -- 200
+    /// also leaves 76 -- so the rest is not a budget limit.
     pub fn conv_budget() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 20))
+        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 60))
     }
     pub fn conv_join_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -1251,6 +1273,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n) == self.ctx.c_bool_true() {
             let x_nn = self.whnf(x_n);
             if Some(x_nn) == self.ctx.c_bool_true() {
+                route_stats::legacy_branch(2);
                 route_stats::bump(&route_stats::LEGACY_TRUE);
                 self.shadow_check(x, y, true);
                 return true
@@ -1258,30 +1281,47 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
 
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
+            route_stats::legacy_branch(3);
             route_stats::bump(if easy { &route_stats::LEGACY_TRUE } else { &route_stats::LEGACY_FALSE });
             self.shadow_check(x, y, easy);
             return easy
         }
 
         let result = if self.proof_irrel_eq(x_n, y_n) {
+            route_stats::legacy_branch(4);
             true
         } else {
             match self.lazy_delta_step(x_n, y_n) {
-                FoundEqResult(short) => short,
+                FoundEqResult(short) => { route_stats::legacy_branch(5); short }
                 Exhausted(x_n, y_n) => {
                     if self.def_eq_const(x_n, y_n) || self.def_eq_local(x_n, y_n) || self.def_eq_proj(x_n, y_n) {
+                        route_stats::legacy_branch(6);
                         true
                     } else {
                         let (xn0, yn0) = (x_n, y_n);
                         let (x_n, y_n) = (self.whnf_no_unfolding(xn0), self.whnf_no_unfolding(yn0));
                         if x_n != xn0 || y_n != yn0 {
-                            self.def_eq(x_n, y_n)
+                            let r = self.def_eq(x_n, y_n);
+                            route_stats::legacy_branch(7);
+                            r
+                        } else if self.def_eq_app(x_n, y_n) {
+                            route_stats::legacy_branch(8);
+                            true
+                        } else if self.try_eta_expansion(x_n, y_n) {
+                            route_stats::legacy_branch(9);
+                            true
+                        } else if self.try_eta_struct(x_n, y_n) {
+                            route_stats::legacy_branch(10);
+                            true
+                        } else if self.try_string_lit_expansion(x_n, y_n) {
+                            route_stats::legacy_branch(11);
+                            true
+                        } else if matches!(self.def_eq_unit(x_n, y_n), Some(true)) {
+                            route_stats::legacy_branch(12);
+                            true
                         } else {
-                            self.def_eq_app(x_n, y_n)
-                                || self.try_eta_expansion(x_n, y_n)
-                                || self.try_eta_struct(x_n, y_n)
-                                || self.try_string_lit_expansion(x_n, y_n)
-                                || matches!(self.def_eq_unit(x_n, y_n), Some(true))
+                            route_stats::legacy_branch(13);
+                            false
                         }
                     }
                 }
@@ -1392,8 +1432,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
             }
             eprintln!("  DIAG: infer_x={} infer_y={} proof_irrel={:?} (exit {}) size_x={:?} size_y={:?}", ix, iy, pir, pir_leaf, szx, szy);
-            eprintln!("UNCERTIFIED last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
-                route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
+            eprintln!("UNCERTIFIED kernel-branch={} last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
+                route_stats::legacy_branch_name(), route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
                 self.ctx.debug_print(wx), self.ctx.debug_print(wy),
                 self.ctx.debug_print(lx), self.ctx.debug_print(ly));
         }
