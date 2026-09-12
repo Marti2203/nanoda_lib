@@ -1304,8 +1304,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let which = self.pair_certified(x, y);
         if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
         if which == 0 && verdict && route_stats::uncertified_budget() {
-            eprintln!("UNCERTIFIED (original says equal, no verified route confirms) last-leaf={}\n  X: {:?}\n  Y: {:?}",
-                route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y));
+            let kx = route_stats::cap_k();
+            let wx = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, x, 256, kx);
+            let wy = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, y, 256, kx);
+            let lx = self.whnf(x);
+            let ly = self.whnf(y);
+            eprintln!("UNCERTIFIED last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
+                route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
+                self.ctx.debug_print(wx), self.ctx.debug_print(wy),
+                self.ctx.debug_print(lx), self.ctx.debug_print(ly));
         }
         if which != 0 {
             if verdict {

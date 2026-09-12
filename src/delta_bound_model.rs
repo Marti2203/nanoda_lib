@@ -4993,6 +4993,99 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 /// to a `Quot.mk` spine, to the function at index 3 applied to `Quot.mk`'s
 /// last argument and then the trailing arguments -- exactly what the kernel
 /// builds. The claim composes the major premise's reduction (a `pstep_star`
+/// MAJOR-PREMISE NORMALIZATION, the kernel's `normalize_major_premise`
+/// applied through structure eta.
+///
+/// `PUnit._sizeOf_1 u` reduces, in the real kernel, all the way to `1`: it
+/// unfolds to `PUnit.rec motive 1 u`, and the kernel turns the
+/// structure-typed local `u` into `PUnit.unit` so iota can fire. Our
+/// reduction relation is deliberately typing-free, so it cannot do that --
+/// `pstep` has no access to `u`'s type -- and the verified whnf stops at the
+/// stuck recursor application.
+///
+/// The conversion route can do it instead, because it is where typed leaves
+/// live. Replace the recursor's major premise with its eta expansion, which
+/// is exactly what the structure-eta leaf certifies, lift that to the whole
+/// application through `deq_p_any_spine_update`, and compare the rebuilt
+/// term. The major premise's position comes from the recursor's own
+/// disclosed data, so nothing is guessed and no other argument is touched.
+#[verifier::spinoff_prover]
+pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+    let (hd, name, _levels, args) = match verified_unfold_const_apps(ctx, x, 100000) {
+        Some(p) => p,
+        None => return None,
+    };
+    let major_idx = match get_recursor_data(env, &name) {
+        Some((_np, _nm, _nmin, mi, _up, _rules)) => mi,
+        None => return None,
+    };
+    if major_idx >= args.len() {
+        return None;
+    }
+    let major = args[major_idx];
+    let ex = match verified_eta_struct_shadow(ctx, env, memo, major, k) {
+        Some(v) => v,
+        None => return None,
+    };
+    if expr_ptr_eq(ex, major) {
+        return None;
+    }
+    // rebuild the application with the expanded major premise
+    let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len()
+        invariant
+            i <= args@.len(),
+            new_args@.len() == i,
+            forall |j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
+        decreases args.len() - i
+    {
+        new_args.push(args[i]);
+        i = i + 1;
+    }
+    assert(new_args@ =~= args@);
+    new_args.set(major_idx, ex);
+    let x2 = verified_foldl_apps(ctx, hd, new_args.as_slice());
+    proof {
+        let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        let built = Seq::new(new_args@.len(), |i: int| to_model(new_args@[i]));
+        assert(new_args@ =~= args@.update(major_idx as int, ex));
+        assert(built =~= args_model.update(major_idx as int, to_model(ex)));
+    }
+    match verified_conv_p(ctx, env, memo, x2, y, fuel, k, (budget - 1) as u32) {
+        Some(true) => {
+            proof {
+                let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+                eta_struct_pair_of_claim(*env, major, ex);
+                deq_p_any_of_eta_struct(dtym, em, lcm, to_model(major), to_model(ex));
+                assert(args_model[major_idx as int] == to_model(major));
+                deq_p_any_spine_update(dtym, em, lcm, to_model(hd), args_model, major_idx as int, to_model(ex));
+                assert(to_model(x) == spine_app(to_model(hd), args_model));
+                assert(to_model(x2) == spine_app(to_model(hd), args_model.update(major_idx as int, to_model(ex))));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(x2), to_model(y));
+            }
+            conv_stat(20);
+            Some(true)
+        }
+        _ => None,
+    }
+}
+
 /// Structure eta as its own step of the conversion route, for the solver's
 /// sake: with both directions inline, `verified_conv_inner_p` no longer fit
 /// in the resource limit. Tier 0 of the family's measure, calling back into
@@ -5526,6 +5619,17 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // folding it inline pushed the solver past its resource limit.
     if !either_rigid {
         if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, k, budget) {
+            return Some(true);
+        }
+    }
+    // --- major-premise normalization (the kernel's `normalize_major_premise`
+    // through structure eta), in its own function for the solver's sake.
+    if !either_rigid {
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, k, budget) {
+            return Some(true);
+        }
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, k, budget) {
+            proof { deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(x)); }
             return Some(true);
         }
     }
