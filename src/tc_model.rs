@@ -3727,8 +3727,8 @@ pub open spec fn types_to(
     })
     ||| (fuel > 0 && match e {
         ExprSpec::Bind(binder_type, body) => exists |lid: u32, infd: ExprSpec|
-            #![trigger subst_full(*body, seq![ExprSpec::Free(lid)], 0), abstr_full(infd, seq![lid], 0)]
-            types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat)
+            #[trigger] bind_marker(lid, infd)
+            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat)
             && t == ExprSpec::Bind(
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
                 Box::new(abstr_full(infd, seq![lid], 0))),
@@ -3736,8 +3736,8 @@ pub open spec fn types_to(
     })
     ||| (fuel > 0 && match e {
         ExprSpec::Bind(binder_type, body) => exists |lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
-            #![trigger subst_full(*body, seq![ExprSpec::Free(lid)], 0), pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)), pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))]
-            types_to(dty, denv, lctx, *binder_type, bt_ty, (fuel - 1) as nat)
+            #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level)
+            && types_to(dty, denv, lctx, *binder_type, bt_ty, (fuel - 1) as nat)
             && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
             && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat)
             && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
@@ -3780,6 +3780,94 @@ pub proof fn types_to_string_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<
 /// Constructor lemmas for `types_to` -- one per disjunct, the intro API
 /// producers use (each is definitional; the two binder cases witness
 /// their existentials, validated to encode correctly per the
+/// The typing relation is MONOTONE in its derivation-height index. Every
+/// rule's premises sit either at the same height on a syntactic subterm or at
+/// a strictly smaller height, so a derivation of height `f1` is also one of
+/// any greater height. This is what a fuel-free exec inference needs: each
+/// recursive call returns a derivation at its own height, and the rule being
+/// applied wants them at a common one.
+#[verifier::spinoff_prover]
+pub proof fn types_to_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, f1: nat, f2: nat)
+    requires types_to(dty, denv, lctx, e, t, f1), f1 <= f2
+    ensures types_to(dty, denv, lctx, e, t, f2)
+    decreases f1, e
+{
+    // App: the premise is on a syntactic subterm at the SAME height.
+    if let ExprSpec::App(f, a) = e {
+        let (ft, aty, bt) = choose |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec|
+            #![trigger pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))]
+            types_to(dty, denv, lctx, *f, ft, f1)
+            && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
+            && t == subst_full(bt, seq![*a], 0);
+        types_to_mono(dty, denv, lctx, *f, ft, f1, f2);
+        assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
+        assert(types_to(dty, denv, lctx, e, t, f2));
+    }
+    // Leaves: these disjuncts do not mention the height at all, but the goal
+    // still has to be unfolded at f2 for the solver to see that.
+    match e {
+        ExprSpec::Free(_) | ExprSpec::Sort(_) | ExprSpec::Const(_, _)
+        | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Var(_) | ExprSpec::Closed => {
+            assert(types_to(dty, denv, lctx, e, t, f2));
+        }
+        _ => {}
+    }
+    // Let and Proj: the premise sits at a height STRICTLY below f1, so the
+    // very same witness serves at f2; it only has to be re-exhibited.
+    if let ExprSpec::Let(_ty0, val, body) = e {
+        let h = choose |h: nat| #[trigger] fuel_marker(h) && h < f1
+            && types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, h);
+        assert(fuel_marker(h));
+        assert(types_to(dty, denv, lctx, e, t, f2));
+    }
+    if let ExprSpec::Proj(idx, s) = e {
+        let (h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) = choose |h: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+            #[trigger] proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0)
+            && h < f1
+            && types_to(dty, denv, lctx, *s, sty, h)
+            && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+            && struct_ctor_of(ind_id) == Some(ctor_id)
+            && ctor_num_params_of(ctor_id) == Some(np)
+            && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, h)
+            && (np as nat) <= args.len()
+            && proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, *s, t);
+        assert(proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
+        assert(types_to(dty, denv, lctx, e, t, f2));
+    }
+    // Binders: premises one height down, re-exhibited through the markers.
+    if let ExprSpec::Bind(binder_type, body) = e {
+        assert(f1 > 0);
+        let g1 = (f1 - 1) as nat;
+        let g2 = (f2 - 1) as nat;
+        if exists |lid: u32, infd: ExprSpec| #[trigger] bind_marker(lid, infd)
+            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1)
+            && t == ExprSpec::Bind(Box::new(abstr_full(*binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0)))
+        {
+            let (lid, infd) = choose |lid: u32, infd: ExprSpec| #[trigger] bind_marker(lid, infd)
+                && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1)
+                && t == ExprSpec::Bind(Box::new(abstr_full(*binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0)));
+            types_to_mono(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1, g2);
+            assert(bind_marker(lid, infd));
+            assert(types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (f2 - 1) as nat));
+            assert(types_to(dty, denv, lctx, e, t, f2));
+        } else {
+            let (lid, bt_ty, dom_level, instd_ty, cod_level) = choose |lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
+                #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level)
+                && types_to(dty, denv, lctx, *binder_type, bt_ty, g1)
+                && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
+                && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, g1)
+                && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
+                && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
+            types_to_mono(dty, denv, lctx, *binder_type, bt_ty, g1, g2);
+            types_to_mono(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, g1, g2);
+            assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
+            assert(types_to(dty, denv, lctx, *binder_type, bt_ty, (f2 - 1) as nat));
+            assert(types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (f2 - 1) as nat));
+            assert(types_to(dty, denv, lctx, e, t, f2));
+        }
+    }
+}
+
 /// recursive-exists note).
 pub proof fn types_to_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, lid: u32, fuel: nat)
     requires lctx.contains_key(lid)
@@ -3979,8 +4067,7 @@ pub proof fn types_to_lambda(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64,
     ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
         ExprSpec::Bind(Box::new(abstr_full(binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0))), fuel)
 {
-    assert(subst_full(body, seq![ExprSpec::Free(lid)], 0) == subst_full(body, seq![ExprSpec::Free(lid)], 0)
-        && abstr_full(infd, seq![lid], 0) == abstr_full(infd, seq![lid], 0));
+    assert(bind_marker(lid, infd));
 }
 
 pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec, fuel: nat)
@@ -3993,9 +4080,7 @@ pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Se
     ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
         ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))), fuel)
 {
-    assert(subst_full(body, seq![ExprSpec::Free(lid)], 0) == subst_full(body, seq![ExprSpec::Free(lid)], 0)
-        && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
-        && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)));
+    assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
 }
 
 /// THE MODEL-LEVEL PROOF-IRRELEVANCE FACT: `x` and `y` are both PROOFS
@@ -4035,6 +4120,17 @@ pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map
         && is_proof_type_m(dty, denv, lctx, ty2)
         && deq_any(denv, tx, ty2)
 }
+
+/// Marker triggers for `types_to`'s two BINDER rules. Without them those
+/// rules' existential witnesses are write-only: an `exists` inside a match
+/// arm whose trigger mentions the arm's own bound variables cannot be
+/// re-introduced from outside, which is why the `Let` and `Proj` rules
+/// already trigger on `fuel_marker`/`proj_marker` instead. Monotonicity in
+/// the derivation height needs to re-exhibit these witnesses, so the binder
+/// rules now carry markers of their own.
+pub open spec fn bind_marker(lid: u32, infd: ExprSpec) -> bool { true }
+
+pub open spec fn pi_marker(lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec) -> bool { true }
 
 /// Marker trigger for `unit_pair`'s witnesses, the same device
 /// `irrel_marker` plays for proof irrelevance.
