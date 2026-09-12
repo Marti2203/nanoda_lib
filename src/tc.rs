@@ -304,24 +304,6 @@ pub mod route_stats {
         cap > 0 && CONVFAIL_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
     }
 
-    thread_local! {
-        /// Terms the major-premise rewriters have already declined on. The
-        /// rewrite is a deterministic function of the term, so a second
-        /// attempt allocates the same garbage for the same answer; without
-        /// this, Init.Omega spent 207 of 211 seconds re-attempting.
-        static MAJOR_ETA_FAIL: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u16)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    /// Keyed by the term AND the current binder depth: the rewrite runs
-    /// inference, which reads the arena's local context, so the same pointer
-    /// can rewrite under one binder and not under another. Keying by the term
-    /// alone cost real coverage (Init.Core 3 uncertified -> 9).
-    pub fn major_eta_seen(e: u32, depth: u16) -> bool {
-        MAJOR_ETA_FAIL.with(|m| m.borrow().contains(&(e, depth)))
-    }
-    pub fn major_eta_note(e: u32, depth: u16) {
-        MAJOR_ETA_FAIL.with(|m| { m.borrow_mut().insert((e, depth)); });
-    }
-
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }

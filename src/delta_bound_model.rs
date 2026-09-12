@@ -2939,18 +2939,6 @@ fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
 /// k <= 60000; only the lazy-delta round/chain assume k <= 500). Clamped
 /// at the call site; no contract needed.
 
-/// Exec-only negative cache for the major-premise rewriters: a hit only
-/// produces `None`, which carries no claim.
-#[verifier::external_body]
-fn major_eta_seen<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> bool {
-    crate::tc::route_stats::major_eta_seen(e.raw_bits(), ctx.dbj_level_counter)
-}
-
-#[verifier::external_body]
-fn major_eta_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) {
-    crate::tc::route_stats::major_eta_note(e.raw_bits(), ctx.dbj_level_counter);
-}
-
 #[verifier::external_body]
 fn conv_retry_cap() -> u32 {
     crate::tc::route_stats::cap_k_join()
@@ -5424,9 +5412,6 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     if budget == 0 {
         return None;
     }
-    if major_eta_seen(ctx, x) {
-        return None;
-    }
     if ctx.num_loose_bvars(x) != 0 {
         return None;
     }
@@ -5447,9 +5432,6 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         Some(v) => Some(v),
         None => verified_major_eta_proj(ctx, env, memo, w, k),
     };
-    if x2.is_none() {
-        major_eta_note(ctx, x);
-    }
     match x2 {
         Some(r) => {
             if expr_ptr_eq(r, x) {
