@@ -401,8 +401,11 @@ pub mod route_stats {
             total, q, lt, lf,
         ) + &(if shadow_enabled() {
             format!(
-                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.1}%) | of which proof-irrelevance certificates {} | disagreements {}",
-                cert, lt, share, g(&SHADOW_PROOF_IRREL), dis,
+                // Two decimals and an explicit shortfall count: with one
+                // decimal, 7258 of 7261 printed as "100.0%", which reads as
+                // "nothing left" when three pairs are still uncertified.
+                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.2}%, {} NOT certified) | of which proof-irrelevance certificates {} | disagreements {}",
+                cert, lt, share, lt.saturating_sub(cert), g(&SHADOW_PROOF_IRREL), dis,
             )
         } else {
             String::from("\nshadow certification: off (set NANODA_SHADOW=1)")
@@ -1316,6 +1319,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 eprintln!("  PROJ-STRUCT: {:?}\n  PROJ-WHNF  : {:?}",
                     self.ctx.debug_print(structure), self.ctx.debug_print(ws));
             }
+            let ix = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x).is_some();
+            let iy = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y).is_some();
+            route_stats::clear_last_leaf();
+            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, kx);
+            let pir_leaf = route_stats::last_leaf();
+            let szx = crate::expr_arena_bridge::verified_size(self.ctx, x, 100000);
+            let szy = crate::expr_arena_bridge::verified_size(self.ctx, y, 100000);
+            eprintln!("  DIAG: infer_x={} infer_y={} proof_irrel={:?} (exit {}) size_x={:?} size_y={:?}", ix, iy, pir, pir_leaf, szx, szy);
             eprintln!("UNCERTIFIED last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
                 route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
                 self.ctx.debug_print(wx), self.ctx.debug_print(wy),

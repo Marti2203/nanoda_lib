@@ -5110,9 +5110,22 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         env_model_capped_sub(*env, kr as nat);
         pstep_star_env_weaken(cmr, em, to_model(structure), to_model(s2));
     }
+    // Either the stuck recursor's major premise expands by structure eta, or
+    // the structure is a quotient computation the reduction relation cannot do
+    // either (`Quot.lift f h (Quot.mk r a)`, the kernel's `reduce_quot`):
+    // `PSigma.fst (Quot.lift ..)` needs exactly that under the projection.
     let s3 = match verified_major_eta_spine(ctx, env, memo, s2, k) {
         Some(v) => v,
-        None => return None,
+        None => {
+            let kq: u32 = if k > 60000 { 60000 } else { k };
+            match verified_quot_step(ctx, env, memo, s2, kq) {
+                Some(v) => {
+                    proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(s2), to_model(v)); }
+                    v
+                }
+                None => return None,
+            }
+        }
     };
     let r = ctx.mk_proj(ty_name, idx, s3);
     proof {
