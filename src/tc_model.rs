@@ -4059,6 +4059,43 @@ pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
         #[trigger] spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
 }
 
+/// Marker trigger for `eta_struct_expand`'s witnesses.
+pub open spec fn eta_struct_marker(tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat) -> bool { true }
+
+/// "`tx` reduces to the structure `ind` applied to `params` (and possibly
+/// more)". The kernel reads the parameters straight off the whnf'd type.
+pub open spec fn struct_type_of(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec, ind: u64, params: Seq<ExprSpec>) -> bool {
+    exists |ils: Seq<LevelSpec>, rest: Seq<ExprSpec>|
+        #[trigger] pstep_star(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
+}
+
+/// STRUCTURE ETA, the kernel's `try_eta_struct`, in the same shape the
+/// function-eta leaf uses: `x` is definitionally equal to its OWN eta
+/// expansion, `Ctor params* x.0 x.1 .. x.(n-1)`. The route builds that
+/// expansion and compares it with the other side by ordinary congruence,
+/// exactly as it does for `fun a => f a`.
+///
+/// The typing premise is what makes this sound rather than nonsense: the
+/// expansion is only equal to `x` when `x` really does inhabit that
+/// structure, so the leaf carries `x`'s type and the fact that it reduces
+/// to the structure whose sole constructor is the one being applied.
+pub open spec fn eta_struct_expand(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    exists |tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
+        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf)
+        && types_to(dty, denv, lctx, x, tx, f)
+        && struct_type_of(denv, tx, ind, params)
+        && struct_ctor_of(ind) == Some(cid)
+        && ctor_num_fields_of(cid) == Some(nf as u16)
+        && y == spine_app(ExprSpec::Const(cid, ls),
+                params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))))
+}
+
+/// Symmetric, for the same reason the unit leaf is: `deq_p_c_symm` inverts
+/// every disjunct, and either side may be the one being expanded.
+pub open spec fn eta_struct_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    eta_struct_expand(dty, denv, lctx, x, y) || eta_struct_expand(dty, denv, lctx, y, x)
+}
+
 /// THE UNIT RULE, the kernel's `def_eq_unit`: if `x`'s type is a structure
 /// whose single constructor takes no fields, and `y`'s type is convertible
 /// to it, then `x` and `y` are definitionally equal -- the type has one
@@ -4913,6 +4950,7 @@ pub open spec fn deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
     ||| deq_c(env, x, y, h)
     ||| proof_irrel_pair(dty, env, lctx, x, y)
     ||| unit_pair(dty, env, lctx, x, y)
+    ||| eta_struct_pair(dty, env, lctx, x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
             deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat),
@@ -4983,6 +5021,7 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
         deq_c_mono(env, x, y, h1, h2);
     } else if proof_irrel_pair(dty, env, lctx, x, y) {
     } else if unit_pair(dty, env, lctx, x, y) {
+    } else if eta_struct_pair(dty, env, lctx, x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -5062,6 +5101,8 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
         deq_any_symm(env, tx, ty2);
         assert(unit_marker(ty2, tx, fy, fx));
         assert(unit_pair(dty, env, lctx, y, x));
+    } else if eta_struct_pair(dty, env, lctx, x, y) {
+        assert(eta_struct_pair(dty, env, lctx, y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -5164,6 +5205,23 @@ pub proof fn deq_p_any_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64
     ensures deq_p_any(dty, env, lctx, x, y)
 {
     deq_p_of_unit(dty, env, lctx, x, y, 0);
+    assert(deq_p(dty, env, lctx, x, y, 0));
+}
+
+/// Structure eta lifts into `deq_p` at any height, as the other typed
+/// leaves do.
+pub proof fn deq_p_of_eta_struct(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires eta_struct_pair(dty, env, lctx, x, y)
+    ensures deq_p(dty, env, lctx, x, y, h)
+{
+    deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+}
+
+pub proof fn deq_p_any_of_eta_struct(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires eta_struct_pair(dty, env, lctx, x, y)
+    ensures deq_p_any(dty, env, lctx, x, y)
+{
+    deq_p_of_eta_struct(dty, env, lctx, x, y, 0);
     assert(deq_p(dty, env, lctx, x, y, 0));
 }
 

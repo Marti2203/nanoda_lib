@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
@@ -3529,6 +3529,159 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 /// ceilings `env_global_cap_bounded`/`local_type_cap_bounded`), confirm
 /// both are `Prop`s (`verified_is_prop_capped`) and convertible
 /// (`verified_conv`). Honest incompleteness: terms above size 500 give
+/// Is this a constructor application? The gate on structure eta, mirroring
+/// the kernel's own "only when the other side is a saturated constructor
+/// application" condition. No claim: a wrong answer only decides whether the
+/// expansion is attempted.
+pub fn is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>) -> bool {
+    match verified_unfold_const_apps(ctx, e, 100000) {
+        Some((_f, name, _levels, _args)) => get_constructor_num_fields(env, &name).is_some(),
+        None => false,
+    }
+}
+
+/// The claim of a shadow STRUCTURE-ETA certificate: `r` is `x`'s own eta
+/// expansion, `Ctor params* x.0 .. x.(n-1)`, where `x`'s type reduces to the
+/// structure whose sole constructor is that `Ctor`. The route then compares
+/// `r` with the other side by ordinary congruence.
+pub open spec fn eta_struct_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, r: ExprPtr<'t>) -> bool {
+    exists |xt: ExprPtr<'t>, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
+        #[trigger] eta_struct_marker(to_model(xt), f, ind, cid, ls, params, nf)
+        && infer_types_to(env, x, xt, f)
+        && struct_type_of(to_model_of_env(env), to_model(xt), ind, params)
+        && struct_ctor_of(ind) == Some(cid)
+        && ctor_num_fields_of(cid) == Some(nf as u16)
+        && to_model(r) == spine_app(ExprSpec::Const(cid, ls),
+                params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))))
+}
+
+pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, r: ExprPtr<'t>)
+    requires eta_struct_claim(env, x, r)
+    ensures eta_struct_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(r))
+{
+    let (xt, f, ind, cid, ls, params, nf) = choose |xt: ExprPtr<'t>, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
+        #[trigger] eta_struct_marker(to_model(xt), f, ind, cid, ls, params, nf)
+        && infer_types_to(env, x, xt, f)
+        && struct_type_of(to_model_of_env(env), to_model(xt), ind, params)
+        && struct_ctor_of(ind) == Some(cid)
+        && ctor_num_fields_of(cid) == Some(nf as u16)
+        && to_model(r) == spine_app(ExprSpec::Const(cid, ls),
+                params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))));
+    assert(eta_struct_marker(to_model(xt), f, ind, cid, ls, params, nf));
+    assert(eta_struct_expand(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(r)));
+}
+
+/// The producer: infer `x`'s type, reduce it, read the structure and its sole
+/// constructor off the head, and build `Ctor params* x.0 .. x.(n-1)`.
+pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => eta_struct_claim(*env, x, r),
+        None => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    let xt = match verified_infer_shadow(ctx, env, memo, x) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(xt) != 0 {
+        return None;
+    }
+    let kr: u32 = if k > 60000 { 60000 } else { k };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let xtw = verified_whnf_rec(ctx, env, memo, xt, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
+    }
+    let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+        Some(p) => p,
+        None => return None,
+    };
+    proof {
+        is_const_shape_model(hd);
+        const_levels_vec_model(hd);
+    }
+    let ctor = match get_structure_first_ctor(env, &ind_name, false) { Some(c) => c, None => return None };
+    let nump = match get_constructor_num_params(env, &ctor) { Some(n) => n, None => return None };
+    let nf = match get_constructor_num_fields(env, &ctor) { Some(n) => n, None => return None };
+    if (nump as usize) > args.len() {
+        return None;
+    }
+    proof {
+        struct_ctor_of_agrees(*env, name_id(ind_name));
+        ctor_num_fields_of_agrees(*env, name_id(ctor));
+    }
+    // `params ++ x.0 .. x.(nf-1)`
+    let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < (nump as usize)
+        invariant
+            i <= nump as usize,
+            nump as usize <= args@.len(),
+            new_args@.len() == i,
+            forall |j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
+        decreases (nump as usize) - i
+    {
+        new_args.push(args[i]);
+        i = i + 1;
+    }
+    let mut j: usize = 0;
+    while j < (nf as usize)
+        invariant
+            j <= nf as usize,
+            nump as usize <= args@.len(),
+            new_args@.len() == (nump as usize) + j,
+            forall |q: int| 0 <= q < nump as usize ==> #[trigger] new_args@[q] == args@[q],
+            forall |q: int| 0 <= q < j ==> #[trigger] to_model(new_args@[(nump as int) + q]) == ExprSpec::Proj(q as usize, Box::new(to_model(x))),
+        decreases (nf as usize) - j
+    {
+        let pj = ctx.mk_proj(ind_name, j, x);
+        new_args.push(pj);
+        j = j + 1;
+    }
+    let ctor_const = ctx.mk_const(ctor, levels);
+    let r = verified_foldl_apps(ctx, ctor_const, new_args.as_slice());
+    proof {
+        let all_args = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        let params = Seq::new(nump as nat, |i: int| to_model(args@[i]));
+        let rest = all_args.skip(nump as int);
+        assert(all_args =~= params + rest);
+        assert(to_model(hd) == ExprSpec::Const(const_id(hd), const_levels_vec(hd)));
+        assert(const_id(hd) == name_id(ind_name));
+        assert(pstep_star(em, to_model(xt), spine_app(ExprSpec::Const(name_id(ind_name), const_levels_vec(hd)), params + rest)));
+        assert(struct_type_of(em, to_model(xt), name_id(ind_name), params));
+        let projs = Seq::new(nf as nat, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x))));
+        is_const_shape_model(ctor_const);
+        const_levels_vec_model(ctor_const);
+        assert(to_model(ctor_const) == ExprSpec::Const(const_id(ctor_const), const_levels_vec(ctor_const)));
+        assert(const_id(ctor_const) == name_id(ctor));
+        let built = Seq::new(new_args@.len(), |i: int| to_model(new_args@[i]));
+        assert(new_args@.len() == (nump as int) + (nf as int));
+        assert((params + projs).len() == (nump as int) + (nf as int));
+        assert forall |i: int| 0 <= i < built.len() implies built[i] == (params + projs)[i] by {
+            if i < nump as int {
+                assert(new_args@[i] == args@[i]);
+                assert(built[i] == to_model(args@[i]));
+                assert((params + projs)[i] == params[i]);
+            } else {
+                let q = i - (nump as int);
+                assert(0 <= q < nf as int);
+                assert(to_model(new_args@[(nump as int) + q]) == ExprSpec::Proj(q as usize, Box::new(to_model(x))));
+                assert((params + projs)[i] == projs[q]);
+            }
+        }
+        assert(built =~= params + projs);
+        assert(to_model(r) == spine_app(ExprSpec::Const(name_id(ctor), const_levels_vec(ctor_const)), params + projs));
+        let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
+        assert(eta_struct_marker(to_model(xt), fx, name_id(ind_name), name_id(ctor), const_levels_vec(ctor_const), params, nf as nat));
+    }
+    Some(r)
+}
+
 /// The claim of a shadow UNIT certificate, the kernel's `def_eq_unit`: both
 /// terms have a type, `x`'s type reduces to a structure whose single
 /// constructor takes no fields, and the two types are convertible. Such a
@@ -4826,6 +4979,68 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 /// to a `Quot.mk` spine, to the function at index 3 applied to `Quot.mk`'s
 /// last argument and then the trailing arguments -- exactly what the kernel
 /// builds. The claim composes the major premise's reduction (a `pstep_star`
+/// Structure eta as its own step of the conversion route, for the solver's
+/// sake: with both directions inline, `verified_conv_inner_p` no longer fit
+/// in the resource limit. Tier 0 of the family's measure, calling back into
+/// `verified_conv_p` at a strictly smaller budget.
+#[verifier::spinoff_prover]
+pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+// --- STRUCTURE ETA (the kernel's `try_eta_struct`): when one side is a
+// constructor application, expand the OTHER side into its own
+// `Ctor params* s.0 .. s.(n-1)` and compare the two by congruence. The
+// leaf certifies that a term equals its own expansion; the comparison
+// with the real constructor application is ordinary conversion. Gated on
+// the other side really being a constructor application, as the kernel
+// gates it, since expanding costs two inferences and a reduction.
+    if is_ctor_app(ctx, env, y) {
+        if let Some(ex) = verified_eta_struct_shadow(ctx, env, memo, x, k) {
+            if !expr_ptr_eq(ex, x) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, k, budget - 1) {
+                    proof {
+                        eta_struct_pair_of_claim(*env, x, ex);
+                        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(x), to_model(ex));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ex), to_model(y));
+                    }
+                    conv_stat(18);
+                    return Some(true);
+                }
+            }
+        }
+    }
+    if is_ctor_app(ctx, env, x) {
+        if let Some(ey) = verified_eta_struct_shadow(ctx, env, memo, y, k) {
+            if !expr_ptr_eq(ey, y) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, k, budget - 1) {
+                    proof {
+                        eta_struct_pair_of_claim(*env, y, ey);
+                        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(y), to_model(ey));
+                        deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ey));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ey), to_model(y));
+                    }
+                    conv_stat(19);
+                    return Some(true);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// through the certified whnf) with the `deq_quot` leaf on the rebuilt spine.
 #[verifier::spinoff_prover]
 pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
@@ -4929,6 +5144,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     Some(r)
 }
 
+#[verifier::spinoff_prover]
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
         k <= 500,
@@ -5286,6 +5502,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             }
         }
         _ => {}
+    }
+    // --- structure eta, in its own function: this one is large enough that
+    // folding it inline pushed the solver past its resource limit.
+    if !either_rigid {
+        if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, k, budget) {
+            return Some(true);
+        }
     }
     // --- K-like recursor (2026-09-08): reduce a K-like recursor application
     // whose major premise is a proof term, then compare the reduct.
