@@ -260,6 +260,15 @@ pub mod route_stats {
             eprintln!("CONVTRACE tag={} budget={} x={:#x} y={:#x}", tag, budget, x, y);
         }
     }
+    /// Diagnostic knob (`NANODA_UNCERTIFIED=N`): print the first N pairs the
+    /// original checker accepted and no verified route could confirm, so the
+    /// residual gap can be read instead of guessed at.
+    pub static UNCERTIFIED_SHOWN: AtomicU64 = AtomicU64::new(0);
+    pub fn uncertified_budget() -> bool {
+        let cap = knob("NANODA_UNCERTIFIED", 0) as u64;
+        cap > 0 && UNCERTIFIED_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
+    }
+
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
     }
@@ -1273,6 +1282,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let which = self.pair_certified(x, y);
         if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+        if which == 0 && verdict && route_stats::uncertified_budget() {
+            eprintln!("UNCERTIFIED (original says equal, no verified route confirms)\n  X: {:?}\n  Y: {:?}",
+                self.ctx.debug_print(x), self.ctx.debug_print(y));
+        }
         if which != 0 {
             if verdict {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
