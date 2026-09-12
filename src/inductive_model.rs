@@ -71,6 +71,9 @@ use crate::delta_bound_model::{verified_infer_shadow, verified_sort_of_capped};
 use crate::beta_model::subst_full_nlbv_bound;
 use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
+#[cfg(verus_only)]
+use crate::expr_model::abstr_full;
+#[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::beta_model::depth_le_size;
@@ -1678,6 +1681,51 @@ pub open spec fn pi_telescope_size_spec(e: ExprSpec) -> nat
     }
 }
 
+/// Abstracting locals never touches the leading binder spine.
+pub proof fn abstr_full_telescope_size(e: ExprSpec, locals: Seq<u32>, offset: nat)
+    ensures pi_telescope_size_spec(abstr_full(e, locals, offset)) == pi_telescope_size_spec(e)
+    decreases e
+{
+    match e {
+        ExprSpec::Bind(_t, b) => {
+            abstr_full_telescope_size(*b, locals, offset + 1);
+        }
+        _ => {}
+    }
+}
+
+/// A telescope adds exactly one binder per element. `abstr_pi_telescope_model`
+/// is what BOTH `abstr_pi_telescope` and `abstr_lambda_telescope` produce --
+/// the model erases which binder it was -- so this serves the recursor's type
+/// and its rules alike.
+pub proof fn abstr_telescope_size(binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec)
+    requires binder_ids.len() == binder_tys.len()
+    ensures pi_telescope_size_spec(abstr_pi_telescope_model(binder_ids, binder_tys, e))
+        == binder_ids.len() + pi_telescope_size_spec(e)
+    decreases binder_ids.len()
+{
+    if binder_ids.len() == 0 {
+    } else {
+        let last_ty = binder_tys.last();
+        let inner = ExprSpec::Bind(Box::new(last_ty), Box::new(abstr_full(e, seq![binder_ids.last()], 0)));
+        abstr_telescope_size(binder_ids.drop_last(), binder_tys.drop_last(), inner);
+        abstr_full_telescope_size(e, seq![binder_ids.last()], 0);
+        assert(pi_telescope_size_spec(inner) == 1 + pi_telescope_size_spec(e));
+    }
+}
+
+/// A spine of applications never starts with a binder.
+pub proof fn spine_app_telescope_size(base: ExprSpec, args: Seq<ExprSpec>)
+    requires pi_telescope_size_spec(base) == 0
+    ensures pi_telescope_size_spec(spine_app(base, args)) == 0
+    decreases args.len()
+{
+    if args.len() == 0 {
+    } else {
+        spine_app_telescope_size(base, args.subrange(0, args.len() - 1));
+    }
+}
+
 /// Real-arena mirror of `pi_telescope_size_spec` above, fuel-based like
 /// every other arbitrary-depth arena-pointer recursion in this file.
 pub fn verified_pi_telescope_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u16>)
@@ -3218,6 +3266,143 @@ pub fn verified_mk_rec_rules<'t, 'p: 't, 'x>(
 /// function's own five `abstr_pi`/`abstr_pi_telescope` calls exactly),
 /// names it `ind_name.rec`, and assembles the `RecursorData` via `mk_
 /// recursor_declar` (the flattened, `Declar`-opaque constructor above).
+/// One recursor RULE's value, split out of `mk_rec_rule1` for the same
+/// reason its type was: so the thing it builds can carry a claim. The value
+/// is `minor ctor_args* handled_rec_args*` wrapped in four lambda telescopes,
+/// over the constructor's own arguments, the minor premises, the motives and
+/// the parameters.
+///
+/// `reduce_rec` fires a rule by applying that value to exactly the
+/// parameters, motives, minors and constructor fields it peeled off the
+/// recursor application. The postcondition here is that the value really
+/// does bind that many arguments, in that many positions -- if it bound
+/// fewer, iota reduction would substitute a parameter where a field belongs.
+pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    local_params: &[ExprPtr<'t>],
+    motives: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    all_ctor_args: &[ExprPtr<'t>],
+    handled_rec_args: &[ExprPtr<'t>],
+    this_minor: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
+    requires
+        ({ let m = to_model(this_minor); matches!(m, ExprSpec::Free(_)) }),
+        forall |i: int| #![trigger all_ctor_args@[i]] 0 <= i < all_ctor_args@.len() ==> { let m = to_model(all_ctor_args@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> { let m = to_model(flat_mapped_minors@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> { let m = to_model(motives@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> { let m = to_model(local_params@[i]); matches!(m, ExprSpec::Free(_)) },
+    ensures
+        pi_telescope_size_spec(to_model(result))
+            == local_params@.len() + motives@.len() + flat_mapped_minors@.len() + all_ctor_args@.len(),
+{
+    let rhs0 = verified_foldl_apps(ctx, this_minor, all_ctor_args);
+    proof {
+        spine_app_telescope_size(to_model(this_minor), Seq::new(all_ctor_args@.len(), |i: int| to_model(all_ctor_args@[i])));
+    }
+    let rhs1 = verified_foldl_apps(ctx, rhs0, handled_rec_args);
+    proof {
+        spine_app_telescope_size(to_model(rhs0), Seq::new(handled_rec_args@.len(), |i: int| to_model(handled_rec_args@[i])));
+    }
+    let rhs2 = verified_abstr_lambda_telescope(ctx, all_ctor_args, rhs1);
+    proof {
+        abstr_telescope_size(
+            Seq::new(all_ctor_args@.len(), |i: int| expr_id(all_ctor_args@[i])),
+            Seq::new(all_ctor_args@.len(), |i: int| local_type(all_ctor_args@[i])),
+            to_model(rhs1));
+    }
+    let rhs3 = verified_abstr_lambda_telescope(ctx, flat_mapped_minors, rhs2);
+    proof {
+        abstr_telescope_size(
+            Seq::new(flat_mapped_minors@.len(), |i: int| expr_id(flat_mapped_minors@[i])),
+            Seq::new(flat_mapped_minors@.len(), |i: int| local_type(flat_mapped_minors@[i])),
+            to_model(rhs2));
+    }
+    let rhs4 = verified_abstr_lambda_telescope(ctx, motives, rhs3);
+    proof {
+        abstr_telescope_size(
+            Seq::new(motives@.len(), |i: int| expr_id(motives@[i])),
+            Seq::new(motives@.len(), |i: int| local_type(motives@[i])),
+            to_model(rhs3));
+    }
+    let rhs5 = verified_abstr_lambda_telescope(ctx, local_params, rhs4);
+    proof {
+        abstr_telescope_size(
+            Seq::new(local_params@.len(), |i: int| expr_id(local_params@[i])),
+            Seq::new(local_params@.len(), |i: int| local_type(local_params@[i])),
+            to_model(rhs4));
+    }
+    rhs5
+}
+
+/// The recursor's own type, split out of `mk_recursor_aux` so the thing it
+/// builds can carry a claim: `motive indices* major`, wrapped in a `Pi` for
+/// the major premise and then in four telescopes, over the indices, the
+/// minor premises, the motives and the parameters, in that order.
+///
+/// What it ensures is the property the rest of the kernel depends on. The
+/// `RecursorData` records `num_params`, `num_motives`, `num_minors` and
+/// `num_indices`, and `reduce_rec` splits a recursor application at exactly
+/// those positions to find the major premise. If those counts disagreed with
+/// the binder structure of the type built beside them, iota reduction would
+/// read its arguments from the wrong places. Here the type's binder arity is
+/// proven to be exactly their sum plus one, the extra binder being the major
+/// premise itself.
+pub fn verified_mk_recursor_ty<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    local_params: &[ExprPtr<'t>],
+    motives: &[ExprPtr<'t>],
+    flat_mapped_minors: &[ExprPtr<'t>],
+    local_indices: &[ExprPtr<'t>],
+    motive: ExprPtr<'t>,
+    major: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
+    requires
+        matches!(to_model(major), ExprSpec::Free(_)),
+        forall |i: int| #![trigger local_indices@[i]] 0 <= i < local_indices@.len() ==> { let m = to_model(local_indices@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> { let m = to_model(flat_mapped_minors@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger motives@[i]] 0 <= i < motives@.len() ==> { let m = to_model(motives@[i]); matches!(m, ExprSpec::Free(_)) },
+        forall |i: int| #![trigger local_params@[i]] 0 <= i < local_params@.len() ==> { let m = to_model(local_params@[i]); matches!(m, ExprSpec::Free(_)) },
+    ensures
+        pi_telescope_size_spec(to_model(result))
+            == local_params@.len() + motives@.len() + flat_mapped_minors@.len() + local_indices@.len() + 1,
+{
+    let motive_app_base = verified_foldl_apps(ctx, motive, local_indices);
+    let motive_app = ctx.mk_app(motive_app_base, major);
+    let rec_ty0 = ctx.abstr_pi(major, motive_app);
+    assert(pi_telescope_size_spec(to_model(rec_ty0)) == 1 + pi_telescope_size_spec(abstr_full(to_model(motive_app), seq![expr_id(major)], 0)));
+    proof { abstr_full_telescope_size(to_model(motive_app), seq![expr_id(major)], 0); }
+    let rec_ty1 = verified_abstr_pi_telescope(ctx, local_indices, rec_ty0);
+    proof {
+        abstr_telescope_size(
+            Seq::new(local_indices@.len(), |i: int| expr_id(local_indices@[i])),
+            Seq::new(local_indices@.len(), |i: int| local_type(local_indices@[i])),
+            to_model(rec_ty0));
+    }
+    let rec_ty2 = verified_abstr_pi_telescope(ctx, flat_mapped_minors, rec_ty1);
+    proof {
+        abstr_telescope_size(
+            Seq::new(flat_mapped_minors@.len(), |i: int| expr_id(flat_mapped_minors@[i])),
+            Seq::new(flat_mapped_minors@.len(), |i: int| local_type(flat_mapped_minors@[i])),
+            to_model(rec_ty1));
+    }
+    let rec_ty3 = verified_abstr_pi_telescope(ctx, motives, rec_ty2);
+    proof {
+        abstr_telescope_size(
+            Seq::new(motives@.len(), |i: int| expr_id(motives@[i])),
+            Seq::new(motives@.len(), |i: int| local_type(motives@[i])),
+            to_model(rec_ty2));
+    }
+    let rec_ty4 = verified_abstr_pi_telescope(ctx, local_params, rec_ty3);
+    proof {
+        abstr_telescope_size(
+            Seq::new(local_params@.len(), |i: int| expr_id(local_params@[i])),
+            Seq::new(local_params@.len(), |i: int| local_type(local_params@[i])),
+            to_model(rec_ty3));
+    }
+    rec_ty4
+}
+
 pub fn verified_mk_recursor_aux<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
     local_params: &[ExprPtr<'t>],
@@ -3252,13 +3437,7 @@ pub fn verified_mk_recursor_aux<'t, 'p: 't>(
         },
     ensures true
 {
-    let motive_app_base = verified_foldl_apps(ctx, motive, local_indices);
-    let motive_app = ctx.mk_app(motive_app_base, major);
-    let rec_ty = ctx.abstr_pi(major, motive_app);
-    let rec_ty = verified_abstr_pi_telescope(ctx, local_indices, rec_ty);
-    let rec_ty = verified_abstr_pi_telescope(ctx, flat_mapped_minors, rec_ty);
-    let rec_ty = verified_abstr_pi_telescope(ctx, motives, rec_ty);
-    let rec_ty = verified_abstr_pi_telescope(ctx, local_params, rec_ty);
+    let rec_ty = verified_mk_recursor_ty(ctx, local_params, motives, flat_mapped_minors, local_indices, motive, major);
     let rec_str_ptr = alloc_string_rec(ctx);
     let name = ctx.str(ind_name, rec_str_ptr);
     match u16::try_from(local_params.len()) {

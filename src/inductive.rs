@@ -1316,6 +1316,50 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         out
     }
 
+    /// Shadow-only (NANODA_SHADOW=1): rebuild this recursor rule's value with
+    /// the certified builder (`inductive_model::verified_mk_rec_rule_val`) and
+    /// check it is the very same term, and independently re-derive the rule's
+    /// recorded field count. The builder's postcondition is that the value
+    /// binds exactly `num_params + num_motives + num_minors + ctor_args`
+    /// arguments, which are the positions `reduce_rec` supplies when it fires
+    /// the rule; the field count is re-derived through
+    /// `verified_pi_telescope_size`, whose own postcondition ties it to the
+    /// constructor type's binder count. Never affects a verdict.
+    #[allow(clippy::too_many_arguments)]
+    fn shadow_check_rec_rule(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        ctor: CtorHeader<'t>,
+        flat_mapped_minors: &[ExprPtr<'t>],
+        this_minor: ExprPtr<'t>,
+        all_ctor_args: &[ExprPtr<'t>],
+        handled_rec_args: &[ExprPtr<'t>],
+        kernel_val: ExprPtr<'t>,
+        kernel_num_fields: usize,
+    ) {
+        if !crate::tc::route_stats::shadow_enabled() {
+            return;
+        }
+        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_TOTAL);
+        let motives = st.motives.clone();
+        let params = st.local_params.clone();
+        let minors_v: Vec<ExprPtr<'t>> = flat_mapped_minors.to_vec();
+        let args_v: Vec<ExprPtr<'t>> = all_ctor_args.to_vec();
+        let rec_args_v: Vec<ExprPtr<'t>> = handled_rec_args.to_vec();
+        let verified_val = crate::inductive_model::verified_mk_rec_rule_val(
+            self.ctx, params.as_slice(), motives.as_slice(), minors_v.as_slice(),
+            args_v.as_slice(), rec_args_v.as_slice(), this_minor);
+        let verified_fields = match crate::inductive_model::verified_pi_telescope_size(self.ctx, ctor.ty, 100000) {
+            Some(n) => (n as usize).checked_sub(params.len()),
+            None => None,
+        };
+        if verified_val == kernel_val && verified_fields == Some(kernel_num_fields) {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_CERT);
+        } else {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_DISAGREE);
+        }
+    }
+
     fn mk_rec_rule1(
         &mut self,
         st: &InductiveCheckState<'t>,
@@ -1332,6 +1376,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let comp_rhs = self.ctx.abstr_lambda_telescope(st.motives.as_slice(), comp_rhs);
         let comp_rhs = self.ctx.abstr_lambda_telescope(st.local_params.as_slice(), comp_rhs);
         let num_fields = self.ctx.pi_telescope_size(ctor.ty) as usize - st.local_params.len();
+        self.shadow_check_rec_rule(st, ctor, flat_mapped_minors, this_minor,
+            all_ctor_args.as_slice(), handled_rec_args.as_slice(), comp_rhs, num_fields);
         RecRule {
             ctor_name: ctor.name,
             ctor_telescope_size_wo_params: u16::try_from(num_fields).unwrap(),
@@ -1433,6 +1479,45 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
+    /// Shadow-only (NANODA_SHADOW=1): rebuild the recursor's type with the
+    /// certified builder (`inductive_model::verified_mk_recursor_ty`) and
+    /// check it is the very same term the original construction produced.
+    /// The builder's own postcondition is that the type's binder arity is
+    /// exactly `num_params + num_motives + num_minors + num_indices + 1`,
+    /// which are the positions `reduce_rec` splits a recursor application at,
+    /// so an agreement here certifies that the recorded counts match the type
+    /// the kernel actually built. Never affects a verdict.
+    fn shadow_check_recursor(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        declar: &Declar<'t>,
+        motive: ExprPtr<'t>,
+        major: ExprPtr<'t>,
+        local_indices: &[ExprPtr<'t>],
+        minors: &[ExprPtr<'t>],
+    ) {
+        if !crate::tc::route_stats::shadow_enabled() {
+            return;
+        }
+        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_REC_TOTAL);
+        let kernel_ty = match declar {
+            Declar::Recursor(rd) => rd.info.ty,
+            _ => return,
+        };
+        let motives = st.motives.clone();
+        let params = st.local_params.clone();
+        let indices: Vec<ExprPtr<'t>> = local_indices.to_vec();
+        let minors_v: Vec<ExprPtr<'t>> = minors.to_vec();
+        let verified_ty = crate::inductive_model::verified_mk_recursor_ty(
+            self.ctx, params.as_slice(), motives.as_slice(), minors_v.as_slice(),
+            indices.as_slice(), motive, major);
+        if verified_ty == kernel_ty {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_REC_CERT);
+        } else {
+            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_REC_DISAGREE);
+        }
+    }
+
     fn mk_recursor_aux(
         &mut self,
         st: &InductiveCheckState<'t>,
@@ -1490,6 +1575,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 minors.as_slice(),
                 rec_rules[i].as_slice(),
             );
+            self.shadow_check_recursor(st, &recursor, motive, major, local_indices, minors.as_slice());
             recursors.push(recursor);
         }
         recursors
