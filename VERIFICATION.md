@@ -187,7 +187,7 @@ Every non-quick `def_eq` confirmation, on real Lean 4 export files:
 | `Init.Core` | 7,261 / 7,261 | 100.00% | **0** |
 | `Init.Data.Int.Basic` | 13,205 / 13,205 | 100.00% | **0** |
 | `Init.Omega` | 55,528 / 55,528 | 100.00% | **0** |
-| `Init.Data.BitVec.Lemmas` | 562,946 / 563,027 | 99.99% | 81 |
+| `Init.Data.BitVec.Lemmas` | 562,962 / 563,027 | 99.99% | 65 |
 
 Zero disagreements on all of them.
 
@@ -234,7 +234,8 @@ certifier only.
 | `NANODA_ROUTE_STATS` | off | print the report |
 | `NANODA_CAP_K` | 500 | environment cap for the conversion route — **not** freely raisable, conv's bounds assume `k ≤ 500` |
 | `NANODA_CAP_K_JOIN` | 60000 | environment cap for the whnf-join route and the conversion retry; 60000 is the maximum the proofs allow, so it does not limit what can be certified |
-| `NANODA_CONV_BUDGET` | 20 | conversion search budget |
+| `NANODA_CONV_BUDGET` | 60 | conversion search budget; 20 left 5 more pairs uncertified on BitVec at identical runtime, and it plateaus at 60 |
+| `NANODA_CONV_RETRIES` | 0 | how many times a pair may be retried past a cached conversion failure; 0 is the original behaviour, and larger values cost time without certifying more |
 | `NANODA_CONV_JOIN` | 256 | rounds for the capped whnf in the join |
 | `NANODA_WHNF_ROUNDS` | 256 | whnf step budget |
 | `NANODA_MEMO_STATS`, `NANODA_CONV_TRACE`, `NANODA_UNCERTIFIED`, `NANODA_CONV_FAIL_PRINT` | off | diagnostics |
@@ -252,11 +253,24 @@ route cannot reuse because a cached positive answer would have to carry its proo
 
 ## 8. What is left
 
-* **`Init.Data.BitVec.Lemmas`: 81 pairs.** A genuine long tail. Measured: our whnf agrees
-  with the kernel's on both sides for these, so it is not a reduction gap; raising the
-  lazy-delta size gate (500 → 5000) and rounds (32 → 128) changes nothing; only 4 of the
-  81 have inference declining. They need further conversion *rules*, one class at a time,
-  the way §5's four were added.
+* **`Init.Data.BitVec.Lemmas`: 65 pairs.** A genuine long tail, and well characterised.
+  A pair is a ROOT failure when no nested `def_eq` below it also failed to certify; at 76
+  uncertified, only **20 were roots** (8 `def_eq_app`, 4 whnf-retry, 4 `lazy_delta`, 2
+  proof irrelevance, 1 structure eta, 1 eta), the other 56 inheriting a failure from an
+  argument.
+
+  Printing the kernel's own intermediate term beside our delta chain's showed the
+  divergence exactly: the kernel reaches `Prod.mk ε ζ (g ..) ..` where we stall at
+  `Prod.rec .. (fun x => ..) ..`, and our major-premise rewrite applied to that stalled
+  term reduces to the kernel's, character for character. So the mechanism is present; what
+  limits it is *where in the search it may run*, which is a cost question.
+
+  Ruled out by measurement, so they are not worth retrying: the conversion budget (60 and
+  200 both leave the same count), `NANODA_CAP_K` (60000, diagnostic only, same count),
+  `NANODA_CAP_K_JOIN`, the lazy-delta gates (500 → 5000, rounds 32 → 128), bounded retries
+  past a cached failure, removing the failure cache (Init.Core alone then exceeds ten
+  minutes), and adding the whnf-join route as a leaf inside conversion (same count, 30%
+  slower).
 * **The fuel-free inference has no `Proj` arm.** Local, sort, constant, both literals,
   lambda, pi, let and application are done; `Proj` still falls back to the fuelled arm.
   That fallback is the last thing keeping the old fuelled family alive, and with it
