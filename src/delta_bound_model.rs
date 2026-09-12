@@ -72,7 +72,7 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_single, verified_infer_app_telescoped, verified_infer_local, verified_infer_sort, verified_infer_const, verified_whnf_step, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_try_eta_expansion, verified_try_eta_expansion_aux, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_whnf_no_unfolding_step_with_proj, verified_unfold_def_step, verified_find_rec_rule, verified_reduce_rec_core, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, verified_ensure_sort};
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, types_to_mono, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
@@ -3464,6 +3464,93 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         }
         return Some(result);
     }
+    // --- pi: both premises sit one height down, so the two sub-derivations
+    // are lifted to a common height with `types_to_mono`.
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(nlbv(to_model(binder_type)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
+        let bodysz = match verified_size(ctx, body, 100000) { Some(v) => v, None => return None };
+        if bodysz > 60000 {
+            return None;
+        }
+        proof { depth_le_size(to_model(body)); }
+        let bt_ty = match verified_infer_free(ctx, env, memo, binder_type) { Some(v) => v, None => return None };
+        let dom_univ = match verified_sort_of_capped(ctx, env, memo, bt_ty, 64) { Some(v) => v, None => return None };
+        let start_pos = get_dbj_level_counter(ctx);
+        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        let locals_slice: &[ExprPtr<'t>] = &[local];
+        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+        }
+        let instd_ty = match verified_infer_free(ctx, env, memo, instd) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        let cod_univ = match verified_sort_of_capped(ctx, env, memo, instd_ty, 64) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        ctx.replace_dbj_level(local);
+        let result_level = ctx.imax(dom_univ, cod_univ);
+        let result = ctx.mk_sort(result_level);
+        proof {
+            let dom_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(dom_univ));
+            let cod_sort = choose |r: ExprPtr<'t>|
+                pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(r))
+                && to_model(r) == ExprSpec::Sort(level_to_model(cod_univ));
+            let h1 = choose |f: nat| #[trigger] infer_types_to(*env, binder_type, bt_ty, f);
+            let h2 = choose |f: nat| #[trigger] infer_types_to(*env, instd, instd_ty, f);
+            let hm: nat = if h1 >= h2 { h1 } else { h2 };
+            types_to_mono(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(bt_ty), h1, hm);
+            types_to_mono(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(instd_ty), h2, hm);
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
+            types_to_pi(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body),
+                expr_id(local), to_model(bt_ty), level_to_model(dom_univ), to_model(instd_ty), level_to_model(cod_univ), hm + 1);
+            assert(to_model(result) == ExprSpec::Sort(LevelSpec::IMax(Box::new(level_to_model(dom_univ)), Box::new(level_to_model(cod_univ)))));
+            assert(infer_types_to(*env, e, result, hm + 1));
+        }
+        return Some(result);
+    }
+    // --- let: substitute the value into the body and infer that, exactly as
+    // the kernel does. This is the one case where the term can GROW, which is
+    // why a fuelled version had to halve its budget here; with no fuel there
+    // is nothing to halve.
+    if let Some((_bn, ty0, val, body, _nd)) = expr_as_let(&el) {
+        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(ty0)), Box::new(to_model(val)), Box::new(to_model(body))));
+        assert(nlbv(to_model(val)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
+        let bodysz = match verified_size(ctx, body, 100000) { Some(v) => v, None => return None };
+        if bodysz > 60000 {
+            return None;
+        }
+        proof { depth_le_size(to_model(body)); }
+        let locals_slice: &[ExprPtr<'t>] = &[val];
+        let substituted = match verified_inst(ctx, body, locals_slice, 0, 100000) { Some(v) => v, None => return None };
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(val)]);
+            assert(to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(val), 0);
+        }
+        let r = match verified_infer_free(ctx, env, memo, substituted) { Some(v) => v, None => return None };
+        proof {
+            let hb = choose |f: nat| #[trigger] infer_types_to(*env, substituted, r, f);
+            types_to_let(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(),
+                to_model(ty0), to_model(val), to_model(body), to_model(r), hb, hb + 1);
+            assert(infer_types_to(*env, e, r, hb + 1));
+        }
+        return Some(r);
+    }
     // --- application: infer the HEAD, whatever it is, then walk the spine,
     // reducing the type to a binder and instantiating one argument at a time.
     // The head being arbitrary is the point: the old arm only accepted a
@@ -3755,7 +3842,12 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if ctx.num_loose_bvars(xt) != 0 {
         return None;
     }
-    let kr: u32 = if k > 60000 { 60000 } else { k };
+    // reduce the inferred type with the JOIN cap rather than the conversion
+    // cap: the claim quantifies the cap away (`struct_type_of` is over the
+    // whole environment), so a bigger one here is free, and the conversion
+    // cap is pinned at 500 by conv's own bounds.
+    let kj = conv_retry_cap();
+    let kr: u32 = if kj > 60000 { 60000 } else { kj };
     let ghost cmr = env_model_capped(*env, kr as nat);
     let xtw = verified_whnf_rec(ctx, env, memo, xt, conv_join_rounds(), kr);
     proof {

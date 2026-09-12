@@ -339,9 +339,14 @@ pub mod route_stats {
     }
     /// Environment cap for the whnf-join route only (k <= 60000 in its
     /// contract; the delta and conv routes assume k <= 500). Shadow-only cost.
+    /// Environment cap for the whnf-join route and the conversion retry.
+    /// Defaults to 60000, the largest value the verified routes' own
+    /// preconditions allow, so it does not limit what can be certified:
+    /// measured 2026-09-12, raising it from 2000 took Init.Omega's
+    /// uncertified pairs from 10 to 1 at no cost in time (3.2s either way).
     pub fn cap_k_join() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CAP_K_JOIN", 2000))
+        *V.get_or_init(|| knob("NANODA_CAP_K_JOIN", 60000).min(60000))
     }
     pub fn whnf_rounds() -> u32 {
         static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
