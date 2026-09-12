@@ -5566,6 +5566,61 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         Some(v) => Some(v),
         None => verified_major_eta_proj(ctx, env, memo, w, k),
     };
+    // If the OTHER side is a stuck recursor too, rewrite it as well and
+    // compare the two rewritten terms. Measured 2026-09-12 on
+    // Init.Data.BitVec.Lemmas: rewriting one side and comparing it against the
+    // unreduced other fails, while comparing the two rewritten terms succeeds
+    // -- both sides have to get past their own stuck recursor before the
+    // constructor applications underneath can meet.
+    if let Some(rx) = x2 {
+        if ctx.num_loose_bvars(y) == 0 {
+            let kr2: u32 = if k > 60000 { 60000 } else { k };
+            let ghost cmr2 = env_model_capped(*env, kr2 as nat);
+            let wy = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr2);
+            proof {
+                env_model_capped_sub(*env, kr2 as nat);
+                pstep_star_env_weaken(cmr2, em, to_model(y), to_model(wy));
+                defeq_of_pstep_star(em, to_model(y), to_model(wy));
+                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
+            }
+            let y2 = match verified_major_eta_spine(ctx, env, memo, wy, k) {
+                Some(v) => Some(v),
+                None => verified_major_eta_proj(ctx, env, memo, wy, k),
+            };
+            if let Some(ry) = y2 {
+                if !expr_ptr_eq(rx, x) || !expr_ptr_eq(ry, y) {
+                    // reduce the rewritten terms before comparing: the point of
+                    // the rewrite is to let iota fire, and the constructor
+                    // applications only meet AFTER it has
+                    if ctx.num_loose_bvars(rx) == 0 && ctx.num_loose_bvars(ry) == 0 {
+                        let rxw = verified_whnf_rec(ctx, env, memo, rx, conv_join_rounds(), kr2);
+                        let ryw = verified_whnf_rec(ctx, env, memo, ry, conv_join_rounds(), kr2);
+                        proof {
+                            pstep_star_env_weaken(cmr2, em, to_model(rx), to_model(rxw));
+                            pstep_star_env_weaken(cmr2, em, to_model(ry), to_model(ryw));
+                            defeq_of_pstep_star(em, to_model(rx), to_model(rxw));
+                            deq_p_any_of_defeq(dtym, em, lcm, to_model(rx), to_model(rxw));
+                            defeq_of_pstep_star(em, to_model(ry), to_model(ryw));
+                            deq_p_any_of_defeq(dtym, em, lcm, to_model(ry), to_model(ryw));
+                        }
+                        if let Some(true) = verified_conv_p(ctx, env, memo, rxw, ryw, fuel, k, (budget - 1) as u32) {
+                            proof {
+                                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(rx));
+                                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(rxw));
+                                deq_p_any_trans(dtym, em, lcm, to_model(y), to_model(wy), to_model(ry));
+                                deq_p_any_trans(dtym, em, lcm, to_model(y), to_model(ry), to_model(ryw));
+                                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rxw), to_model(ryw));
+                                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ryw));
+                                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ryw), to_model(y));
+                            }
+                            conv_stat(22);
+                            return Some(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
     match x2 {
         Some(r) => {
             if expr_ptr_eq(r, x) {
