@@ -3898,6 +3898,140 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         assert(to_model(hd) == ExprSpec::Const(const_id(hd), const_levels_vec(hd)));
         assert(const_id(hd) == name_id(ind_name));
         assert(pstep_star(em, to_model(xt), spine_app(ExprSpec::Const(name_id(ind_name), const_levels_vec(hd)), params + rest)));
+        defeq_of_pstep_star(em, to_model(xt), to_model(xtw));
+        deq_any_of_defeq(em, to_model(xt), to_model(xtw));
+        assert(struct_type_of(em, to_model(xt), name_id(ind_name), params));
+        let projs = Seq::new(nf as nat, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x))));
+        is_const_shape_model(ctor_const);
+        const_levels_vec_model(ctor_const);
+        assert(to_model(ctor_const) == ExprSpec::Const(const_id(ctor_const), const_levels_vec(ctor_const)));
+        assert(const_id(ctor_const) == name_id(ctor));
+        let built = Seq::new(new_args@.len(), |i: int| to_model(new_args@[i]));
+        assert(new_args@.len() == (nump as int) + (nf as int));
+        assert((params + projs).len() == (nump as int) + (nf as int));
+        assert forall |i: int| 0 <= i < built.len() implies built[i] == (params + projs)[i] by {
+            if i < nump as int {
+                assert(new_args@[i] == args@[i]);
+                assert(built[i] == to_model(args@[i]));
+                assert((params + projs)[i] == params[i]);
+            } else {
+                let q = i - (nump as int);
+                assert(0 <= q < nf as int);
+                assert(to_model(new_args@[(nump as int) + q]) == ExprSpec::Proj(q as usize, Box::new(to_model(x))));
+                assert((params + projs)[i] == projs[q]);
+            }
+        }
+        assert(built =~= params + projs);
+        assert(to_model(r) == spine_app(ExprSpec::Const(name_id(ctor), const_levels_vec(ctor_const)), params + projs));
+        let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
+        assert(eta_struct_marker(to_model(xt), fx, name_id(ind_name), name_id(ctor), const_levels_vec(ctor_const), params, nf as nat));
+    }
+    Some(r)
+}
+
+pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => eta_struct_claim(*env, x, r),
+        None => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    let xt = match verified_infer_shadow(ctx, env, memo, x) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(xt) != 0 {
+        return None;
+    }
+    if ctx.num_loose_bvars(y) != 0 {
+        return None;
+    }
+    let yt = match verified_infer_shadow(ctx, env, memo, y) { Some(v) => v, None => return None };
+    if ctx.num_loose_bvars(yt) != 0 {
+        return None;
+    }
+    // the two types must be convertible: that is what makes an expansion read
+    // off the OTHER side's structure valid for this one, and it is exactly the
+    // check `try_eta_struct_aux` performs
+    match verified_conv(ctx, env, memo, xt, yt, fuel, k, 16) {
+        Some(true) => {}
+        _ => return None,
+    }
+    // reduce the inferred type with the JOIN cap rather than the conversion
+    // cap: the claim quantifies the cap away (`struct_type_of` is over the
+    // whole environment), so a bigger one here is free, and the conversion
+    // cap is pinned at 500 by conv's own bounds.
+    let kj = conv_retry_cap();
+    let kr: u32 = if kj > 60000 { 60000 } else { kj };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let xtw = verified_whnf_rec(ctx, env, memo, yt, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(yt), to_model(xtw));
+    }
+    let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+        Some(p) => p,
+        None => return None,
+    };
+    proof {
+        is_const_shape_model(hd);
+        const_levels_vec_model(hd);
+    }
+    let ctor = match get_structure_first_ctor(env, &ind_name, false) { Some(c) => c, None => return None };
+    let nump = match get_constructor_num_params(env, &ctor) { Some(n) => n, None => return None };
+    let nf = match get_constructor_num_fields(env, &ctor) { Some(n) => n, None => return None };
+    if (nump as usize) > args.len() {
+        return None;
+    }
+    proof {
+        struct_ctor_of_agrees(*env, name_id(ind_name));
+        ctor_num_fields_of_agrees(*env, name_id(ctor));
+    }
+    // `params ++ x.0 .. x.(nf-1)`
+    let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
+    let mut i: usize = 0;
+    while i < (nump as usize)
+        invariant
+            i <= nump as usize,
+            nump as usize <= args@.len(),
+            new_args@.len() == i,
+            forall |j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
+        decreases (nump as usize) - i
+    {
+        new_args.push(args[i]);
+        i = i + 1;
+    }
+    let mut j: usize = 0;
+    while j < (nf as usize)
+        invariant
+            j <= nf as usize,
+            nump as usize <= args@.len(),
+            new_args@.len() == (nump as usize) + j,
+            forall |q: int| 0 <= q < nump as usize ==> #[trigger] new_args@[q] == args@[q],
+            forall |q: int| 0 <= q < j ==> #[trigger] to_model(new_args@[(nump as int) + q]) == ExprSpec::Proj(q as usize, Box::new(to_model(x))),
+        decreases (nf as usize) - j
+    {
+        let pj = ctx.mk_proj(ind_name, j, x);
+        new_args.push(pj);
+        j = j + 1;
+    }
+    let ctor_const = ctx.mk_const(ctor, levels);
+    let r = verified_foldl_apps(ctx, ctor_const, new_args.as_slice());
+    proof {
+        let all_args = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        let params = Seq::new(nump as nat, |i: int| to_model(args@[i]));
+        let rest = all_args.skip(nump as int);
+        assert(all_args =~= params + rest);
+        assert(to_model(hd) == ExprSpec::Const(const_id(hd), const_levels_vec(hd)));
+        assert(const_id(hd) == name_id(ind_name));
+        assert(pstep_star(em, to_model(yt), spine_app(ExprSpec::Const(name_id(ind_name), const_levels_vec(hd)), params + rest)));
+        defeq_of_pstep_star(em, to_model(yt), to_model(xtw));
+        deq_any_of_defeq(em, to_model(yt), to_model(xtw));
+        // xt ~ yt (from the conversion check) and yt reduces to the structure
+        deq_any_trans(em, to_model(xt), to_model(yt), to_model(xtw));
         assert(struct_type_of(em, to_model(xt), name_id(ind_name), params));
         let projs = Seq::new(nf as nat, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x))));
         is_const_shape_model(ctor_const);
@@ -5486,8 +5620,42 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     // again, burning the whole budget on a regress. (Measured 2026-09-12: the
     // deepest conversion failures on Init.Core were nested `LT.mk %(LT.mk
     // %(..).0).0` towers produced by exactly this.)
+    // The kernel applies this rule to the REDUCTS (`def_eq` calls
+    // `try_eta_struct(x_n, y_n)`), and whether a side is a constructor
+    // application is usually only visible after reduction. Try the reducts
+    // first, composing through the reduction on both sides.
+    if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
+        let krr: u32 = { let c = conv_retry_cap(); if c > 60000 { 60000 } else { c } };
+        let ghost cmrr = env_model_capped(*env, krr as nat);
+        let wx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), krr);
+        let wy = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), krr);
+        if !(expr_ptr_eq(wx, x) && expr_ptr_eq(wy, y)) {
+            proof {
+                env_model_capped_sub(*env, krr as nat);
+                pstep_star_env_weaken(cmrr, em, to_model(x), to_model(wx));
+                pstep_star_env_weaken(cmrr, em, to_model(y), to_model(wy));
+            }
+            if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, wx, wy, fuel, k, (budget - 1) as u32) {
+                proof {
+                    defeq_of_pstep_star(em, to_model(x), to_model(wx));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(wx));
+                    defeq_of_pstep_star(em, to_model(y), to_model(wy));
+                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(wx), to_model(wy));
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(wy));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(wy), to_model(y));
+                }
+                return Some(true);
+            }
+        }
+    }
     if is_ctor_app(ctx, env, y) && !is_ctor_app(ctx, env, x) {
-        if let Some(ex) = verified_eta_struct_shadow(ctx, env, memo, x, k) {
+        let exo = match verified_eta_struct_shadow(ctx, env, memo, x, k) {
+            Some(v) => Some(v),
+            // reading x's own type failed; try the kernel's way round
+            None => verified_eta_struct_shadow_via(ctx, env, memo, x, y, fuel, k),
+        };
+        if let Some(ex) = exo {
             if !expr_ptr_eq(ex, x) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, k, budget - 1) {
                     proof {
@@ -5502,7 +5670,11 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         }
     }
     if is_ctor_app(ctx, env, x) && !is_ctor_app(ctx, env, y) {
-        if let Some(ey) = verified_eta_struct_shadow(ctx, env, memo, y, k) {
+        let eyo = match verified_eta_struct_shadow(ctx, env, memo, y, k) {
+            Some(v) => Some(v),
+            None => verified_eta_struct_shadow_via(ctx, env, memo, y, x, fuel, k),
+        };
+        if let Some(ey) = eyo {
             if !expr_ptr_eq(ey, y) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, k, budget - 1) {
                     proof {

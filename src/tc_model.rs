@@ -4158,11 +4158,18 @@ pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
 /// Marker trigger for `eta_struct_expand`'s witnesses.
 pub open spec fn eta_struct_marker(tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat) -> bool { true }
 
-/// "`tx` reduces to the structure `ind` applied to `params` (and possibly
-/// more)". The kernel reads the parameters straight off the whnf'd type.
+/// "`tx` is CONVERTIBLE to the structure `ind` applied to `params` (and
+/// possibly more)".
+///
+/// Convertible, not merely reducible: the kernel's `try_eta_struct_aux` reads
+/// the constructor and parameters off the OTHER side -- which is already a
+/// constructor application -- and establishes this side by checking the two
+/// types are definitionally equal. Requiring `tx` to reduce to the structure
+/// on its own is strictly stronger, and it was rejecting pairs the kernel
+/// accepts, because `tx` need not whnf to a constant-headed application.
 pub open spec fn struct_type_of(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec, ind: u64, params: Seq<ExprSpec>) -> bool {
     exists |ils: Seq<LevelSpec>, rest: Seq<ExprSpec>|
-        #[trigger] pstep_star(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
+        #[trigger] deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
 }
 
 /// STRUCTURE ETA, the kernel's `try_eta_struct`, in the same shape the
