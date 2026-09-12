@@ -3043,6 +3043,19 @@ fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
 /// Environment cap for conv's RETRY whnf (the measured rounds allow
 /// k <= 60000; only the lazy-delta round/chain assume k <= 500). Clamped
 /// at the call site; no contract needed.
+
+/// Exec-only negative cache for the major-premise rewriters: a hit only
+/// produces `None`, which carries no claim.
+#[verifier::external_body]
+fn major_eta_seen<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> bool {
+    crate::tc::route_stats::major_eta_seen(e.raw_bits(), ctx.dbj_level_counter)
+}
+
+#[verifier::external_body]
+fn major_eta_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) {
+    crate::tc::route_stats::major_eta_note(e.raw_bits(), ctx.dbj_level_counter);
+}
+
 #[verifier::external_body]
 fn conv_retry_cap() -> u32 {
     crate::tc::route_stats::cap_k_join()
@@ -3812,6 +3825,12 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     if ctx.num_loose_bvars(xtt) != 0 || ctx.num_loose_bvars(ytt) != 0 {
         { conv_stat(30); return None; }
     }
+    // The Prop check keeps the ambient cap. Its claim does not mention the
+    // cap, so a larger one would cost nothing in the proof -- but TRIED AND
+    // REVERTED 2026-09-12: raising it to 60000 left every corpus's certified
+    // count identical and took Init.Omega from 3.4 s to 198 s. Exit 31 below
+    // is not a cap limit; those types are genuinely not Prop-sorted, which is
+    // proof irrelevance correctly declining.
     match verified_is_prop_capped(ctx, env, memo, xtt, fuel, k) {
         Some(true) => {}
         _ => { conv_stat(31); return None; }
@@ -4149,7 +4168,7 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
     // The measure says exactly that: `budget` falls only on a reduction or
     // instantiation step, the term-size component falls on every congruence
     // step, and the tier orders the three functions of this family.
-    decreases budget, size(to_model(x)) + size(to_model(y)), 2int
+    decreases budget, size(to_model(x)) + size(to_model(y)), 4int
 {
     // the kernel's `eq_cache`, with its proof: a hit is a certificate whose
     // type invariant already holds the claim this function promises.
@@ -5114,17 +5133,35 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     // the structure is a quotient computation the reduction relation cannot do
     // either (`Quot.lift f h (Quot.mk r a)`, the kernel's `reduce_quot`):
     // `PSigma.fst (Quot.lift ..)` needs exactly that under the projection.
-    let s3 = match verified_major_eta_spine(ctx, env, memo, s2, k) {
-        Some(v) => v,
-        None => {
-            let kq: u32 = if k > 60000 { 60000 } else { k };
-            match verified_quot_step(ctx, env, memo, s2, kq) {
-                Some(v) => {
-                    proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(s2), to_model(v)); }
-                    v
-                }
-                None => return None,
+    // Cheap gate before anything expensive: the reduced structure must be a
+    // constant-headed application whose head is either a recursor (so the
+    // major premise may need expanding) or a quotient function (so the
+    // quotient rule may apply). Without this the step ran its inferences on
+    // every projection the route ever compares, which cost Init.Omega two
+    // orders of magnitude for no extra coverage.
+    let (is_rec, is_quot) = match verified_unfold_const_apps(ctx, s2, 100000) {
+        Some((_f, sname, _l, _a)) => (
+            get_recursor_data(env, &sname).is_some(),
+            ctx.quot_kind_code(sname).is_some(),
+        ),
+        None => (false, false),
+    };
+    if !is_rec && !is_quot {
+        return None;
+    }
+    let s3 = if is_rec {
+        match verified_major_eta_spine(ctx, env, memo, s2, k) {
+            Some(v) => v,
+            None => return None,
+        }
+    } else {
+        let kq: u32 = if k > 60000 { 60000 } else { k };
+        match verified_quot_step(ctx, env, memo, s2, kq) {
+            Some(v) => {
+                proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(s2), to_model(v)); }
+                v
             }
+            None => return None,
         }
     };
     let r = ctx.mk_proj(ty_name, idx, s3);
@@ -5157,10 +5194,32 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     if budget == 0 {
         return None;
     }
-    let x2 = match verified_major_eta_spine(ctx, env, memo, x, k) {
+    if major_eta_seen(ctx, x) {
+        return None;
+    }
+    if ctx.num_loose_bvars(x) != 0 {
+        return None;
+    }
+    // Work on the REDUCT, not the term: `PUnit._sizeOf_1 u` only shows its
+    // stuck recursor after delta, and `Prod.fst (Prod.map ..)` only shows its
+    // projection after delta. Reducing here (memoized) is what lets the step
+    // run once per pair instead of at every recursion level.
+    let kr: u32 = if k > 60000 { 60000 } else { k };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let w = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(x), to_model(w));
+        defeq_of_pstep_star(em, to_model(x), to_model(w));
+        deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(w));
+    }
+    let x2 = match verified_major_eta_spine(ctx, env, memo, w, k) {
         Some(v) => Some(v),
-        None => verified_major_eta_proj(ctx, env, memo, x, k),
+        None => verified_major_eta_proj(ctx, env, memo, w, k),
     };
+    if x2.is_none() {
+        major_eta_note(ctx, x);
+    }
     match x2 {
         Some(r) => {
             if expr_ptr_eq(r, x) {
@@ -5169,6 +5228,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             match verified_conv_p(ctx, env, memo, r, y, fuel, k, (budget - 1) as u32) {
                 Some(true) => {
                     proof {
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(r));
                         deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(r), to_model(y));
                     }
                     conv_stat(20);
@@ -5242,6 +5302,203 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
                     conv_stat(19);
                     return Some(true);
                 }
+            }
+        }
+    }
+    None
+}
+
+/// The conversion route's last reduction leaf, split out for the solver:
+/// weak-head normalize BOTH sides with the capped whnf and either join them
+/// on the nose or recurse on the reducts when either moved. This is the real
+/// `def_eq`'s whnf-core-then-retry shape.
+#[verifier::spinoff_prover]
+pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+        nlbv(to_model(x)) <= 0,
+        nlbv(to_model(y)) <= 0,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+    let kr0 = conv_retry_cap();
+    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let rx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
+    let ry = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
+        pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
+    }
+    if expr_ptr_eq(rx, ry) {
+        proof {
+            assert(pstep_star(em, to_model(x), to_model(rx)));
+            assert(pstep_star(em, to_model(y), to_model(rx)));
+            assert(defeq(em, to_model(x), to_model(y)));
+            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+        }
+        conv_stat(6);
+        return Some(true);
+    }
+    conv_trace(4, rx, ry, budget);
+    if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
+        if let Some(true) = verified_conv_p(ctx, env, memo, rx, ry, fuel, k, budget - 1) {
+            proof {
+                defeq_of_pstep_star(em, to_model(x), to_model(rx));
+                deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(rx));
+                defeq_of_pstep_star(em, to_model(y), to_model(ry));
+                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(ry));
+                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+            }
+            conv_stat(10);
+            return Some(true);
+        }
+    }
+    None
+}
+
+/// The quotient, eta and K-like leaves of the conversion route, split out
+/// for the solver: `verified_conv_inner_p` no longer fits in its resource
+/// limit with everything inline.
+#[verifier::spinoff_prover]
+pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, size(to_model(x)) + size(to_model(y)), 2int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+    let xe_sh = ctx.read_expr(x);
+    let ye_sh = ctx.read_expr(y);
+    let x_rigid = expr_as_pi(&xe_sh).is_some() || expr_as_lambda(&xe_sh).is_some() || expr_as_sort(&xe_sh).is_some();
+    let y_rigid = expr_as_pi(&ye_sh).is_some() || expr_as_lambda(&ye_sh).is_some() || expr_as_sort(&ye_sh).is_some();
+    let xe = xe_sh;
+    let ye = ye_sh;
+    let either_rigid = x_rigid || y_rigid;
+    // --- quotient computation (the kernel's `reduce_quot`) ---
+    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
+        if let Some(rx) = verified_quot_step(ctx, env, memo, x, k) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(rx));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
+                }
+                conv_stat(15);
+                return Some(true);
+            }
+        }
+    }
+    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
+        if let Some(ry) = verified_quot_step(ctx, env, memo, y, k) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                }
+                conv_stat(15);
+                return Some(true);
+            }
+        }
+    }
+    // --- eta (2026-09-08): the kernel's `def_eq_eta` -- exactly one side a
+    // lambda `fun (a : t) => body`, the other side `f` closed: compare the
+    // lambda with `fun (a : t) => f a` (the model's `eta_expands_to`, a
+    // closed `f` being its own shift). Claim: deq_p(x, eta f) then the eta
+    // leaf `deq_eta(eta f, f)` lifted through the reduction-only relation.
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((n1, s1, t1, _)), None) => {
+            if ctx.num_loose_bvars(y) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(y, v0);
+                let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
+                if let Some(true) = verified_conv_p(ctx, env, memo, x, new_lambda, fuel, k, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(y));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(y)));
+                        assert(deq_eta(to_model(new_lambda), to_model(y)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(y));
+                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(y));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(12);
+                    return Some(true);
+                }
+            }
+        }
+        (None, Some((n2, s2, t2, _))) => {
+            if ctx.num_loose_bvars(x) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(x, v0);
+                let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
+                if let Some(true) = verified_conv_p(ctx, env, memo, new_lambda, y, fuel, k, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(x));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(x)));
+                        assert(deq_eta(to_model(new_lambda), to_model(x)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(x));
+                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(x));
+                        deq_p_any_symm(dtym, em, lcm, to_model(new_lambda), to_model(x));
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(12);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    // --- structure eta, in its own function: this one is large enough that
+    // folding it inline pushed the solver past its resource limit.
+    if !either_rigid {
+        if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, k, budget) {
+            return Some(true);
+        }
+    }
+    // --- K-like recursor (2026-09-08): reduce a K-like recursor application
+    // whose major premise is a proof term, then compare the reduct.
+    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
+        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, k) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
+                proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
+                conv_stat(13);
+                return Some(true);
+            }
+        }
+    }
+    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
+        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, k) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
+                proof {
+                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                }
+                conv_stat(13);
+                return Some(true);
             }
         }
     }
@@ -5360,7 +5617,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
     }
-    decreases budget, size(to_model(x)) + size(to_model(y)), 1int
+    decreases budget, size(to_model(x)) + size(to_model(y)), 3int
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
@@ -5635,121 +5892,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         }
         _ => {}
     }
-    // --- quotient computation (the kernel's `reduce_quot`) ---
-    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
-        if let Some(rx) = verified_quot_step(ctx, env, memo, x, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
-                proof {
-                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(rx));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
-                }
-                conv_stat(15);
-                return Some(true);
-            }
-        }
-    }
-    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
-        if let Some(ry) = verified_quot_step(ctx, env, memo, y, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
-                proof {
-                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
-                }
-                conv_stat(15);
-                return Some(true);
-            }
-        }
-    }
-    // --- eta (2026-09-08): the kernel's `def_eq_eta` -- exactly one side a
-    // lambda `fun (a : t) => body`, the other side `f` closed: compare the
-    // lambda with `fun (a : t) => f a` (the model's `eta_expands_to`, a
-    // closed `f` being its own shift). Claim: deq_p(x, eta f) then the eta
-    // leaf `deq_eta(eta f, f)` lifted through the reduction-only relation.
-    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
-        (Some((n1, s1, t1, _)), None) => {
-            if ctx.num_loose_bvars(y) == 0 {
-                let v0 = ctx.mk_var(0);
-                let body = ctx.mk_app(y, v0);
-                let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
-                if let Some(true) = verified_conv_p(ctx, env, memo, x, new_lambda, fuel, k, budget - 1) {
-                    proof {
-                        nlbv_shift_noop(1, 0, to_model(y));
-                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
-                        assert(eta_expands_to(to_model(new_lambda), to_model(y)));
-                        assert(deq_eta(to_model(new_lambda), to_model(y)));
-                        deq_any_of_eta(em, to_model(new_lambda), to_model(y));
-                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(y));
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
-                    }
-                    conv_stat(12);
-                    return Some(true);
-                }
-            }
-        }
-        (None, Some((n2, s2, t2, _))) => {
-            if ctx.num_loose_bvars(x) == 0 {
-                let v0 = ctx.mk_var(0);
-                let body = ctx.mk_app(x, v0);
-                let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
-                if let Some(true) = verified_conv_p(ctx, env, memo, new_lambda, y, fuel, k, budget - 1) {
-                    proof {
-                        nlbv_shift_noop(1, 0, to_model(x));
-                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
-                        assert(eta_expands_to(to_model(new_lambda), to_model(x)));
-                        assert(deq_eta(to_model(new_lambda), to_model(x)));
-                        deq_any_of_eta(em, to_model(new_lambda), to_model(x));
-                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(x));
-                        deq_p_any_symm(dtym, em, lcm, to_model(new_lambda), to_model(x));
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(new_lambda), to_model(y));
-                    }
-                    conv_stat(12);
-                    return Some(true);
-                }
-            }
-        }
-        _ => {}
-    }
-    // --- structure eta, in its own function: this one is large enough that
-    // folding it inline pushed the solver past its resource limit.
-    if !either_rigid {
-        if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, k, budget) {
-            return Some(true);
-        }
-    }
-    // --- major-premise normalization (the kernel's `normalize_major_premise`
-    // through structure eta), in its own function for the solver's sake.
-    if !either_rigid {
-        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, k, budget) {
-            return Some(true);
-        }
-        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, k, budget) {
-            proof { deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(x)); }
-            return Some(true);
-        }
-    }
-    // --- K-like recursor (2026-09-08): reduce a K-like recursor application
-    // whose major premise is a proof term, then compare the reduct.
-    if !x_rigid && ctx.num_loose_bvars(x) == 0 {
-        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
-                proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
-                conv_stat(13);
-                return Some(true);
-            }
-        }
-    }
-    if !y_rigid && ctx.num_loose_bvars(y) == 0 {
-        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
-                proof {
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
-                }
-                conv_stat(13);
-                return Some(true);
-            }
-        }
+    // --- quotient, eta and K-like, in their own function: the solver's
+    // resource limit again.
+    if let Some(true) = verified_conv_leaves_p(ctx, env, memo, x, y, fuel, k, budget) {
+        return Some(true);
     }
     // --- reduction: closed, size-gated terms only ---
     // (No entry size gate any more, 2026-09-05: it rejected every large
@@ -5776,39 +5922,33 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         conv_trace(5, x, y, budget);
         return None;
     }
-    let kr0 = conv_retry_cap();
-    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let rx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
-    let ry = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr);
-    proof {
-        env_model_capped_sub(*env, kr as nat);
-        pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
-        pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
-    }
-    if expr_ptr_eq(rx, ry) {
-        proof {
-            assert(pstep_star(em, to_model(x), to_model(rx)));
-            assert(pstep_star(em, to_model(y), to_model(rx)));
-            assert(defeq(em, to_model(x), to_model(y)));
-            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
-        }
-        conv_stat(6);
+    // --- the capped-whnf join and retry, in its own function: this one grew
+    // past the solver's resource limit inline.
+    if let Some(true) = verified_conv_whnf_retry_p(ctx, env, memo, x, y, fuel, k, budget) {
         return Some(true);
     }
-    conv_trace(4, rx, ry, budget);
-    if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
-        if let Some(true) = verified_conv_p(ctx, env, memo, rx, ry, fuel, k, budget - 1) {
-            proof {
-                defeq_of_pstep_star(em, to_model(x), to_model(rx));
-                deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(rx));
-                defeq_of_pstep_star(em, to_model(y), to_model(ry));
-                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ry));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(ry));
-                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
-            }
-            conv_stat(10);
+    // --- LAST RESORT: major-premise normalization (the kernel's
+    // `normalize_major_premise` through structure eta, and the quotient rule
+    // under a projection). Placed here, after every cheaper rule, because
+    // each attempt costs two inferences and a reduction: running it at every
+    // conversion node took Init.Omega from 3.4 s to 196 s for no extra
+    // coverage at all. Only pairs that would otherwise be uncertified reach
+    // this point.
+    // Near the TOP of a certification attempt only. Each rewrite spawns a
+    // whole extra conversion subtree, and allowing it at every recursion
+    // level cost Init.Omega 3.8s -> 211s. One level below the top is needed
+    // and sufficient: congruence compares arguments at the SAME budget, so
+    // only a reduction step drops a level, and the shapes this rule exists
+    // for show up either in the pair itself or just past one reduction.
+    // Measured: top-only leaves 102 of Init.Omega's pairs uncertified, one
+    // level down brings it to 81 -- the same as allowing it everywhere -- at
+    // 3.6s instead of 211s.
+    if !either_rigid && budget as u64 + 1 >= conv_budget_total() as u64 {
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, k, budget) {
+            return Some(true);
+        }
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, k, budget) {
+            proof { deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(x)); }
             return Some(true);
         }
     }
