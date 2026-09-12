@@ -4996,36 +4996,39 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 /// MAJOR-PREMISE NORMALIZATION, the kernel's `normalize_major_premise`
 /// applied through structure eta.
 ///
-/// `PUnit._sizeOf_1 u` reduces, in the real kernel, all the way to `1`: it
-/// unfolds to `PUnit.rec motive 1 u`, and the kernel turns the
-/// structure-typed local `u` into `PUnit.unit` so iota can fire. Our
-/// reduction relation is deliberately typing-free, so it cannot do that --
-/// `pstep` has no access to `u`'s type -- and the verified whnf stops at the
-/// stuck recursor application.
+/// Two shapes need it, both found by printing the verified and the kernel
+/// whnf side by side on the pairs no route could confirm:
 ///
-/// The conversion route can do it instead, because it is where typed leaves
-/// live. Replace the recursor's major premise with its eta expansion, which
-/// is exactly what the structure-eta leaf certifies, lift that to the whole
-/// application through `deq_p_any_spine_update`, and compare the rebuilt
-/// term. The major premise's position comes from the recursor's own
-/// disclosed data, so nothing is guessed and no other argument is touched.
+/// - `PUnit._sizeOf_1 u` unfolds to `PUnit.rec motive 1 u`, and the kernel
+///   turns the structure-typed local `u` into `PUnit.unit` so iota can fire.
+/// - `Prod.fst (Prod.map f g p)` unfolds to `(Prod.rec .. p).0`, because
+///   `Prod.map` is defined by pattern matching and so compiles to `Prod.rec`.
+///   Here the stuck recursor sits INSIDE a projection's structure.
+///
+/// Our reduction relation is deliberately typing-free -- `pstep` has no
+/// access to a term's type -- so the verified whnf stops at the stuck
+/// recursor in both cases. The conversion route can do it instead, because
+/// that is where typed leaves live.
+///
+/// This rewrites a term to an equal one with the major premise expanded,
+/// returning the rewritten term together with the `deq_p_any` that justifies
+/// it: the structure-eta leaf for the premise itself, lifted to the
+/// application by `deq_p_any_spine_update` and, for the projection shape,
+/// through `deq_p_any_proj_congr`. The premise's position comes from the
+/// recursor's own disclosed data, so nothing is guessed.
 #[verifier::spinoff_prover]
-pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
         k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
-        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
-        _ => true,
+        Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
+        None => true,
     }
-    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost lcm = arena_lctx();
-    if budget == 0 {
-        return None;
-    }
     let (hd, name, _levels, args) = match verified_unfold_const_apps(ctx, x, 100000) {
         Some(p) => p,
         None => return None,
@@ -5045,7 +5048,6 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     if expr_ptr_eq(ex, major) {
         return None;
     }
-    // rebuild the application with the expanded major premise
     let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
     let mut i: usize = 0;
     while i < args.len()
@@ -5066,23 +5068,103 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         let built = Seq::new(new_args@.len(), |i: int| to_model(new_args@[i]));
         assert(new_args@ =~= args@.update(major_idx as int, ex));
         assert(built =~= args_model.update(major_idx as int, to_model(ex)));
+        eta_struct_pair_of_claim(*env, major, ex);
+        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(major), to_model(ex));
+        assert(args_model[major_idx as int] == to_model(major));
+        deq_p_any_spine_update(dtym, em, lcm, to_model(hd), args_model, major_idx as int, to_model(ex));
+        assert(to_model(x) == spine_app(to_model(hd), args_model));
+        assert(to_model(x2) == spine_app(to_model(hd), args_model.update(major_idx as int, to_model(ex))));
     }
-    match verified_conv_p(ctx, env, memo, x2, y, fuel, k, (budget - 1) as u32) {
-        Some(true) => {
-            proof {
-                let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-                eta_struct_pair_of_claim(*env, major, ex);
-                deq_p_any_of_eta_struct(dtym, em, lcm, to_model(major), to_model(ex));
-                assert(args_model[major_idx as int] == to_model(major));
-                deq_p_any_spine_update(dtym, em, lcm, to_model(hd), args_model, major_idx as int, to_model(ex));
-                assert(to_model(x) == spine_app(to_model(hd), args_model));
-                assert(to_model(x2) == spine_app(to_model(hd), args_model.update(major_idx as int, to_model(ex))));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(x2), to_model(y));
+    Some(x2)
+}
+
+/// The projection shape: reduce the structure (which is what exposes the
+/// recursor `Prod.map` and friends compile to), normalize its major premise,
+/// and rebuild the projection.
+#[verifier::spinoff_prover]
+pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
+        None => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    let el = ctx.read_expr(x);
+    let (ty_name, idx, structure) = match expr_as_proj(&el) {
+        Some(p) => p,
+        None => return None,
+    };
+
+    if ctx.num_loose_bvars(structure) != 0 {
+        return None;
+    }
+    let kr: u32 = if k > 60000 { 60000 } else { k };
+    let ghost cmr = env_model_capped(*env, kr as nat);
+    let s2 = verified_whnf_rec(ctx, env, memo, structure, conv_join_rounds(), kr);
+    proof {
+        env_model_capped_sub(*env, kr as nat);
+        pstep_star_env_weaken(cmr, em, to_model(structure), to_model(s2));
+    }
+    let s3 = match verified_major_eta_spine(ctx, env, memo, s2, k) {
+        Some(v) => v,
+        None => return None,
+    };
+    let r = ctx.mk_proj(ty_name, idx, s3);
+    proof {
+        defeq_of_pstep_star(em, to_model(structure), to_model(s2));
+        deq_p_any_of_defeq(dtym, em, lcm, to_model(structure), to_model(s2));
+        deq_p_any_trans(dtym, em, lcm, to_model(structure), to_model(s2), to_model(s3));
+        deq_p_any_proj_congr(dtym, em, lcm, idx, to_model(structure), to_model(s3));
+        assert(to_model(x) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
+        assert(to_model(r) == ExprSpec::Proj(idx, Box::new(to_model(s3))));
+    }
+    Some(r)
+}
+
+/// The conversion step over the two rewriters above.
+#[verifier::spinoff_prover]
+pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
+        _ => true,
+    }
+    decreases budget, size(to_model(x)) + size(to_model(y)), 0int
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    if budget == 0 {
+        return None;
+    }
+    let x2 = match verified_major_eta_spine(ctx, env, memo, x, k) {
+        Some(v) => Some(v),
+        None => verified_major_eta_proj(ctx, env, memo, x, k),
+    };
+    match x2 {
+        Some(r) => {
+            if expr_ptr_eq(r, x) {
+                return None;
             }
-            conv_stat(20);
-            Some(true)
+            match verified_conv_p(ctx, env, memo, r, y, fuel, k, (budget - 1) as u32) {
+                Some(true) => {
+                    proof {
+                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(r), to_model(y));
+                    }
+                    conv_stat(20);
+                    Some(true)
+                }
+                _ => None,
+            }
         }
-        _ => None,
+        None => None,
     }
 }
 

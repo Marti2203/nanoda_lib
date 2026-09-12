@@ -1309,6 +1309,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let wy = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, y, 256, kx);
             let lx = self.whnf(x);
             let ly = self.whnf(y);
+            // if the verified reduct is stuck under a Proj, show what the
+            // structure itself reduces to
+            if let crate::expr::Expr::Proj { structure, .. } = self.ctx.read_expr(wx) {
+                let ws = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, structure, 256, kx);
+                eprintln!("  PROJ-STRUCT: {:?}\n  PROJ-WHNF  : {:?}",
+                    self.ctx.debug_print(structure), self.ctx.debug_print(ws));
+            }
             eprintln!("UNCERTIFIED last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
                 route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
                 self.ctx.debug_print(wx), self.ctx.debug_print(wy),
