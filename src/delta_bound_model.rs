@@ -3312,6 +3312,236 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 /// (on `Init.Omega`, 1,979,104 calls against 58,105 distinct terms), because
 /// proof irrelevance infers both sides and both of their types at every
 /// conversion node. A hit returns the cached type together with its claim, so
+/// FUEL-FREE INFERENCE: the kernel's `infer`, recursing the way the kernel
+/// does -- structurally where it can and through instantiation where it must
+/// -- with no fuel parameter and no threaded depth ceilings. It carries no
+/// termination argument at all, which is the honest contract: the real
+/// `infer` has none either, since reduction only terminates for well-typed
+/// input. Verus checks it for partial correctness, so what is proven is "if
+/// it returns a type, that type is derivable".
+///
+/// The claim is `infer_shadow_claim`, which quantifies the derivation height
+/// away. Each recursive call yields a derivation at its own height and the
+/// rule being applied wants a common one, which is what `types_to_mono` is
+/// for. Where an arena operation needs a depth ceiling, it is MEASURED right
+/// there rather than derived from a ghost parameter -- no `d`, no `dd`, no
+/// `infer_result_depth_bound`, no `infer_depth_fixpoint_ok`.
+#[verifier::exec_allows_no_decreases_clause]
+#[verifier::spinoff_prover]
+pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    requires
+        memo.wf(), memo.spec_env() == *env,
+        nlbv(to_model(e)) <= 0,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => infer_shadow_claim(*env, e, r) && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let el = ctx.read_expr(e);
+    // --- local ---
+    if let Some((_, ty)) = expr_as_local(e, &el) {
+        proof {
+            local_type_wf(e);
+            is_local_shape_model(e);
+            arena_lctx_local(e);
+            types_to_free(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), expr_id(e), 0);
+            assert(to_model(e) == ExprSpec::Free(expr_id(e)));
+            assert(arena_lctx()[expr_id(e)] == to_model(ty));
+            assert(infer_types_to(*env, e, ty, 0));
+        }
+        return Some(ty);
+    }
+    // --- sort ---
+    if let Some(l) = expr_as_sort(&el) {
+        let r = verified_infer_sort(ctx, l);
+        proof {
+            types_to_sort(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), level_to_model(l), 0);
+            assert(infer_types_to(*env, e, r, 0));
+        }
+        return Some(r);
+    }
+    // --- constant ---
+    if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
+        match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
+            Some(r) => {
+                proof {
+                    let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+                        to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
+                        && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r));
+                    is_const_shape_model(e);
+                    const_levels_vec_model(e);
+                    assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
+                    assert(const_id(e) == name_id(c_name));
+                    types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), name_id(c_name), const_levels_vec(e), to_model(r), 0);
+                    assert(infer_types_to(*env, e, r, 0));
+                }
+                return Some(r);
+            }
+            None => return None,
+        }
+    }
+    // --- nat and string literals ---
+    if expr_as_nat_lit(e, &el).is_some() {
+        match ctx.nat_type() {
+            Some(r) => {
+                proof {
+                    is_const_shape_model(r);
+                    is_nat_lit_shape_model(e);
+                    types_to_nat_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), 0);
+                    assert(infer_types_to(*env, e, r, 0));
+                }
+                return Some(r);
+            }
+            None => return None,
+        }
+    }
+    if expr_as_string_lit(e, &el) {
+        match ctx.string_type() {
+            Some(r) => {
+                proof {
+                    is_const_shape_model(r);
+                    is_string_lit_shape_model(e);
+                    types_to_string_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), 0);
+                    assert(infer_types_to(*env, e, r, 0));
+                }
+                return Some(r);
+            }
+            None => return None,
+        }
+    }
+    // --- lambda: open the body with a fresh local, infer it, abstract the
+    // result back into a `Pi`. The ceiling `verified_inst` needs is MEASURED
+    // from the body itself rather than threaded in as a ghost parameter.
+    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
+        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
+        assert(nlbv(to_model(binder_type)) == 0);
+        assert(nlbv(to_model(body)) <= 1);
+        let bodysz = match verified_size(ctx, body, 100000) { Some(v) => v, None => return None };
+        if bodysz > 60000 {
+            return None;
+        }
+        proof { depth_le_size(to_model(body)); }
+        let start_pos = get_dbj_level_counter(ctx);
+        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        let locals_slice: &[ExprPtr<'t>] = &[local];
+        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
+            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
+            assert(nlbv(to_model(instd)) <= 0);
+        }
+        let infd = match verified_infer_free(ctx, env, memo, instd) {
+            Some(v) => v,
+            None => { ctx.replace_dbj_level(local); return None; }
+        };
+        let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
+        ctx.replace_dbj_level(local);
+        let abstrd_binder_type = abstr_levels_with_locals(ctx, binder_type, start_pos, locals_slice);
+        let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
+        let result_nlbv = ctx.num_loose_bvars(result);
+        if result_nlbv != 0 {
+            return None;
+        }
+        proof {
+            assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
+            assert(to_model(result) == ExprSpec::Bind(Box::new(to_model(abstrd_binder_type)), Box::new(to_model(abstrd_infd))));
+            assert(nlbv(to_model(result)) == 0);
+            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
+            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
+            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
+            let hb = choose |f: nat| #[trigger] infer_types_to(*env, instd, infd, f);
+            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(infd), hb));
+            types_to_lambda(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body), expr_id(local), to_model(infd), hb + 1);
+            assert(to_model(abstrd_binder_type) == abstr_full(to_model(binder_type), seq![expr_id(local)], 0));
+            assert(to_model(abstrd_infd) == abstr_full(to_model(infd), seq![expr_id(local)], 0));
+            assert(infer_types_to(*env, e, result, hb + 1));
+        }
+        return Some(result);
+    }
+    // --- application: infer the HEAD, whatever it is, then walk the spine,
+    // reducing the type to a binder and instantiating one argument at a time.
+    // The head being arbitrary is the point: the old arm only accepted a
+    // `Const` or a `Local` there, so a beta-redex `(fun h => b) a` -- which is
+    // what the uncertified pairs turned out to be -- fell straight through.
+    // The application rule keeps the derivation height fixed, so nothing needs
+    // lifting across the spine.
+    if expr_as_app(&el).is_some() {
+        let (hd, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+        let ghost args_all = Seq::new(args@.len(), |i: int| to_model(args@[i]));
+        proof {
+            assert(to_model(e) == spine_app(to_model(hd), args_all));
+            spine_app_nlbv_decompose(to_model(hd), args_all);
+            assert forall |q: int| 0 <= q < args@.len() implies nlbv(to_model(#[trigger] args@[q])) <= 0 by {
+                assert(args_all[q] == to_model(args@[q]));
+                assert(nlbv(args_all[q]) <= nlbv(spine_app(to_model(hd), args_all)));
+            }
+        }
+        let ht = match verified_infer_free(ctx, env, memo, hd) { Some(v) => v, None => return None };
+        let ghost h = choose |f: nat| #[trigger] infer_types_to(*env, hd, ht, f);
+        let mut cur_ty = ht;
+        let mut i: usize = 0;
+        while i < args.len()
+            invariant
+                memo.wf(), memo.spec_env() == *env,
+                i <= args@.len(),
+                args_all == Seq::new(args@.len(), |q: int| to_model(args@[q])),
+                nlbv(to_model(cur_ty)) <= 0,
+                forall |q: int| 0 <= q < args@.len() ==> #[trigger] nlbv(to_model(args@[q])) <= 0,
+                types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), spine_app(to_model(hd), args_all.subrange(0, i as int)), to_model(cur_ty), h),
+            decreases args.len() - i
+        {
+            let kr: u32 = 500;
+            let ghost cmr = env_model_capped(*env, kr as nat);
+            let w = verified_whnf_rec(ctx, env, memo, cur_ty, 256, kr);
+            proof {
+                env_model_capped_sub(*env, kr as nat);
+                pstep_star_env_weaken(env_model_capped(*env, kr as nat), to_model_of_env(*env), to_model(cur_ty), to_model(w));
+            }
+            let wel = ctx.read_expr(w);
+            let (_bn, _bs, aty, bt) = match expr_as_pi(&wel) { Some(p) => p, None => return None };
+            assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt))));
+            // the instantiation's depth ceiling is MEASURED here
+            let bsz = match verified_size(ctx, bt, 100000) { Some(v) => v, None => return None };
+            if bsz > 60000 {
+                return None;
+            }
+            proof { depth_le_size(to_model(bt)); }
+            let a = args[i];
+            let ls: &[ExprPtr<'t>] = &[a];
+            let instd = match verified_inst(ctx, bt, ls, 0, 100000) { Some(v) => v, None => return None };
+            proof {
+                assert(Seq::new(ls@.len(), |q: int| to_model(ls@[q])) =~= seq![to_model(a)]);
+                assert(to_model(instd) == subst_full(to_model(bt), seq![to_model(a)], 0));
+                assert(nlbv(to_model(bt)) <= 1);
+                subst_full_nlbv_bound(to_model(bt), to_model(a), 0);
+                // the reduction fact in the shape the application rule wants
+                assert(pstep_star(to_model_of_env(*env), to_model(cur_ty), to_model(w)));
+                assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt))));
+                assert(pstep_star(to_model_of_env(*env), to_model(cur_ty),
+                    ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt)))));
+                types_to_app(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), spine_app(to_model(hd), args_all.subrange(0, i as int)),
+                    to_model(a), to_model(cur_ty), to_model(aty), to_model(bt), h);
+                spine_app_compose_last(to_model(hd), args_all.subrange(0, i as int), to_model(a));
+                assert(args_all.subrange(0, i as int).push(to_model(a)) =~= args_all.subrange(0, i as int + 1));
+            }
+            cur_ty = instd;
+            i = i + 1;
+        }
+        proof {
+            assert(args_all.subrange(0, args@.len() as int) =~= args_all);
+            assert(infer_types_to(*env, e, cur_ty, h));
+        }
+        return Some(cur_ty);
+    }
+    None
+}
+
 /// nothing here is trusted: `InferCert`'s type invariant carries the proof.
 pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
@@ -3383,7 +3613,13 @@ fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
             proof { assert(infer_types_to(*env, e, ty, fuel as nat)); }
             Some(ty)
         }
-        None => { infer_exit(14); None }
+        None => {
+            infer_exit(14);
+            // the fuel-free inference, which supports shapes the fuelled one
+            // does not -- notably a spine whose head is neither a constant nor
+            // a local, i.e. a beta-redex
+            verified_infer_free(ctx, env, memo, e)
+        }
     }
 }
 
