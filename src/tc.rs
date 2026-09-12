@@ -73,6 +73,9 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// lifetime as `tc_cache`, for the same reason -- weak head normal forms
     /// depend on the environment. Never read by the verdict path.
     pub(crate) shadow_memo: crate::tc_model::WhnfMemo<'x, 't>,
+    /// diagnostics: the uncertified-event count when the current `def_eq`
+    /// call was entered
+    shadow_root_entry: u64,
     /// The caches for things like inference, reduction, and equality checking.
     pub(crate) tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
@@ -239,7 +242,7 @@ pub mod route_stats {
         /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
         /// prunes work (the route answers `None`), so this cannot affect what
         /// gets confirmed, only how fast it fails.
-        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u32), u32>> = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u32), (u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
     }
     // Remembers the HIGHEST budget a pair failed at (2026-09-05): a failure
     // at budget B implies failure at any budget <= B (the route is monotone
@@ -273,13 +276,45 @@ pub mod route_stats {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV_FAIL").is_some())
     }
+    /// How many times a pair may be RETRIED after a recorded failure before
+    /// the cache starts pruning it. One attempt is not always enough: the
+    /// certifier's state grows as it runs (the whnf, inference and conversion
+    /// memos fill in), so a pair that failed early can succeed later, and the
+    /// cache was holding those back. Measured 2026-09-12 on
+    /// Init.Data.BitVec.Lemmas.
+    pub fn conv_retries() -> u32 {
+        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        // 0 reproduces the original one-and-done behaviour; measured, larger
+        // values cost time on Init.Data.BitVec.Lemmas (3 -> 378s from 216s)
+        // and certify nothing extra
+        *V.get_or_init(|| knob("NANODA_CONV_RETRIES", 0))
+    }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
         if conv_fail_off() { return false; }
-        CONV_FAIL.with(|c| c.borrow().get(&(a, b)).map_or(false, |&m| m >= budget))
+        CONV_FAIL.with(|c| {
+            let mut m = c.borrow_mut();
+            match m.get_mut(&(a, b)) {
+                Some((bud, tries)) if *bud >= budget => {
+                    if *tries < conv_retries() {
+                        *tries += 1;
+                        false
+                    } else {
+                        true
+                    }
+                }
+                _ => false,
+            }
+        })
     }
     pub fn conv_fail_note(a: u32, b: u32, budget: u32) {
-        CONV_FAIL.with(|c| { let mut m = c.borrow_mut(); let e = m.entry((a, b)).or_insert(0); if budget > *e { *e = budget; } });
+        CONV_FAIL.with(|c| {
+            let mut m = c.borrow_mut();
+            let e = m.entry((a, b)).or_insert((0, 0));
+            if budget > e.0 { e.0 = budget; }
+        });
     }
+
+
     /// Opt-in conv trace (`NANODA_CONV_TRACE=1`): one line per conv stage
     /// outcome; `tag` 0 enter, 1 loose-bvar give-up, 2 delta-round continue,
     /// 3 delta-round exhausted/none, 4 retry reducts differ, 5 final None.
@@ -310,6 +345,14 @@ pub mod route_stats {
         /// missing. Diagnostics only.
         static LEGACY_BRANCH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     }
+    /// Counts uncertified events, so a `def_eq` call can tell whether any
+    /// nested call below it also failed to certify. A pair with no
+    /// uncertified descendant is a ROOT failure: the kernel decided it by a
+    /// rule the certifier cannot reproduce, rather than inheriting the
+    /// failure from a sub-comparison.
+    pub static UNCERT_EVENTS: AtomicU64 = AtomicU64::new(0);
+    pub fn uncert_events() -> u64 { UNCERT_EVENTS.load(Ordering::Relaxed) }
+
     pub fn legacy_branch(tag: u8) {
         if shadow_enabled() { LEGACY_BRANCH.with(|c| c.set(tag)); }
     }
@@ -482,7 +525,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert_eq!(dag.dbj_level_counter, 0);
         route_stats::conv_fail_clear();
         let shadow_memo = crate::tc_model::WhnfMemo::new(env);
-        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info, shadow_memo } 
+        let shadow_root_entry = 0u64;
+        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info, shadow_memo, shadow_root_entry } 
     }
 
     /// Conduct the preliminary checks done on all declarations; a declaration
@@ -1262,6 +1306,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// (`route_stats::shadow_check`), and any disagreement -- a verified
     /// confirmation the original code rejected -- is counted as an alarm.
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+        let entry_uncert = route_stats::uncert_events();
         if let Some(easy) = self.def_eq_quick_check(x, y) {
             route_stats::bump(&route_stats::QUICK);
             return easy
@@ -1333,7 +1378,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         } else {
             route_stats::bump(&route_stats::LEGACY_FALSE);
         }
-        self.shadow_check(x, y, result);
+        self.shadow_check_rooted(x, y, result, entry_uncert);
         result
     }
 
@@ -1391,6 +1436,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(e)
     }
 
+    fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64) {
+        self.shadow_root_entry = entry;
+        self.shadow_check(x, y, verdict);
+    }
+
     fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool) {
         if !route_stats::shadow_enabled() {
             return;
@@ -1398,6 +1448,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         route_stats::clear_last_leaf();
         let which = self.pair_certified(x, y);
         if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+        if which == 0 && verdict {
+            route_stats::UNCERT_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if which == 0 && verdict && route_stats::uncertified_budget() {
             let kx = route_stats::cap_k();
             let wx = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, x, 256, kx);
@@ -1432,8 +1485,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
             }
             eprintln!("  DIAG: infer_x={} infer_y={} proof_irrel={:?} (exit {}) size_x={:?} size_y={:?}", ix, iy, pir, pir_leaf, szx, szy);
-            eprintln!("UNCERTIFIED kernel-branch={} last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
-                route_stats::legacy_branch_name(), route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
+            let is_root = route_stats::uncert_events() == self.shadow_root_entry + 1;
+            if is_root {
+                let b = route_stats::conv_budget();
+                let kk = route_stats::cap_k();
+                let xn = self.whnf_no_unfolding(x);
+                let yn = self.whnf_no_unfolding(y);
+                match (crate::expr_arena_bridge::verified_unfold_apps(self.ctx, xn, 100000),
+                       crate::expr_arena_bridge::verified_unfold_apps(self.ctx, yn, 100000)) {
+                    (Some((hx, ax)), Some((hy, ay))) => {
+                        let head_eq = hx == hy;
+                        let head_conv = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, hx, hy, 100, kk, b), Some(true));
+                        let mut args_ok = String::new();
+                        if ax.len() == ay.len() {
+                            for i in 0..ax.len() {
+                                let ok = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, ax[i], ay[i], 100, kk, b), Some(true));
+                                args_ok.push(if ok { 'y' } else { 'n' });
+                            }
+                        }
+                        let spine = matches!(crate::delta_bound_model::verified_conv_spine_p(self.ctx, self.env, &mut self.shadow_memo, xn, yn, 100, kk, b), Some(true));
+                        eprintln!("  ROOTINFO: head_eq={} head_conv={} nargs={}/{} args=[{}] spine_step={}",
+                            head_eq, head_conv, ax.len(), ay.len(), args_ok, spine);
+                    }
+                    _ => eprintln!("  ROOTINFO: not-both-spines"),
+                }
+            }
+            eprintln!("UNCERTIFIED root={} kernel-branch={} last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
+                is_root, route_stats::legacy_branch_name(), route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
                 self.ctx.debug_print(wx), self.ctx.debug_print(wy),
                 self.ctx.debug_print(lx), self.ctx.debug_print(ly));
         }
