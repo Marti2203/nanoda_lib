@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::arena_lctx;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
+use crate::env_model::{env_model_capped, env_model_capped_has, env_model_nofv, env_model_nofv_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
 #[cfg(verus_only)]
@@ -481,13 +481,109 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
 }
 
 
-
-
-
-
-
-
-
+/// CAP-FREE delta step. `verified_unfold_def_step_capped` with the `k` ceiling,
+/// the `bound`/`d` ghost parameters and the depth half of its contract removed
+/// -- what is left is the kernel's own `unfold_def`: if the head is a constant
+/// with a definition whose value has no free variables, substitute the
+/// universe parameters and re-apply the arguments.
+pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
+            &&& nlbv(to_model(r)) <= 0
+        },
+        None => true,
+    }
+{
+    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) {
+        Some(p) => p,
+        None => return None,
+    };
+    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+    proof {
+        // the arguments inherit `e`'s own closedness
+        spine_app_nlbv_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+    }
+    let fun_el = ctx.read_expr(fun);
+    let (name, levels) = match expr_as_const(fun, &fun_el) {
+        Some(p) => p,
+        None => return None,
+    };
+    let (def_uparams, def_value) = match env.get_declar_val(&name) {
+        Some(p) => p,
+        None => return None,
+    };
+    // Per-definition certification. One test, not two: `!has_fv` is what the
+    // model actually requires. The size ceiling that used to stand beside it
+    // bought no coverage (measured 2026-09-13: lifting it leaves every corpus
+    // at exactly the same certified count, 15% slower) -- it existed to bound
+    // the unfolded value's DEPTH, for the ceiling algebra that is gone.
+    if ctx.has_fvars(def_value) {
+        return None;
+    }
+    let levels_vec = read_levels_vec(ctx, levels);
+    let uparams_vec = read_levels_vec(ctx, def_uparams);
+    if levels_vec.len() != uparams_vec.len() {
+        return None;
+    }
+    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
+    // (2026-09-11) no universe parameters: the value is its own instance --
+    // skip the substitution walk (it was ~10% of the shadow's runtime).
+    let subst_res = if uparams_vec.len() == 0 {
+        proof {
+            assert(to_model_of_levels(def_uparams) =~= Seq::<LevelSpec>::empty());
+            assert(level_names(to_model_of_levels(def_uparams)) =~= Seq::<u64>::empty());
+            assert(to_model_of_levels(levels) =~= Seq::<LevelSpec>::empty());
+            subst_expr_levels_empty(to_model(def_value));
+            subst_expr_levels_rel_empty(to_model(def_value));
+            assert(subst_expr_levels(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels)) == to_model(def_value));
+            assert(subst_expr_levels_rel(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels), to_model(def_value)));
+        }
+        Some(def_value)
+    } else {
+        verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000)
+    };
+    match subst_res {
+        Some(def_val) => {
+            let ghost id = name_id(name);
+            let ghost ks = level_names(to_model_of_levels(def_uparams));
+            let ghost val = to_model(def_value);
+            let ghost cm = env_model_nofv(*env);
+            assert(to_model_of_env(*env).contains_key(id));
+            assert(to_model_of_env(*env)[id] == (ks, val));
+            proof {
+                is_const_shape_model(fun);
+                const_levels_vec_model(fun);
+            }
+            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
+            assert(const_id(fun) == id);
+            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
+            proof {
+                assert(!has_fv(val));
+                env_model_nofv_has(*env, id);
+                assert(cm.contains_key(id) && cm[id] == (ks, val));
+                assert(pstep(cm, to_model(fun), to_model(def_val)));
+                pstep_star_one(cm, to_model(fun), to_model(def_val));
+                pstep_spine_app_star(cm, to_model(fun), to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+            }
+            proof {
+                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
+            }
+            assert(nlbv(to_model(def_val)) == 0);
+            let result = verified_foldl_apps(ctx, def_val, &args);
+            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            proof {
+                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+            }
+            assert(nlbv(to_model(result)) <= 0);
+            Some(result)
+        }
+        None => None,
+    }
+}
 
 /// Delta-lift CM: `verified_whnf_measured_rounds` over the capped model
 

@@ -346,6 +346,35 @@ pub mod route_stats {
     pub fn legacy_branch(tag: u8) {
         if shadow_enabled() { LEGACY_BRANCH.with(|c| c.set(tag)); }
     }
+    /// Every uncertified event, split by the unverified branch that decided it
+    /// and by whether it is a ROOT (no nested `def_eq` below it also failed).
+    /// Counted for all of them, not just the ones the print budget reaches, so
+    /// the breakdown is a census rather than a first-N sample.
+    pub static UNCERT_BY_BRANCH: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+    pub static UNCERT_ROOT_BY_BRANCH: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+    pub fn note_uncert(is_root: bool) {
+        let t = LEGACY_BRANCH.with(|c| c.get()) as usize;
+        if t < 16 {
+            UNCERT_BY_BRANCH[t].fetch_add(1, Ordering::Relaxed);
+            if is_root { UNCERT_ROOT_BY_BRANCH[t].fetch_add(1, Ordering::Relaxed); }
+        }
+    }
+    pub fn uncert_breakdown() -> String {
+        let mut out = String::from("uncertified by kernel branch (roots in parens):");
+        for t in 0..16usize {
+            let n = UNCERT_BY_BRANCH[t].load(Ordering::Relaxed);
+            if n == 0 { continue; }
+            let r = UNCERT_ROOT_BY_BRANCH[t].load(Ordering::Relaxed);
+            let name = match t as u8 {
+                2 => "bool_true", 3 => "quick2", 4 => "proof_irrel", 5 => "lazy_delta",
+                6 => "const/local/proj leaf", 7 => "whnf-retry recursion", 8 => "def_eq_app",
+                9 => "eta", 10 => "eta_struct", 11 => "string_lit", 12 => "unit",
+                13 => "all failed", _ => "?",
+            };
+            out.push_str(&format!(" {} {}({})", name, n, r));
+        }
+        out
+    }
     pub fn legacy_branch_name() -> &'static str {
         match LEGACY_BRANCH.with(|c| c.get()) {
             2 => "bool_true", 3 => "quick2", 4 => "proof_irrel", 5 => "lazy_delta",
@@ -491,7 +520,7 @@ pub mod route_stats {
             CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed)) + &{
             let extra: Vec<String> = (11..64).filter(|i| CONV_LEAF[*i].load(Ordering::Relaxed) > 0).map(|i| format!("{}:{}", i, CONV_LEAF[i].load(Ordering::Relaxed))).collect();
             format!("\nconv leaf codes >= 11 (11 irrel leaf, 12 eta, 13 K-like, 14 deq_p whnf; 20-33 irrel-shadow exits; 40-55 rec-producer exits): {}", extra.join(" "))
-        }
+        } + &format!("\n{}", uncert_breakdown())
     }
 }
 
@@ -1424,6 +1453,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
         if which == 0 && verdict {
             route_stats::UNCERT_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            route_stats::note_uncert(route_stats::uncert_events() == self.shadow_root_entry + 1);
         }
         if which == 0 && verdict && route_stats::uncertified_budget() {
             let kx = route_stats::cap_k();

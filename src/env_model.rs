@@ -435,6 +435,45 @@ pub proof fn env_model_capped_has<'x, 'a>(env: Env<'x, 'a>, k: nat, id: u64)
 {
 }
 
+/// The UNCAPPED delta model: every definition whose value has no free
+/// variables, with no size ceiling at all. `env_model_capped`'s `size <= k`
+/// test was never about soundness -- it existed so an unfolded value's DEPTH
+/// could be bounded by `k`, feeding the same depth-ceiling algebra the fuelled
+/// inference needed and the fuel-free one does not. `!has_fv` is the real
+/// condition: a definition whose value mentions a free variable cannot be
+/// substituted into an arbitrary context.
+pub open spec fn env_model_nofv<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    to_model_of_env(env).restrict(
+        to_model_of_env(env).dom().filter(|id: u64| !has_fv(to_model_of_env(env)[id].1)),
+    )
+}
+
+/// Membership in the uncapped model from the single per-definition check.
+pub proof fn env_model_nofv_has<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    requires
+        to_model_of_env(env).contains_key(id),
+        !has_fv(to_model_of_env(env)[id].1),
+    ensures
+        env_model_nofv(env).contains_key(id),
+        env_model_nofv(env)[id] == to_model_of_env(env)[id],
+{
+}
+
+/// The uncapped model is a sub-map of the full model (for `pstep_star_env_weaken`).
+pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
+    ensures forall |id: u64| #[trigger] env_model_nofv(env).contains_key(id)
+        ==> to_model_of_env(env).contains_key(id) && env_model_nofv(env)[id] == to_model_of_env(env)[id]
+{
+}
+
+/// ... and every capped model is a sub-map of it, so a fact proven against a
+/// cap still holds against the uncapped one.
+pub proof fn env_model_capped_sub_nofv<'x, 'a>(env: Env<'x, 'a>, k: nat)
+    ensures forall |id: u64| #[trigger] env_model_capped(env, k).contains_key(id)
+        ==> env_model_nofv(env).contains_key(id) && env_model_capped(env, k)[id] == env_model_nofv(env)[id]
+{
+}
+
 /// The capped model is a sub-map of the full model (for `pstep_star_env_weaken`).
 pub proof fn env_model_capped_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
     ensures forall |id: u64| #[trigger] env_model_capped(env, k).contains_key(id)
