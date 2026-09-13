@@ -50,7 +50,6 @@ use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, ind_num_params, en
 #[cfg(verus_only)]
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
-use crate::tc_model::mk_rec_rule;
 use crate::tc_model::{WhnfMemo, rec_rule_ctor_name, rec_rule_val, rec_rule_ctor_telescope_size_wo_params};
 #[cfg(verus_only)]
 use crate::tc_model::rec_rule_val_of;
