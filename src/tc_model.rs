@@ -2773,14 +2773,16 @@ pub open spec fn is_proof_type_m(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<
 /// previous form tested the types themselves against `Prop`, i.e. made `x`
 /// and `y` propositions rather than proofs -- the same slip the exec
 /// shadow route once had; nothing on the live certifier read the old form.)
-pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
+    decreases h, 3int
+{
     exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
         #[trigger] irrel_marker(tx, ty2, fx, fy)
         && types_to(dty, denv, lctx, x, tx, fx)
         && types_to(dty, denv, lctx, y, ty2, fy)
         && is_proof_type_m(dty, denv, lctx, tx)
         && is_proof_type_m(dty, denv, lctx, ty2)
-        && deq_any(denv, tx, ty2)
+        && deq_p(dty, denv, lctx, tx, ty2, h)
 }
 
 /// Marker triggers for `types_to`'s two BINDER rules. Without them those
@@ -3583,7 +3585,7 @@ pub open spec fn deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
     decreases h, 0int
 {
     ||| deq_c(env, x, y, h)
-    ||| proof_irrel_pair(dty, env, lctx, x, y)
+    ||| (h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat))
     ||| unit_pair(dty, env, lctx, x, y)
     ||| eta_struct_pair(dty, env, lctx, x, y)
     ||| (h > 0 && match (x, y) {
@@ -3648,7 +3650,19 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
 {
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
-    } else if proof_irrel_pair(dty, env, lctx, x, y) {
+    } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h1 - 1) as nat) {
+        // the proposition-equality conjunct is now a TYPED conversion, so it
+        // has to be lifted along with the step itself
+        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+            #[trigger] irrel_marker(tx, ty2, fx, fy)
+            && types_to(dty, env, lctx, x, tx, fx)
+            && types_to(dty, env, lctx, y, ty2, fy)
+            && is_proof_type_m(dty, env, lctx, tx)
+            && is_proof_type_m(dty, env, lctx, ty2)
+            && deq_p(dty, env, lctx, tx, ty2, (h1 - 1) as nat);
+        deq_p_mono(dty, env, lctx, tx, ty2, (h1 - 1) as nat, (h2 - 1) as nat);
+        assert(irrel_marker(tx, ty2, fx, fy));
+        assert(proof_irrel_pair(dty, env, lctx, x, y, (h2 - 1) as nat));
     } else if unit_pair(dty, env, lctx, x, y) {
     } else if eta_struct_pair(dty, env, lctx, x, y) {
     } else {
@@ -3709,17 +3723,17 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
 {
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
-    } else if proof_irrel_pair(dty, env, lctx, x, y) {
+    } else if h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat) {
         let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
             #[trigger] irrel_marker(tx, ty2, fx, fy)
             && types_to(dty, env, lctx, x, tx, fx)
             && types_to(dty, env, lctx, y, ty2, fy)
             && is_proof_type_m(dty, env, lctx, tx)
             && is_proof_type_m(dty, env, lctx, ty2)
-            && deq_any(env, tx, ty2);
-        deq_any_symm(env, tx, ty2);
+            && deq_p(dty, env, lctx, tx, ty2, (h - 1) as nat);
+        deq_p_symm(dty, env, lctx, tx, ty2, (h - 1) as nat);
         assert(irrel_marker(ty2, tx, fy, fx));
-        assert(proof_irrel_pair(dty, env, lctx, y, x));
+        assert(proof_irrel_pair(dty, env, lctx, y, x, (h - 1) as nat));
     } else if unit_pair(dty, env, lctx, x, y) {
         let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
             #[trigger] unit_marker(tx, ty2, fx, fy)
@@ -3811,11 +3825,31 @@ pub proof fn deq_p_of_deq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
     }
 }
 
-/// An irrelevance pair is `deq_p` at any height.
-pub proof fn deq_p_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires proof_irrel_pair(dty, env, lctx, x, y)
+/// The irrelevance leaf is monotone in its own height: its only height-
+/// dependent conjunct is the typed conversion between the two propositions,
+/// and that is `deq_p_mono`.
+pub proof fn proof_irrel_pair_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
+    requires proof_irrel_pair(dty, env, lctx, x, y, h1), h1 <= h2
+    ensures proof_irrel_pair(dty, env, lctx, x, y, h2)
+{
+    let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
+        #[trigger] irrel_marker(tx, ty2, fx, fy)
+        && types_to(dty, env, lctx, x, tx, fx)
+        && types_to(dty, env, lctx, y, ty2, fy)
+        && is_proof_type_m(dty, env, lctx, tx)
+        && is_proof_type_m(dty, env, lctx, ty2)
+        && deq_p(dty, env, lctx, tx, ty2, h1);
+    deq_p_mono(dty, env, lctx, tx, ty2, h1, h2);
+    assert(irrel_marker(tx, ty2, fx, fy));
+}
+
+/// An irrelevance pair at height `hi` is `deq_p` at any height above it.
+pub proof fn deq_p_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, hi: nat, h: nat)
+    requires proof_irrel_pair(dty, env, lctx, x, y, hi), h > hi
     ensures deq_p(dty, env, lctx, x, y, h)
 {
+    proof_irrel_pair_mono(dty, env, lctx, x, y, hi, (h - 1) as nat);
+    assert(deq_p_c(dty, env, lctx, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
 }
 
@@ -4082,12 +4116,12 @@ pub proof fn deq_p_any_of_defeq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u6
     deq_p_any_of_deq_any(dty, env, lctx, x, y);
 }
 
-pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires proof_irrel_pair(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, hi: nat)
+    requires proof_irrel_pair(dty, env, lctx, x, y, hi)
     ensures deq_p_any(dty, env, lctx, x, y)
 {
-    deq_p_of_irrel(dty, env, lctx, x, y, 0);
-    assert(deq_p(dty, env, lctx, x, y, 0));
+    deq_p_of_irrel(dty, env, lctx, x, y, hi, hi + 1);
+    assert(deq_p(dty, env, lctx, x, y, hi + 1));
 }
 
 /// `deq_p_any` congruences: lift the height-indexed `deq_p_*_congr` through

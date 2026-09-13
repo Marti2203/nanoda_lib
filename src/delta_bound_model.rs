@@ -72,6 +72,8 @@ use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit
 use crate::level_arena_bridge::name_ptr_eq;
 use crate::tc_model::{verified_infer_app_telescoped, verified_infer_sort, verified_infer_const, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_find_rec_rule, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
 #[cfg(verus_only)]
+use crate::tc_model::deq_p;
+#[cfg(verus_only)]
 use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, types_to_mono, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
@@ -2787,7 +2789,7 @@ pub open spec fn proof_irrel_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'
         && infer_types_to(env, y, yt, fy)
         && is_proof_type_claim(env, xt)
         && is_proof_type_claim(env, yt)
-        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt))
+        && deq_p_any(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(xt), to_model(yt))
 }
 
 /// "`ty` is the type of a PROOF": the type OF `ty` reduces to a `Prop`-level
@@ -3222,14 +3224,21 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 
 
 /// `None`.
-pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => proof_irrel_shadow_claim(*env, x, y),
         _ => true,
     }
+    decreases budget, 0int, 0int
 {
+    // Comparing the two propositions with the TYPED conversion is what makes
+    // this route mutually recursive with it, so it now carries the family's
+    // budget and spends one level on that comparison.
+    if budget == 0 {
+        return None;
+    }
     if ctx.num_loose_bvars(x) != 0 || ctx.num_loose_bvars(y) != 0 {
         { conv_stat(29); return None; }
     }
@@ -3257,7 +3266,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         Some(true) => {}
         _ => { conv_stat(32); return None; }
     }
-    match verified_conv(ctx, env, memo, xt, yt, fuel, conv_budget_total()) {
+    match verified_conv_p(ctx, env, memo, xt, yt, fuel, (budget - 1) as u32) {
         Some(true) => {
             proof {
                 let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
@@ -3604,9 +3613,9 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
 /// The exec shadow's proof-irrelevance claim IS the model's `proof_irrel_pair`
 /// (both say: two proofs -- types whose types are Prop-level sorts -- of
 /// convertible propositions), modulo `to_model` and the marker triggers.
-pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (hi: nat)
     requires proof_irrel_shadow_claim(env, x, y)
-    ensures proof_irrel_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y))
+    ensures proof_irrel_pair(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(x), to_model(y), hi)
 {
     let dty = to_model_of_declar_ty(env);
     let denv = to_model_of_env(env);
@@ -3617,7 +3626,8 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprP
         && infer_types_to(env, y, yt, fy)
         && is_proof_type_claim(env, xt)
         && is_proof_type_claim(env, yt)
-        && deq_any(to_model_of_env(env), to_model(xt), to_model(yt));
+        && deq_p_any(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(xt), to_model(yt));
+    let hi = choose |h: nat| deq_p(dty, denv, lctx, to_model(xt), to_model(yt), h);
     let (xtt, fxt) = choose |tt: ExprPtr<'t>, f: nat| #![trigger infer_types_to(env, xt, tt, f)]
         infer_types_to(env, xt, tt, f) && is_prop_type_claim(env, tt);
     let (ytt, fyt) = choose |tt: ExprPtr<'t>, f: nat| #![trigger infer_types_to(env, yt, tt, f)]
@@ -3637,7 +3647,8 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprP
     assert(pstep_star(denv, to_model(ytt), ExprSpec::Sort(level_to_model(yl))));
     assert(is_proof_type_m(dty, denv, lctx, to_model(yt)));
     assert(irrel_marker(to_model(xt), to_model(yt), fx, fy));
-    assert(proof_irrel_pair(dty, denv, lctx, to_model(x), to_model(y)));
+    assert(proof_irrel_pair(dty, denv, lctx, to_model(x), to_model(y), hi));
+    hi
 }
 
 /// `verified_conv` with the per-checker failure cache around it: pairs
@@ -3784,7 +3795,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 /// major), the rewritten spine steps by ordinary iota, and `deq_p_any`
 /// composes the two. `k <= 500` is the proof-irrelevance route's own cap.
 #[verifier::spinoff_prover]
-pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
@@ -3793,6 +3804,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
     }
+    decreases budget, 0int, 1int
 {
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost em = to_model_of_env(*env);
@@ -3839,13 +3851,13 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     if ctx.num_loose_bvars(ctor_app) != 0 {
         return None;
     }
-    match verified_proof_irrel_shadow(ctx, env, memo, major, ctor_app, fuel) {
+    match verified_proof_irrel_shadow(ctx, env, memo, major, ctor_app, fuel, budget) {
         Some(true) => {}
         _ => return None,
     }
     proof {
-        proof_irrel_pair_of_shadow_claim(*env, major, ctor_app);
-        deq_p_any_of_irrel(dtym, em, lcm, to_model(major), to_model(ctor_app));
+        let hi = proof_irrel_pair_of_shadow_claim(*env, major, ctor_app);
+        deq_p_any_of_irrel(dtym, em, lcm, to_model(major), to_model(ctor_app), hi);
     }
     // the spine with the synthesized constructor in the major position
     let mut args2: Vec<ExprPtr<'t>> = Vec::new();
@@ -4926,7 +4938,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     // --- K-like recursor (2026-09-08): reduce a K-like recursor application
     // whose major premise is a proof term, then compare the reduct.
     if !x_rigid && ctx.num_loose_bvars(x) == 0 {
-        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel) {
+        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, budget) {
             if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, budget - 1) {
                 proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
                 conv_stat(13);
@@ -4935,7 +4947,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
     }
     if !y_rigid && ctx.num_loose_bvars(y) == 0 {
-        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel) {
+        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, budget) {
             if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, budget - 1) {
                 proof {
                     deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
@@ -5206,10 +5218,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // Prop-level sorts, the types convertible over the reduction-only route).
     // This is the leaf that distinguishes the `_p` family from `verified_conv`.
     if !either_rigid {
-        if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel) {
+        if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel, budget) {
             proof {
-                proof_irrel_pair_of_shadow_claim(*env, x, y);
-                deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
+                let hi = proof_irrel_pair_of_shadow_claim(*env, x, y);
+                deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y), hi);
             }
             conv_stat(11);
             return Some(true);

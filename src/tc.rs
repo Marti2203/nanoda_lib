@@ -1383,7 +1383,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 2; }
         if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
         if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { return 4; }
-        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) {
+        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
             return 5;
         }
@@ -1513,7 +1513,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ix = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x).is_some();
             let iy = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y).is_some();
             route_stats::clear_last_leaf();
-            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100);
+            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget());
             let pir_leaf = route_stats::last_leaf();
             // when the KERNEL decided by proof irrelevance and we did not,
             // show the four terms the rule turns on
@@ -1524,6 +1524,42 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ytt = yt.and_then(|t| crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, t));
                 let px = xtt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
                 let py = ytt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
+                let wxt = xt.map(|t| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, t));
+                let wyt = yt.map(|t| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, t));
+                eprintln!("  IRREL whnf(xt)={:?}\n  IRREL whnf(yt)={:?}",
+                    wxt.map(|t| self.ctx.debug_print(t)), wyt.map(|t| self.ctx.debug_print(t)));
+                // which ARGUMENT of the two propositions fails to convert,
+                // and what does each side reduce to on its own
+                if let (Some(a), Some(b)) = (wxt, wyt) {
+                    if let (Some((h1, a1)), Some((h2, a2))) = (
+                        crate::expr_arena_bridge::verified_unfold_apps(self.ctx, a, 100000),
+                        crate::expr_arena_bridge::verified_unfold_apps(self.ctx, b, 100000),
+                    ) {
+                        let hc = matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, h1, h2, 100, route_stats::conv_budget()), Some(true));
+                        eprintln!("  IRREL head_conv={} nargs={}/{}", hc, a1.len(), a2.len());
+                        if a1.len() == a2.len() {
+                            for q in 0..a1.len() {
+                                let ok = matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, a1[q], a2[q], 100, route_stats::conv_budget()), Some(true));
+                                if !ok {
+                                    let ra = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, a1[q]);
+                                    let rb = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, a2[q]);
+                                    eprintln!("  IRREL arg{} FAILS\n    a={:?}\n    b={:?}\n    whnf(a)={:?}\n    whnf(b)={:?}",
+                                        q, self.ctx.debug_print(a1[q]), self.ctx.debug_print(a2[q]),
+                                        self.ctx.debug_print(ra), self.ctx.debug_print(rb));
+                                    // a reduct stuck under a Proj: what does
+                                    // the structure itself reduce to?
+                                    if let crate::expr::Expr::Proj { structure, .. } = self.ctx.read_expr(ra) {
+                                        let ws = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, structure);
+                                        let un = crate::tc_model::verified_unfold_def_step_free(self.ctx, self.env, structure, 100000);
+                                        eprintln!("    STRUCT={:?}\n    whnf(STRUCT)={:?}\n    delta(STRUCT)={:?}",
+                                            self.ctx.debug_print(structure), self.ctx.debug_print(ws),
+                                            un.map(|t| self.ctx.debug_print(t)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 eprintln!("  IRREL xt={:?}\n  IRREL yt={:?}\n  IRREL xtt={:?} is_prop={:?}\n  IRREL ytt={:?} is_prop={:?}",
                     xt.map(|t| self.ctx.debug_print(t)), yt.map(|t| self.ctx.debug_print(t)),
                     xtt.map(|t| self.ctx.debug_print(t)), px,
