@@ -41,21 +41,20 @@ Against the pre-verification baseline (`b89e378`), across the seven kernel files
 
 | File | Added | What it is |
 |---|---:|---|
-| `src/tc.rs` | 763 | diagnostics module, shadow hooks, routed tests |
+| `src/tc.rs` | 929 | diagnostics module, shadow hooks, routed tests |
 | `src/inductive.rs` | 178 | shadow hooks for constructors, inductive shapes, elimination level, recursors |
 | `src/expr.rs` | 35 | `quot_kind_code`, `nat_bin_op_code` — name → small-code readers |
 | `src/env.rs` | 20 | `visible_declar_names` |
 | `src/quot.rs` | 17 | shadow hook comparing the quotient/`Eq` expected types |
 | `src/util.rs` | 12 | `raw_bits`/`raw` accessors on `Ptr` |
 | `src/main.rs` | 3 | print the report when `NANODA_ROUTE_STATS` is set |
-| **Total** | **1025 insertions, 3 deletions** | |
+| **Total** | **1,184 insertions, 10 deletions** | |
 
-Within `tc.rs`'s 763 lines: 276 are routed tests, 261 are the `route_stats` diagnostics
-module (counters, knobs, the report line, the conversion failure cache), and 224 are the
-shadow hooks and their wiring. So roughly two thirds of the kernel diff is tests and
-diagnostics.
+Roughly two thirds of `tc.rs`'s growth is tests and diagnostics rather than wiring: the
+routed tests, the `route_stats` module (counters, the report line, the conversion failure
+cache, the uncertified-pair printer), and the shadow hooks.
 
-**All three "deletions" are lines re-emitted with something appended:**
+**All ten "deletions" are lines re-emitted with something appended.** Three are structural:
 
 ```
 tc.check_ctor(&st, ind.name, ctor.ty)          → gained a semicolon
@@ -63,8 +62,20 @@ assert!(self.declars.get(ind_name).is_some())  → moved after a shadow-note blo
 Self { ctx: dag, env, tc_cache, declar_info }  → gained the shadow_memo field
 ```
 
-No kernel logic was removed, reordered or rewritten. The kernel is 6,839 lines; the
-verification layer beside it is 48,025.
+The other seven are `def_eq`'s own branches, each re-emitted with a
+`route_stats::legacy_branch(n)` tag so the report can say which unverified rule decided a
+pair the verified routes could not certify:
+
+```
+FoundEqResult(short) => short   →   FoundEqResult(short) => { legacy_branch(5); short }
+self.def_eq(x_n, y_n)           →   let r = self.def_eq(x_n, y_n); legacy_branch(7); r
+```
+
+No kernel logic was removed, reordered or rewritten.
+
+The baseline kernel is 9,496 lines. The verification layer beside it is 24,289 — down from
+48,025 once every definition nothing reaches was removed (§8 of the history: 27,676 lines,
+in two sweeps).
 
 ---
 
@@ -114,6 +125,19 @@ The alternative, which this project used for most of its life, is a fuel paramet
 does not prove the kernel's algorithm terminates; it replaces it with a truncated one that
 does. The gap between those two programs is measurable, and it showed up directly as
 uncertified pairs (§6).
+
+Fuel is also expensive in proof. To recurse, a fuelled inference must re-establish a bound
+on its own result's depth at every level, which is what `infer_result_depth_bound`,
+`infer_depth_fixpoint_ok` and sixteen supporting lemmas existed to do — none of them with
+any counterpart in the kernel. When the fuel-free inference gained its last arm (`Proj`,
+which needed a depth bound on `infer(structure)` to instantiate the constructor telescope),
+that whole algebra became unreachable and was deleted. Nothing about the kernel's
+`infer_proj` needed it; it was the price of the fuel.
+
+All the fuel-free inference asks for now is a term with no loose bound variables. The
+linear fuel budget that used to gate it (`size * (fuel + 1) <= 60000`) went with the fuel,
+and the size ceiling that came with that budget was turning away large-but-inferable terms
+for no remaining reason — removing it took BitVec's inference share from 96.1% to 99.4%.
 
 ---
 
@@ -187,7 +211,8 @@ Every non-quick `def_eq` confirmation, on real Lean 4 export files:
 | `Init.Core` | 7,261 / 7,261 | 100.00% | **0** |
 | `Init.Data.Int.Basic` | 13,205 / 13,205 | 100.00% | **0** |
 | `Init.Omega` | 55,528 / 55,528 | 100.00% | **0** |
-| `Init.Data.BitVec.Lemmas` | 562,962 / 563,027 | 99.99% | 65 |
+| `Init.Data.BitVec.Lemmas` | 562,968 / 563,027 | 99.99% | 59 |
+| **full `Init`** (57,424 declarations) | **2,163,079 / 2,167,833** | **99.78%** | 4,754 |
 
 Zero disagreements on all of them.
 
@@ -209,9 +234,8 @@ Other decisions, on `Init.Core`:
 Which route produced each certificate, on `Init.Core`: whnf-join 3,887, conversion 2,128,
 lazy-delta 1,154, core 92.
 
-Full `Init` (57,424 declarations) last measured at 2,154,911 / 2,167,833 = **99.4%** with
-0 disagreements, *before* the four rules of §5 and the fuel-free inference landed. It has
-not been re-run since; the figure is a floor, not a current reading.
+Full `Init` was re-measured on 2026-09-13 against the current code (34 minutes): it had
+stood at 99.4%, taken before the rules of §5 and the fuel-free inference landed.
 
 The recursor claims are stronger than agreement alone. `verified_mk_recursor_ty` proves
 the recursor's type has binder arity exactly
@@ -225,25 +249,40 @@ would read arguments from the wrong places.
 
 ## 7. Knobs
 
-All knobs are ours — the original kernel reads no environment variables. They steer the
-certifier only.
+There are no budget knobs. Every cap, round count and search budget is a constant in the
+source, with the measurement that justifies its value in a comment beside it:
 
-| Knob | Default | Effect |
+| Constant | Value | Why |
+|---|---:|---|
+| `cap_k` | 500 | environment cap for the conversion route — the value its proofs are stated at |
+| `cap_k_join` | 60000 | environment cap for the whnf-join route and the conversion retry; the maximum its proofs allow, so it does not limit what can be certified |
+| `conv_budget` | 60 | conversion search budget; 20 left 5 more pairs uncertified on BitVec at identical runtime, and it plateaus at 60 |
+| `conv_retries` | 0 | retries past a cached conversion failure; 0 is the original behaviour, larger values cost time without certifying more |
+| `conv_join_rounds` | 256 | rounds for the capped whnf in the join |
+| `whnf_rounds` | 256 | whnf step budget |
+| major-eta rounds | 4 | rounds of iterated major-premise normalization |
+
+`cap_k` is worth its own note. `verified_conv_p` and its whole family are proven under
+`requires k <= 500`, and the call site that supplies it sits in `tc.rs`, outside `verus!`
+— so nothing would have caught an environment variable handing the verified routes an
+argument their proofs never covered. It used to be exactly that: `NANODA_CAP_K`, read
+with no clamp. It is now the constant 500.
+
+For whoever raises it: stating the conversion family at `k <= 60000` verifies with exactly
+two failures, both the lazy-delta round's
+`bound2 + d2³ + d2² + d2 + 10 <= 0xFFFF_0000`, which caps `d2` near 1625 and so `k` near
+625. It also takes full verification from 11 seconds past ten minutes, and no measured
+coverage gain pays for that yet.
+
+What remains reads the environment, and none of it changes what the checker decides:
+
+| Variable | Default | Effect |
 |---|---|---|
-| `NANODA_SHADOW` | off | run the shadow certifier at all |
+| `NANODA_SHADOW` | off | run the shadow certifier at all — the opt-in that keeps it off the verdict path |
 | `NANODA_ROUTE_STATS` | off | print the report |
-| `NANODA_CAP_K` | 500 | environment cap for the conversion route — **not** freely raisable, conv's bounds assume `k ≤ 500` |
-| `NANODA_CAP_K_JOIN` | 60000 | environment cap for the whnf-join route and the conversion retry; 60000 is the maximum the proofs allow, so it does not limit what can be certified |
-| `NANODA_CONV_BUDGET` | 60 | conversion search budget; 20 left 5 more pairs uncertified on BitVec at identical runtime, and it plateaus at 60 |
-| `NANODA_CONV_RETRIES` | 0 | how many times a pair may be retried past a cached conversion failure; 0 is the original behaviour, and larger values cost time without certifying more |
-| `NANODA_CONV_JOIN` | 256 | rounds for the capped whnf in the join |
-| `NANODA_WHNF_ROUNDS` | 256 | whnf step budget |
 | `NANODA_MEMO_STATS`, `NANODA_CONV_TRACE`, `NANODA_UNCERTIFIED`, `NANODA_CONV_FAIL_PRINT` | off | diagnostics |
-| `NANODA_NO_CONV`, `NANODA_NO_CONV_FAIL` | off | experiment switches |
 
-Two of these are load-bearing in a way worth flagging. `NANODA_CAP_K` is a real ceiling:
-the conversion route's proofs are parameterised by it and assume `k ≤ 500`. And the
-conversion **failure cache** (`conv_fail_seen_p`) has no counterpart in `def_eq`; it is
+The conversion **failure cache** (`conv_fail_seen_p`) has no counterpart in `def_eq`. It is
 untrusted — `external_body` with no `ensures`, and a hit only produces `None`, which
 carries no claim — but without it the route exceeds ten minutes on `Init.Omega` against
 about three seconds with it. It stands in for the kernel's own memo caches, which this
@@ -253,32 +292,41 @@ route cannot reuse because a cached positive answer would have to carry its proo
 
 ## 8. What is left
 
-* **`Init.Data.BitVec.Lemmas`: 65 pairs.** A genuine long tail, and well characterised.
-  A pair is a ROOT failure when no nested `def_eq` below it also failed to certify; at 76
-  uncertified, only **20 were roots** (8 `def_eq_app`, 4 whnf-retry, 4 `lazy_delta`, 2
-  proof irrelevance, 1 structure eta, 1 eta), the other 56 inheriting a failure from an
-  argument.
+* **`Init.Data.BitVec.Lemmas`: 59 pairs**, and `Init`'s wider 4,754. A genuine long tail,
+  and well characterised. A pair is a ROOT failure when no nested `def_eq` below it also
+  failed to certify; of BitVec's 59, only **14 are roots** (down from 20 at 76), the other
+  45 inheriting a failure from an argument.
 
-  Printing the kernel's own intermediate term beside our delta chain's showed the
-  divergence exactly: the kernel reaches `Prod.mk ε ζ (g ..) ..` where we stall at
-  `Prod.rec .. (fun x => ..) ..`, and our major-premise rewrite applied to that stalled
-  term reduces to the kernel's, character for character. So the mechanism is present; what
-  limits it is *where in the search it may run*, which is a cost question.
+  Ten of those fourteen are a stuck recursor — `Fin.rec`, `Nat.rec`, `Eq.rec` — facing a
+  constructor application or a local that the kernel had already reached. Instrumenting
+  the exact call the rule makes (`NANODA_UNCERTIFIED` prints it) settled what is and is
+  not the problem:
+
+  - structure eta **does** rewrite the major premise to a genuine `Fin.mk ..`;
+  - ι **does** fire on the rewritten term — `verified_rec_step_capped` returns `Some`;
+  - the term it fires to is headed by *another* stuck `Fin.rec`, which is why rewriting
+    once and comparing looked like the rule not working. `verified_major_eta_fix` now
+    iterates to a fixpoint;
+  - and the pairs still do not close, at 1, 4 or 64 rounds, even with a full-budget
+    conversion run on the fixpoint.
+
+  So the remaining gap is in the ARGUMENTS, not the major premise. Both sides reach
+  `Fin.mk`, and the fields then need `BitVec.toNat w (x * y)` against
+  `(x.0.0 * y.0.0) % 2^w` — delta plus projection-of-constructor inside an argument
+  position. That is the next root cause to chase.
+
+  The other four roots are `Eq.rec` needing the kernel's K-like rule (`to_ctor_when_k`,
+  which has no counterpart on the live path), and pairs whose heads already agree.
 
   Ruled out by measurement, so they are not worth retrying: the conversion budget (60 and
-  200 both leave the same count), `NANODA_CAP_K` (60000, diagnostic only, same count),
-  `NANODA_CAP_K_JOIN`, the lazy-delta gates (500 → 5000, rounds 32 → 128), bounded retries
-  past a cached failure, removing the failure cache (Init.Core alone then exceeds ten
-  minutes), and adding the whnf-join route as a leaf inside conversion (same count, 30%
-  slower).
-* **The fuel-free inference has no `Proj` arm.** Local, sort, constant, both literals,
-  lambda, pi, let and application are done; `Proj` still falls back to the fuelled arm.
-  That fallback is the last thing keeping the old fuelled family alive, and with it
-  `infer_result_depth_bound`, `infer_depth_fixpoint_ok` and the `d`/`dd` ceilings threaded
-  through ~30 sites.
-* **`NANODA_CAP_K`.** The conversion route's `k ≤ 500` assumption is the remaining cap
-  that actually limits what can be proven.
-* **Full `Init`.** Needs a re-run (§6).
+  200 both leave the same count), the conversion cap at 60000, the whnf-join cap, the
+  lazy-delta gates (500 → 5000, rounds 32 → 128), bounded retries past a cached failure,
+  removing the failure cache (Init.Core alone then exceeds ten minutes), adding the
+  whnf-join route as a leaf inside conversion (same count, 30% slower), comparing the
+  reduced one-sided rewrite against the other side's reduct (same count, 40% slower), and
+  iterating major-premise normalization (same count).
+* **The conversion route's `k ≤ 500`.** The one remaining cap that limits what can be
+  proven; see §7 for exactly what blocks raising it.
 
 ---
 
@@ -300,7 +348,8 @@ rm -rf target/verus-partial/debug/.fingerprint/nanoda_lib-*
 cargo verus focus -- --rlimit 300 --num-threads 6
 ```
 
-Current state: **1,273 functions verified, 0 errors**; 79 tests pass.
+Current state: **495 functions verified, 0 errors**; 79 tests pass. Full verification takes
+about 11 seconds.
 
 Corpora are generated with [`lean4export`](https://github.com/leanprover/lean4export) and
 live in `~/nanoda_corpora/`:
