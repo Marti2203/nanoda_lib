@@ -1515,6 +1515,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             route_stats::clear_last_leaf();
             let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100);
             let pir_leaf = route_stats::last_leaf();
+            // when the KERNEL decided by proof irrelevance and we did not,
+            // show the four terms the rule turns on
+            if route_stats::legacy_branch_name() == "proof_irrel" {
+                let xt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
+                let yt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y);
+                let xtt = xt.and_then(|t| crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, t));
+                let ytt = yt.and_then(|t| crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, t));
+                let px = xtt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
+                let py = ytt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
+                eprintln!("  IRREL xt={:?}\n  IRREL yt={:?}\n  IRREL xtt={:?} is_prop={:?}\n  IRREL ytt={:?} is_prop={:?}",
+                    xt.map(|t| self.ctx.debug_print(t)), yt.map(|t| self.ctx.debug_print(t)),
+                    xtt.map(|t| self.ctx.debug_print(t)), px,
+                    ytt.map(|t| self.ctx.debug_print(t)), py);
+            }
             let szx = crate::expr_arena_bridge::verified_size(self.ctx, x, 100000);
             let szy = crate::expr_arena_bridge::verified_size(self.ctx, y, 100000);
             if !ix {
