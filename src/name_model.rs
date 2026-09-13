@@ -161,47 +161,7 @@ pub fn replace_pfx_model(n: &NameSpec, outgoing: &NameSpec, incoming: NameSpec) 
     }
 }
 
-/// The property `replace_pfx` exists to guarantee: if `outgoing` occurs
-/// anywhere along `n`'s prefix chain, replacing it swaps out exactly that
-/// segment and everything *below* it (`outgoing`'s own prefix and beyond),
-/// while every segment *above* it (the suffixes closer to `n`) is
-/// untouched, structurally — i.e. `replace_pfx` never accidentally
-/// disturbs any part of `n` outside the matched prefix point.
-///
-/// This is really `subst`-shaped (same "replace one occurrence, preserve
-/// the rest of the tree" idea as `expr_model::subst_full`, applied to a
-/// linear prefix chain instead of a general tree), so proving it here
-/// generalizes cleanly: for `n` that doesn't contain `outgoing` anywhere at
-/// all, `replace_pfx_full` is a no-op (mirroring
-/// `subst_full_noop`/`abstr_full_noop`'s "the thing being substituted for
-/// isn't present, so nothing changes" shape).
-pub proof fn replace_pfx_noop(n: NameSpec, outgoing: NameSpec, incoming: NameSpec)
-    requires !contains_pfx(n, outgoing)
-    ensures replace_pfx_full(n, outgoing, incoming) == n
-    decreases n
-{
-    match n {
-        NameSpec::Anon => {}
-        NameSpec::Str(pfx, _) => { replace_pfx_noop(*pfx, outgoing, incoming); }
-        NameSpec::Num(pfx, _) => { replace_pfx_noop(*pfx, outgoing, incoming); }
-    }
-}
 
-/// Does `target` occur anywhere along `n`'s prefix chain (including `n`
-/// itself)?
-pub open spec fn contains_pfx(n: NameSpec, target: NameSpec) -> bool
-    decreases n
-{
-    if n == target {
-        true
-    } else {
-        match n {
-            NameSpec::Anon => false,
-            NameSpec::Str(pfx, _) => contains_pfx(*pfx, target),
-            NameSpec::Num(pfx, _) => contains_pfx(*pfx, target),
-        }
-    }
-}
 
 /// Mirrors `TcCtx::get_pfx`: walk `n`'s prefix chain until reaching the
 /// single-segment name whose own prefix is `Anon` (i.e. the topmost

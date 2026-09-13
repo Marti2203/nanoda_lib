@@ -47,7 +47,7 @@ use crate::beta_model::{
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_slice_to, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id, is_nat_lit_shape_model, nat_lit_value, bignum_ptr_value};
 #[cfg(verus_only)]
@@ -58,9 +58,9 @@ use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_leve
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model, bool_true_arity_is_zero};
+use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{local_type_cap, local_type_wf, local_type_cap_bounded};
+use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]
@@ -78,26 +78,18 @@ use crate::tc_model::{InferCert, ConvCert};
 use crate::tc_model::def_eq_witness;
 #[cfg(verus_only)]
 use crate::tc_model::args_model_of;
-#[cfg(verus_only)]
-use crate::tc_model::whnf_multi_round_ok;
-use crate::tc_model::verified_whnf_multi_round_bounded;
-#[cfg(verus_only)]
-use crate::tc_model::{whnf_multi_round_final_bound, whnf_multi_round_final_d};
 use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::expr_ptr_eq;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{whnf_fixpoint_ok, whnf_step_next_bound, whnf_step_next_d};
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 use crate::level_arena_bridge::verified_leq;
-use crate::level_arena_bridge::verified_may_be_prop;
 #[cfg(verus_only)]
 use crate::level_model::interp;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{const_expr_no_levels_canonical, spine_app_compose_last, defeq_of_pstep_star, pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_max_var_below_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound, whnf_no_unfolding_with_proj_reaches, one_whnf_no_unfolding_with_proj_step};
+use crate::beta_model::{const_expr_no_levels_canonical, spine_app_compose_last, defeq_of_pstep_star, pstep_star_trans, pstep_star_refl, subst_full_depth_bound_n, subst_full_nlbv_bound_n, subst_full_nlbv_bound};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, const_levels_vec_model, const_id, const_levels_vec, is_const_shape};
 use crate::level_arena_bridge::read_levels_vec;
@@ -106,7 +98,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_sub, env_global_cap_bounded};
+use crate::env_model::{env_model_capped, env_model_capped_sub};
 #[cfg(verus_only)]
 use crate::tc_model::{nat_repr_is_zero_reaches_canonical, nat_repr_pred_reaches_succ_app};
 #[cfg(verus_only)]
@@ -321,40 +313,8 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 
 
 
-/// `infer_proj_params_step_next_bound`/`_fixpoint_ok`'s siblings for the
-/// LAST third of `infer_proj` (`tc.rs:484-500`, the `idx` loop, this
-/// arc's SEVENTH `_fixpoint_ok` instance): the constant argument bounding
-/// EVERY round here is `structure`'s own bound (`bound_s`/`d_s`), not
-/// `cap` -- `mk_proj(inductive_name, i, structure)`'s result is `Proj(
-/// structure)`, whose `nlbv`/`max_var_below` pass through unchanged from
-/// `structure` and whose `depth` is `structure`'s depth plus one (the
-/// `Proj` wrapper itself) -- accounted for by requiring `depth(structure)
-/// < d_s` (not `<=`) rather than a `+ 1` in the arithmetic itself, since
-/// a bare integer literal in a `nat`-typed expression is only legal in
-/// ghost/proof/spec positions, not a plain exec `let`.
-pub open spec fn infer_proj_idx_step_next_bound(bound: nat, d: nat, bound_s: nat) -> nat {
-    if whnf_step_next_bound(bound, d) >= bound_s { whnf_step_next_bound(bound, d) } else { bound_s }
-}
 
-/// `d_s` is defined to already carry the `Proj` wrapper's own `+ 1`
-/// depth headroom (the function's own `requires` asks for `depth(
-/// structure) < d_s`, not `<=`) -- this keeps every `nat` arithmetic
-/// expression built purely from existing `nat` VALUES (no bare integer
-/// literal), sidestepping a Verus restriction: a bare integer literal in
-/// a `nat`-typed expression is only allowed in ghost/proof/spec
-/// positions, not in a plain `let` inside exec code.
-pub open spec fn infer_proj_idx_step_next_d(d: nat, d_s: nat) -> nat {
-    whnf_step_next_d(d) + d_s
-}
 
-pub open spec fn infer_proj_idx_fixpoint_ok(bound: nat, d: nat, bound_s: nat, d_s: nat, k: nat) -> bool
-    decreases k
-{
-    d <= 60000
-        && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
-        && whnf_step_next_d(d) <= 60000
-        && (k == 0 || infer_proj_idx_fixpoint_ok(infer_proj_idx_step_next_bound(bound, d, bound_s), infer_proj_idx_step_next_d(d, d_s), bound_s, d_s, (k - 1) as nat))
-}
 
 
 
@@ -5681,39 +5641,8 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     }
 }
 
-/// `verified_lazy_delta_round`'s own growth formula, one round's worth,
-/// expressed purely in terms of `d` and the environment's own cap `cap`
-/// (an upper bound on `env_global_cap(*env)`, threaded explicitly since a
-/// ghost quantity can't flow into an exec call argument -- same reason
-/// `verified_delta_bounded`'s `bound2`/`d2` are explicit). Named so
-/// `delta_round_fixpoint_ok`/`verified_lazy_delta_loop` can thread them
-/// without repeating the formula inline. Mirrors `whnf_step_next_bound`/
-/// `whnf_step_next_d` (`expr_arena_bridge.rs`) exactly, composed with the
-/// `bound + cap` / `cap + d + d` step `verified_lazy_delta_round` itself
-/// takes from `(bound, d)` to `(bound2, d2)`.
-pub open spec fn delta_round_next_d(d: nat, cap: nat) -> nat {
-    let d2 = cap + d + d;
-    d2 * d2 + d2 + d2 + d2 + d2
-}
-pub open spec fn delta_round_next_bound(bound: nat, d: nat, cap: nat) -> nat {
-    let d2 = cap + d + d;
-    let bound2 = bound + cap;
-    bound2 + d2 * d2 * d2 + d2 * d2
-}
 
 
-/// The `(bound, d)` a caller should assume `verified_lazy_delta_loop`'s
-/// result satisfies "as if `n` full rounds had elapsed" -- defined
-/// RECURSIVELY, matching `delta_round_next_bound`/`_d`'s own unfolding
-/// exactly, so a caller's own recursive call composes with `verified_lazy_
-/// delta_loop`'s ensures for FREE by definitional unfolding (no separate
-/// transitivity lemma), the same trick `whnf_no_unfolding_with_proj_
-/// reaches`'s recursive definition already used.
-pub open spec fn delta_loop_bound_after(bound: nat, d: nat, cap: nat, n: nat) -> nat
-    decreases n
-{
-    if n == 0 { bound } else { delta_loop_bound_after(delta_round_next_bound(bound, d, cap), delta_round_next_d(d, cap), cap, (n - 1) as nat) }
-}
 
 
 

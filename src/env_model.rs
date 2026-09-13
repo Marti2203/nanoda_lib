@@ -48,7 +48,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below, env_wf, env_closed};
+use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below};
 
 /// `Env::get_constructor` returns `Option<&ConstructorData>`, a reference
 /// to a struct with several fields -- rather than registering the whole
@@ -247,28 +247,9 @@ pub open spec fn is_lt(a: ReducibilityHintSpec, b: ReducibilityHintSpec) -> bool
     }
 }
 
-pub proof fn is_lt_irreflexive(a: ReducibilityHintSpec)
-    ensures !is_lt(a, a)
-{
-}
 
-pub proof fn is_lt_asymmetric(a: ReducibilityHintSpec, b: ReducibilityHintSpec)
-    ensures is_lt(a, b) ==> !is_lt(b, a)
-{
-}
 
-pub proof fn is_lt_transitive(a: ReducibilityHintSpec, b: ReducibilityHintSpec, c: ReducibilityHintSpec)
-    ensures is_lt(a, b) && is_lt(b, c) ==> is_lt(a, c)
-{
-}
 
-/// Any two hints are comparable: exactly one of `a == b`, `is_lt(a, b)`,
-/// `is_lt(b, a)` holds. Combined with irreflexivity/asymmetry/transitivity,
-/// this makes `is_lt` a genuine strict total order.
-pub proof fn is_lt_trichotomous(a: ReducibilityHintSpec, b: ReducibilityHintSpec)
-    ensures a == b || is_lt(a, b) || is_lt(b, a)
-{
-}
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
@@ -398,12 +379,6 @@ pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
 {
 }
 
-#[verifier::external_body]
-pub proof fn env_global_size_wf<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-        ==> size(to_model_of_env(env)[id].1) <= env_global_size_cap(env)
-{
-}
 
 /// Closedness of every definition body (no locals) -- CHECKED by the
 /// certificate scan via the real `has_fvars` flag, then pinned here --
@@ -423,30 +398,7 @@ pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
 {
 }
 
-#[verifier::external_body]
-pub proof fn env_global_closed_wf<'x, 'a>(env: Env<'x, 'a>)
-    requires env_global_closed(env)
-    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-        ==> !has_fv(to_model_of_env(env)[id].1)
-            && crate::expr_arena_bridge::ctor_num_params_of(id) is None
-{
-}
 
-/// The model-level `env_wf` of the real environment, from the two caps.
-pub proof fn env_wf_of_global<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    requires env_global_cap(env) <= k, env_global_size_cap(env) <= k
-    ensures crate::beta_model::env_wf(to_model_of_env(env), k)
-{
-    env_global_wf(env);
-    env_global_size_wf(env);
-    assert forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id) implies
-        nlbv(to_model_of_env(env)[id].1) == 0
-        && size(to_model_of_env(env)[id].1) <= k
-        && max_var_below(to_model_of_env(env)[id].1, k)
-        && depth(to_model_of_env(env)[id].1) <= k by {
-        crate::beta_model::max_var_below_mono(to_model_of_env(env)[id].1, env_global_cap(env), k);
-    }
-}
 
 /// (`env_closed_of_global` retired with the nat-fold rule, P3: the full
 /// model contains the nat-op definitions, which `env_closed` now excludes;
@@ -469,24 +421,7 @@ pub open spec fn env_model_capped<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, 
     )
 }
 
-/// Trust (same character as `env_global_closed_wf`'s ctor clause, now
-/// stated on its own so it no longer rides on the global scan): a name has
-/// ONE declaration per export, so no definition/theorem id is also a
-/// constructor id.
-#[verifier::external_body]
-pub proof fn env_defs_not_ctors<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-        ==> crate::expr_arena_bridge::ctor_num_params_of(id) is None
-{
-}
 
-/// Trust: no definition/theorem id is a recursor id (one declaration per name).
-#[verifier::external_body]
-pub proof fn env_defs_not_recs<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-        ==> crate::expr_arena_bridge::rec_data_of(id) is None
-{
-}
 
 /// Membership in the capped model from the per-definition checks.
 pub proof fn env_model_capped_has<'x, 'a>(env: Env<'x, 'a>, k: nat, id: u64)
@@ -507,61 +442,9 @@ pub proof fn env_model_capped_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
 {
 }
 
-/// `env_wf(env_model_capped(env, k), k)` by construction: every member's
-/// value has size <= k, hence depth <= k (`depth_le_size`) and, being
-/// closed (`nlbv == 0` from the `get_declar_val` trust boundary), its
-/// variables are below its depth.
-pub proof fn env_model_capped_wf<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures env_wf(env_model_capped(env, k), k)
-{
-    env_global_wf(env);
-    let m = env_model_capped(env, k);
-    assert forall |id: u64| #[trigger] m.contains_key(id) implies
-        nlbv(m[id].1) == 0 && size(m[id].1) <= k && max_var_below(m[id].1, k) && depth(m[id].1) <= k by {
-        assert(to_model_of_env(env).contains_key(id));
-        let v = to_model_of_env(env)[id].1;
-        assert(m[id].1 == v);
-        depth_le_size(v);
-        nlbv_bound_implies_max_var_below(v, 0);
-        max_var_below_mono(v, (depth(v) + 0) as nat, k);
-    }
-}
 
-/// `env_closed(env_model_capped(env, k))` by construction.
-/// THE CONFLUENCE MODEL (nat-fold P3): the capped model with the nat-op
-/// definitions (`Nat.add`, ...) REMOVED, so `env_closed` holds by
-/// construction -- the environment the certified confluence/transitivity
-/// chains are stated over. The routes' reduction claims use the unfiltered
-/// `env_model_capped` (symbolic unfolding of the ops stays available);
-/// `env_model_conf` is a sub-map of it (`env_model_conf_sub`).
-pub open spec fn env_model_conf<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, (Seq<u64>, ExprSpec)> {
-    env_model_capped(env, k).restrict(
-        env_model_capped(env, k).dom().filter(|id: u64| crate::expr_arena_bridge::nat_bin_op_of(id) is None),
-    )
-}
 
-pub proof fn env_model_conf_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures forall |id: u64| #[trigger] env_model_conf(env, k).contains_key(id)
-        ==> env_model_capped(env, k).contains_key(id) && env_model_conf(env, k)[id] == env_model_capped(env, k)[id]
-{
-}
 
-pub proof fn env_model_conf_closed<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures env_closed(env_model_conf(env, k))
-{
-    env_global_wf(env);
-    env_defs_not_ctors(env);
-    env_defs_not_recs(env);
-    let m = env_model_conf(env, k);
-    assert forall |id: u64| #[trigger] m.contains_key(id) implies
-        nlbv(m[id].1) == 0 && !has_fv(m[id].1) && crate::expr_arena_bridge::ctor_num_params_of(id) is None
-        && crate::expr_arena_bridge::rec_data_of(id) is None
-        && crate::expr_arena_bridge::nat_bin_op_of(id) is None by {
-        assert(env_model_capped(env, k).contains_key(id));
-        assert(to_model_of_env(env).contains_key(id));
-        assert(m[id].1 == to_model_of_env(env)[id].1);
-    }
-}
 
 #[verifier::external_body]
 pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
@@ -758,58 +641,7 @@ pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, 
 pub uninterp spec fn ind_all_ind_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
 pub uninterp spec fn ind_all_ctor_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
 
-/// A real Lean inductive declaration's own constructors always share ITS
-/// universe parameters exactly (never their own, independently-chosen
-/// ones) -- a basic structural fact about how `mutual .. end` blocks and
-/// their constructors are elaborated, not derived from anything more
-/// basic in this model (same disclosed-trust character as `env_global_
-/// cap`/`mutual_block_cap`). Lets `verified_replace_if_nested`'s fan-out
-/// loop (`inductive_model.rs`) derive a sibling's OWN constructors' arity
-/// from the sibling's OWN (already-established, per the mutual block's
-/// SHARED arity) uparams length, without needing a separate requires
-/// stated per-constructor at the caller's own signature (impossible
-/// there -- the sibling's `NamePtr` isn't in scope until inside the
-/// loop).
-/// Any `Const(name, levels)` occurring in an already-type-checked real
-/// expression always has `levels` matching `name`'s own declared
-/// universe-parameter arity -- a basic well-typedness invariant of the
-/// REAL kernel (a real `Const` application is never built with the wrong
-/// number of level arguments), same disclosed-trust flavor as `get_
-/// recursor_data`'s own "uparams are genuinely Param-shaped" fact.
-/// Stated with NO requires at all (unconditionally true for a real,
-/// already-checked `name`/`levels` pair) rather than as a requires on
-/// some caller's signature, since the caller (`verified_replace_if_
-/// nested`) only learns `name`/`levels` from an INTERNAL call result
-/// (`verified_is_nested_ind_app`), not from its own parameters -- a
-/// requires phrased in terms of them would be unstatable at the
-/// signature level.
-#[verifier::external_body]
-pub proof fn const_levels_match_declared_arity<'x, 'a>(env: Env<'x, 'a>, name: NamePtr<'a>, levels: LevelsPtr<'a>)
-    ensures
-        to_model_of_declar_ty(env).contains_key(name_id(name))
-            ==> to_model_of_declar_ty(env)[name_id(name)].0.len() == to_model_of_levels(levels).len(),
-{
-}
 
-#[verifier::external_body]
-pub proof fn mutual_block_uniform_levels_arity<'x, 'a>(env: Env<'x, 'a>, block_name: NamePtr<'a>, levels_len: nat)
-    requires
-        to_model_of_declar_ty(env).contains_key(name_id(block_name))
-            ==> to_model_of_declar_ty(env)[name_id(block_name)].0.len() == levels_len,
-    ensures
-        forall |k: int| 0 <= k < ind_all_ctor_names(env, block_name).len() ==>
-            to_model_of_declar_ty(env).contains_key(#[trigger] ind_all_ctor_names(env, block_name)[k])
-                ==> to_model_of_declar_ty(env)[ind_all_ctor_names(env, block_name)[k]].0.len() == levels_len,
-        // Every OTHER member of `block_name`'s own mutual block ALSO
-        // shares this arity -- lets a caller re-invoke this SAME lemma
-        // with `block_name` set to each sibling in turn (now knowing
-        // the sibling's OWN arity) to get that sibling's OWN
-        // constructors' arity too, via the ctor conjunct above.
-        forall |k: int| 0 <= k < ind_all_ind_names(env, block_name).len() ==>
-            to_model_of_declar_ty(env).contains_key(#[trigger] ind_all_ind_names(env, block_name)[k])
-                ==> to_model_of_declar_ty(env)[ind_all_ind_names(env, block_name)[k]].0.len() == levels_len,
-{
-}
 
 pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
     ensures match result {
@@ -894,53 +726,13 @@ pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// (`old_declar_names_finite`).
 pub uninterp spec fn mutual_block_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
-/// `mutual_block_cap` itself is finite (any real environment has SOME
-/// largest mutual block) but that alone doesn't rule out it being
-/// astronomically large -- this names a generous, disclosed CEILING on
-/// it (`u32::MAX`, vastly beyond any real Lean `mutual .. end` block's
-/// actual size) purely so callers doing `u64` bookkeeping on a mutual
-/// block's own name count (e.g. `verified_mk_specialized_rec_to_
-/// unspecialized_map`'s own re-indexing counter) can discharge overflow
-/// checks without threading a bespoke requires through every such site.
-/// Same "name the max, don't compute it" trust character as `mutual_
-/// block_cap` itself.
-/// Disclosed CEILING on the global declaration-type depth cap (same trust
-/// character as `mutual_block_cap_bounded`): no real Lean environment has
-/// a declaration type of depth 30000. Lets `verified_infer` be called
-/// with a GHOST `d` (no per-checker certificate scan) by the shadow
-/// certifier's proof-irrelevance check.
-#[verifier::external_body]
-pub proof fn env_global_cap_bounded<'x, 'a>(env: Env<'x, 'a>)
-    ensures env_global_cap(env) <= 30000,
-{
-}
 
-#[verifier::external_body]
-pub proof fn mutual_block_cap_bounded<'x, 'a>(env: Env<'x, 'a>)
-    ensures mutual_block_cap(env) <= u32::MAX as nat,
-{
-}
 
 /// The SET of name-ids present in the OLD (persistent, pre-temp-
 /// extension) declaration map -- `mk_unique_name`'s (`inductive.rs:588-
 /// 597`) own fresh-name search checks membership against exactly this.
 pub uninterp spec fn old_declar_names<'x, 'a>(env: Env<'x, 'a>) -> Set<u64>;
 
-/// A real `Env`'s OLD declaration map (an `IndexMap`, `env.rs`) always
-/// has a genuinely FINITE element count, even though this model doesn't
-/// compute it -- an obviously-true structural fact about any real,
-/// terminating program's data structures, the SAME minimal-trust flavor
-/// as `env_global_cap`/`local_type_cap`'s own "name the max, don't claim
-/// a number" pattern, just needing finiteness rather than a numeric
-/// ceiling here: `mk_unique_name_collision_bound`'s own pigeonhole
-/// argument only needs `old_declar_names(*env).len()` to be a well-
-/// defined `nat` (via `Set::len`'s own `finite()` requirement), not any
-/// SPECIFIC bound on its value.
-#[verifier::external_body]
-pub proof fn old_declar_names_finite<'x, 'a>(env: Env<'x, 'a>)
-    ensures old_declar_names(env).finite()
-{
-}
 
 pub assume_specification<'x, 'a> [old_declar_is_some] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool)
     ensures result == old_declar_names(*env).contains(name_id(*n));
@@ -997,229 +789,15 @@ pub proof fn env_global_wf_ty<'x, 'a>(env: Env<'x, 'a>)
 {
 }
 
-/// A real declaration's fetched value, alone in an otherwise-empty `env`,
-/// is `env_wf` -- exactly what `pstep`'s delta rule needs to fire on it.
-/// `cap := size(val)` works: `size(val) <= cap` trivially, `depth(val) <=
-/// cap` via `depth_le_size`, and `max_var_below(val, cap)` via `nlbv(val)
-/// == 0` (just proven above) composed through `nlbv_bound_implies_max_var_
-/// below`/`max_var_below_mono`.
-pub proof fn env_declar_singleton_wf(id: u64, ks: Seq<u64>, val: ExprSpec)
-    requires nlbv(val) == 0
-    ensures env_wf(Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)), size(val))
-{
-    let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
-    nlbv_bound_implies_max_var_below(val, 0);
-    depth_le_size(val);
-    max_var_below_mono(val, depth(val), size(val));
-    broadcast use vstd::map::lemma_map_insert_domain;
-    broadcast use vstd::map::lemma_map_insert_same;
-    assert(singleton.dom() =~= Set::<u64>::empty().insert(id));
-    assert forall |id2: u64| #[trigger] singleton.contains_key(id2) implies {
-        &&& nlbv(singleton[id2].1) == 0
-        &&& size(singleton[id2].1) <= size(val)
-        &&& max_var_below(singleton[id2].1, size(val))
-        &&& depth(singleton[id2].1) <= size(val)
-    } by {
-        assert(id2 == id);
-        assert(singleton[id2] == (ks, val));
-    }
-}
 
-/// The environment-only mathematical foundation for `specialize_nested_
-/// aux`'s (`inductive.rs:383-423`) termination wall -- attempted, at the
-/// user's explicit request, after a dedicated scoping fork confirmed the
-/// wall is real (NOT a false alarm) and precisely characterized it: the
-/// loop's own bound (`st.all_inductives_incl_specialized.len()`) grows
-/// mid-iteration as `replace_if_nested` (`inductive.rs:609-699`)
-/// discovers new nested-container types to specialize, and termination
-/// depends on "a real, already-elaborated Lean environment's nested-type
-/// reachability is finite" -- a graph-reachability property of the
-/// ENVIRONMENT's own declaration structure, structurally different from
-/// `gen_elim_level`/`mk_unique_name`'s termination walls (both genuine
-/// finite-pigeonhole arguments over an ALREADY-FIXED-SIZE list; see
-/// [[feedback_verus_set_lib_pigeonhole]]) -- there is no already-
-/// materialized list to do a counting argument over here; the "list"
-/// ITSELF is what needs to be shown finite.
-///
-/// `Set<A>` in this vstd fork is, BY ITS OWN TYPE DEFINITION, always
-/// finite (`vstd/set.rs`'s own doc comment: "`Set` only holds finite
-/// sets" -- `Set::new` on a genuinely-infinite predicate silently
-/// produces "an arbitrary finite set" per `make_set`'s own doc comment,
-/// NOT a faithful infinite one). This does NOT mean finiteness is "free"
-/// here: if `env_nested_children` genuinely had an infinite reachable
-/// chain, asserting `env_nested_reachable` "exists" with the closure
-/// property below would be asserting something FALSE about the
-/// UNDERLYING (conceptually infinite) relation, which would be a real,
-/// silent unsoundness -- not caught by Verus's own type-checker, since
-/// axioms about uninterpreted functions are trusted, not verified for
-/// self-consistency. This is EXACTLY the same character of trust
-/// `env_global_cap`'s own existence already carries (nothing derives
-/// that a depth bound exists either; it's asserted because it's true
-/// for any REAL, finite, already-elaborated environment) -- not a step
-/// down in rigor, but genuinely NEW content: this project's very first
-/// axiom about the environment's REACHABILITY structure rather than a
-/// single declaration's own size/depth/count.
-pub uninterp spec fn env_nested_children<'x, 'a>(env: Env<'x, 'a>, name: u64) -> Set<u64>;
 
-pub uninterp spec fn env_nested_reachable<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>) -> Set<u64>;
 
-/// The trust boundary itself: `env_nested_reachable(env, seed)` contains
-/// `seed` and is closed under `env_nested_children` -- the standard
-/// declarative characterization of a transitive closure (rather than a
-/// literal recursive construction, which `Set<A>`'s own lack of a
-/// general fold/fixed-point combinator makes awkward to write directly).
-/// TRUE for any real environment (Lean's own elaborator only ever
-/// accepts well-founded, finite nested-inductive structures); NOT
-/// derived from anything more basic in this model, matching `env_global_
-/// wf`'s own `#[verifier::external_body]` treatment.
-#[verifier::external_body]
-pub proof fn env_nested_reachable_closure<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>)
-    ensures
-        seed.subset_of(env_nested_reachable(env, seed)),
-        forall |n: u64| #[trigger] env_nested_reachable(env, seed).contains(n) ==> env_nested_children(env, n).subset_of(env_nested_reachable(env, seed)),
-{
-}
 
-/// A discovered nested container's MUTUAL SIBLINGS are reachable
-/// whenever the container itself is -- `replace_if_nested`'s own fan-out
-/// (`inductive.rs:641-696`) specializes an ENTIRE mutual block as one
-/// unit the instant ANY member is discovered nested (one `IndTyHeader`
-/// push per name in `all_ind_names`, not just the one that triggered the
-/// match), so "is this name interesting enough to specialize" is
-/// genuinely a property of the WHOLE block, not of one member alone.
-/// Trusted (empirical claim about how mutual blocks are structured and
-/// specialized, same category as `env_nested_reachable_closure` itself),
-/// needed because `env_nested_children`'s own closure property was
-/// stated per bare NAME, with no separate provision for "and everything
-/// mutually bundled with it."
-#[verifier::external_body]
-pub proof fn mutual_siblings_reachable<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, block_repr: NamePtr<'a>, sibling_id: u64)
-    requires
-        env_nested_reachable(env, seed).contains(name_id(block_repr)),
-        ind_all_ind_names(env, block_repr).contains(sibling_id),
-    ensures env_nested_reachable(env, seed).contains(sibling_id)
-{
-}
 
-/// A SINGLE, uniform bound on how many `IndTyHeader`-push events can EVER
-/// be attributed, across ONE ENTIRE `specialize_nested_aux` run, to
-/// discoveries of any ONE given real declaration name -- same "one
-/// number for the whole environment, don't compute it per-declaration"
-/// convention `env_global_cap` already established.
-///
-/// Critically PER-NAME-ACROSS-THE-WHOLE-RUN, NOT per-scan -- an earlier
-/// version of this comment described it as "per one declaration's own
-/// constructor scan," which turns out to be the WRONG granularity and
-/// would make `nested_specialization_bound` below UNSOUND: each real
-/// name can itself be discovered as a nested occurrence MULTIPLE times
-/// across DIFFERENT scans (different specialized copies of some OTHER
-/// container each independently re-discovering it), and bounding only
-/// "pushes per scan" leaves TOTAL pushes governed by a SELF-REFERENTIAL
-/// inequality (total <= (original_len + total) * per-scan-cap), which
-/// does not actually bound anything for any per-scan-cap >= 1. The
-/// FIXED reference frame that makes a bound possible at all is the REAL
-/// declaration NAME, not the scan: `replace_if_nested`'s cache
-/// (`nested_to_unspecialized_ty_wfvars`, keyed by `i_params` canonicalized
-/// onto the enclosing block's FIXED `local_params` -- see `73f1c8e`'s own
-/// commit message for the by-hand trace confirming this canonicalization)
-/// dedupes repeat discoveries of "the same real name at the same
-/// argument pattern" regardless of which scan found them, so the number
-/// of GENUINELY NEW discoveries attributable to one real name, over the
-/// WHOLE run, is itself a real, finite, per-declaration static fact
-/// (bounded by how many distinct argument patterns are expressible using
-/// the block's own fixed parameters) -- still trusted, not derived, but
-/// now a fact about a FIXED reference frame rather than a growing count.
-///
-/// Also folds in `replace_if_nested`'s fan-out (`inductive.rs:641-696`):
-/// EACH genuinely-new discovery of a name pushes ONE `IndTyHeader` PER
-/// NAME in the discovered container's OWN mutual block (`all_ind_names`),
-/// not just one -- e.g. finding `Array Foo` where `Array`/`List` are
-/// mutually defined pushes BOTH `_nested.Array_k` AND `_nested.List_k`
-/// from that single discovery. `nested_occ_cap` bounds the TOTAL,
-/// fan-out included, attributable to one name -- not the count of
-/// distinct argument patterns alone (which would undercount) and not a
-/// per-scan count (which, per above, doesn't actually bound the total).
-pub uninterp spec fn nested_occ_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
-/// The measure `specialize_nested_aux`'s own outer loop needs: an upper
-/// bound on the TOTAL number of `IndTyHeader`-push events reachable from
-/// a `seed` set of inductive names, given `env_nested_reachable(env,
-/// seed)`'s own size (itself a real `nat`, since `Set<u64>` is always
-/// finite) and the uniform per-declaration occurrence cap. Deliberately
-/// a PRODUCT, not a sum over `env_nested_reachable`'s own elements (which
-/// would need a "sum over a finite Set" fold/induction lemma this vstd
-/// fork's `set_lib.rs` doesn't provide) -- `len() * cap` over-approximates
-/// the same quantity a per-declaration sum would give exactly, which is
-/// all a termination MEASURE needs (an upper bound, not a tight count).
-pub open spec fn nested_specialization_bound<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>) -> nat {
-    env_nested_reachable(env, seed).len() * nested_occ_cap(env)
-}
 
-/// How many times `v` occurs in `s` -- factored out purely so `nested_
-/// specialization_pigeonhole` below can state its per-name occurrence-cap
-/// hypothesis precisely; `vstd::seq.rs` has no built-in `filter`/`count`
-/// in this fork.
-pub open spec fn count_eq(s: Seq<u64>, v: u64) -> nat
-    decreases s.len()
-{
-    if s.len() == 0 {
-        0
-    } else if s[s.len() - 1] == v {
-        1 + count_eq(s.subrange(0, s.len() - 1), v)
-    } else {
-        count_eq(s.subrange(0, s.len() - 1), v)
-    }
-}
 
-/// The elementary counting step `nested_specialization_bound` needs to
-/// actually bound a real push SEQUENCE: if every pushed name is drawn
-/// from a fixed, finite `env_nested_reachable(env, seed)` (size R), and
-/// no single name occurs more than `nested_occ_cap(env)` (C) times in
-/// the sequence, the sequence has length at most R*C. This is PURE,
-/// environment-independent combinatorics (a sequence valued in a set of
-/// size R with every value capped at C occurrences has length <= R*C) --
-/// categorically different from this file's other trust boundaries
-/// (`env_nested_reachable_closure`, `nested_occ_cap` themselves, both
-/// empirical claims about real Lean environments): this one is provable
-/// from first principles, e.g. by exhibiting an injection from sequence
-/// positions into `reachable x [0, C)` via each position's own rank
-/// among same-value predecessors (same "injection into a known-size
-/// finite Set, pigeonhole via `lemma_map_size`" technique `gen_elim_
-/// level_collision_bound`/`mk_unique_name_collision_bound` already used
-/// in `name_arena_bridge.rs`). Trusted here (`#[verifier::external_body]`)
-/// rather than actually carried out, purely for scope -- constructing the
-/// rank function and its injectivity proof is real additional work, not
-/// a shortcut around any REMAINING uncertainty about whether the fact is
-/// true.
-#[verifier::external_body]
-pub proof fn nested_specialization_pigeonhole<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, pushed_names: Seq<u64>)
-    requires
-        forall |i: int| 0 <= i < pushed_names.len() ==> env_nested_reachable(env, seed).contains(#[trigger] pushed_names[i]),
-        forall |m: u64| #[trigger] env_nested_reachable(env, seed).contains(m) ==> count_eq(pushed_names, m) <= nested_occ_cap(env),
-    ensures pushed_names.len() <= nested_specialization_bound(env, seed)
-{
-}
 
-/// The remaining link `nested_specialization_pigeonhole` needs before it
-/// can be applied to a REAL run's own growing push history: restates
-/// `nested_occ_cap`'s OWN documented meaning ("bounds push events
-/// attributable to ONE name, across the WHOLE run" -- see that constant's
-/// doc comment above) directly as a fact about any reachable-valued
-/// sequence, rather than leaving the per-name occurrence-cap hypothesis
-/// to be independently established by each caller. NOT new content
-/// beyond what `nested_occ_cap` already asserts -- this is that same
-/// trust boundary, phrased in the `Seq`/`count_eq` vocabulary `nested_
-/// specialization_pigeonhole` needs to consume it. Trusted
-/// (`#[verifier::external_body]`), same category as `nested_occ_cap`
-/// itself, not a new empirical claim.
-#[verifier::external_body]
-pub proof fn nested_occ_cap_holds_for_reachable_seq<'x, 'a>(env: Env<'x, 'a>, seed: Set<u64>, pushed_names: Seq<u64>)
-    requires
-        forall |i: int| 0 <= i < pushed_names.len() ==> env_nested_reachable(env, seed).contains(#[trigger] pushed_names[i]),
-    ensures
-        forall |m: u64| #[trigger] env_nested_reachable(env, seed).contains(m) ==> count_eq(pushed_names, m) <= nested_occ_cap(env),
-{
-}
 
 }
 

@@ -57,71 +57,8 @@ pub open spec fn is_succ(l: LevelSpec) -> bool {
     match l { LevelSpec::Succ(_) => true, _ => false }
 }
 
-/// `TcCtx::is_never_zero`'s (`level.rs:280-287`) own model: a PURELY
-/// SYNTACTIC, structural over-approximation of "this level can never
-/// denote 0" -- `Succ(_)` is always non-zero; `Max` is never-zero if
-/// EITHER side is; `IMax(_, r)` is never-zero based on the RIGHT side
-/// ONLY (matching `interp`'s own `IMax` rule: the whole thing collapses
-/// to 0 whenever the right side does, regardless of the left). `Param`
-/// conservatively answers `false` (a bound universe variable COULD be
-/// instantiated to 0) -- this is deliberately NOT as precise as `interp`
-/// itself, exactly mirroring the real function's own syntactic (not
-/// semantic) check.
-pub open spec fn is_never_zero_spec(l: LevelSpec) -> bool
-    decreases l
-{
-    match l {
-        LevelSpec::Zero | LevelSpec::Param(_) => false,
-        LevelSpec::Succ(_) => true,
-        LevelSpec::Max(a, b) => is_never_zero_spec(*a) || is_never_zero_spec(*b),
-        LevelSpec::IMax(_, r) => is_never_zero_spec(*r),
-    }
-}
 
-/// `TcCtx::may_be_prop`'s (`level.rs:276-278`) own model: `!is_never_zero_spec`.
-pub open spec fn may_be_prop_spec(l: LevelSpec) -> bool {
-    !is_never_zero_spec(l)
-}
 
-/// The real semantic payoff of `is_never_zero_spec`: whenever it answers
-/// `true`, the level GENUINELY never denotes 0, under ANY parameter
-/// assignment `rho` -- not just "the syntactic check happened to say so."
-/// Proven by structural induction, mirroring `is_never_zero_spec`'s own
-/// case split against `interp`'s own definition case by case: `Succ`
-/// trivially interps to `something + 1 >= 1`; `Max`'s `max_nat` can only
-/// be `>=` whichever side the IH already bounds away from 0; `IMax`'s
-/// own "collapse to 0 iff the right side does" rule means the IH on the
-/// right side (`interp(r,rho) >= 1`, hence `!= 0`) directly rules out
-/// the collapsing branch, leaving the `max_nat` branch (again `>=` the
-/// right side).
-pub proof fn is_never_zero_spec_sound(l: LevelSpec)
-    requires is_never_zero_spec(l)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) >= 1
-    decreases l
-{
-    match l {
-        LevelSpec::Succ(a) => {
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*a, rho) + 1);
-        }
-        LevelSpec::Max(a, b) => {
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == max_nat(interp(*a, rho), interp(*b, rho)));
-            if is_never_zero_spec(*a) {
-                is_never_zero_spec_sound(*a);
-            } else {
-                is_never_zero_spec_sound(*b);
-            }
-        }
-        LevelSpec::IMax(t, r) => {
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) ==
-                if interp(*r, rho) == 0 { 0 } else { max_nat(interp(*t, rho), interp(*r, rho)) });
-            is_never_zero_spec_sound(*r);
-        }
-        _ => {
-            assert(!is_never_zero_spec(l));
-            assert(false);
-        }
-    }
-}
 
 pub open spec fn is_imax(l: LevelSpec) -> bool {
     match l { LevelSpec::IMax(_, _) => true, _ => false }
@@ -163,39 +100,6 @@ pub fn combining(l: LevelSpec, r: LevelSpec) -> (result: LevelSpec)
     }
 }
 
-/// Mirrors `TcCtx::simplify`'s `Zero`/`Param`/`Succ`/`Max` cases: normalizes a
-/// level while preserving what it denotes. The `IMax` case is intentionally
-/// omitted for now — `level.rs`'s real `simplify` decides that case using
-/// `is_zero`/`is_one`, which are themselves defined via the `leq` decision
-/// procedure (`leq_core`/`leq_imax_by_cases`). Modeling `IMax` here means
-/// modeling `leq` first, which is the next step in this exploration.
-pub fn simplify_no_imax(l: LevelSpec) -> (result: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, rho)
-    decreases l
-{
-    match l {
-        LevelSpec::Zero => LevelSpec::Zero,
-        LevelSpec::Param(p) => LevelSpec::Param(p),
-        LevelSpec::Succ(a) => {
-            let sub = simplify_no_imax(*a);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*a, rho) + 1);
-            LevelSpec::Succ(Box::new(sub))
-        }
-        LevelSpec::Max(a, b) => {
-            let sa = simplify_no_imax(*a);
-            let sb = simplify_no_imax(*b);
-            let result = combining(sa, sb);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == max_nat(interp(*a, rho), interp(*b, rho)));
-            result
-        }
-        LevelSpec::IMax(a, b) => LevelSpec::IMax(a, b),
-    }
-}
 
 /// A conservative, structural-only fragment of `TcCtx::leq_core`
 /// (`level.rs`'s decision procedure for "is `l + diff <= r` valid for every
@@ -861,50 +765,6 @@ pub proof fn case_split_sound(
     }
 }
 
-/// Mirrors `TcCtx::leq_imax_by_cases`: decides `l_in + diff <= r_in` (for
-/// every assignment of the universe parameters) by case-splitting on `p`,
-/// using `leq_core_partial` for the two resulting subgoals. Sound by
-/// `case_split_sound` above: `subst1`'s own postcondition supplies exactly
-/// the "what does `lhs_0`/`rhs_0`/`lhs_s`/`rhs_s` denote" hypotheses it
-/// needs, and `leq_core_partial`'s postcondition supplies the two subgoal
-/// hypotheses — so this composes without needing any further proof, which
-/// is exactly the payoff of proving `case_split_sound` as a standalone fact.
-pub fn leq_imax_by_cases_via_partial(l_in: LevelSpec, r_in: LevelSpec, p: u64, diff: i64) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l_in, rho) as int <= interp(r_in, rho) as int + diff as int
-{
-    let l_in2 = dup(&l_in);
-    let r_in2 = dup(&r_in);
-    let succ_p = LevelSpec::Succ(Box::new(LevelSpec::Param(p)));
-
-    let lhs_0 = subst1(l_in, p, &LevelSpec::Zero);
-    let rhs_0 = subst1(r_in, p, &LevelSpec::Zero);
-    let lhs_s = subst1(l_in2, p, &succ_p);
-    let rhs_s = subst1(r_in2, p, &succ_p);
-
-    let ok0 = leq_core_partial(&lhs_0, &rhs_0, diff);
-    let oks = leq_core_partial(&lhs_s, &rhs_s, diff);
-
-    // Bridge facts: `subst1`'s ensures are stated in terms of `l_in2`/`r_in2`
-    // (the actual arguments passed to it) and `interp(succ_p, rho)`; restate
-    // them in terms of `l_in`/`r_in`/`eff` to match `case_split_sound`'s
-    // hypotheses exactly.
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(l_in2, rho) == interp(l_in, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(r_in2, rho) == interp(r_in, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(succ_p, rho) == interp(LevelSpec::Param(p), rho) + 1);
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Param(p), rho) == eff(rho, p as nat));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(succ_p, rho) == eff(rho, p as nat) + 1);
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) == interp(l_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(rhs_s, rho) == interp(r_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
-
-    if ok0 && oks {
-        proof {
-            case_split_sound(l_in, r_in, p, diff as int, lhs_0, rhs_0, lhs_s, rhs_s);
-        }
-        true
-    } else {
-        false
-    }
-}
 
 /// Fuel-threaded, mutually-recursive counterpart to `leq_core_partial` +
 /// `leq_imax_by_cases_via_partial`: instead of leaning on the (still

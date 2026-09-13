@@ -57,9 +57,9 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, c
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, verified_whnf_no_unfolding_fixpoint, verified_whnf_no_unfolding_fixpoint_bounded, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{whnf_fixpoint_ok, whnf_fixpoint_final_bound, whnf_fixpoint_final_d, is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
+use crate::expr_arena_bridge::{is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{bool_true_id, bool_false_id, nat_zero_id, nat_succ_id, nat_repr_is_zero, nat_repr_pred};
@@ -115,7 +115,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, one_whnf_no_unfolding_with_proj_step, whnf_no_unfolding_with_proj_reaches, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, shift_abstr_commute, depth_le_size};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, depth_le_size};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id, bool_true_arity_is_zero_any};
 use crate::expr_arena_bridge::verified_size;
@@ -480,191 +480,11 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     }
 }
 
-/// `verified_whnf_step`'s own stronger sibling, composing `verified_whnf_
-/// no_unfolding_fixpoint_bounded` (`n` rounds of beta/zeta, WITH forward
-/// bounds) and `verified_unfold_def_step_bounded` (one delta attempt,
-/// WITH forward bounds) -- unlike the original `verified_whnf_step`, this
-/// one's OWN result carries `nlbv`/`max_var_below`/`depth` too, so it can
-/// be fed into a FURTHER round of itself (the real missing piece this
-/// whole project's "multi-round whnf" gap has been about). Requires
-/// `env_global_cap(*env)` fit under the bound the no-unfolding fixpoint
-/// leaves behind, so the definition body's own natural cap unifies with
-/// the beta/zeta phase's already-grown bound (same "caller supplies a
-/// sufficient ceiling" pattern as everywhere else).
-pub fn verified_whnf_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        whnf_fixpoint_ok(bound, d, n as nat),
-        bound2 == whnf_fixpoint_final_bound(bound, d, n as nat),
-        d2 == whnf_fixpoint_final_d(d, n as nat),
-        env_global_cap(*env) <= bound2,
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound2)
-            &&& depth(to_model(r)) <= env_global_cap(*env) + d2 + d2
-        },
-        None => true,
-    }
-{
-    match verified_whnf_no_unfolding_fixpoint_bounded(ctx, e, fuel, Ghost(bound), Ghost(d), n) {
-        Some(whnfd) => {
-            proof {
-                assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
-                    to_model_of_env(*env).contains_key(k)
-                    && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == to_model_of_env(*env)[k]
-                by {}
-                pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model_of_env(*env), to_model(e), to_model(whnfd));
-            }
-            match verified_unfold_def_step_bounded(ctx, env, whnfd, fuel, Ghost(bound2), Ghost(d2)) {
-                Some(r) => {
-                    proof {
-                        let (id, ks, val) = choose |id: u64, ks: Seq<u64>, val: ExprSpec| {
-                            &&& to_model_of_env(*env).contains_key(id)
-                            &&& to_model_of_env(*env)[id] == (ks, val)
-                            &&& pstep_star(
-                                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                                    to_model(whnfd),
-                                    to_model(r),
-                                )
-                        };
-                        let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
-                        assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
-                            to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
-                        by {
-                            assert(k == id);
-                        }
-                        pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(whnfd), to_model(r));
-                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(whnfd), to_model(r));
-                    }
-                    Some(r)
-                }
-                None => {
-                    assert(d2 <= env_global_cap(*env) + d2 + d2);
-                    Some(whnfd)
-                }
-            }
-        }
-        None => None,
-    }
-}
-
-/// "`cap`/`bound`/`d` have enough headroom for `outer_n` MORE chained
-/// calls to `verified_whnf_step_bounded`" -- same recursive-feasibility
-/// shape as `whnf_fixpoint_ok`, one level up: each round is ONE `verified_
-/// whnf_no_unfolding_step` (fixed `n=1`, not a whole inner fixpoint --
-/// deliberately the simplest granularity, matching real `whnf`'s own
-/// "one no-unfolding pass, one delta attempt, repeat" loop shape) plus
-/// one delta attempt via `verified_unfold_def_step_bounded`. `cap`
-/// (`env_global_cap` of the real environment) stays FIXED across every
-/// round -- only `bound`/`d` grow -- matching `verified_whnf_step_
-/// bounded`'s own output shape exactly: `max_var_below` only grows to
-/// `bound + d^3 + d^2` (the beta/zeta phase's own contribution), while
-/// `depth` grows via `cap + d2 + d2` (the delta phase's contribution,
-/// `cap`-anchored since delta pulls in an environment-stored value).
-pub open spec fn whnf_multi_round_ok(cap: nat, bound: nat, d: nat, outer_n: nat) -> bool
-    decreases outer_n
-{
-    // Same phantom-next-round fix as `whnf_fixpoint_ok`: `outer_n == 0`
-    // runs nothing and demands nothing; every EXECUTED round's budget
-    // is demanded by its own recursion level.
-    outer_n == 0 || (whnf_fixpoint_ok(bound, d, 1) && cap <= bound && {
-        let bound2 = bound + d * d * d + d * d;
-        let d2 = d * d + 4 * d;
-        let next_d = cap + d2 + d2;
-        whnf_multi_round_ok(cap, bound2, next_d, (outer_n - 1) as nat)
-    })
-}
 
 
-/// The closed-form "`bound`/`d` after `outer_n` rounds" `whnf_multi_round_
-/// ok`'s own recursive feasibility check walks through internally but
-/// never surfaces -- same "expose what the recursion already tracks"
-/// story as `whnf_fixpoint_final_bound`/`_d` one level down.
-pub open spec fn whnf_multi_round_final_bound(cap: nat, bound: nat, d: nat, outer_n: nat) -> nat
-    decreases outer_n
-{
-    if outer_n == 0 {
-        bound
-    } else {
-        let bound2 = bound + d * d * d + d * d;
-        let d2 = d * d + 4 * d;
-        let next_d = cap + d2 + d2;
-        whnf_multi_round_final_bound(cap, bound2, next_d, (outer_n - 1) as nat)
-    }
-}
 
-pub open spec fn whnf_multi_round_final_d(cap: nat, bound: nat, d: nat, outer_n: nat) -> nat
-    decreases outer_n
-{
-    if outer_n == 0 {
-        d
-    } else {
-        let bound2 = bound + d * d * d + d * d;
-        let d2 = d * d + 4 * d;
-        let next_d = cap + d2 + d2;
-        whnf_multi_round_final_d(cap, bound2, next_d, (outer_n - 1) as nat)
-    }
-}
 
-/// `verified_whnf_multi_round`'s own stronger sibling: ALSO exposes
-/// `nlbv`/`max_var_below`/`depth` on the result, needed by any caller that
-/// must feed a `whnf`'d term into FURTHER structural work (peeling a `Pi`,
-/// substituting, then `whnf`-ing AGAIN -- exactly `check_positivity1`'s
-/// own loop shape) rather than just needing the one reduction fact.
-pub fn verified_whnf_multi_round_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(cap): Ghost<nat>, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, outer_n: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        env_global_cap(*env) <= cap,
-        whnf_multi_round_ok(cap, bound, d, outer_n as nat),
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), whnf_multi_round_final_bound(cap, bound, d, outer_n as nat))
-            &&& depth(to_model(r)) <= whnf_multi_round_final_d(cap, bound, d, outer_n as nat)
-        },
-        None => true,
-    }
-    decreases outer_n
-{
-    if outer_n == 0 {
-        proof {
-            pstep_star_refl(to_model_of_env(*env), to_model(e));
-        }
-        return Some(e);
-    }
-    proof {
-        reveal_with_fuel(whnf_fixpoint_final_bound, 2);
-        reveal_with_fuel(whnf_fixpoint_final_d, 2);
-        assert(whnf_fixpoint_final_bound(bound, d, 1) == bound + d * d * d + d * d);
-        assert(whnf_fixpoint_final_d(d, 1) == d * d + (d + d + d + d));
-    }
-    match verified_whnf_step_bounded(ctx, env, e, fuel, Ghost(bound), Ghost(d), 1, Ghost(bound + d * d * d + d * d), Ghost(d * d + (d + d + d + d))) {
-        Some(r) => {
-            assert(env_global_cap(*env) + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)) <= cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d)));
-            proof {
-                reveal_with_fuel(whnf_multi_round_final_bound, 2);
-                reveal_with_fuel(whnf_multi_round_final_d, 2);
-            }
-            match verified_whnf_multi_round_bounded(ctx, env, r, fuel, Ghost(cap), Ghost(bound + d * d * d + d * d), Ghost(cap + (d * d + (d + d + d + d)) + (d * d + (d + d + d + d))), outer_n - 1) {
-                Some(r2) => {
-                    proof {
-                        pstep_star_trans(to_model_of_env(*env), to_model(e), to_model(r), to_model(r2));
-                    }
-                    Some(r2)
-                }
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
+
 
 
 

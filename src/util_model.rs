@@ -175,44 +175,8 @@ pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
     }
 }
 
-/// `alloc_X`'s logic: check `persistent` first (tag `false`/`ExportFile`);
-/// else find-or-insert into `local` (tag `true`/`TcCtx`). Returns the tag,
-/// the index, and `local`'s new contents (only changed when actually
-/// inserting).
-pub open spec fn alloc_transition<T>(persistent: Seq<T>, local: Seq<T>, v: T) -> (bool, nat, Seq<T>) {
-    match find_index(persistent, v) {
-        Some(i) => (false, i, local),
-        None => match find_index(local, v) {
-            Some(i) => (true, i, local),
-            None => (true, local.len(), local.push(v)),
-        },
-    }
-}
 
-/// `read_X`'s logic: dispatch on the tag, then index into the
-/// corresponding set.
-pub open spec fn read_ptr<T>(persistent: Seq<T>, local: Seq<T>, is_tc: bool, idx: nat) -> Option<T> {
-    if is_tc {
-        if idx < local.len() { Some(local[idx as int]) } else { None }
-    } else {
-        if idx < persistent.len() { Some(persistent[idx as int]) } else { None }
-    }
-}
 
-/// The round-trip theorem: allocating `v` and immediately reading back the
-/// pointer you got always returns `v`, regardless of whether it was found
-/// in `persistent`, found in `local`, or freshly inserted into `local`.
-pub proof fn alloc_read_roundtrip<T>(persistent: Seq<T>, local: Seq<T>, v: T)
-    ensures ({
-        let (is_tc, idx, local2) = alloc_transition(persistent, local, v);
-        read_ptr(persistent, local2, is_tc, idx) == Some(v)
-    })
-{
-    find_index_correct(persistent, v);
-    if find_index(persistent, v).is_none() {
-        find_index_correct(local, v);
-    }
-}
 
 }
 

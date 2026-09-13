@@ -46,12 +46,12 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_noop, abstr_full_depth, find_from_end, subst_expr_levels_rel, subst_expr_levels};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_depth, find_from_end, subst_expr_levels_rel, subst_expr_levels};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
 #[cfg(verus_only)]
-use crate::beta_model::{size, args_size_sum, spine_reduce_size_cap, spine_reduce_size_cap_prefix_le, spine_reduce_chain_sized_wrapped, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model, string_free, string_lits_ok, string_free_lits_ok, size_pos, nlbv_bound_implies_max_var_below, depth_le_size, spine_reduce_chain_sized_full_wrapped, pstep_spine_app_one, spine_app_size, subst1_size_bound, spine_app_max_var_below, string_lits_ok_spine_app, string_lits_ok_subst1};
+use crate::beta_model::{size, args_size_sum, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model, string_free, string_lits_ok, string_free_lits_ok, nlbv_bound_implies_max_var_below, depth_le_size, spine_app_size, spine_app_max_var_below, string_lits_ok_spine_app};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
@@ -508,12 +508,6 @@ pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
 /// separate caps per context.
 pub uninterp spec fn local_type_cap() -> nat;
 
-/// Disclosed CEILING on `local_type_cap` (twin of `env_global_cap_bounded`).
-#[verifier::external_body]
-pub proof fn local_type_cap_bounded()
-    ensures local_type_cap() <= 30000,
-{
-}
 
 /// Deliberately omits `max_var_below`/`size` (unlike `env_global_wf`) --
 /// `depth` is needed for `infer`'s own depth-boundedness, and an
@@ -680,29 +674,7 @@ pub uninterp spec fn ctor_num_fields_of(id: u64) -> Option<u16>;
 /// 8 ble (`land`/`lor`/`xor`/`shl`/`shr` are NOT modeled: `None`).
 pub uninterp spec fn nat_bin_op_of(id: u64) -> Option<u8>;
 
-/// Disclosed trust (kernel facts): a nat-op id (`Nat.add`, ...) is a
-/// DEFINITION, so neither a constructor nor a recursor; `Nat.zero`/
-/// `Nat.succ` are constructors (hence never delta-unfoldable in a closed
-/// env) and not nat-op ids; the two are distinct ids.
-#[verifier::external_body]
-pub proof fn nat_op_not_ctor_not_rec(id: u64)
-    requires nat_bin_op_of(id) is Some
-    ensures ctor_num_params_of(id) is None, rec_data_of(id) is None
-{
-}
 
-#[verifier::external_body]
-pub proof fn nat_ctor_facts()
-    ensures
-        ctor_num_params_of(nat_zero_id()) is Some,
-        ctor_num_params_of(nat_succ_id()) is Some,
-        nat_bin_op_of(nat_zero_id()) is None,
-        nat_bin_op_of(nat_succ_id()) is None,
-        nat_zero_id() != nat_succ_id(),
-        ctor_num_params_of(bool_true_id()) is Some,
-        ctor_num_params_of(bool_false_id()) is Some,
-{
-}
 
 /// RECURSOR DATA, arena-global (rec-iota P0, 2026-09-04) -- the same
 /// "one declaration per name id per export" trust as `ctor_num_params_of`
@@ -729,14 +701,6 @@ pub ghost struct RecDataSpec {
 
 pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
 
-/// A constructor id is never a recursor id (one declaration per name):
-/// the recursor-iota rule cannot fire on a constructor-headed spine.
-#[verifier::external_body]
-pub proof fn ctor_not_rec(id: u64)
-    requires ctor_num_params_of(id) is Some
-    ensures rec_data_of(id) is None
-{
-}
 
 /// Disclosed trust: every recursor rule's right-hand side is a CLOSED
 /// term (no loose bound variables, no free variables) with no string
@@ -767,86 +731,6 @@ pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
     (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e) == nat_zero_id())
 }
 
-/// Exec `StringLit`-freeness check over the real arena, mirroring the
-/// model `string_free` exactly (same dispatch as `verified_size`).
-/// `Some(true)` gives `string_lits_ok(to_model(e), cap)` at EVERY cap
-/// via `string_free_lits_ok` -- the runtime-dischargeable route to the
-/// per-element `string_lits_ok(_, 0)` facts `pstep_to_pstep_d`/
-/// `defeq_trans_single_middle_sized` demand (a `StringLit`'s ghost
-/// expansion itself can never be measured by exec code). `Some(false)`
-/// is a definite `StringLit` sighting; `None` is fuel exhaustion or an
-/// unmodeled shape.
-pub fn verified_string_free<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
-        Some(b) => b == string_free(to_model(e)),
-        None => true,
-    }
-    decreases fuel
-{
-    if fuel == 0 {
-        return None;
-    }
-    let el = ctx.read_expr(e);
-    if let Some((f, a)) = expr_as_app(&el) {
-        let bf = match verified_string_free(ctx, f, fuel - 1) { Some(v) => v, None => return None };
-        let ba = match verified_string_free(ctx, a, fuel - 1) { Some(v) => v, None => return None };
-        assert(string_free(to_model(e)) == (string_free(to_model(f)) && string_free(to_model(a))));
-        return Some(bf && ba);
-    }
-    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
-        let bt = match verified_string_free(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let bb = match verified_string_free(ctx, body, fuel - 1) { Some(v) => v, None => return None };
-        assert(string_free(to_model(e)) == (string_free(to_model(ty)) && string_free(to_model(body))));
-        return Some(bt && bb);
-    }
-    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
-        let bt = match verified_string_free(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let bb = match verified_string_free(ctx, body, fuel - 1) { Some(v) => v, None => return None };
-        assert(string_free(to_model(e)) == (string_free(to_model(ty)) && string_free(to_model(body))));
-        return Some(bt && bb);
-    }
-    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
-        let bt = match verified_string_free(ctx, ty, fuel - 1) { Some(v2) => v2, None => return None };
-        let bv = match verified_string_free(ctx, v, fuel - 1) { Some(v2) => v2, None => return None };
-        let bb = match verified_string_free(ctx, body, fuel - 1) { Some(v2) => v2, None => return None };
-        assert(string_free(to_model(e)) == (string_free(to_model(ty)) && string_free(to_model(v)) && string_free(to_model(body))));
-        return Some(bt && bv && bb);
-    }
-    if let Some((_, _, st)) = expr_as_proj(&el) {
-        let bs = match verified_string_free(ctx, st, fuel - 1) { Some(v) => v, None => return None };
-        assert(string_free(to_model(e)) == string_free(to_model(st)));
-        return Some(bs);
-    }
-    if expr_as_var(&el).is_some() {
-        assert(string_free(to_model(e)));
-        return Some(true);
-    }
-    if expr_as_sort(&el).is_some() {
-        assert(string_free(to_model(e)));
-        return Some(true);
-    }
-    if expr_as_const(e, &el).is_some() {
-        proof { is_const_shape_model(e); }
-        assert(string_free(to_model(e)));
-        return Some(true);
-    }
-    if expr_as_local(e, &el).is_some() {
-        proof { is_local_shape_model(e); }
-        assert(string_free(to_model(e)));
-        return Some(true);
-    }
-    if expr_as_nat_lit(e, &el).is_some() {
-        proof { is_nat_lit_shape_model(e); }
-        assert(string_free(to_model(e)));
-        return Some(true);
-    }
-    if expr_as_string_lit(e, &el) {
-        proof { is_string_lit_shape_model(e); }
-        assert(!string_free(to_model(e)));
-        return Some(false);
-    }
-    None
-}
 
 /// Exec size computation over the real arena, mirroring the model
 /// `size` exactly -- THE opening piece of the chain-carrying
@@ -1118,316 +1002,7 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
     None
 }
 
-/// `verified_whnf_beta_step` with a SIZED CHAIN: measures the head and
-/// every argument with `verified_size`, computes `spine_reduce_size_cap`
-/// over ALL arguments iteratively (the suffix-form loop invariant makes
-/// each step a definitional unfolding of the spec cap), gates at 60000,
-/// and then exposes the explicit `pstep` chain from the applied spine to
-/// the result with EVERY element's size <= 60000 -- dischargeable
-/// per-element bounds, without knowing in advance how many arguments the
-/// beta step will consume (`spine_reduce_size_cap_prefix_le`). `None`
-/// additionally covers any measurement or gate failure -- honest
-/// incompleteness, same convention as everywhere in this arc.
-pub fn verified_whnf_beta_step_sized<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, bound: nat) -> (result: Option<ExprPtr<'t>>)
-    requires
-        args.len() > 0,
-        nlbv(to_model(e_fun)) <= 0,
-        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
-        depth(to_model(e_fun)) <= 60000,
-        bound + 10 <= 0xFFFF_0000,
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r))
-            &&& exists |ch: Seq<ExprSpec>|
-                #![trigger ch.len()]
-                ch.len() >= 1
-                && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-                && ch[ch.len() - 1] == to_model(r)
-                && pstep_chain_valid(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ch)
-                && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= 60000)
-        },
-        None => true,
-    }
-{
-    let ghost full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    let sf = match verified_size(ctx, e_fun, fuel) { Some(v) => v, None => return None };
-    let mut acc_hs: u64 = sf as u64;
-    let mut acc_sum: u64 = 0;
-    let mut k: usize = 0;
-    proof {
-        assert(full_model.subrange(0, full_model.len() as int) =~= full_model);
-        assert(sf as nat == size(to_model(e_fun)));
-    }
-    while k < args.len()
-        invariant
-            k <= args@.len(),
-            acc_hs <= 60000,
-            acc_sum <= 60000,
-            full_model == Seq::new(args@.len(), |i: int| to_model(args@[i])),
-            spine_reduce_size_cap(size(to_model(e_fun)), full_model)
-                == spine_reduce_size_cap(acc_hs as nat, full_model.subrange(k as int, full_model.len() as int)) + acc_sum as nat,
-        decreases args@.len() - k
-    {
-        let sa = match verified_size(ctx, args[k], fuel) { Some(v) => v, None => return None };
-        assert(acc_hs * (1u64 + sa as u64) <= 60000u64 * 60001u64) by (nonlinear_arith)
-            requires acc_hs <= 60000, sa <= 60000;
-        let m: u64 = acc_hs * (1u64 + sa as u64);
-        if m > 60000 {
-            return None;
-        }
-        let s2: u64 = acc_sum + 1u64 + sa as u64;
-        if s2 > 60000 {
-            return None;
-        }
-        proof {
-            let suf = full_model.subrange(k as int, full_model.len() as int);
-            assert(suf.len() > 0);
-            assert(suf[0] == to_model(args@[k as int]));
-            assert(sa as nat == size(to_model(args@[k as int])));
-            assert(size(suf[0]) == sa as nat);
-            assert(suf.subrange(1, suf.len() as int) =~= full_model.subrange(k as int + 1, full_model.len() as int));
-            assert(spine_reduce_size_cap(acc_hs as nat, suf)
-                == spine_reduce_size_cap((acc_hs as nat) * (1 + size(suf[0])), suf.subrange(1, suf.len() as int)) + 1 + size(suf[0]));
-            assert(m as nat == (acc_hs as nat) * (1 + sa as nat));
-        }
-        acc_hs = m;
-        acc_sum = s2;
-        k = k + 1;
-    }
-    if acc_hs > 60000 || acc_sum > 60000 || acc_hs + acc_sum > 60000 {
-        return None;
-    }
-    proof {
-        assert(full_model.subrange(args@.len() as int, full_model.len() as int) =~= Seq::<ExprSpec>::empty());
-        assert(spine_reduce_size_cap(acc_hs as nat, Seq::<ExprSpec>::empty()) == acc_hs as nat);
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) == acc_hs as nat + acc_sum as nat);
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) <= 60000);
-    }
-    let r = match verified_whnf_beta_step(ctx, e_fun, args, fuel, Ghost(bound)) { Some(v) => v, None => return None };
-    proof {
-        let env0 = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
-        let n = choose |n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
-            && spine_bind(to_model(e_fun), n) is Some
-            && to_model(r) == spine_app(
-                spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
-                Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
-            )
-            && pstep_star(env0, spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r));
-        let cm = Seq::new(n, |i: int| to_model(args@[i]));
-        let rm = Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i]));
-        assert(cm + rm =~= full_model);
-        spine_reduce_chain_sized_wrapped(env0, to_model(e_fun), cm, rm);
-        let ch = choose |ch: Seq<ExprSpec>|
-            #![trigger ch.len()]
-            ch.len() >= 1
-            && ch[0] == spine_app(to_model(e_fun), cm + rm)
-            && ch[ch.len() - 1] == spine_app(spine_reduce(to_model(e_fun), cm), rm)
-            && pstep_chain_valid(env0, ch)
-            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm));
-        spine_reduce_size_cap_prefix_le(size(to_model(e_fun)), cm, rm);
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm) <= spine_reduce_size_cap(size(to_model(e_fun)), cm + rm));
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), cm + rm) == spine_reduce_size_cap(size(to_model(e_fun)), full_model));
-        assert(ch[0] == spine_app(to_model(e_fun), full_model));
-        assert(ch[ch.len() - 1] == to_model(r));
-        assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= 60000 by {
-            assert(size(ch[i]) <= spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm));
-        }
-        assert(ch.len() >= 1
-            && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && ch[ch.len() - 1] == to_model(r)
-            && pstep_chain_valid(env0, ch)
-            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= 60000));
-    }
-    Some(r)
-}
 
-/// THE FULL-CONJUNCT PRODUCER: `verified_whnf_beta_step_sized` with the
-/// chain's per-element facts upgraded from size-only to the complete
-/// triple (`size`/`max_var_below`/`string_lits_ok(_, 0)`) that
-/// `pstep_to_pstep_d`/`chain_to_pstep_d_links` need -- so this
-/// producer's verdict can feed `defeq_trans_single_middle_sized` and
-/// the certified-confluence machinery directly. Two additions make
-/// that possible:
-/// - a caller-chosen `size_gate` (<= 60000) replaces the fixed 60000
-///   ceiling, because the chain's uniform mvb bound is
-///   `bound + size_gate + (size_gate+2)*(size_gate+1)` -- at the fixed
-///   gate that is ~1.8e9, far past what the Takahashi overflow
-///   ceilings can absorb, while at gate 100 it is ~10k (see
-///   `single_middle_ceil_sat_demo`'s scale);
-/// - runtime `verified_string_free` gates on the head and every
-///   argument discharge the `string_lits_ok` conjuncts via
-///   `string_free_lits_ok` (a `StringLit`'s ghost expansion can never
-///   be measured by exec code, but its absence can).
-pub fn verified_whnf_beta_step_sized_full<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, size_gate: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        args.len() > 0,
-        nlbv(to_model(e_fun)) <= 0,
-        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
-        depth(to_model(e_fun)) <= 60000,
-        size_gate <= 60000,
-        bound + size_gate as nat + (size_gate as nat + 2) * (size_gate as nat + 1) + 10 <= 0xFFFF_0000,
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r))
-            &&& exists |ch: Seq<ExprSpec>|
-                #![trigger ch.len()]
-                ch.len() >= 1
-                && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-                && ch[ch.len() - 1] == to_model(r)
-                && pstep_chain_valid(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), ch)
-                && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= size_gate as nat)
-                && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], (bound + size_gate as nat + (size_gate as nat + 2) * (size_gate as nat + 1)) as nat))
-                && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0))
-        },
-        None => true,
-    }
-{
-    let ghost full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    let sfree = match verified_string_free(ctx, e_fun, fuel) { Some(b) => b, None => return None };
-    if !sfree {
-        return None;
-    }
-    let sf = match verified_size(ctx, e_fun, fuel) { Some(v) => v, None => return None };
-    if sf > size_gate {
-        return None;
-    }
-    let mut acc_hs: u64 = sf as u64;
-    let mut acc_sum: u64 = 0;
-    let mut k: usize = 0;
-    proof {
-        assert(full_model.subrange(0, full_model.len() as int) =~= full_model);
-        assert(sf as nat == size(to_model(e_fun)));
-        assert(string_free(to_model(e_fun)));
-    }
-    while k < args.len()
-        invariant
-            k <= args@.len(),
-            acc_hs <= size_gate,
-            acc_sum <= size_gate,
-            size_gate <= 60000,
-            acc_sum >= 2 * k,
-            full_model == Seq::new(args@.len(), |i: int| to_model(args@[i])),
-            spine_reduce_size_cap(size(to_model(e_fun)), full_model)
-                == spine_reduce_size_cap(acc_hs as nat, full_model.subrange(k as int, full_model.len() as int)) + acc_sum as nat,
-            forall |j: int| 0 <= j < k ==> string_free(to_model(args@[j])),
-        decreases args@.len() - k
-    {
-        let afree = match verified_string_free(ctx, args[k], fuel) { Some(b) => b, None => return None };
-        if !afree {
-            return None;
-        }
-        let sa = match verified_size(ctx, args[k], fuel) { Some(v) => v, None => return None };
-        assert(acc_hs * (1u64 + sa as u64) <= 60000u64 * 60001u64) by (nonlinear_arith)
-            requires acc_hs <= 60000, sa <= 60000;
-        let m: u64 = acc_hs * (1u64 + sa as u64);
-        if m > size_gate as u64 {
-            return None;
-        }
-        let s2: u64 = acc_sum + 1u64 + sa as u64;
-        if s2 > size_gate as u64 {
-            return None;
-        }
-        proof {
-            let suf = full_model.subrange(k as int, full_model.len() as int);
-            assert(suf.len() > 0);
-            assert(suf[0] == to_model(args@[k as int]));
-            assert(sa as nat == size(to_model(args@[k as int])));
-            assert(size(suf[0]) == sa as nat);
-            size_pos(to_model(args@[k as int]));
-            assert(suf.subrange(1, suf.len() as int) =~= full_model.subrange(k as int + 1, full_model.len() as int));
-            assert(spine_reduce_size_cap(acc_hs as nat, suf)
-                == spine_reduce_size_cap((acc_hs as nat) * (1 + size(suf[0])), suf.subrange(1, suf.len() as int)) + 1 + size(suf[0]));
-            assert(m as nat == (acc_hs as nat) * (1 + sa as nat));
-        }
-        acc_hs = m;
-        acc_sum = s2;
-        k = k + 1;
-    }
-    if acc_hs + acc_sum > size_gate as u64 {
-        return None;
-    }
-    proof {
-        assert(full_model.subrange(args@.len() as int, full_model.len() as int) =~= Seq::<ExprSpec>::empty());
-        assert(spine_reduce_size_cap(acc_hs as nat, Seq::<ExprSpec>::empty()) == acc_hs as nat);
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) == acc_hs as nat + acc_sum as nat);
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), full_model) <= size_gate as nat);
-        assert(2 * args@.len() <= size_gate as nat);
-    }
-    let r = match verified_whnf_beta_step(ctx, e_fun, args, fuel, Ghost(bound)) { Some(v) => v, None => return None };
-    proof {
-        let env0 = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
-        let n = choose |n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
-            && spine_bind(to_model(e_fun), n) is Some
-            && to_model(r) == spine_app(
-                spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
-                Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
-            )
-            && pstep_star(env0, spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r));
-        let cm = Seq::new(n, |i: int| to_model(args@[i]));
-        let rm = Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i]));
-        assert(cm + rm =~= full_model);
-        let sg = size_gate as nat;
-        let bound0 = (bound + sg) as nat;
-        let capf = spine_reduce_size_cap(size(to_model(e_fun)), full_model);
-        let capc = spine_reduce_size_cap(size(to_model(e_fun)), cm);
-        // Head facts at bound0: closed + gated size gives mvb; the
-        // runtime gate gives strings.
-        nlbv_bound_implies_max_var_below(to_model(e_fun), 0);
-        depth_le_size(to_model(e_fun));
-        assert(depth(to_model(e_fun)) <= sg);
-        max_var_below_mono(to_model(e_fun), (depth(to_model(e_fun)) + 0) as nat, bound0);
-        string_free_lits_ok(to_model(e_fun), 0);
-        // Argument facts at bound0/scap 0, for both the consumed and
-        // remaining splits.
-        assert forall |i: int| 0 <= i < cm.len() implies max_var_below(#[trigger] cm[i], bound0) && string_lits_ok(#[trigger] cm[i], 0) by {
-            assert(cm[i] == to_model(args@[i]));
-            max_var_below_mono(cm[i], bound, bound0);
-            string_free_lits_ok(cm[i], 0);
-        }
-        assert forall |i: int| 0 <= i < rm.len() implies max_var_below(#[trigger] rm[i], bound0) && string_lits_ok(#[trigger] rm[i], 0) by {
-            assert(rm[i] == to_model(args@[n as int + i]));
-            max_var_below_mono(rm[i], bound, bound0);
-            string_free_lits_ok(rm[i], 0);
-        }
-        // Headroom for the full-conjunct chain lemma: the consumed
-        // prefix's cap and length both sit under the gate.
-        spine_reduce_size_cap_prefix_le(size(to_model(e_fun)), cm, rm);
-        assert(capc + args_size_sum(rm) <= capf);
-        assert(capc <= sg);
-        assert(cm.len() <= args@.len());
-        assert(cm.len() + 1 <= sg + 2);
-        assert((cm.len() + 1) * (capc + 1) <= (sg + 2) * (sg + 1)) by (nonlinear_arith)
-            requires cm.len() + 1 <= sg + 2, capc + 1 <= sg + 1;
-        spine_reduce_chain_sized_full_wrapped(env0, to_model(e_fun), cm, rm, bound0, 0);
-        let bigb = (bound0 + (cm.len() + 1) * (capc + 1)) as nat;
-        let ch = choose |ch: Seq<ExprSpec>|
-            #![trigger ch.len()]
-            ch.len() >= 1
-            && ch[0] == spine_app(to_model(e_fun), cm + rm)
-            && ch[ch.len() - 1] == spine_app(spine_reduce(to_model(e_fun), cm), rm)
-            && pstep_chain_valid(env0, ch)
-            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= spine_reduce_size_cap(size(to_model(e_fun)), cm) + args_size_sum(rm))
-            && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], bigb))
-            && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0));
-        assert(spine_reduce_size_cap(size(to_model(e_fun)), cm + rm) == capf);
-        assert(ch[0] == spine_app(to_model(e_fun), full_model));
-        assert(ch[ch.len() - 1] == to_model(r));
-        let mb = (bound + sg + (sg + 2) * (sg + 1)) as nat;
-        assert(bigb <= mb);
-        assert forall |i: int| 0 <= i < ch.len() implies size(#[trigger] ch[i]) <= sg && max_var_below(#[trigger] ch[i], mb) by {
-            assert(size(ch[i]) <= capc + args_size_sum(rm));
-            max_var_below_mono(ch[i], bigb, mb);
-        }
-        assert(ch.len() >= 1
-            && ch[0] == spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && ch[ch.len() - 1] == to_model(r)
-            && pstep_chain_valid(env0, ch)
-            && (forall |i: int| 0 <= i < ch.len() ==> size(#[trigger] ch[i]) <= size_gate as nat)
-            && (forall |i: int| 0 <= i < ch.len() ==> max_var_below(#[trigger] ch[i], mb))
-            && (forall |i: int| 0 <= i < ch.len() ==> string_lits_ok(#[trigger] ch[i], 0)));
-    }
-    Some(r)
-}
 
 /// `Nat.zero`'s own declared universe-parameter arity is unconditionally
 /// ZERO -- a basic, permanent fact about the real Lean prelude (`Nat.zero`
@@ -1450,18 +1025,6 @@ pub proof fn nat_zero_arity_is_zero<'a>(e: ExprPtr<'a>)
 {
 }
 
-/// `Bool.true`'s twin of `nat_zero_arity_is_zero` (see that lemma's doc
-/// for the rationale): `Bool.true` is not universe-polymorphic, so a
-/// real `Const` named `Bool.true` always carries empty levels -- needed
-/// to identify any two such constants with the one canonical form and
-/// lift `verified_def_eq_bool_true_shortcut`'s verdict to a model-level
-/// joinability fact.
-#[verifier::external_body]
-pub proof fn bool_true_arity_is_zero<'a>(e: ExprPtr<'a>)
-    requires is_const_shape(e), const_id(e) == bool_true_id()
-    ensures to_model_of_levels(const_levels_of(e)).len() == 0
-{
-}
 
 /// Either `Bool` constant (`bool_to_expr`'s result) carries empty levels
 /// -- `bool_true_arity_is_zero` extended to `Bool.false`, same disclosed
@@ -1837,41 +1400,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_let] (ctx: &mut TcCtx<'t, 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_proj] (ctx: &mut TcCtx<'t, 'p>, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures to_model(result) == ExprSpec::Proj(idx, Box::new(to_model(structure)));
 
-/// Real-arena counterpart to `expr_model::find_pos_from_end`: recursion on
-/// the slice directly (structural `decreases`, no fuel needed -- unlike
-/// `verified_inst`/`verified_abstr` below, `ExprPtr` never needs to be
-/// "descended into" here, only compared, so there's no opaque-type
-/// termination problem to sidestep).
-pub fn verified_find_pos_from_end<'t>(locals: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: Option<u16>)
-    requires locals.len() <= 60000
-    ensures
-        match result {
-            Some(p) => find_from_end(Seq::new(locals@.len(), |i: int| expr_id(locals@[i])), expr_id(e)) == Some(p as nat)
-                && (p as nat) < locals.len(),
-            None => find_from_end(Seq::new(locals@.len(), |i: int| expr_id(locals@[i])), expr_id(e)) is None,
-        }
-    decreases locals.len()
-{
-    if locals.len() == 0 {
-        None
-    } else {
-        let last = locals[locals.len() - 1];
-        proof { expr_id_injective(last, e); }
-        if expr_ptr_eq(last, e) {
-            assert(expr_id(last) == expr_id(e));
-            Some(0)
-        } else {
-            assert(expr_id(last) != expr_id(e));
-            let sub = &locals[0..locals.len() - 1];
-            assert(Seq::new(sub@.len(), |i: int| expr_id(sub@[i]))
-                =~= Seq::new(locals@.len(), |i: int| expr_id(locals@[i])).subrange(0, locals@.len() as int - 1));
-            match verified_find_pos_from_end(sub, e) {
-                Some(p) => Some(p + 1),
-                None => None,
-            }
-        }
-    }
-}
 
 /// Real-arena counterpart to `expr_model::inst_model`, mirroring
 /// `TcCtx::inst_aux`'s actual logic (including its short-circuit) but
@@ -1998,118 +1526,6 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
     None
 }
 
-/// Real-arena counterpart to `expr_model::abstr_model`, mirroring
-/// `TcCtx::abstr_aux`'s actual logic (short-circuit included), same
-/// caching caveat as `verified_inst`.
-pub fn verified_abstr<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16, fuel: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        offset as nat + depth(to_model(e)) <= 60000,
-        locals.len() <= 60000,
-        offset as nat + locals.len() as nat + depth(to_model(e)) <= 60000,
-    ensures match result {
-        Some(r) => to_model(r) == abstr_full(to_model(e), Seq::new(locals@.len(), |i: int| expr_id(locals@[i])), offset as nat),
-        None => true,
-    }
-    decreases fuel
-{
-    if fuel == 0 {
-        return None;
-    }
-    let fuel1 = fuel - 1;
-    let has_fv_e = ctx.has_fvars(e);
-    if !has_fv_e {
-        proof {
-            abstr_full_noop(to_model(e), Seq::new(locals@.len(), |i: int| expr_id(locals@[i])), offset as nat);
-        }
-        return Some(e);
-    }
-    let el = ctx.read_expr(e);
-    if expr_is_local(e, &el) {
-        assert(to_model(e) == ExprSpec::Free(expr_id(e)));
-        return match verified_find_pos_from_end(locals, e) {
-            Some(p) => match offset.checked_add(p) {
-                Some(op) => Some(ctx.mk_var(op)),
-                None => None,
-            },
-            None => Some(e),
-        };
-    }
-    if expr_as_var(&el).is_some() {
-        return Some(e);
-    }
-    if expr_is_closed_leaf(e, &el) {
-        proof {
-            if is_const_shape(e) {
-                is_const_shape_model(e);
-                assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-            } else if is_nat_lit_shape(e) {
-                is_nat_lit_shape_model(e);
-                assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
-            } else if is_string_lit_shape(e) {
-                is_string_lit_shape_model(e);
-                assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
-            } else {
-                assert(to_model(e) == ExprSpec::Closed);
-            }
-        }
-        return Some(e);
-    }
-    if let Some((fun, arg)) = expr_as_app(&el) {
-        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
-        assert(depth(to_model(fun)) < depth(to_model(e)));
-        assert(depth(to_model(arg)) < depth(to_model(e)));
-        return match (verified_abstr(ctx, fun, locals, offset, fuel1), verified_abstr(ctx, arg, locals, offset, fuel1)) {
-            (Some(sf), Some(sa)) => Some(ctx.mk_app(sf, sa)),
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_abstr(ctx, binder_type, locals, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(offset1)) => match verified_abstr(ctx, body, locals, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_pi(binder_name, binder_style, st, sb)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_abstr(ctx, binder_type, locals, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(offset1)) => match verified_abstr(ctx, body, locals, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_lambda(binder_name, binder_style, st, sb)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
-        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(val)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_abstr(ctx, binder_type, locals, offset, fuel1), verified_abstr(ctx, val, locals, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(sv), Some(offset1)) => match verified_abstr(ctx, body, locals, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_let(binder_name, st, sv, sb, nondep)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
-        assert(depth(to_model(structure)) < depth(to_model(e)));
-        return match verified_abstr(ctx, structure, locals, offset, fuel1) {
-            Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
-            None => None,
-        };
-    }
-    None
-}
 
 /// Closed-form model of `TcCtx::abstr_pi_telescope`'s (`expr.rs:670-676`)
 /// own recursion: peels `binder_ids`/`binder_tys` from the END (matching
@@ -2415,25 +1831,6 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
     }
 }
 
-/// Plain range-slicing on `&[ExprPtr<'t>]`, factored out here specifically
-/// (rather than written inline at each call site) because slice-index
-/// preconditions for `ExprPtr` slices verify fine in THIS file (see
-/// `verified_whnf_beta_step`'s own `&args[0..n]`/`&args[n..args.len()]`,
-/// already-committed and working) but do NOT discharge in `tc_model.rs`
-/// for reasons not fully root-caused (confirmed reproducible there even
-/// for the most trivial possible slice, `&args[..0]`, with NO other
-/// preconditions involved, and confirmed NOT caused by anything from this
-/// session's own changes -- reproduces identically on a clean, unmodified
-/// `HEAD`). Slicing `&[RecRule<'t>]` in `tc_model.rs` (`verified_find_rec_
-/// rule`, elsewhere in that file) is unaffected -- the failure is specific
-/// to `ExprPtr` slices in that one file. Routing the actual index
-/// operation through here sidesteps it entirely.
-pub fn verified_slice_to<'a, 't>(args: &'a [ExprPtr<'t>], n: usize) -> (result: &'a [ExprPtr<'t>])
-    requires n <= args.len()
-    ensures result@ == args@.subrange(0, n as int)
-{
-    &args[0..n]
-}
 
 
 /// Real-arena counterpart to `spine_app`'s inverse: `TcCtx::unfold_apps`'s
@@ -2583,104 +1980,7 @@ pub fn verified_peel_pis<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_l
     }
 }
 
-/// Real-arena counterpart to `expr.rs::TcCtx::inst_forall_params`
-/// (`expr.rs:153-162`): peel exactly `n` leading `Pi` binders via
-/// `verified_peel_pis` (returning `None`, not the real function's
-/// `panic!()`, if fewer than `n` are available -- same "None instead of
-/// panic" convention `verified_is_nested_ind_app` already uses), then
-/// instantiate the resulting body with `all_args[0..n]` via `verified_
-/// inst`. Structurally identical to `tc_model.rs::verified_infer_app_
-/// telescoped` (which does the same peel-then-instantiate composition),
-/// generalized to take an explicit `n` rather than always using the
-/// full `args.len()` -- needed because `replace_if_nested`'s own calls
-/// (`inductive.rs:663, 683`) pass `all_args` containing MORE than `n`
-/// entries (the container's own parameter count), using only the
-/// leading `n` of them.
-pub fn verified_inst_forall_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, n: usize, all_args: &[ExprPtr<'t>], fuel: u32, d: nat, args_d: nat) -> (result: Option<ExprPtr<'t>>)
-    requires
-        n <= all_args@.len(),
-        depth(to_model(e)) <= d,
-        d <= 60000,
-        nlbv(to_model(e)) == 0,
-        forall |i: int| 0 <= i < n ==> #[trigger] depth(to_model(all_args@[i])) <= args_d,
-        forall |i: int| 0 <= i < n ==> #[trigger] nlbv(to_model(all_args@[i])) <= 0,
-    ensures match result {
-        Some(r) => {
-            &&& exists |body: ExprSpec|
-                spine_bind(to_model(e), n as nat) == Some(body)
-                && to_model(r) == subst_full(body, Seq::new(n as nat, |i: int| to_model(all_args@[i])), 0)
-            &&& depth(to_model(r)) <= d + args_d
-            &&& nlbv(to_model(r)) <= 0
-        },
-        None => true,
-    }
-{
-    match verified_peel_pis(ctx, e, n, fuel) {
-        Some((peeled, n2)) => {
-            if n2 != n {
-                return None;
-            }
-            proof {
-                spine_bind_depth(to_model(e), n as nat, to_model(peeled));
-                spine_bind_nlbv(to_model(e), n as nat, to_model(peeled), 0);
-            }
-            let result = verified_inst(ctx, peeled, &all_args[0..n], 0, fuel);
-            proof {
-                if let Some(r) = result {
-                    let ghost args_model = Seq::new(n as nat, |i: int| to_model(all_args@[i]));
-                    let ghost sliced: Seq<ExprPtr<'t>> = all_args@.subrange(0, n as int);
-                    assert(args_model =~= Seq::new(sliced.len(), |i: int| to_model(sliced[i])));
-                    subst_full_depth_bound_n(to_model(peeled), args_model, 0, args_d);
-                    subst_full_nlbv_bound_n(to_model(peeled), args_model, 0);
-                    assert(depth(to_model(r)) <= depth(to_model(peeled)) + args_d);
-                    assert(depth(to_model(r)) <= d + args_d);
-                    assert(nlbv(to_model(r)) <= 0);
-                }
-            }
-            result
-        }
-        None => None,
-    }
-}
 
-/// Real-arena counterpart to `expr.rs::TcCtx::replace_params`
-/// (`expr.rs:214-223`): `abstr(e, outgoing)` then `inst(_, ingoing)`, a
-/// plain two-step composition of `verified_abstr`/`verified_inst` with
-/// no new recursion of its own. Needed by `replace_if_nested`
-/// (`inductive.rs:627, 667`), which uses this to canonicalize a
-/// discovered nested-container application back onto the enclosing
-/// block's own fixed parameters -- see `env_model.rs`'s `nested_occ_cap`
-/// doc comment and this session's own soundness trace for why that
-/// canonicalization is exactly what makes the termination measure's
-/// cache-key space bounded in the first place.
-///
-/// `abstr_full_depth` (exact depth-preservation, not just a bound) lets
-/// the SAME `d` bound the input to `verified_inst` after abstraction,
-/// with no separate "depth after abstr" parameter needed.
-pub fn verified_replace_params<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, ingoing: &[ExprPtr<'t>], outgoing: &[ExprPtr<'t>], fuel: u32, d: nat) -> (result: Option<ExprPtr<'t>>)
-    requires
-        depth(to_model(e)) <= d,
-        d as nat + outgoing@.len() as nat <= 60000,
-    ensures match result {
-        Some(r) => to_model(r) == subst_full(
-            abstr_full(to_model(e), Seq::new(outgoing@.len(), |i: int| expr_id(outgoing@[i])), 0),
-            Seq::new(ingoing@.len(), |i: int| to_model(ingoing@[i])),
-            0,
-        ),
-        None => true,
-    }
-{
-    match verified_abstr(ctx, e, outgoing, 0, fuel) {
-        Some(e2) => {
-            proof {
-                abstr_full_depth(to_model(e), Seq::new(outgoing@.len(), |i: int| expr_id(outgoing@[i])), 0);
-                assert(depth(to_model(e2)) == depth(to_model(e)));
-            }
-            verified_inst(ctx, e2, ingoing, 0, fuel)
-        }
-        None => None,
-    }
-}
 
 /// The capstone: bridges `tc.rs`'s `whnf_no_unfolding_aux`'s
 /// `Lambda { .. } if !args.is_empty()` branch -- the real kernel's
@@ -3175,152 +2475,10 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
     }
 }
 
-/// `verified_whnf_no_unfolding_step`'s own growth formula, one call's
-/// worth: `d` (a depth cap) becomes `d*d + 4*d + 1`, `bound` becomes
-/// `bound + d*d*d + d*d`. Named so the fixpoint below can thread them
-/// without repeating the formula inline.
-pub open spec fn whnf_step_next_d(d: nat) -> nat { d * d + 4 * d }
-pub open spec fn whnf_step_next_bound(bound: nat, d: nat) -> nat { bound + d * d * d + d * d }
 
-/// "`bound`/`d` have enough headroom for `n` MORE chained calls to
-/// `verified_whnf_no_unfolding_step`": checks THIS call's own headroom
-/// precondition, then recurses on what the NEXT call would see
-/// (`whnf_step_next_bound`/`whnf_step_next_d`) for the remaining `n - 1`
-/// calls. Deliberately recursive rather than a closed-form bound on `n`:
-/// letting Verus unfold this one level per `verified_whnf_no_unfolding_
-/// fixpoint` recursive call, matching its own `decreases n`, means no
-/// separate monotonicity lemma is needed to relate "headroom for `n`
-/// steps" to "headroom for `n - 1` steps" -- the recursive definition
-/// IS that relationship.
-pub open spec fn whnf_fixpoint_ok(bound: nat, d: nat, n: nat) -> bool
-    decreases n
-{
-    // `n == 0` demands NOTHING: no round will run, so no budget is
-    // needed. (The original also demanded the base ceilings at the
-    // never-executed post-final level, which compounded the cubic one
-    // level too far and capped d at ~38 instead of ~1625 for a single
-    // real round -- the same phantom-next-round vacuity
-    // `delta_round_fixpoint_ok` was caught with.)
-    n == 0 || (d <= 60000 && bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000
-        && whnf_fixpoint_ok(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat))
-}
 
-/// Chains `verified_whnf_no_unfolding_step` up to `n` times, stitching
-/// the individual `pstep_star` facts together via `pstep_star_trans`
-/// (free, by chain concatenation -- see `pstep_star_trans`'s own doc
-/// comment). This is the "small fixed iteration cap" this arc settled
-/// on for the outer fixpoint-chaining question `verified_whnf_no_
-/// unfolding_step` alone left open -- but `n` is a genuine PARAMETER
-/// here, not a hardcoded constant: the caller picks however many
-/// iterations their own headroom (`bound`/`d`) can actually afford, per
-/// `whnf_fixpoint_ok`'s real (not arbitrary) numeric consequence of
-/// `verified_whnf_no_unfolding_step`'s own growth formula. `None`
-/// propagates immediately from any failed sub-step (fuel exhaustion in
-/// `verified_unfold_apps`/`verified_peel_lambdas`/`verified_inst`,
-/// exactly as elsewhere in this file) rather than returning the best
-/// partial progress -- matches this file's established, simpler
-/// precedent (`verified_unfold_def_step`, `verified_reduce_proj_step`).
-pub fn verified_whnf_no_unfolding_fixpoint<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, bound: nat, d: nat, n: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        whnf_fixpoint_ok(bound, d, n as nat),
-    ensures match result {
-        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)),
-        None => true,
-    }
-    decreases n
-{
-    if n == 0 {
-        proof {
-            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
-        }
-        return Some(e);
-    }
-    match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
-        Some(r) => {
-            match verified_whnf_no_unfolding_fixpoint(ctx, r, fuel, bound + d * d * d + d * d, d * d + (d + d + d + d), n - 1) {
-                Some(r2) => {
-                    proof {
-                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
-                    }
-                    Some(r2)
-                }
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
 
-/// The closed-form "`d` after `n` rounds" that `whnf_fixpoint_ok`'s own
-/// recursive feasibility check walks through internally but never
-/// SURFACES -- needed so `verified_whnf_no_unfolding_fixpoint_bounded`
-/// below can state a genuine forward bound on its own result (not just
-/// feasibility of getting there), the same way `verified_whnf_no_
-/// unfolding_step`'s own `ensures` already exposes `whnf_step_next_d`/
-/// `whnf_step_next_bound` for a SINGLE round.
-pub open spec fn whnf_fixpoint_final_d(d: nat, n: nat) -> nat
-    decreases n
-{
-    if n == 0 { d } else { whnf_fixpoint_final_d(whnf_step_next_d(d), (n - 1) as nat) }
-}
 
-pub open spec fn whnf_fixpoint_final_bound(bound: nat, d: nat, n: nat) -> nat
-    decreases n
-{
-    if n == 0 { bound } else { whnf_fixpoint_final_bound(whnf_step_next_bound(bound, d), whnf_step_next_d(d), (n - 1) as nat) }
-}
 
-/// `verified_whnf_no_unfolding_fixpoint`'s own stronger sibling: ALSO
-/// exposes `nlbv`/`max_var_below`/`depth` on the result via `whnf_
-/// fixpoint_final_bound`/`_d` above, not just `pstep_star` -- needed so
-/// this fixpoint's own output can be fed into a FURTHER round (a delta
-/// attempt, or another beta/zeta fixpoint), which the original couldn't
-/// support despite its own single-step building block (`verified_whnf_
-/// no_unfolding_step`) already tracking exactly this internally. Pure
-/// restatement of facts the original's own recursive structure already
-/// establishes -- no new lemmas, just carrying them through to the
-/// `ensures` by induction on `n` (mirroring the original's own `decreases
-/// n` exactly).
-pub fn verified_whnf_no_unfolding_fixpoint_bounded<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, n: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        whnf_fixpoint_ok(bound, d, n as nat),
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), whnf_fixpoint_final_bound(bound, d, n as nat))
-            &&& depth(to_model(r)) <= whnf_fixpoint_final_d(d, n as nat)
-        },
-        None => true,
-    }
-    decreases n
-{
-    if n == 0 {
-        proof {
-            pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
-        }
-        return Some(e);
-    }
-    match verified_whnf_no_unfolding_step(ctx, e, fuel, Ghost(bound), Ghost(d)) {
-        Some(r) => {
-            match verified_whnf_no_unfolding_fixpoint_bounded(ctx, r, fuel, Ghost(bound + d * d * d + d * d), Ghost(d * d + (d + d + d + d)), n - 1) {
-                Some(r2) => {
-                    proof {
-                        pstep_star_trans(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r), to_model(r2));
-                    }
-                    Some(r2)
-                }
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
 
 }
