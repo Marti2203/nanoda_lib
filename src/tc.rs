@@ -2038,7 +2038,7 @@ mod routed_tests {
             assert!(tc.def_eq(redex, prop), "two beta steps must be def_eq to the reduct");
             let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100),
                 Some(true),
                 "the whnf-join boundary must follow BOTH beta steps"
             );
@@ -2147,7 +2147,7 @@ mod routed_tests {
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
             let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
             assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100, 500, 8),
+                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100),
                 Some(true),
                 "the whnf-join boundary must confirm the beta redex on its own"
             );
@@ -2197,7 +2197,7 @@ mod routed_tests {
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
         let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, applied, prop, 100, 500, 8),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, applied, prop, 100),
             Some(true),
             "the whnf-join boundary must confirm the delta-then-beta pair on its own"
         );
@@ -2247,7 +2247,7 @@ mod routed_tests {
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
         let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, proj, prop, 100, 500, 8),
+            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, proj, prop, 100),
             Some(true),
             "the whnf-join boundary must confirm the projection pair on its own"
         );
