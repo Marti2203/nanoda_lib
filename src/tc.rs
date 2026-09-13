@@ -393,13 +393,6 @@ pub mod route_stats {
     pub fn knob(name: &'static str, default: u32) -> u32 {
         std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     }
-    /// Environment cap for the conversion route. CLAMPED, not merely
-    /// documented: `verified_conv_p` and its family are proven under
-    /// `requires k <= 500`, and this call site sits outside `verus!`, so
-    /// nothing would catch `NANODA_CAP_K=60000` handing the verified routes
-    /// an argument their proofs never covered. The knob can lower the cap
-    /// for measurement; it cannot raise it past what is proven.
-    pub fn cap_k() -> u32 { 500 }
     /// Conversion search budget. 60 rather than 20: measured 2026-09-12 on
     /// Init.Data.BitVec.Lemmas, 20 leaves 81 pairs uncertified and 60 leaves
     /// 76, at the same runtime (215s either way). It plateaus there -- 200
@@ -1387,10 +1380,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// route: core, delta, join, conv, proof-irrelevance.)
     fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
         if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
-        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
+        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 2; }
         if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
-        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
-        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) {
+        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { return 4; }
+        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
             return 5;
         }
@@ -1446,7 +1439,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             route_stats::note_uncert(route_stats::uncert_events() == self.shadow_root_entry + 1);
         }
         if which == 0 && verdict && route_stats::uncertified_budget() {
-            let kx = route_stats::cap_k();
             let wx = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, x);
             let wy = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, y);
             let lx = self.whnf(x);
@@ -1473,10 +1465,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             let major = args[mi as usize];
                             let mw = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, major);
                             let mty = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
-                            let ety = crate::delta_bound_model::verified_eta_struct_shadow(self.ctx, self.env, &mut self.shadow_memo, major, kx);
+                            let ety = crate::delta_bound_model::verified_eta_struct_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
                             // the exact call `verified_conv_major_eta_p` makes,
                             // and what reducing its result gets you
-                            let sp = crate::delta_bound_model::verified_major_eta_fix(self.ctx, self.env, &mut self.shadow_memo, t, kx, 64);
+                            let sp = crate::delta_bound_model::verified_major_eta_fix(self.ctx, self.env, &mut self.shadow_memo, t, 64);
                             let spw = sp.map(|r| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, r));
                             let moved = match spw { Some(v) => !crate::expr_arena_bridge::expr_ptr_eq(v, t), None => false };
                             // would the rewritten side actually close against
@@ -1503,7 +1495,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             };
                             let other = if tag == "X" { wy } else { wx };
                             let would = match spw {
-                                Some(v) => matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, v, other, 100, kx, route_stats::conv_budget()), Some(true)),
+                                Some(v) => matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, v, other, 100, route_stats::conv_budget()), Some(true)),
                                 None => false,
                             };
                             eprintln!("  REC-{} rec={:?} major_idx={} major={:?}\n    major-whnf={:?}\n    major-type={:?}\n    eta={:?}\n    SPINE-REWRITE={} REWRITE-REDUCES-TO-NEW={} WOULD-CLOSE={} IOTA-ON-REWRITE={} exits={}\n    rewritten-major={:?}\n    rewrite-whnf={:?}",
@@ -1521,7 +1513,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ix = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x).is_some();
             let iy = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y).is_some();
             route_stats::clear_last_leaf();
-            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, kx);
+            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100);
             let pir_leaf = route_stats::last_leaf();
             let szx = crate::expr_arena_bridge::verified_size(self.ctx, x, 100000);
             let szy = crate::expr_arena_bridge::verified_size(self.ctx, y, 100000);
@@ -1542,22 +1534,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let is_root = route_stats::uncert_events() == self.shadow_root_entry + 1;
             if is_root {
                 let b = route_stats::conv_budget();
-                let kk = route_stats::cap_k();
                 let xn = self.whnf_no_unfolding(x);
                 let yn = self.whnf_no_unfolding(y);
                 match (crate::expr_arena_bridge::verified_unfold_apps(self.ctx, xn, 100000),
                        crate::expr_arena_bridge::verified_unfold_apps(self.ctx, yn, 100000)) {
                     (Some((hx, ax)), Some((hy, ay))) => {
                         let head_eq = hx == hy;
-                        let head_conv = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, hx, hy, 100, kk, b), Some(true));
+                        let head_conv = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, hx, hy, 100, b), Some(true));
                         let mut args_ok = String::new();
                         if ax.len() == ay.len() {
                             for i in 0..ax.len() {
-                                let ok = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, ax[i], ay[i], 100, kk, b), Some(true));
+                                let ok = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, ax[i], ay[i], 100, b), Some(true));
                                 args_ok.push(if ok { 'y' } else { 'n' });
                             }
                         }
-                        let spine = matches!(crate::delta_bound_model::verified_conv_spine_p(self.ctx, self.env, &mut self.shadow_memo, xn, yn, 100, kk, b), Some(true));
+                        let spine = matches!(crate::delta_bound_model::verified_conv_spine_p(self.ctx, self.env, &mut self.shadow_memo, xn, yn, 100, b), Some(true));
                         eprintln!("  ROOTINFO: head_eq={} head_conv={} nargs={}/{} args=[{}] spine_step={}",
                             head_eq, head_conv, ax.len(), ay.len(), args_ok, spine);
                     }
@@ -1598,7 +1589,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return;
         }
         if must_be_prop {
-            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100, 2000) == Some(true) {
+            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100) == Some(true) {
                 route_stats::bump(&route_stats::SHADOW_SORT_CERT);
             }
         } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 32).is_some() {
@@ -2115,7 +2106,7 @@ mod routed_tests {
         // pair (so the routed `true` above did not need the legacy path).
         let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
         assert_eq!(
-            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, &mut memo, c_foo, prop, 100, 500),
+            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, &mut memo, c_foo, prop, 100),
             Some(true),
             "the delta boundary must confirm Const(foo) == Sort 0 on its own"
         );

@@ -400,40 +400,9 @@ pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
 
 
 
-/// (`env_closed_of_global` retired with the nat-fold rule, P3: the full
-/// model contains the nat-op definitions, which `env_closed` now excludes;
-/// confluence consumers use `env_model_conf` below.)
-
-/// THE CAPPED MODEL (delta-lift CM, 2026-09-04): `to_model_of_env(env)`
-/// restricted to the definitions whose value fits `k` (size <= k) and is
-/// closed (no free variables). `env_wf`/`env_closed` hold for it BY
-/// CONSTRUCTION -- no global scan, no certificate that can fail on one
-/// oversized definition elsewhere in the environment (which is exactly
-/// what `EnvCapCert` did on the full `Init` corpus: 449 builds, 44235
-/// failures, 2.16M def_eq calls with no verified route). A delta step
-/// certifies its own definition at unfold time (`verified_size <= k`,
-/// `!has_fvars`), which puts the id in this map's domain; results under
-/// the capped model weaken to the full model (`env_model_capped_sub`).
-pub open spec fn env_model_capped<'x, 'a>(env: Env<'x, 'a>, k: nat) -> Map<u64, (Seq<u64>, ExprSpec)> {
-    to_model_of_env(env).restrict(
-        to_model_of_env(env).dom().filter(|id: u64|
-            size(to_model_of_env(env)[id].1) <= k && !has_fv(to_model_of_env(env)[id].1)),
-    )
-}
 
 
 
-/// Membership in the capped model from the per-definition checks.
-pub proof fn env_model_capped_has<'x, 'a>(env: Env<'x, 'a>, k: nat, id: u64)
-    requires
-        to_model_of_env(env).contains_key(id),
-        size(to_model_of_env(env)[id].1) <= k,
-        !has_fv(to_model_of_env(env)[id].1),
-    ensures
-        env_model_capped(env, k).contains_key(id),
-        env_model_capped(env, k)[id] == to_model_of_env(env)[id],
-{
-}
 
 /// The UNCAPPED delta model: every definition whose value has no free
 /// variables, with no size ceiling at all. `env_model_capped`'s `size <= k`

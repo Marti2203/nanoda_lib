@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::arena_lctx;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_has, env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
+use crate::env_model::{env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
 #[cfg(verus_only)]
@@ -355,130 +355,6 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     }
 }
 
-/// Delta-lift CM (capped model): `verified_unfold_def_step_bounded` with
-/// the definition CERTIFIED AT UNFOLD TIME instead of by a global env
-/// scan -- the body's size (`verified_size <= k`) and closedness
-/// (`!has_fvars`) are checked right here, which puts `id` in
-/// `env_model_capped(env, k)`'s domain, so the step holds under the
-/// capped model with `k` in the role `env_global_cap` used to play (and
-/// the singleton -> capped weakening done here, not by the caller).
-/// Cost: one size walk of the body per unfold (the level substitution
-/// already copies it).
-pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        k as nat <= bound,
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound)
-            &&& depth(to_model(r)) <= k + d + d
-        },
-        None => true,
-    }
-{
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) {
-        Some(p) => p,
-        None => return None,
-    };
-    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-    proof {
-        spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
-    }
-    assert(args@.len() <= d);
-    let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) {
-        Some(p) => p,
-        None => return None,
-    };
-    let (def_uparams, def_value) = match env.get_declar_val(&name) {
-        Some(p) => p,
-        None => return None,
-    };
-    // Per-definition certification (the capped model's membership test).
-    let sv = match verified_size(ctx, def_value, 100000) { Some(v) => v, None => return None };
-    if sv > k {
-        return None;
-    }
-    if ctx.has_fvars(def_value) {
-        return None;
-    }
-    let levels_vec = read_levels_vec(ctx, levels);
-    let uparams_vec = read_levels_vec(ctx, def_uparams);
-    if levels_vec.len() != uparams_vec.len() {
-        return None;
-    }
-    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    // (2026-09-11) no universe parameters: the value is its own instance --
-    // skip the substitution walk (it was ~10% of the shadow's runtime).
-    let subst_res = if uparams_vec.len() == 0 {
-        proof {
-            assert(to_model_of_levels(def_uparams) =~= Seq::<LevelSpec>::empty());
-            assert(level_names(to_model_of_levels(def_uparams)) =~= Seq::<u64>::empty());
-            assert(to_model_of_levels(levels) =~= Seq::<LevelSpec>::empty());
-            subst_expr_levels_empty(to_model(def_value));
-            subst_expr_levels_rel_empty(to_model(def_value));
-            assert(subst_expr_levels(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels)) == to_model(def_value));
-            assert(subst_expr_levels_rel(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels), to_model(def_value)));
-        }
-        Some(def_value)
-    } else {
-        verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000)
-    };
-    match subst_res {
-        Some(def_val) => {
-            let ghost id = name_id(name);
-            let ghost ks = level_names(to_model_of_levels(def_uparams));
-            let ghost val = to_model(def_value);
-            let ghost cm = env_model_nofv(*env);
-            assert(to_model_of_env(*env).contains_key(id));
-            assert(to_model_of_env(*env)[id] == (ks, val));
-            proof {
-                is_const_shape_model(fun);
-                const_levels_vec_model(fun);
-            }
-            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-            assert(const_id(fun) == id);
-            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
-            proof {
-                assert(size(val) <= k as nat);
-                assert(!has_fv(val));
-                env_model_capped_has(*env, k as nat, id);
-                assert(cm.contains_key(id) && cm[id] == (ks, val));
-                assert(pstep(cm, to_model(fun), to_model(def_val)));
-                pstep_star_one(cm, to_model(fun), to_model(def_val));
-                pstep_spine_app_star(cm, to_model(fun), to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
-            }
-            proof {
-                depth_le_size(val);
-                nlbv_bound_implies_max_var_below(val, 0);
-                max_var_below_mono(val, (depth(val) + 0) as nat, k as nat);
-                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
-                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(levels), to_model(def_val));
-                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(levels), to_model(def_val), k as nat);
-                max_var_below_mono(to_model(def_val), k as nat, bound);
-            }
-            assert(nlbv(to_model(def_val)) == 0);
-            assert(depth(to_model(def_val)) <= k as nat);
-            assert(max_var_below(to_model(def_val), bound));
-            let result = verified_foldl_apps(ctx, def_val, &args);
-            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            proof {
-                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
-                spine_app_bounds(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound, k as nat, d);
-            }
-            assert(nlbv(to_model(result)) <= 0);
-            assert(max_var_below(to_model(result), bound));
-            assert(depth(to_model(result)) <= k + d + args@.len());
-            Some(result)
-        }
-        None => None,
-    }
-}
 
 
 /// CAP-FREE delta step. `verified_unfold_def_step_capped` with the `k` ceiling,

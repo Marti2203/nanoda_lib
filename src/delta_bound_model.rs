@@ -167,7 +167,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::{WhnfMemo, WhnfCert, verified_whnf_free, verified_whnf_no_unfolding_free, verified_unfold_def_step_capped};
+use crate::tc_model::{WhnfMemo, WhnfCert, verified_whnf_free, verified_whnf_no_unfolding_free, verified_unfold_def_step_free};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -1164,11 +1164,10 @@ pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
 /// "Ensure Pi" with capped reduction: a syntactic `Pi` is returned as is;
 /// otherwise the capped measured whnf (32 rounds, cap `k`) is tried once.
 /// `Some((w, bt, body))`: `cur` reduces to `w == Bind(bt, body)`.
-pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, cur: ExprPtr<'t>, k: u32) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)>)
+pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, cur: ExprPtr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(cur)) <= 0,
-        k <= 60000,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some((w, bt, body)) =>
@@ -1311,7 +1310,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases np as usize - i
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
         let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             depth_le_size(to_model(w2));
@@ -1365,7 +1364,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases idx - j
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
         let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
         proof {
             depth_le_size(to_model(w2));
@@ -1389,7 +1388,7 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         cur = new_ty;
         j = j + 1;
     }
-    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return { infer_exit(6); None } };
+    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
     proof {
         proj_field_type_final(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), idx, s_m);
         assert(j == idx);
@@ -1669,11 +1668,10 @@ impl<'e, 'x, 't> EnvCapCert<'e, 'x, 't> {
 /// Delta-lift CM: THE LAZY-DELTA ROUTE WITHOUT A CERTIFICATE -- the same
 /// procedure as `verified_lazy_delta_checked_cached` over the capped
 /// model (definitions certified at unfold time), with the witnesses
-/// weakened to the full model. `k` (<= 500) is the per-definition size
+/// weakened to the full model. There is no per-definition size
 /// cap, no longer a global property of the environment.
-pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
@@ -1698,19 +1696,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if ctx.num_loose_bvars(y) != 0 {
         return None;
     }
-    proof {
-        depth_le_size(to_model(x));
-        depth_le_size(to_model(y));
-        assert(depth(to_model(x)) <= 500);
-        assert(depth(to_model(y)) <= 500);
-        nlbv_bound_implies_max_var_below(to_model(x), 0);
-        nlbv_bound_implies_max_var_below(to_model(y), 0);
-        max_var_below_mono(to_model(x), depth(to_model(x)) as nat, 500);
-        max_var_below_mono(to_model(y), depth(to_model(y)) as nat, 500);
-        assert(500 + k <= 1000);
-        assert(k + 500 + 500 <= 1500);
-    }
-    let r = verified_lazy_delta_round_capped(ctx, env, memo, x, y, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat));
+    let r = verified_lazy_delta_round_capped(ctx, env, memo, x, y, fuel);
     match r {
         Some(DeltaRoundResult::Found(b)) => {
             if b {
@@ -1937,10 +1923,9 @@ fn conv_fail_note_p<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
 /// comparison), and compare the opened bodies -- closed terms now, so
 /// every reduction route applies. The claim composes through
 /// `deq_any_bind_fresh`.
-pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires
         memo.wf(), memo.spec_env() == *env,
-        k <= 500,
         deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
@@ -1963,7 +1948,7 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
     if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
         if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
-            if let Some(true) = verified_conv(ctx, env, memo, ib1, ib2, fuel, k, budget) {
+            if let Some(true) = verified_conv(ctx, env, memo, ib1, ib2, fuel, budget) {
                 proof {
                     let kk = expr_id(local);
                     let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
@@ -1987,10 +1972,9 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 /// comparison), and compare the opened bodies -- closed terms now, so
 /// every reduction route applies. The claim composes through
 /// `deq_any_bind_fresh`.
-pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires
         memo.wf(), memo.spec_env() == *env,
-        k <= 500,
         deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(t1), to_model(t2)),
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
@@ -2018,7 +2002,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
     if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
         if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, ib1, ib2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, ib1, ib2, fuel, budget - 1) {
                 proof {
                     let kk = expr_id(local);
                     let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
@@ -2038,9 +2022,8 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// `verified_conv` with the per-checker failure cache around it: pairs
 /// this checker already failed on are not re-searched (the recursion
 /// revisits the same sub-pairs from many contexts).
-pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -2051,7 +2034,7 @@ pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>,
     if conv_fail_seen(x, y, budget) {
         return None;
     }
-    let r = verified_conv_inner(ctx, env, memo, x, y, fuel, k, budget);
+    let r = verified_conv_inner(ctx, env, memo, x, y, fuel, budget);
     match r {
         Some(true) => Some(true),
         _ => {
@@ -2066,9 +2049,8 @@ pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>,
 /// equal argument counts and at least one argument, the heads and then each
 /// argument pair are `conv`-checked at `budget - 1`, and the verdict is
 /// assembled by repeated `deq_any_app_congr` along the spine prefixes.
-pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -2087,7 +2069,7 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     let ghost am1 = Seq::new(args1@.len(), |i: int| to_model(args1@[i]));
     let ghost am2 = Seq::new(args2@.len(), |i: int| to_model(args2@[i]));
-    if let Some(true) = verified_conv(ctx, env, memo, h1, h2, fuel, k, budget - 1) {
+    if let Some(true) = verified_conv(ctx, env, memo, h1, h2, fuel, budget - 1) {
     } else {
         return None;
     }
@@ -2107,12 +2089,12 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             am2 == Seq::new(args2@.len(), |j: int| to_model(args2@[j])),
             em == to_model_of_env(*env),
             deq_any(em, spine_app(to_model(h1), am1.subrange(0, i as int)), spine_app(to_model(h2), am2.subrange(0, i as int))),
-            k <= 500, budget >= 1,
+            budget >= 1,
         decreases n - i
     {
         let a1 = args1[i];
         let a2 = args2[i];
-        if let Some(true) = verified_conv(ctx, env, memo, a1, a2, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv(ctx, env, memo, a1, a2, fuel, budget - 1) {
             proof {
                 let p1 = am1.subrange(0, i as int);
                 let p2 = am2.subrange(0, i as int);
@@ -2142,10 +2124,9 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
 /// round's depth/bound requires hold), accumulating the `pstep_star`
 /// facts; stops at the first round that is not a strict `Continue`.
 /// Returns the final reducts (`x`/`y` themselves when nothing moved).
-pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, max_rounds: u32) -> (r: (ExprPtr<'t>, ExprPtr<'t>))
+pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, max_rounds: u32) -> (r: (ExprPtr<'t>, ExprPtr<'t>))
     requires
         memo.wf(), memo.spec_env() == *env,
-        k <= 500,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
@@ -2164,8 +2145,7 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     while j < max_rounds
         invariant
             memo.wf(), memo.spec_env() == *env,
-            k <= 500,
-            cm == env_model_nofv(*env),
+                cm == env_model_nofv(*env),
             cx == x || pstep_star(cm, to_model(x), to_model(cx)),
             cy == y || pstep_star(cm, to_model(y), to_model(cy)),
             nlbv(to_model(cx)) <= 0,
@@ -2177,17 +2157,7 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         if sx > 500 || sy > 500 {
             return (cx, cy);
         }
-        proof {
-            depth_le_size(to_model(cx));
-            depth_le_size(to_model(cy));
-            nlbv_bound_implies_max_var_below(to_model(cx), 0);
-            nlbv_bound_implies_max_var_below(to_model(cy), 0);
-            max_var_below_mono(to_model(cx), depth(to_model(cx)) as nat, 500);
-            max_var_below_mono(to_model(cy), depth(to_model(cy)) as nat, 500);
-            assert(500 + k <= 1000);
-            assert(k + 500 + 500 <= 1500);
-        }
-        match verified_lazy_delta_round_capped(ctx, env, memo, cx, cy, fuel, k, Ghost(500 as nat), Ghost(500 as nat), Ghost(1000 as nat), Ghost(1500 as nat)) {
+        match verified_lazy_delta_round_capped(ctx, env, memo, cx, cy, fuel) {
             Some(DeltaRoundResult::Continue(x2, y2)) => {
                 if expr_ptr_eq(x2, cx) && expr_ptr_eq(y2, cy) {
                     return (cx, cy);
@@ -2669,7 +2639,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases np as usize - i
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return None };
         let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
         proof {
             depth_le_size(to_model(w2));
@@ -2721,7 +2691,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
                 ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases idx - j
     {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
+        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return None };
         let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return None };
         proof {
             depth_le_size(to_model(w2));
@@ -2745,7 +2715,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         cur = new_ty;
         j = j + 1;
     }
-    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur, k) { Some(v) => v, None => return None };
+    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return None };
     proof {
         proj_field_type_final(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), idx, s_m);
         assert(j == idx);
@@ -2841,9 +2811,9 @@ pub open spec fn is_prop_type_claim<'t, 'x>(env: Env<'x, 't>, ty: ExprPtr<'t>) -
 /// Capped Prop check for the shadow certifier: whnf `ty` with the measured
 /// rounds over the capped model (no global caps), read off a `Sort`, and
 /// check its level is `<= 0` (`verified_leq` against `zero`).
-pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, ty: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(ty)) <= 0, k <= 60000,
+        nlbv(to_model(ty)) <= 0,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => is_prop_type_claim(*env, ty),
@@ -2918,9 +2888,8 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
 
 /// The producer: infer `x`'s type, reduce it, read the structure and its sole
 /// constructor off the head, and build `Ctor params* x.0 .. x.(n-1)`.
-pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => eta_struct_claim(*env, x, r),
@@ -3032,9 +3001,8 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     Some(r)
 }
 
-pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => eta_struct_claim(*env, x, r),
@@ -3059,7 +3027,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     // the two types must be convertible: that is what makes an expansion read
     // off the OTHER side's structure valid for this one, and it is exactly the
     // check `try_eta_struct_aux` performs
-    match verified_conv(ctx, env, memo, xt, yt, fuel, k, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
         Some(true) => {}
         _ => return None,
     }
@@ -3193,9 +3161,8 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
 /// The producer: infer both types, reduce `x`'s, check its head names a
 /// structure whose one constructor has no fields, and certify the two types
 /// convertible over the reduction-only route.
-pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => unit_shadow_claim(*env, x, y),
@@ -3210,7 +3177,6 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     if ctx.num_loose_bvars(xt) != 0 {
         return None;
     }
-    let kr: u32 = if k > 60000 { 60000 } else { k };
     let ghost cmr = env_model_nofv(*env);
     let xtw = verified_whnf_free(ctx, env, memo, xt);
     proof {
@@ -3241,7 +3207,7 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         assert(unit_like_type_m(em, to_model(xt)));
     }
     let yt = match verified_infer_shadow(ctx, env, memo, y) { Some(v) => v, None => return None };
-    match verified_conv(ctx, env, memo, xt, yt, fuel, k, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
         Some(true) => {
             proof {
                 let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
@@ -3256,9 +3222,8 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 
 
 /// `None`.
-pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<bool>)
+pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => proof_irrel_shadow_claim(*env, x, y),
@@ -3284,15 +3249,15 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     // count identical and took Init.Omega from 3.4 s to 198 s. Exit 31 below
     // is not a cap limit; those types are genuinely not Prop-sorted, which is
     // proof irrelevance correctly declining.
-    match verified_is_prop_capped(ctx, env, memo, xtt, fuel, k) {
+    match verified_is_prop_capped(ctx, env, memo, xtt, fuel) {
         Some(true) => {}
         _ => { conv_stat(31); return None; }
     }
-    match verified_is_prop_capped(ctx, env, memo, ytt, fuel, k) {
+    match verified_is_prop_capped(ctx, env, memo, ytt, fuel) {
         Some(true) => {}
         _ => { conv_stat(32); return None; }
     }
-    match verified_conv(ctx, env, memo, xt, yt, fuel, k, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
         Some(true) => {
             proof {
                 let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
@@ -3311,9 +3276,8 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     }
 }
 
-pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -3382,7 +3346,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     let xp_opt = ctx.pred_of_nat_succ(x);
     let yp_opt = ctx.pred_of_nat_succ(y);
     if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
-        if let Some(true) = verified_conv(ctx, env, memo, xp, yp, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv(ctx, env, memo, xp, yp, fuel, budget - 1) {
             proof {
                 let sc = const_expr_no_levels(nat_succ_id());
                 let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
@@ -3407,13 +3371,13 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // below spent one budget unit per application layer, so a 10-argument
     // spine exhausted the budget walking down its own head. Here every
     // head/argument pair is checked at the SAME budget level.
-    if let Some(true) = verified_conv_spine(ctx, env, memo, x, y, fuel, k, budget - 1) {
+    if let Some(true) = verified_conv_spine(ctx, env, memo, x, y, fuel, budget - 1) {
         return Some(true);
     }
     match (expr_as_app(&xe), expr_as_app(&ye)) {
         (Some((f1, a1)), Some((f2, a2))) => {
-            if let Some(true) = verified_conv(ctx, env, memo, f1, f2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv(ctx, env, memo, a1, a2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv(ctx, env, memo, f1, f2, fuel, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, memo, a1, a2, fuel, budget - 1) {
                     proof { deq_any_app_congr(em, to_model(f1), to_model(f2), to_model(a1), to_model(a2)); }
                     conv_stat(2);
                     return Some(true);
@@ -3424,13 +3388,13 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     match (expr_as_pi(&xe), expr_as_pi(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv(ctx, env, memo, t1, t2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv(ctx, env, memo, b1, b2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv(ctx, env, memo, t1, t2, fuel, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, memo, b1, b2, fuel, budget - 1) {
                     proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_bind_fresh(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, budget - 1) {
                     return Some(true);
                 }
             }
@@ -3439,13 +3403,13 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv(ctx, env, memo, t1, t2, fuel, k, budget - 1) {
-                if let Some(true) = verified_conv(ctx, env, memo, b1, b2, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv(ctx, env, memo, t1, t2, fuel, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, memo, b1, b2, fuel, budget - 1) {
                     proof { deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_bind_fresh(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, budget - 1) {
                     return Some(true);
                 }
             }
@@ -3455,7 +3419,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     match (expr_as_proj(&xe), expr_as_proj(&ye)) {
         (Some((_, i1, s1)), Some((_, i2, s2))) => {
             if i1 == i2 {
-                if let Some(true) = verified_conv(ctx, env, memo, s1, s2, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv(ctx, env, memo, s1, s2, fuel, budget - 1) {
                     proof { deq_any_proj_congr(em, i1, to_model(s1), to_model(s2)); }
                     conv_stat(4);
                     return Some(true);
@@ -3490,10 +3454,10 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // ran out of budget before its reducts could be compared. Run the rounds
     // in a loop here, not by the budget,
     // then recurse ONCE on the final reducts.
-    let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, k, 32);
+    let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, 32);
     if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
         conv_trace(2, cx, cy, budget);
-        if let Some(true) = verified_conv(ctx, env, memo, cx, cy, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv(ctx, env, memo, cx, cy, fuel, budget - 1) {
             proof {
                 if cx == x {
                     deq_any_refl(em, to_model(x));
@@ -3545,7 +3509,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     conv_trace(4, rx, ry, budget);
     if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
-        if let Some(true) = verified_conv(ctx, env, memo, rx, ry, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv(ctx, env, memo, rx, ry, fuel, budget - 1) {
             proof {
                 defeq_of_pstep_star(em, to_model(x), to_model(rx));
                 deq_any_of_defeq(em, to_model(x), to_model(rx));
@@ -3606,9 +3570,8 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprP
 /// `verified_conv` with the per-checker failure cache around it: pairs
 /// this checker already failed on are not re-searched (the recursion
 /// revisits the same sub-pairs from many contexts).
-pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -3629,7 +3592,7 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
     if conv_fail_seen_p(x, y, budget) {
         return None;
     }
-    let r = verified_conv_inner_p(ctx, env, memo, x, y, fuel, k, budget);
+    let r = verified_conv_inner_p(ctx, env, memo, x, y, fuel, budget);
     match r {
         Some(true) => {
             memo.conv_put(ConvCert::make(x, y, env));
@@ -3647,9 +3610,8 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
 /// equal argument counts and at least one argument, the heads and then each
 /// argument pair are `conv`-checked at `budget - 1`, and the verdict is
 /// assembled by repeated `deq_any_app_congr` along the spine prefixes.
-pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -3679,7 +3641,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         assert(args_size_sum(am1) > 0);
         assert(args_size_sum(am2) > 0);
     }
-    if let Some(true) = verified_conv_p(ctx, env, memo, h1, h2, fuel, k, budget) {
+    if let Some(true) = verified_conv_p(ctx, env, memo, h1, h2, fuel, budget) {
     } else {
         return None;
     }
@@ -3704,7 +3666,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             // needed inside the body for the structural (size) measure
             to_model(x) == spine_app(to_model(h1), am1),
             to_model(y) == spine_app(to_model(h2), am2),
-            k <= 500, budget >= 1,
+            budget >= 1,
         decreases n - i
     {
         let a1 = args1[i];
@@ -3715,7 +3677,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             assert(am1[i as int] == to_model(a1));
             assert(am2[i as int] == to_model(a2));
         }
-        if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, k, budget) {
+        if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, budget) {
             proof {
                 let p1 = am1.subrange(0, i as int);
                 let p2 = am2.subrange(0, i as int);
@@ -3749,11 +3711,10 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 /// major), the rewritten spine steps by ordinary iota, and `deq_p_any`
 /// composes the two. `k <= 500` is the proof-irrelevance route's own cap.
 #[verifier::spinoff_prover]
-pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
@@ -3805,7 +3766,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     if ctx.num_loose_bvars(ctor_app) != 0 {
         return None;
     }
-    match verified_proof_irrel_shadow(ctx, env, memo, major, ctor_app, fuel, k) {
+    match verified_proof_irrel_shadow(ctx, env, memo, major, ctor_app, fuel) {
         Some(true) => {}
         _ => return None,
     }
@@ -4286,9 +4247,8 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 /// through `deq_p_any_proj_congr`. The premise's position comes from the
 /// recursor's own disclosed data, so nothing is guessed.
 #[verifier::spinoff_prover]
-pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
@@ -4310,7 +4270,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         return None;
     }
     let major = args[major_idx];
-    let ex = match verified_eta_struct_shadow(ctx, env, memo, major, k) {
+    let ex = match verified_eta_struct_shadow(ctx, env, memo, major) {
         Some(v) => v,
         None => return None,
     };
@@ -4351,9 +4311,8 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 /// recursor `Prod.map` and friends compile to), normalize its major premise,
 /// and rebuild the projection.
 #[verifier::spinoff_prover]
-pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
@@ -4372,7 +4331,6 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     if ctx.num_loose_bvars(structure) != 0 {
         return None;
     }
-    let kr: u32 = if k > 60000 { 60000 } else { k };
     let ghost cmr = env_model_nofv(*env);
     let s2 = verified_whnf_free(ctx, env, memo, structure);
     proof {
@@ -4400,13 +4358,12 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         return None;
     }
     let s3 = if is_rec {
-        match verified_major_eta_spine(ctx, env, memo, s2, k) {
+        match verified_major_eta_spine(ctx, env, memo, s2) {
             Some(v) => v,
             None => return None,
         }
     } else {
-        let kq: u32 = if k > 60000 { 60000 } else { k };
-        match verified_quot_step(ctx, env, memo, s2, kq) {
+        match verified_quot_step(ctx, env, memo, s2) {
             Some(v) => {
                 proof { deq_p_any_of_deq_any(dtym, em, lcm, to_model(s2), to_model(v)); }
                 v
@@ -4446,9 +4403,8 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 /// reduction gives `rewrite ~ reduct`, and the loop invariant carries
 /// `deq_p_any(x, cur)` across.
 #[verifier::spinoff_prover]
-pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32, rounds: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, rounds: u32) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
         nlbv(to_model(x)) <= 0,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
@@ -4468,8 +4424,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     while i < rounds
         invariant
             memo.wf(), memo.spec_env() == *env,
-            k <= 500,
-            cmk == env_model_nofv(*env),
+                cmk == env_model_nofv(*env),
             em == to_model_of_env(*env),
             dtym == to_model_of_declar_ty(*env),
             lcm == arena_lctx(),
@@ -4477,9 +4432,9 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             deq_p_any(dtym, em, lcm, to_model(x), to_model(cur)),
         decreases rounds - i
     {
-        let rw = match verified_major_eta_spine(ctx, env, memo, cur, k) {
+        let rw = match verified_major_eta_spine(ctx, env, memo, cur) {
             Some(v) => v,
-            None => match verified_major_eta_proj(ctx, env, memo, cur, k) {
+            None => match verified_major_eta_proj(ctx, env, memo, cur) {
                 Some(v) => v,
                 None => break,
             },
@@ -4506,9 +4461,8 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     if any { Some(cur) } else { None }
 }
 
-pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -4529,7 +4483,6 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     // stuck recursor after delta, and `Prod.fst (Prod.map ..)` only shows its
     // projection after delta. Reducing here (memoized) is what lets the step
     // run once per pair instead of at every recursion level.
-    let kr: u32 = if k > 60000 { 60000 } else { k };
     let ghost cmr = env_model_nofv(*env);
     let w = verified_whnf_free(ctx, env, memo, x);
     proof {
@@ -4538,7 +4491,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         defeq_of_pstep_star(em, to_model(x), to_model(w));
         deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(w));
     }
-    let x2 = verified_major_eta_fix(ctx, env, memo, w, k, 4);
+    let x2 = verified_major_eta_fix(ctx, env, memo, w, 4);
     // If the OTHER side is a stuck recursor too, rewrite it as well and
     // compare the two rewritten terms. Measured 2026-09-12 on
     // Init.Data.BitVec.Lemmas: rewriting one side and comparing it against the
@@ -4547,7 +4500,6 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     // constructor applications underneath can meet.
     if let Some(rx) = x2 {
         if ctx.num_loose_bvars(y) == 0 {
-            let kr2: u32 = if k > 60000 { 60000 } else { k };
             let ghost cmr2 = env_model_nofv(*env);
             let wy = verified_whnf_free(ctx, env, memo, y);
             proof {
@@ -4556,7 +4508,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                 defeq_of_pstep_star(em, to_model(y), to_model(wy));
                 deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
             }
-            let y2 = verified_major_eta_fix(ctx, env, memo, wy, k, 4);
+            let y2 = verified_major_eta_fix(ctx, env, memo, wy, 4);
             if let Some(ry) = y2 {
                 if !expr_ptr_eq(rx, x) || !expr_ptr_eq(ry, y) {
                     // reduce the rewritten terms before comparing: the point of
@@ -4582,7 +4534,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                         if expr_ptr_eq(rxw, w) && expr_ptr_eq(ryw, wy) {
                             return None;
                         }
-                        if let Some(true) = verified_conv_p(ctx, env, memo, rxw, ryw, fuel, k, (budget - 1) as u32) {
+                        if let Some(true) = verified_conv_p(ctx, env, memo, rxw, ryw, fuel, (budget - 1) as u32) {
                             proof {
                                 deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(rx));
                                 deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(rxw));
@@ -4612,7 +4564,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                     return None;
                 }
             }
-            match verified_conv_p(ctx, env, memo, r, y, fuel, k, (budget - 1) as u32) {
+            match verified_conv_p(ctx, env, memo, r, y, fuel, (budget - 1) as u32) {
                 Some(true) => {
                     proof {
                         deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(r));
@@ -4633,9 +4585,8 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 /// in the resource limit. Tier 0 of the family's measure, calling back into
 /// `verified_conv_p` at a strictly smaller budget.
 #[verifier::spinoff_prover]
-pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -4675,7 +4626,7 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
                 pstep_star_env_weaken(cmrr, em, to_model(x), to_model(wx));
                 pstep_star_env_weaken(cmrr, em, to_model(y), to_model(wy));
             }
-            if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, wx, wy, fuel, k, (budget - 1) as u32) {
+            if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, wx, wy, fuel, (budget - 1) as u32) {
                 proof {
                     defeq_of_pstep_star(em, to_model(x), to_model(wx));
                     deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(wx));
@@ -4690,14 +4641,14 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         }
     }
     if is_ctor_app(ctx, env, y) && !is_ctor_app(ctx, env, x) {
-        let exo = match verified_eta_struct_shadow(ctx, env, memo, x, k) {
+        let exo = match verified_eta_struct_shadow(ctx, env, memo, x) {
             Some(v) => Some(v),
             // reading x's own type failed; try the kernel's way round
-            None => verified_eta_struct_shadow_via(ctx, env, memo, x, y, fuel, k),
+            None => verified_eta_struct_shadow_via(ctx, env, memo, x, y, fuel),
         };
         if let Some(ex) = exo {
             if !expr_ptr_eq(ex, x) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, budget - 1) {
                     proof {
                         eta_struct_pair_of_claim(*env, x, ex);
                         deq_p_any_of_eta_struct(dtym, em, lcm, to_model(x), to_model(ex));
@@ -4710,13 +4661,13 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         }
     }
     if is_ctor_app(ctx, env, x) && !is_ctor_app(ctx, env, y) {
-        let eyo = match verified_eta_struct_shadow(ctx, env, memo, y, k) {
+        let eyo = match verified_eta_struct_shadow(ctx, env, memo, y) {
             Some(v) => Some(v),
-            None => verified_eta_struct_shadow_via(ctx, env, memo, y, x, fuel, k),
+            None => verified_eta_struct_shadow_via(ctx, env, memo, y, x, fuel),
         };
         if let Some(ey) = eyo {
             if !expr_ptr_eq(ey, y) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, budget - 1) {
                     proof {
                         eta_struct_pair_of_claim(*env, y, ey);
                         deq_p_any_of_eta_struct(dtym, em, lcm, to_model(y), to_model(ey));
@@ -4737,9 +4688,8 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// on the nose or recurse on the reducts when either moved. This is the real
 /// `def_eq`'s whnf-core-then-retry shape.
 #[verifier::spinoff_prover]
-pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
@@ -4775,7 +4725,7 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     }
     conv_trace(4, rx, ry, budget);
     if !(expr_ptr_eq(rx, x) && expr_ptr_eq(ry, y)) {
-        if let Some(true) = verified_conv_p(ctx, env, memo, rx, ry, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv_p(ctx, env, memo, rx, ry, fuel, budget - 1) {
             proof {
                 defeq_of_pstep_star(em, to_model(x), to_model(rx));
                 deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(rx));
@@ -4796,9 +4746,8 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// for the solver: `verified_conv_inner_p` no longer fits in its resource
 /// limit with everything inline.
 #[verifier::spinoff_prover]
-pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -4821,8 +4770,8 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let either_rigid = x_rigid || y_rigid;
     // --- quotient computation (the kernel's `reduce_quot`) ---
     if !x_rigid && ctx.num_loose_bvars(x) == 0 {
-        if let Some(rx) = verified_quot_step(ctx, env, memo, x, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
+        if let Some(rx) = verified_quot_step(ctx, env, memo, x) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, budget - 1) {
                 proof {
                     deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(rx));
                     deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
@@ -4833,8 +4782,8 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
     }
     if !y_rigid && ctx.num_loose_bvars(y) == 0 {
-        if let Some(ry) = verified_quot_step(ctx, env, memo, y, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
+        if let Some(ry) = verified_quot_step(ctx, env, memo, y) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, budget - 1) {
                 proof {
                     deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), to_model(ry));
                     deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
@@ -4856,7 +4805,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
                 let v0 = ctx.mk_var(0);
                 let body = ctx.mk_app(y, v0);
                 let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
-                if let Some(true) = verified_conv_p(ctx, env, memo, x, new_lambda, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, x, new_lambda, fuel, budget - 1) {
                     proof {
                         nlbv_shift_noop(1, 0, to_model(y));
                         assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
@@ -4876,7 +4825,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
                 let v0 = ctx.mk_var(0);
                 let body = ctx.mk_app(x, v0);
                 let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
-                if let Some(true) = verified_conv_p(ctx, env, memo, new_lambda, y, fuel, k, budget - 1) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, new_lambda, y, fuel, budget - 1) {
                     proof {
                         nlbv_shift_noop(1, 0, to_model(x));
                         assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
@@ -4897,15 +4846,15 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     // --- structure eta, in its own function: this one is large enough that
     // folding it inline pushed the solver past its resource limit.
     if !either_rigid {
-        if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, k, budget) {
+        if let Some(true) = verified_conv_eta_struct_p(ctx, env, memo, x, y, fuel, budget) {
             return Some(true);
         }
     }
     // --- K-like recursor (2026-09-08): reduce a K-like recursor application
     // whose major premise is a proof term, then compare the reduct.
     if !x_rigid && ctx.num_loose_bvars(x) == 0 {
-        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, k, budget - 1) {
+        if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, budget - 1) {
                 proof { deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y)); }
                 conv_stat(13);
                 return Some(true);
@@ -4913,8 +4862,8 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
     }
     if !y_rigid && ctx.num_loose_bvars(y) == 0 {
-        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, k) {
-            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, k, budget - 1) {
+        if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, budget - 1) {
                 proof {
                     deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
                     deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
@@ -4929,11 +4878,10 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
 
 /// through the certified whnf) with the `deq_quot` leaf on the rebuilt spine.
 #[verifier::spinoff_prover]
-pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-        k <= 60000,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_any(to_model_of_env(*env), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
@@ -5031,9 +4979,8 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 }
 
 #[verifier::spinoff_prover]
-pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
+pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 500,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
@@ -5130,7 +5077,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
                 conv_stat(16);
                 return Some(true);
             }
-            if let Some(true) = verified_conv_p(ctx, env, memo, nx, ny, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, nx, ny, fuel, budget - 1) {
                 proof {
                     defeq_of_pstep_star(em, to_model(x), to_model(nx));
                     deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(nx));
@@ -5161,7 +5108,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     let xp_opt = if either_rigid { None } else { ctx.pred_of_nat_succ(x) };
     let yp_opt = if either_rigid { None } else { ctx.pred_of_nat_succ(y) };
     if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
-        if let Some(true) = verified_conv_p(ctx, env, memo, xp, yp, fuel, k, budget - 1) {
+        if let Some(true) = verified_conv_p(ctx, env, memo, xp, yp, fuel, budget - 1) {
             proof {
                 let sc = const_expr_no_levels(nat_succ_id());
                 let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
@@ -5186,7 +5133,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // Prop-level sorts, the types convertible over the reduction-only route).
     // This is the leaf that distinguishes the `_p` family from `verified_conv`.
     if !either_rigid {
-        if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel, k) {
+        if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel) {
             proof {
                 proof_irrel_pair_of_shadow_claim(*env, x, y);
                 deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y));
@@ -5199,7 +5146,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // structure whose single constructor takes no fields, so the type has one
     // element and they are equal. Like proof irrelevance, a rule about typing.
     if !either_rigid {
-        if let Some(true) = verified_unit_shadow(ctx, env, memo, x, y, fuel, k) {
+        if let Some(true) = verified_unit_shadow(ctx, env, memo, x, y, fuel) {
             proof {
                 unit_pair_of_shadow_claim(*env, x, y);
                 deq_p_any_of_unit(dtym, em, lcm, to_model(x), to_model(y));
@@ -5214,10 +5161,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
         let ghost cm = env_model_nofv(*env);
         proof { env_model_nofv_sub(*env); }
-        let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, k, 32);
+        let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, 32);
         if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
             conv_trace(2, cx, cy, budget);
-            if let Some(true) = verified_conv_p(ctx, env, memo, cx, cy, fuel, k, budget - 1) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, cx, cy, fuel, budget - 1) {
                 proof {
                     if cx == x {
                         deq_p_any_refl(dtym, em, lcm, to_model(x));
@@ -5251,7 +5198,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     match (expr_as_proj(&xe_proj), expr_as_proj(&ye_proj)) {
         (Some((_, i1, s1)), Some((_, i2, s2))) => {
             if i1 == i2 {
-                if let Some(true) = verified_conv_p(ctx, env, memo, s1, s2, fuel, k, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, s1, s2, fuel, budget) {
                     proof { deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2)); }
                     conv_stat(4);
                     return Some(true);
@@ -5268,14 +5215,14 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // below spent one budget unit per application layer, so a 10-argument
     // spine exhausted the budget walking down its own head. Here every
     // head/argument pair is checked at the SAME budget level.
-    if x_app_sh && y_app_sh { if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, k, budget) {
+    if x_app_sh && y_app_sh { if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, budget) {
         return Some(true);
     }
     }
     match (expr_as_app(&xe), expr_as_app(&ye)) {
         (Some((f1, a1)), Some((f2, a2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, f1, f2, fuel, k, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, k, budget) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, f1, f2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, budget) {
                     proof { deq_p_any_app_congr(dtym, em, lcm, to_model(f1), to_model(f2), to_model(a1), to_model(a2)); }
                     conv_stat(2);
                     return Some(true);
@@ -5286,13 +5233,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     match (expr_as_pi(&xe), expr_as_pi(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, k, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, k, budget) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
                     proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, k, budget) {
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, budget) {
                     return Some(true);
                 }
             }
@@ -5301,13 +5248,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
         (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, k, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, k, budget) {
+            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
                     proof { deq_p_any_bind_congr(dtym, em, lcm, to_model(t1), to_model(t2), to_model(b1), to_model(b2)); }
                     conv_stat(3);
                     return Some(true);
                 }
-                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, k, budget) {
+                if let Some(true) = verified_conv_bind_fresh_p(ctx, env, memo, n1, s1, t1, t2, b1, b2, fuel, budget) {
                     return Some(true);
                 }
             }
@@ -5316,7 +5263,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     // --- quotient, eta and K-like, in their own function: the solver's
     // resource limit again.
-    if let Some(true) = verified_conv_leaves_p(ctx, env, memo, x, y, fuel, k, budget) {
+    if let Some(true) = verified_conv_leaves_p(ctx, env, memo, x, y, fuel, budget) {
         return Some(true);
     }
     // --- reduction: closed, size-gated terms only ---
@@ -5346,7 +5293,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     // --- the capped-whnf join and retry, in its own function: this one grew
     // past the solver's resource limit inline.
-    if let Some(true) = verified_conv_whnf_retry_p(ctx, env, memo, x, y, fuel, k, budget) {
+    if let Some(true) = verified_conv_whnf_retry_p(ctx, env, memo, x, y, fuel, budget) {
         return Some(true);
     }
     // --- LAST RESORT: major-premise normalization (the kernel's
@@ -5366,10 +5313,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // level down brings it to 81 -- the same as allowing it everywhere -- at
     // 3.6s instead of 211s.
     if !either_rigid && budget as u64 + 4 >= conv_budget_total() as u64 {
-        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, k, budget) {
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, x, y, fuel, budget) {
             return Some(true);
         }
-        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, k, budget) {
+        if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, budget) {
             proof { deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(x)); }
             return Some(true);
         }
@@ -5385,182 +5332,102 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 /// Delta-lift CM: `verified_delta_bounded` over the capped model (one
 /// delta attempt certified at unfold time, then one beta/zeta step);
 /// `k` replaces `env_global_cap`.
-pub fn verified_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>, Ghost(bound2): Ghost<nat>, Ghost(d2): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+/// CAP-FREE, CEILING-FREE delta attempt: `verified_delta_capped` with `k`, the
+/// four ghost bounds and the depth half of its contract removed. One delta
+/// step certified at unfold time, then one beta/zeta step -- the kernel's own
+/// shape. The arena primitives' depth ceiling is MEASURED here rather than
+/// threaded in, the same way the fuel-free inference does it.
+pub fn verified_delta_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        bound + k <= bound2,
-        k + d + d <= d2,
-        d2 <= 60000,
-        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => {
             &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
             &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound2 + d2 * d2 * d2 + d2 * d2)
-            &&& depth(to_model(r)) <= d2 * d2 + d2 + d2 + d2 + d2
         },
         None => true,
     }
 {
-    proof {
-        max_var_below_mono(to_model(e), bound, bound2);
-    }
-    match verified_unfold_def_step_capped(ctx, env, e, fuel, k, Ghost(bound2), Ghost(d)) {
+    match verified_unfold_def_step_free(ctx, env, e, fuel) {
         Some(unfolded) => {
             let ghost cm = env_model_nofv(*env);
-            match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, Ghost(bound2), Ghost(d2)) {
+            let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+            let sz = match verified_size(ctx, unfolded, 100000) { Some(v) => v, None => return Some(unfolded) };
+            if sz > 60000 {
+                return Some(unfolded);
+            }
+            proof { depth_le_size(to_model(unfolded)); }
+            match crate::expr_arena_bridge::verified_whnf_no_unfolding_step_plain(ctx, unfolded, fuel) {
                 Some(r) => {
                     proof {
-                        assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
-                            cm.contains_key(k)
-                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == cm[k]
-                        by {}
-                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(unfolded), to_model(r));
+                        assert forall |j: u64| #[trigger] mt.contains_key(j) implies
+                            cm.contains_key(j) && mt[j] == cm[j] by {}
+                        pstep_star_env_weaken(mt, cm, to_model(unfolded), to_model(r));
                         pstep_star_trans(cm, to_model(e), to_model(unfolded), to_model(r));
                     }
                     Some(r)
                 }
-                None => {
-                    proof {
-                        max_var_below_mono(to_model(unfolded), bound2, bound2 + d2 * d2 * d2 + d2 * d2);
-                        assert(depth(to_model(unfolded)) <= d2);
-                        assert(d2 <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith) {}
-                    }
-                    Some(unfolded)
-                }
+                None => Some(unfolded),
             }
         }
         None => None,
     }
 }
 
-/// A closed leaf (a folded literal: depth 0, no loose bvars) fits any
-/// round's output bounds.
-pub proof fn weaken_leaf_bound(e: ExprSpec, bound2: nat, d2: nat)
-    requires nlbv(e) <= 0, depth(e) == 0
-    ensures
-        max_var_below(e, bound2 + d2 * d2 * d2 + d2 * d2),
-        depth(e) <= d2 * d2 + d2 + d2 + d2 + d2,
-{
-    nlbv_bound_implies_max_var_below(e, 0);
-    max_var_below_mono(e, (depth(e) + 0) as nat, bound2 + d2 * d2 * d2 + d2 * d2);
-}
 
-/// Real-arena counterpart to ONE iteration of `tc.rs::TypeChecker::lazy_
-/// delta_step`'s own loop body (`tc.rs:1271-1304`, everything up to but
-/// NOT including the trailing `def_eq_quick_check` early-exit at
-/// `tc.rs:1305-1307` -- a pure optimization, safe to skip per this whole
-/// arc's established convention). Composes all four previously-separate
-/// `lazy_delta_step` sub-pieces (`verified_def_eq_nat`, `verified_get_
-/// applied_def`, `verified_try_unfold_proj_app`, `verified_try_eq_const_
-/// app`) plus `verified_delta_bounded` and `verified_is_lt` into the
-/// real function's exact five-way dispatch: both sides not applied defs
-/// (`Exhausted`), exactly one side is (unfold through a `Proj` first if
-/// possible, else `delta`), or both sides are (compare reducibility
-/// hints -- unfold whichever is "more reducible" first, or if tied, try
-/// the same-head-name congruence fast path before unfolding BOTH sides).
-///
-/// Deliberately does NOT loop -- this is one round, matching the "one
-/// round first" precedent throughout this arc (`verified_whnf_beta_step`
-/// before its own fixpoint chaining, `verified_def_eq_binder_step` before
-/// its telescoping). A genuine multi-round `lazy_delta_step` needs its
-/// own termination argument: each `delta` call grows the depth cap
-/// (`bound2`/`d2` here), so chaining rounds needs a `whnf_fixpoint_ok`-
-/// style recursive feasibility predicate tracking that growth across `n`
-/// rounds -- not yet attempted.
-///
-/// `Continue(x2, y2)`'s ensures states real progress: whichever side
-/// changed did so via a genuine `pstep_star` reduction (from `delta`/
-/// `try_unfold_proj_app`, both already-proven `pstep_star` facts), never
-/// a fabricated claim. `Found`/`Exhausted` don't yet restate what `def_
-/// eq_nat`/`try_eq_const_app` themselves already proved about WHY they
-/// fired -- consistent with this arc's established under-claiming style
-/// for composed dispatchers (e.g. `def_eq_local`'s ensures not restating
-/// its own recursive binder-type fact either).
-/// An operand left UNCHANGED by a round (bound at the original, tighter
-/// `(bound, d)` scale) still needs to be expressed at the uniform
-/// `(bound2, d2)`-scale formula every `Continue` case advertises, since
-/// `bound <= bound2` and `d <= d2` always hold (this function's own
-/// `requires`).
-proof fn weaken_unchanged_bound(v: ExprSpec, bound: nat, d: nat, bound2: nat, d2: nat)
-    requires
-        max_var_below(v, bound),
-        depth(v) <= d,
-        bound <= bound2,
-        d <= d2,
-    ensures
-        max_var_below(v, bound2 + d2 * d2 * d2 + d2 * d2),
-        depth(v) <= d2 * d2 + d2 + d2 + d2 + d2,
-{
-    max_var_below_mono(v, bound, bound2);
-    max_var_below_mono(v, bound2, bound2 + d2 * d2 * d2 + d2 * d2);
-    assert(d <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith)
-        requires d <= d2
-    {}
-}
 
-/// `verified_try_unfold_proj_app`'s own `(bound, d)`-scale output bound
-/// weakened up to the same uniform `(bound2, d2)`-scale formula.
-proof fn weaken_proj_result_bound(v: ExprSpec, bound: nat, d: nat, bound2: nat, d2: nat)
-    requires
-        max_var_below(v, bound + d * d * d + d * d),
-        depth(v) <= d * d + 4 * d,
-        bound <= bound2,
-        d <= d2,
-    ensures
-        max_var_below(v, bound2 + d2 * d2 * d2 + d2 * d2),
-        depth(v) <= d2 * d2 + d2 + d2 + d2 + d2,
-{
-    assert(bound + d * d * d + d * d <= bound2 + d2 * d2 * d2 + d2 * d2) by (nonlinear_arith)
-        requires bound <= bound2, d <= d2
-    {}
-    max_var_below_mono(v, bound + d * d * d + d * d, bound2 + d2 * d2 * d2 + d2 * d2);
-    assert(d * d + 4 * d <= d2 * d2 + d2 + d2 + d2 + d2) by (nonlinear_arith)
-        requires d <= d2
-    {}
-}
+
 
 
 /// Delta-lift CM: `verified_lazy_delta_round` over the capped model.
+/// `verified_try_unfold_proj_app` with its two ghost ceilings MEASURED at the
+/// point of use instead of threaded in. This ceiling is not a reduction
+/// budget: the helper's own arithmetic bound is cubic in the depth, so a term
+/// has to be small enough that `bound + d^3 + d^2 + d + 10` stays inside a
+/// u32. 1500 is where that is comfortably true, and the gate is a runtime
+/// size check rather than a number passed down from the caller.
+pub fn verified_try_unfold_proj_app_measured<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+    requires
+        nlbv(to_model(e)) <= 0,
+    ensures match result {
+        Some(r) => {
+            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+            &&& r != e
+            &&& nlbv(to_model(r)) <= 0
+        },
+        None => true,
+    }
+{
+    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return None };
+    if sz > 1500 {
+        return None;
+    }
+    proof {
+        depth_le_size(to_model(e));
+        nlbv_bound_implies_max_var_below(to_model(e), 0);
+        max_var_below_mono(to_model(e), depth(to_model(e)) as nat, 1500);
+    }
+    verified_try_unfold_proj_app(ctx, e, fuel, Ghost(1500 as nat), Ghost(1500 as nat))
+}
+
 pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     ctx: &mut TcCtx<'t, 'p>,
     env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>,
     x: ExprPtr<'t>,
     y: ExprPtr<'t>,
     fuel: u32,
-    k: u32,
-    Ghost(bound): Ghost<nat>,
-    Ghost(d): Ghost<nat>,
-    Ghost(bound2): Ghost<nat>,
-    Ghost(d2): Ghost<nat>,
 ) -> (result: Option<DeltaRoundResult<'t>>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-        max_var_below(to_model(x), bound),
-        depth(to_model(x)) <= d,
         nlbv(to_model(y)) <= 0,
-        max_var_below(to_model(y), bound),
-        depth(to_model(y)) <= d,
-        d <= 60000,
-        bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
-        bound + k <= bound2,
-        k + d + d <= d2,
-        d2 <= 60000,
-        bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(DeltaRoundResult::Continue(x2, y2)) => {
             &&& (x2 == x || pstep_star(env_model_nofv(*env), to_model(x), to_model(x2)))
             &&& (y2 == y || pstep_star(env_model_nofv(*env), to_model(y), to_model(y2)))
             &&& nlbv(to_model(x2)) <= 0
-            &&& max_var_below(to_model(x2), bound2 + d2 * d2 * d2 + d2 * d2)
-            &&& depth(to_model(x2)) <= d2 * d2 + d2 + d2 + d2 + d2
             &&& nlbv(to_model(y2)) <= 0
-            &&& max_var_below(to_model(y2), bound2 + d2 * d2 * d2 + d2 * d2)
-            &&& depth(to_model(y2)) <= d2 * d2 + d2 + d2 + d2 + d2
         },
         Some(DeltaRoundResult::Exhausted(x2, y2)) => x2 == x && y2 == y,
         Some(DeltaRoundResult::Found(b)) => b ==> nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat),
@@ -5568,8 +5435,16 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     }
 {
     proof {
-        assert(bound <= bound2);
-        assert(d <= d2);
+    }
+    // the arena-wide depth ceiling, measured rather than threaded
+    let szx0 = match verified_size(ctx, x, 100000) { Some(v) => v, None => return None };
+    let szy0 = match verified_size(ctx, y, 100000) { Some(v) => v, None => return None };
+    if szx0 > 60000 || szy0 > 60000 {
+        return None;
+    }
+    proof {
+        depth_le_size(to_model(x));
+        depth_le_size(to_model(y));
     }
     if let Some(b) = verified_def_eq_nat(ctx, x, y, fuel) {
         return Some(DeltaRoundResult::Found(b));
@@ -5580,8 +5455,6 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
         match crate::tc_model::verified_nat_fold_step_free(ctx, env, memo, x) {
             Some(xprime) => {
                 proof {
-                    weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
-                    weaken_leaf_bound(to_model(xprime), bound2, d2);
                 }
                 return Some(DeltaRoundResult::Continue(xprime, y));
             }
@@ -5590,8 +5463,6 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
         match crate::tc_model::verified_nat_fold_step_free(ctx, env, memo, y) {
             Some(yprime) => {
                 proof {
-                    weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
-                    weaken_leaf_bound(to_model(yprime), bound2, d2);
                 }
                 return Some(DeltaRoundResult::Continue(x, yprime));
             }
@@ -5603,7 +5474,7 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     match (r1, r2) {
         (None, None) => Some(DeltaRoundResult::Exhausted(x, y)),
         (Some(_), None) => {
-            match verified_try_unfold_proj_app(ctx, y, fuel, Ghost(bound), Ghost(d)) {
+            match verified_try_unfold_proj_app_measured(ctx, y, fuel) {
                 Some(yprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -5611,15 +5482,12 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                             && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_nofv(*env)[k]
                         by {}
                         pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_nofv(*env), to_model(y), to_model(yprime));
-                        weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
-                        weaken_proj_result_bound(to_model(yprime), bound, d, bound2, d2);
                     }
                     Some(DeltaRoundResult::Continue(x, yprime))
                 }
-                None => match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                None => match verified_delta_free(ctx, env, x, fuel) {
                     Some(xprime) => {
                         proof {
-                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
                         }
                         Some(DeltaRoundResult::Continue(xprime, y))
                     }
@@ -5628,7 +5496,7 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
             }
         }
         (None, Some(_)) => {
-            match verified_try_unfold_proj_app(ctx, x, fuel, Ghost(bound), Ghost(d)) {
+            match verified_try_unfold_proj_app_measured(ctx, x, fuel) {
                 Some(xprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
@@ -5636,15 +5504,12 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                             && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_nofv(*env)[k]
                         by {}
                         pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_nofv(*env), to_model(x), to_model(xprime));
-                        weaken_proj_result_bound(to_model(xprime), bound, d, bound2, d2);
-                        weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
                     }
                     Some(DeltaRoundResult::Continue(xprime, y))
                 }
-                None => match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                None => match verified_delta_free(ctx, env, y, fuel) {
                     Some(yprime) => {
                         proof {
-                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
                         }
                         Some(DeltaRoundResult::Continue(x, yprime))
                     }
@@ -5654,20 +5519,18 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
         }
         (Some((x_name, x_hint)), Some((y_name, y_hint))) => {
             if verified_is_lt(&x_hint, &y_hint) {
-                match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                match verified_delta_free(ctx, env, y, fuel) {
                     Some(yprime) => {
                         proof {
-                            weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
                         }
                         Some(DeltaRoundResult::Continue(x, yprime))
                     }
                     None => None,
                 }
             } else if verified_is_lt(&y_hint, &x_hint) {
-                match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                match verified_delta_free(ctx, env, x, fuel) {
                     Some(xprime) => {
                         proof {
-                            weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
                         }
                         Some(DeltaRoundResult::Continue(xprime, y))
                     }
@@ -5676,8 +5539,8 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
             } else {
                 match verified_try_eq_const_app(ctx, x, x_name, x_hint, y, y_name, y_hint, fuel) {
                     Some(b) => Some(DeltaRoundResult::Found(b)),
-                    None => match verified_delta_capped(ctx, env, x, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
-                        Some(xprime) => match verified_delta_capped(ctx, env, y, fuel, k, Ghost(bound), Ghost(d), Ghost(bound2), Ghost(d2)) {
+                    None => match verified_delta_free(ctx, env, x, fuel) {
+                        Some(xprime) => match verified_delta_free(ctx, env, y, fuel) {
                             Some(yprime) => Some(DeltaRoundResult::Continue(xprime, yprime)),
                             None => None,
                         },
