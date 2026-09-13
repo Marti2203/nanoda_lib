@@ -270,27 +270,17 @@ pub mod route_stats {
         WHNF_CALLS.fetch_add(1, Ordering::Relaxed);
         WHNF_SEEN.with(|m| { if !m.borrow_mut().insert((e, k)) { WHNF_REPEATS.fetch_add(1, Ordering::Relaxed); } });
     }
-    /// Diagnostic knob (`NANODA_NO_CONV_FAIL=1`): bypass the conversion
-    /// failure cache, to measure what the search costs without it.
-    pub fn conv_fail_off() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV_FAIL").is_some())
-    }
     /// How many times a pair may be RETRIED after a recorded failure before
     /// the cache starts pruning it. One attempt is not always enough: the
     /// certifier's state grows as it runs (the whnf, inference and conversion
     /// memos fill in), so a pair that failed early can succeed later, and the
     /// cache was holding those back. Measured 2026-09-12 on
     /// Init.Data.BitVec.Lemmas.
-    pub fn conv_retries() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        // 0 reproduces the original one-and-done behaviour; measured, larger
-        // values cost time on Init.Data.BitVec.Lemmas (3 -> 378s from 216s)
-        // and certify nothing extra
-        *V.get_or_init(|| knob("NANODA_CONV_RETRIES", 0))
-    }
+    /// 0 reproduces the original one-and-done behaviour; measured, larger
+    /// values cost time on Init.Data.BitVec.Lemmas (3 -> 378s from 216s) and
+    /// certify nothing extra.
+    pub fn conv_retries() -> u32 { 0 }
     pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
-        if conv_fail_off() { return false; }
         CONV_FAIL.with(|c| {
             let mut m = c.borrow_mut();
             match m.get_mut(&(a, b)) {
@@ -374,12 +364,13 @@ pub mod route_stats {
     pub fn knob(name: &'static str, default: u32) -> u32 {
         std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     }
-    /// Environment cap for the conversion route (its proof bounds assume
-    /// k <= 500; never raise this one without re-verifying conv).
-    pub fn cap_k() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CAP_K", 500))
-    }
+    /// Environment cap for the conversion route. CLAMPED, not merely
+    /// documented: `verified_conv_p` and its family are proven under
+    /// `requires k <= 500`, and this call site sits outside `verus!`, so
+    /// nothing would catch `NANODA_CAP_K=60000` handing the verified routes
+    /// an argument their proofs never covered. The knob can lower the cap
+    /// for measurement; it cannot raise it past what is proven.
+    pub fn cap_k() -> u32 { 500 }
     /// Environment cap for the whnf-join route only (k <= 60000 in its
     /// contract; the delta and conv routes assume k <= 500). Shadow-only cost.
     /// Environment cap for the whnf-join route and the conversion retry.
@@ -387,26 +378,14 @@ pub mod route_stats {
     /// preconditions allow, so it does not limit what can be certified:
     /// measured 2026-09-12, raising it from 2000 took Init.Omega's
     /// uncertified pairs from 10 to 1 at no cost in time (3.2s either way).
-    pub fn cap_k_join() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CAP_K_JOIN", 60000).min(60000))
-    }
-    pub fn whnf_rounds() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_WHNF_ROUNDS", 256))
-    }
+    pub fn cap_k_join() -> u32 { 60000 }
+    pub fn whnf_rounds() -> u32 { 256 }
     /// Conversion search budget. 60 rather than 20: measured 2026-09-12 on
     /// Init.Data.BitVec.Lemmas, 20 leaves 81 pairs uncertified and 60 leaves
     /// 76, at the same runtime (215s either way). It plateaus there -- 200
     /// also leaves 76 -- so the rest is not a budget limit.
-    pub fn conv_budget() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_BUDGET", 60))
-    }
-    pub fn conv_join_rounds() -> u32 {
-        static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        *V.get_or_init(|| knob("NANODA_CONV_JOIN", 256))
-    }
+    pub fn conv_budget() -> u32 { 60 }
+    pub fn conv_join_rounds() -> u32 { 256 }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_INFER_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -440,10 +419,6 @@ pub mod route_stats {
     pub fn shadow_enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("NANODA_SHADOW").is_some())
-    }
-    pub fn conv_enabled() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NANODA_NO_CONV").is_none())
     }
     pub static LEGACY_TRUE: AtomicU64 = AtomicU64::new(0);
     pub static LEGACY_FALSE: AtomicU64 = AtomicU64::new(0);
@@ -1395,8 +1370,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
         if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
         if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
-        if route_stats::conv_enabled()
-            && matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
+        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
         if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
             return 5;
@@ -1463,6 +1437,66 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ws = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, structure, 256, kx);
                 eprintln!("  PROJ-STRUCT: {:?}\n  PROJ-WHNF  : {:?}",
                     self.ctx.debug_print(structure), self.ctx.debug_print(ws));
+            }
+            // if a verified reduct is a stuck RECURSOR, show its major
+            // premise, the type we infer for it, and whether structure eta
+            // can rewrite it -- that is the exact input to
+            // `verified_major_eta_spine`, the rule that would have to fire
+            for (tag, t) in [("X", wx), ("Y", wy)] {
+                if let Some((_hd, name, _lv, args)) =
+                    crate::expr_arena_bridge::verified_unfold_const_apps(self.ctx, t, 100000)
+                {
+                    if let Some((_np, _nm, _nmin, mi, _up, _rules)) =
+                        crate::env_model::get_recursor_data(self.env, &name)
+                    {
+                        if (mi as usize) < args.len() {
+                            let major = args[mi as usize];
+                            let mw = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, major, 256, kx);
+                            let mty = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
+                            let ety = crate::delta_bound_model::verified_eta_struct_shadow(self.ctx, self.env, &mut self.shadow_memo, major, kx);
+                            // the exact call `verified_conv_major_eta_p` makes,
+                            // and what reducing its result gets you
+                            let sp = crate::delta_bound_model::verified_major_eta_fix(self.ctx, self.env, &mut self.shadow_memo, t, kx, 64);
+                            let spw = sp.map(|r| crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, r, 256, kx));
+                            let moved = match spw { Some(v) => !crate::expr_arena_bridge::expr_ptr_eq(v, t), None => false };
+                            // would the rewritten side actually close against
+                            // the other one, given a FULL budget? if yes, the
+                            // rule works and only its gate is in the way
+                            // what does the rewrite put in the major slot,
+                            // and does it look like a constructor application?
+                            let rewritten_major = sp.and_then(|r| {
+                                crate::expr_arena_bridge::verified_unfold_const_apps(self.ctx, r, 100000)
+                                    .and_then(|(_h, _n, _l, a)| a.get(mi as usize).copied())
+                            });
+                            let rm_txt = rewritten_major.map(|m| format!("{:?}", self.ctx.debug_print(m)));
+                            let rm_head = rm_txt.as_ref().map(|t| t.chars().take(60).collect::<String>());
+                            // run the iota producer on the rewrite itself and
+                            // report which exit it takes
+                            let (iota_ok, iota_exit) = match sp {
+                                Some(r) => {
+                                    let before: Vec<u64> = (0..64).map(|q| route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed)).collect();
+                                    let got = crate::tc_model::verified_rec_step_capped(self.ctx, self.env, &mut self.shadow_memo, r, 256, kx).is_some();
+                                    let moved: Vec<usize> = (0..64).filter(|q| route_stats::CONV_LEAF[*q].load(std::sync::atomic::Ordering::Relaxed) != before[*q]).collect();
+                                    (got, format!("{:?}", moved))
+                                }
+                                None => (false, String::from("-")),
+                            };
+                            let other = if tag == "X" { wy } else { wx };
+                            let would = match spw {
+                                Some(v) => matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, v, other, 100, kx, route_stats::conv_budget()), Some(true)),
+                                None => false,
+                            };
+                            eprintln!("  REC-{} rec={:?} major_idx={} major={:?}\n    major-whnf={:?}\n    major-type={:?}\n    eta={:?}\n    SPINE-REWRITE={} REWRITE-REDUCES-TO-NEW={} WOULD-CLOSE={} IOTA-ON-REWRITE={} exits={}\n    rewritten-major={:?}\n    rewrite-whnf={:?}",
+                                tag, self.ctx.debug_print(name), mi,
+                                self.ctx.debug_print(major),
+                                self.ctx.debug_print(mw),
+                                mty.map(|v| self.ctx.debug_print(v)),
+                                ety.map(|v| self.ctx.debug_print(v)),
+                                sp.is_some(), moved, would, iota_ok, iota_exit, rm_head,
+                                spw.map(|v| self.ctx.debug_print(v)));
+                        }
+                    }
+                }
             }
             let ix = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x).is_some();
             let iy = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y).is_some();

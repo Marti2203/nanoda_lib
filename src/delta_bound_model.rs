@@ -4449,6 +4449,84 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 
 /// The conversion step over the two rewriters above.
 #[verifier::spinoff_prover]
+/// ITERATED major-premise normalization. One rewrite is not enough: on
+/// `Init.Data.BitVec.Lemmas` the structure-eta rewrite puts a genuine
+/// `Fin.mk ..` in the major slot and iota DOES fire on it (measured
+/// 2026-09-13: `verified_rec_step_capped` returns `Some` on the rewritten
+/// term), but the term it fires to is headed by ANOTHER stuck `Fin.rec`
+/// whose own major needs the same treatment. Ten of the fourteen root
+/// failures there are that shape, which is why rewriting once and comparing
+/// looked like the rule simply not working.
+///
+/// So: rewrite, reduce, repeat while the reduct is still a stuck recursor
+/// with an eta-expandable major. The bound is a plain round counter -- each
+/// round costs one memoized whnf -- and the caller's useless-rewrite filter
+/// still applies to the fixpoint.
+///
+/// The claim composes one `deq_p_any` per round: eta gives `cur ~ rewrite`,
+/// reduction gives `rewrite ~ reduct`, and the loop invariant carries
+/// `deq_p_any(x, cur)` across.
+#[verifier::spinoff_prover]
+pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, k: u32, rounds: u32) -> (result: Option<ExprPtr<'t>>)
+    requires memo.wf(), memo.spec_env() == *env,
+        k <= 500,
+        nlbv(to_model(x)) <= 0,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        match result {
+        Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r))
+            && nlbv(to_model(r)) <= 0,
+        None => true,
+    }
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    let ghost cmk = env_model_capped(*env, k as nat);
+    let mut cur = x;
+    let mut any = false;
+    let mut i: u32 = 0;
+    proof { deq_p_any_refl(dtym, em, lcm, to_model(x)); }
+    while i < rounds
+        invariant
+            memo.wf(), memo.spec_env() == *env,
+            k <= 500,
+            cmk == env_model_capped(*env, k as nat),
+            em == to_model_of_env(*env),
+            dtym == to_model_of_declar_ty(*env),
+            lcm == arena_lctx(),
+            nlbv(to_model(cur)) <= 0,
+            deq_p_any(dtym, em, lcm, to_model(x), to_model(cur)),
+        decreases rounds - i
+    {
+        let rw = match verified_major_eta_spine(ctx, env, memo, cur, k) {
+            Some(v) => v,
+            None => match verified_major_eta_proj(ctx, env, memo, cur, k) {
+                Some(v) => v,
+                None => break,
+            },
+        };
+        if expr_ptr_eq(rw, cur) {
+            break;
+        }
+        if ctx.num_loose_bvars(rw) != 0 {
+            break;
+        }
+        let rww = verified_whnf_rec(ctx, env, memo, rw, conv_join_rounds(), k);
+        proof {
+            env_model_capped_sub(*env, k as nat);
+            pstep_star_env_weaken(cmk, em, to_model(rw), to_model(rww));
+            defeq_of_pstep_star(em, to_model(rw), to_model(rww));
+            deq_p_any_of_defeq(dtym, em, lcm, to_model(rw), to_model(rww));
+            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cur), to_model(rw));
+            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rw), to_model(rww));
+        }
+        cur = rww;
+        any = true;
+        i = i + 1;
+    }
+    if any { Some(cur) } else { None }
+}
+
 pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
         k <= 500,
@@ -4481,10 +4559,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         defeq_of_pstep_star(em, to_model(x), to_model(w));
         deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(w));
     }
-    let x2 = match verified_major_eta_spine(ctx, env, memo, w, k) {
-        Some(v) => Some(v),
-        None => verified_major_eta_proj(ctx, env, memo, w, k),
-    };
+    let x2 = verified_major_eta_fix(ctx, env, memo, w, k, 4);
     // If the OTHER side is a stuck recursor too, rewrite it as well and
     // compare the two rewritten terms. Measured 2026-09-12 on
     // Init.Data.BitVec.Lemmas: rewriting one side and comparing it against the
@@ -4502,10 +4577,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                 defeq_of_pstep_star(em, to_model(y), to_model(wy));
                 deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
             }
-            let y2 = match verified_major_eta_spine(ctx, env, memo, wy, k) {
-                Some(v) => Some(v),
-                None => verified_major_eta_proj(ctx, env, memo, wy, k),
-            };
+            let y2 = verified_major_eta_fix(ctx, env, memo, wy, k, 4);
             if let Some(ry) = y2 {
                 if !expr_ptr_eq(rx, x) || !expr_ptr_eq(ry, y) {
                     // reduce the rewritten terms before comparing: the point of
