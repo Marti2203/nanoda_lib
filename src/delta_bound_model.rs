@@ -3523,6 +3523,54 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             return Some(true);
         }
     }
+    // --- eta (the kernel's `def_eq_eta`) ---
+    // Same story as the quotient leaf below: the typed family has had this
+    // since eta landed, the reduction-only family has not, and proof
+    // irrelevance can only use the reduction-only one. The claim is untyped
+    // anyway -- `deq_eta` is a leaf of `deq` -- so it belongs here at least
+    // as much as there.
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((n1, s1, t1, _)), None) => {
+            if ctx.num_loose_bvars(y) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(y, v0);
+                let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
+                if let Some(true) = verified_conv(ctx, env, memo, x, new_lambda, fuel, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(y));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(y)));
+                        assert(deq_eta(to_model(new_lambda), to_model(y)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(y));
+                        deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(35);
+                    return Some(true);
+                }
+            }
+        }
+        (None, Some((n2, s2, t2, _))) => {
+            if ctx.num_loose_bvars(x) == 0 {
+                let v0 = ctx.mk_var(0);
+                let body = ctx.mk_app(x, v0);
+                let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
+                if let Some(true) = verified_conv(ctx, env, memo, new_lambda, y, fuel, budget - 1) {
+                    proof {
+                        nlbv_shift_noop(1, 0, to_model(x));
+                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
+                        assert(eta_expands_to(to_model(new_lambda), to_model(x)));
+                        assert(deq_eta(to_model(new_lambda), to_model(x)));
+                        deq_any_of_eta(em, to_model(new_lambda), to_model(x));
+                        deq_any_symm(em, to_model(new_lambda), to_model(x));
+                        deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                    }
+                    conv_stat(35);
+                    return Some(true);
+                }
+            }
+        }
+        _ => {}
+    }
     // --- quotient computation (the kernel's `reduce_quot`) ---
     // The `_p` family has had this leaf all along; the reduction-only family
     // did not, and proof irrelevance compares its two propositions with THIS
