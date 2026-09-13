@@ -466,20 +466,7 @@ pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
 {
 }
 
-/// ... and every capped model is a sub-map of it, so a fact proven against a
-/// cap still holds against the uncapped one.
-pub proof fn env_model_capped_sub_nofv<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures forall |id: u64| #[trigger] env_model_capped(env, k).contains_key(id)
-        ==> env_model_nofv(env).contains_key(id) && env_model_capped(env, k)[id] == env_model_nofv(env)[id]
-{
-}
 
-/// The capped model is a sub-map of the full model (for `pstep_star_env_weaken`).
-pub proof fn env_model_capped_sub<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    ensures forall |id: u64| #[trigger] env_model_capped(env, k).contains_key(id)
-        ==> to_model_of_env(env).contains_key(id) && env_model_capped(env, k)[id] == to_model_of_env(env)[id]
-{
-}
 
 
 

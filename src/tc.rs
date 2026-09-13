@@ -400,21 +400,11 @@ pub mod route_stats {
     /// an argument their proofs never covered. The knob can lower the cap
     /// for measurement; it cannot raise it past what is proven.
     pub fn cap_k() -> u32 { 500 }
-    /// Environment cap for the whnf-join route only (k <= 60000 in its
-    /// contract; the delta and conv routes assume k <= 500). Shadow-only cost.
-    /// Environment cap for the whnf-join route and the conversion retry.
-    /// Defaults to 60000, the largest value the verified routes' own
-    /// preconditions allow, so it does not limit what can be certified:
-    /// measured 2026-09-12, raising it from 2000 took Init.Omega's
-    /// uncertified pairs from 10 to 1 at no cost in time (3.2s either way).
-    pub fn cap_k_join() -> u32 { 60000 }
-    pub fn whnf_rounds() -> u32 { 256 }
     /// Conversion search budget. 60 rather than 20: measured 2026-09-12 on
     /// Init.Data.BitVec.Lemmas, 20 leaves 81 pairs uncertified and 60 leaves
     /// 76, at the same runtime (215s either way). It plateaus there -- 200
     /// also leaves 76 -- so the rest is not a budget limit.
     pub fn conv_budget() -> u32 { 60 }
-    pub fn conv_join_rounds() -> u32 { 256 }
     pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_INFER_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -1398,7 +1388,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
         if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
         if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) { return 2; }
-        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k_join(), route_stats::whnf_rounds()), Some(true)) { return 3; }
+        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
         if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k(), route_stats::conv_budget()), Some(true)) { return 4; }
         if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::cap_k()), Some(true)) {
             route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
@@ -1457,14 +1447,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         if which == 0 && verdict && route_stats::uncertified_budget() {
             let kx = route_stats::cap_k();
-            let wx = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, x, 256, kx);
-            let wy = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, y, 256, kx);
+            let wx = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, x);
+            let wy = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, y);
             let lx = self.whnf(x);
             let ly = self.whnf(y);
             // if the verified reduct is stuck under a Proj, show what the
             // structure itself reduces to
             if let crate::expr::Expr::Proj { structure, .. } = self.ctx.read_expr(wx) {
-                let ws = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, structure, 256, kx);
+                let ws = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, structure);
                 eprintln!("  PROJ-STRUCT: {:?}\n  PROJ-WHNF  : {:?}",
                     self.ctx.debug_print(structure), self.ctx.debug_print(ws));
             }
@@ -1481,13 +1471,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     {
                         if (mi as usize) < args.len() {
                             let major = args[mi as usize];
-                            let mw = crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, major, 256, kx);
+                            let mw = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, major);
                             let mty = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
                             let ety = crate::delta_bound_model::verified_eta_struct_shadow(self.ctx, self.env, &mut self.shadow_memo, major, kx);
                             // the exact call `verified_conv_major_eta_p` makes,
                             // and what reducing its result gets you
                             let sp = crate::delta_bound_model::verified_major_eta_fix(self.ctx, self.env, &mut self.shadow_memo, t, kx, 64);
-                            let spw = sp.map(|r| crate::tc_model::verified_whnf_rec(self.ctx, self.env, &mut self.shadow_memo, r, 256, kx));
+                            let spw = sp.map(|r| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, r));
                             let moved = match spw { Some(v) => !crate::expr_arena_bridge::expr_ptr_eq(v, t), None => false };
                             // would the rewritten side actually close against
                             // the other one, given a FULL budget? if yes, the
@@ -1505,7 +1495,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             let (iota_ok, iota_exit) = match sp {
                                 Some(r) => {
                                     let before: Vec<u64> = (0..64).map(|q| route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed)).collect();
-                                    let got = crate::tc_model::verified_rec_step_capped(self.ctx, self.env, &mut self.shadow_memo, r, 256, kx).is_some();
+                                    let got = crate::tc_model::verified_rec_step_free(self.ctx, self.env, &mut self.shadow_memo, r).is_some();
                                     let moved: Vec<usize> = (0..64).filter(|q| route_stats::CONV_LEAF[*q].load(std::sync::atomic::Ordering::Relaxed) != before[*q]).collect();
                                     (got, format!("{:?}", moved))
                                 }

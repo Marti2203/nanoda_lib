@@ -98,7 +98,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_sub};
+use crate::env_model::{env_model_nofv, env_model_nofv_sub};
 #[cfg(verus_only)]
 use crate::tc_model::{nat_repr_is_zero_reaches_canonical, nat_repr_pred_reaches_succ_app};
 #[cfg(verus_only)]
@@ -117,7 +117,7 @@ use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
 use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
 use crate::expr_arena_bridge::{verified_size, verified_depth};
-use crate::tc_model::{verified_rec_step_capped, first_rule_ctor_name};
+use crate::tc_model::{verified_rec_step_free, first_rule_ctor_name};
 #[cfg(verus_only)]
 use crate::inductive_model::contains_const_named;
 use crate::inductive_model::verified_has_ind_occ;
@@ -167,7 +167,7 @@ use crate::beta_model::{depth_le_size, size};
 use crate::expr_model::has_fv;
 #[cfg(verus_only)]
 use crate::beta_model::defeq;
-use crate::tc_model::{WhnfMemo, WhnfCert, verified_whnf_rec, verified_whnf_no_unfolding_rec, verified_unfold_def_step_capped};
+use crate::tc_model::{WhnfMemo, WhnfCert, verified_whnf_free, verified_whnf_no_unfolding_free, verified_unfold_def_step_capped};
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
 
@@ -505,13 +505,13 @@ pub fn verified_infer_app_whnf_loop<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env
             proof { pstep_star_refl(denv, to_model(cur_ty)); }
             (cur_ty, bt0, body0)
         } else {
-            let w0 = verified_whnf_rec(ctx, env, memo, cur_ty, 256, k);
+            let w0 = verified_whnf_free(ctx, env, memo, cur_ty);
             let wl = ctx.read_expr(w0);
             match expr_as_pi(&wl) {
                 Some((_, _, bt0, body0)) => {
                     proof {
-                        env_model_capped_sub(*env, k as nat);
-                        pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(cur_ty), to_model(w0));
+                        env_model_nofv_sub(*env);
+                        pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(cur_ty), to_model(w0));
                     }
                     (w0, bt0, body0)
                 }
@@ -1183,13 +1183,13 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
         proof { pstep_star_refl(to_model_of_env(*env), to_model(cur)); }
         return Some((cur, bt0, body0));
     }
-    let w0 = verified_whnf_rec(ctx, env, memo, cur, 256, k);
+    let w0 = verified_whnf_free(ctx, env, memo, cur);
     let wl = ctx.read_expr(w0);
     match expr_as_pi(&wl) {
         Some((_, _, bt0, body0)) => {
             proof {
-                env_model_capped_sub(*env, k as nat);
-                pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(cur), to_model(w0));
+                env_model_nofv_sub(*env);
+                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(cur), to_model(w0));
             }
             Some((w0, bt0, body0))
         }
@@ -1240,10 +1240,10 @@ pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let sty = match verified_infer(ctx, env, memo, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return { infer_exit(6); None } };
     assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
     let k: u32 = 2000;
-    let w = verified_whnf_rec(ctx, env, memo, sty, 256, k);
+    let w = verified_whnf_free(ctx, env, memo, sty);
     proof {
-        env_model_capped_sub(*env, k as nat);
-        pstep_star_env_weaken(env_model_capped(*env, k as nat), denv, to_model(sty), to_model(w));
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), denv, to_model(sty), to_model(w));
     }
     let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
     let args_s: &[ExprPtr<'t>] = args.as_slice();
@@ -1436,12 +1436,12 @@ pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     }
 {
     let k: u32 = 2000;
-    let r = verified_whnf_rec(ctx, env, memo, ty, 256, k);
+    let r = verified_whnf_free(ctx, env, memo, ty);
     let rel = ctx.read_expr(r);
     if let Some(l) = expr_as_sort(&rel) {
         proof {
-            env_model_capped_sub(*env, k as nat);
-            pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(ty), to_model(r));
+            env_model_nofv_sub(*env);
+            pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(ty), to_model(r));
             assert(to_model(r) == ExprSpec::Sort(level_to_model(l)));
         }
         return Some(l);
@@ -1683,9 +1683,9 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         _ => true,
     }
 {
-    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost cm = env_model_nofv(*env);
     proof {
-        env_model_capped_sub(*env, k as nat);
+        env_model_nofv_sub(*env);
     }
     let sx = match verified_size(ctx, x, fuel) { Some(v) => v, None => return None };
     let sy = match verified_size(ctx, y, fuel) { Some(v) => v, None => return None };
@@ -1798,9 +1798,8 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// available: on the full `Init` corpus the global certificate failed for
 /// 44235 of 44684 checkers, leaving 2.16M non-trivial def_eq calls with no
 /// verified route at all.
-pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, k: u32, rounds: u32) -> (result: Option<bool>)
+pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-        k <= 60000,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => defeq(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -1818,12 +1817,12 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if ctx.num_loose_bvars(y) != 0 {
         return None;
     }
-    let rx = verified_whnf_rec(ctx, env, memo, x, rounds, k);
-    let ry = verified_whnf_rec(ctx, env, memo, y, rounds, k);
+    let rx = verified_whnf_free(ctx, env, memo, x);
+    let ry = verified_whnf_free(ctx, env, memo, y);
     if expr_ptr_eq(rx, ry) {
         proof {
-            let cm = env_model_capped(*env, k as nat);
-            env_model_capped_sub(*env, k as nat);
+            let cm = env_model_nofv(*env);
+            env_model_nofv_sub(*env);
             assert(pstep_star(cm, to_model(x), to_model(rx)));
             assert(pstep_star(cm, to_model(y), to_model(rx)));
             pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(rx));
@@ -1881,20 +1880,6 @@ fn conv_fail_print<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'
 #[verifier::external_body]
 fn conv_trace<'t>(tag: u8, x: ExprPtr<'t>, y: ExprPtr<'t>, budget: u32) {
     crate::tc::route_stats::conv_trace(tag, x.raw_bits(), y.raw_bits(), budget);
-}
-
-/// Environment cap for conv's RETRY whnf (the measured rounds allow
-/// k <= 60000; only the lazy-delta round/chain assume k <= 500). Clamped
-/// at the call site; no contract needed.
-
-#[verifier::external_body]
-fn conv_retry_cap() -> u32 {
-    crate::tc::route_stats::cap_k_join()
-}
-
-#[verifier::external_body]
-fn conv_join_rounds() -> u32 {
-    crate::tc::route_stats::conv_join_rounds()
 }
 
 /// Failure-cache probes (diagnostics-grade, no contract): a hit only makes
@@ -2166,13 +2151,13 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         ({
         let (cx, cy) = r;
-        &&& (cx == x || pstep_star(env_model_capped(*env, k as nat), to_model(x), to_model(cx)))
-        &&& (cy == y || pstep_star(env_model_capped(*env, k as nat), to_model(y), to_model(cy)))
+        &&& (cx == x || pstep_star(env_model_nofv(*env), to_model(x), to_model(cx)))
+        &&& (cy == y || pstep_star(env_model_nofv(*env), to_model(y), to_model(cy)))
         &&& nlbv(to_model(cx)) <= 0
         &&& nlbv(to_model(cy)) <= 0
     })
 {
-    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost cm = env_model_nofv(*env);
     let mut cx = x;
     let mut cy = y;
     let mut j: u32 = 0;
@@ -2180,7 +2165,7 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         invariant
             memo.wf(), memo.spec_env() == *env,
             k <= 500,
-            cm == env_model_capped(*env, k as nat),
+            cm == env_model_nofv(*env),
             cx == x || pstep_star(cm, to_model(x), to_model(cx)),
             cy == y || pstep_star(cm, to_model(y), to_model(cy)),
             nlbv(to_model(cx)) <= 0,
@@ -2520,11 +2505,11 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             decreases args.len() - i
         {
             let kr: u32 = 500;
-            let ghost cmr = env_model_capped(*env, kr as nat);
-            let w = verified_whnf_rec(ctx, env, memo, cur_ty, 256, kr);
+            let ghost cmr = env_model_nofv(*env);
+            let w = verified_whnf_free(ctx, env, memo, cur_ty);
             proof {
-                env_model_capped_sub(*env, kr as nat);
-                pstep_star_env_weaken(env_model_capped(*env, kr as nat), to_model_of_env(*env), to_model(cur_ty), to_model(w));
+                env_model_nofv_sub(*env);
+                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(cur_ty), to_model(w));
             }
             let wel = ctx.read_expr(w);
             let (_bn, _bs, aty, bt) = match expr_as_pi(&wel) { Some(p) => p, None => return None };
@@ -2615,10 +2600,10 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let ghost f2 = choose |f: nat| #[trigger] infer_types_to(*env, structure, sty, f);
     assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
     let k: u32 = 2000;
-    let w = verified_whnf_rec(ctx, env, memo, sty, 256, k);
+    let w = verified_whnf_free(ctx, env, memo, sty);
     proof {
-        env_model_capped_sub(*env, k as nat);
-        pstep_star_env_weaken(env_model_capped(*env, k as nat), denv, to_model(sty), to_model(w));
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), denv, to_model(sty), to_model(w));
     }
     let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return None };
     let args_s: &[ExprPtr<'t>] = args.as_slice();
@@ -2865,14 +2850,14 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         _ => true,
     }
 {
-    let r = verified_whnf_rec(ctx, env, memo, ty, 256, k);
+    let r = verified_whnf_free(ctx, env, memo, ty);
     let rel = ctx.read_expr(r);
     if let Some(level) = expr_as_sort(&rel) {
         let zero = ctx.zero();
         if verified_leq(ctx, level, zero, fuel) {
             proof {
-                env_model_capped_sub(*env, k as nat);
-                pstep_star_env_weaken(env_model_capped(*env, k as nat), to_model_of_env(*env), to_model(ty), to_model(r));
+                env_model_nofv_sub(*env);
+                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(ty), to_model(r));
                 assert forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(level), rho) <= 0 by {
                     assert(interp(level_to_model(level), rho) <= interp(level_to_model(zero), rho));
                 }
@@ -2954,12 +2939,10 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     // cap: the claim quantifies the cap away (`struct_type_of` is over the
     // whole environment), so a bigger one here is free, and the conversion
     // cap is pinned at 500 by conv's own bounds.
-    let kj = conv_retry_cap();
-    let kr: u32 = if kj > 60000 { 60000 } else { kj };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let xtw = verified_whnf_rec(ctx, env, memo, xt, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let xtw = verified_whnf_free(ctx, env, memo, xt);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
     }
     let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
@@ -3084,12 +3067,10 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     // cap: the claim quantifies the cap away (`struct_type_of` is over the
     // whole environment), so a bigger one here is free, and the conversion
     // cap is pinned at 500 by conv's own bounds.
-    let kj = conv_retry_cap();
-    let kr: u32 = if kj > 60000 { 60000 } else { kj };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let xtw = verified_whnf_rec(ctx, env, memo, yt, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let xtw = verified_whnf_free(ctx, env, memo, yt);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(yt), to_model(xtw));
     }
     let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
@@ -3230,10 +3211,10 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         return None;
     }
     let kr: u32 = if k > 60000 { 60000 } else { k };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let xtw = verified_whnf_rec(ctx, env, memo, xt, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let xtw = verified_whnf_free(ctx, env, memo, xt);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
     }
     let (hd, name, _levels, _args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
@@ -3498,16 +3479,16 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         conv_trace(1, x, y, budget);
         return None;
     }
-    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost cm = env_model_nofv(*env);
     proof {
-        env_model_capped_sub(*env, k as nat);
+        env_model_nofv_sub(*env);
     }
     // LAZY-DELTA CHAIN (2026-09-05): the kernel's `lazy_delta_step` LOOPS
     // unfolding rounds until the pair is decided or exhausted; one round per
     // conv level spent a budget unit per unfolding, so a chain such as
     // `Add.add -> instAddNat -> Nat.add -> Nat.add._f -> brecOn -> Nat.rec`
     // ran out of budget before its reducts could be compared. Run the rounds
-    // in a loop here (bounded by `conv_join_rounds() * 8`, not the budget),
+    // in a loop here, not by the budget,
     // then recurse ONCE on the final reducts.
     let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, k, 32);
     if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
@@ -3544,13 +3525,11 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // the nat-literal leaf get to see `NLit(0)` vs `Nat.zero`, `Nat.succ
     // (..)` vs a literal, and a constructor spine vs its unfolded twin
     // (the real `def_eq`'s whnf_core-then-retry shape).
-    let kr0 = conv_retry_cap();
-    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let rx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
-    let ry = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let rx = verified_whnf_free(ctx, env, memo, x);
+    let ry = verified_whnf_free(ctx, env, memo, y);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
         pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
     }
@@ -3784,7 +3763,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost em = to_model_of_env(*env);
     let ghost lcm = arena_lctx();
-    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost cm = env_model_nofv(*env);
     let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
@@ -3815,7 +3794,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     if ctx.num_loose_bvars(mty) != 0 {
         return None;
     }
-    let w = verified_whnf_rec(ctx, env, memo, mty, 256, k);
+    let w = verified_whnf_free(ctx, env, memo, mty);
     let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
     if (cnp as usize) > iargs.len() {
         return None;
@@ -3868,9 +3847,9 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         }
         spine_app_nlbv(to_model(head), args2_model);
     }
-    let r = match verified_rec_step_capped(ctx, env, memo, spine2, fuel, k) { Some(v) => v, None => return None };
+    let r = match verified_rec_step_free(ctx, env, memo, spine2) { Some(v) => v, None => return None };
     proof {
-        env_model_capped_sub(*env, k as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cm, em, to_model(spine2), to_model(r));
         defeq_of_pstep_star(em, to_model(spine2), to_model(r));
         deq_p_any_of_defeq(dtym, em, lcm, to_model(spine2), to_model(r));
@@ -4029,10 +4008,10 @@ pub fn verified_positive_arg<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
     let ghost em = to_model_of_env(*env);
     let k: u32 = 2000;
-    let w = verified_whnf_rec(ctx, env, memo, ty, 256, k);
+    let w = verified_whnf_free(ctx, env, memo, ty);
     proof {
-        env_model_capped_sub(*env, k as nat);
-        pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(ty), to_model(w));
         assert(pos_marker(w));
     }
     match verified_has_ind_occ(ctx, w, ind_consts, 100000) {
@@ -4219,10 +4198,10 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 {
     let ghost em = to_model_of_env(*env);
     let k: u32 = 2000;
-    let w = verified_whnf_rec(ctx, env, memo, ty, 256, k);
+    let w = verified_whnf_free(ctx, env, memo, ty);
     proof {
-        env_model_capped_sub(*env, k as nat);
-        pstep_star_env_weaken(env_model_capped(*env, k as nat), em, to_model(ty), to_model(w));
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(ty), to_model(w));
         assert(pos_marker(w));
     }
     let wl = ctx.read_expr(w);
@@ -4394,10 +4373,10 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         return None;
     }
     let kr: u32 = if k > 60000 { 60000 } else { k };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let s2 = verified_whnf_rec(ctx, env, memo, structure, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let s2 = verified_whnf_free(ctx, env, memo, structure);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(structure), to_model(s2));
     }
     // Either the stuck recursor's major premise expands by structure eta, or
@@ -4481,7 +4460,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost lcm = arena_lctx();
-    let ghost cmk = env_model_capped(*env, k as nat);
+    let ghost cmk = env_model_nofv(*env);
     let mut cur = x;
     let mut any = false;
     let mut i: u32 = 0;
@@ -4490,7 +4469,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         invariant
             memo.wf(), memo.spec_env() == *env,
             k <= 500,
-            cmk == env_model_capped(*env, k as nat),
+            cmk == env_model_nofv(*env),
             em == to_model_of_env(*env),
             dtym == to_model_of_declar_ty(*env),
             lcm == arena_lctx(),
@@ -4511,9 +4490,9 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         if ctx.num_loose_bvars(rw) != 0 {
             break;
         }
-        let rww = verified_whnf_rec(ctx, env, memo, rw, conv_join_rounds(), k);
+        let rww = verified_whnf_free(ctx, env, memo, rw);
         proof {
-            env_model_capped_sub(*env, k as nat);
+            env_model_nofv_sub(*env);
             pstep_star_env_weaken(cmk, em, to_model(rw), to_model(rww));
             defeq_of_pstep_star(em, to_model(rw), to_model(rww));
             deq_p_any_of_defeq(dtym, em, lcm, to_model(rw), to_model(rww));
@@ -4551,10 +4530,10 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     // projection after delta. Reducing here (memoized) is what lets the step
     // run once per pair instead of at every recursion level.
     let kr: u32 = if k > 60000 { 60000 } else { k };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let w = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let w = verified_whnf_free(ctx, env, memo, x);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(w));
         defeq_of_pstep_star(em, to_model(x), to_model(w));
         deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(w));
@@ -4569,10 +4548,10 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     if let Some(rx) = x2 {
         if ctx.num_loose_bvars(y) == 0 {
             let kr2: u32 = if k > 60000 { 60000 } else { k };
-            let ghost cmr2 = env_model_capped(*env, kr2 as nat);
-            let wy = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr2);
+            let ghost cmr2 = env_model_nofv(*env);
+            let wy = verified_whnf_free(ctx, env, memo, y);
             proof {
-                env_model_capped_sub(*env, kr2 as nat);
+                env_model_nofv_sub(*env);
                 pstep_star_env_weaken(cmr2, em, to_model(y), to_model(wy));
                 defeq_of_pstep_star(em, to_model(y), to_model(wy));
                 deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
@@ -4584,8 +4563,8 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
                     // the rewrite is to let iota fire, and the constructor
                     // applications only meet AFTER it has
                     if ctx.num_loose_bvars(rx) == 0 && ctx.num_loose_bvars(ry) == 0 {
-                        let rxw = verified_whnf_rec(ctx, env, memo, rx, conv_join_rounds(), kr2);
-                        let ryw = verified_whnf_rec(ctx, env, memo, ry, conv_join_rounds(), kr2);
+                        let rxw = verified_whnf_free(ctx, env, memo, rx);
+                        let ryw = verified_whnf_free(ctx, env, memo, ry);
                         proof {
                             pstep_star_env_weaken(cmr2, em, to_model(rx), to_model(rxw));
                             pstep_star_env_weaken(cmr2, em, to_model(ry), to_model(ryw));
@@ -4628,7 +4607,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
             }
             // same filter on the one-sided path
             if ctx.num_loose_bvars(r) == 0 {
-                let rw = verified_whnf_rec(ctx, env, memo, r, conv_join_rounds(), kr);
+                let rw = verified_whnf_free(ctx, env, memo, r);
                 if expr_ptr_eq(rw, w) {
                     return None;
                 }
@@ -4687,13 +4666,12 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     // application is usually only visible after reduction. Try the reducts
     // first, composing through the reduction on both sides.
     if ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
-        let krr: u32 = { let c = conv_retry_cap(); if c > 60000 { 60000 } else { c } };
-        let ghost cmrr = env_model_capped(*env, krr as nat);
-        let wx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), krr);
-        let wy = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), krr);
+        let ghost cmrr = env_model_nofv(*env);
+        let wx = verified_whnf_free(ctx, env, memo, x);
+        let wy = verified_whnf_free(ctx, env, memo, y);
         if !(expr_ptr_eq(wx, x) && expr_ptr_eq(wy, y)) {
             proof {
-                env_model_capped_sub(*env, krr as nat);
+                env_model_nofv_sub(*env);
                 pstep_star_env_weaken(cmrr, em, to_model(x), to_model(wx));
                 pstep_star_env_weaken(cmrr, em, to_model(y), to_model(wy));
             }
@@ -4777,13 +4755,11 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     if budget == 0 {
         return None;
     }
-    let kr0 = conv_retry_cap();
-    let kr: u32 = if kr0 > 60000 { 60000 } else { kr0 };
-    let ghost cmr = env_model_capped(*env, kr as nat);
-    let rx = verified_whnf_rec(ctx, env, memo, x, conv_join_rounds(), kr);
-    let ry = verified_whnf_rec(ctx, env, memo, y, conv_join_rounds(), kr);
+    let ghost cmr = env_model_nofv(*env);
+    let rx = verified_whnf_free(ctx, env, memo, x);
+    let ry = verified_whnf_free(ctx, env, memo, y);
     proof {
-        env_model_capped_sub(*env, kr as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(rx));
         pstep_star_env_weaken(cmr, em, to_model(y), to_model(ry));
     }
@@ -4965,7 +4941,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     }
 {
     let ghost em = to_model_of_env(*env);
-    let ghost cm = env_model_capped(*env, k as nat);
+    let ghost cm = env_model_nofv(*env);
     let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
@@ -4990,11 +4966,11 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     }
     // the kernel `whnf`s the major premise before matching `Quot.mk`
     let major = args[qi];
-    let mw = verified_whnf_rec(ctx, env, memo, major, 256, k);
+    let mw = verified_whnf_free(ctx, env, memo, major);
     let ghost args2_model = args_model.update(qi as int, to_model(mw));
     proof {
         pstep_star_spine_update(cm, to_model(head), args_model, qi as int, to_model(mw));
-        env_model_capped_sub(*env, k as nat);
+        env_model_nofv_sub(*env);
         pstep_star_env_weaken(cm, em, to_model(x), spine_app(to_model(head), args2_model));
         defeq_of_pstep_star(em, to_model(x), spine_app(to_model(head), args2_model));
         deq_any_of_defeq(em, to_model(x), spine_app(to_model(head), args2_model));
@@ -5137,12 +5113,12 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // the discipline `def_eq` follows; before 2026-09-11 this route tried
     // congruence on unreduced terms first and reduced only as a last resort.
     if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
-        let ghost cmn = env_model_capped(*env, k as nat);
-        let nx = verified_whnf_no_unfolding_rec(ctx, env, memo, x, 256, k);
-        let ny = verified_whnf_no_unfolding_rec(ctx, env, memo, y, 256, k);
+        let ghost cmn = env_model_nofv(*env);
+        let nx = verified_whnf_no_unfolding_free(ctx, env, memo, x);
+        let ny = verified_whnf_no_unfolding_free(ctx, env, memo, y);
         if !(expr_ptr_eq(nx, x) && expr_ptr_eq(ny, y)) {
             proof {
-                env_model_capped_sub(*env, k as nat);
+                env_model_nofv_sub(*env);
                 pstep_star_env_weaken(cmn, em, to_model(x), to_model(nx));
                 pstep_star_env_weaken(cmn, em, to_model(y), to_model(ny));
             }
@@ -5236,8 +5212,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     // BEFORE any congruence): unfold both heads until the pair is decided or
     // the chain is exhausted, then recurse once on the reducts.
     if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
-        let ghost cm = env_model_capped(*env, k as nat);
-        proof { env_model_capped_sub(*env, k as nat); }
+        let ghost cm = env_model_nofv(*env);
+        proof { env_model_nofv_sub(*env); }
         let (cx, cy) = verified_delta_chain(ctx, env, memo, x, y, fuel, k, 32);
         if !(expr_ptr_eq(cx, x) && expr_ptr_eq(cy, y)) {
             conv_trace(2, cx, cy, budget);
@@ -5420,7 +5396,7 @@ pub fn verified_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         bound2 + d2 * d2 * d2 + d2 * d2 + d2 + 10 <= 0xFFFF_0000,
     ensures match result {
         Some(r) => {
-            &&& pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r))
+            &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), bound2 + d2 * d2 * d2 + d2 * d2)
             &&& depth(to_model(r)) <= d2 * d2 + d2 + d2 + d2 + d2
@@ -5433,7 +5409,7 @@ pub fn verified_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     match verified_unfold_def_step_capped(ctx, env, e, fuel, k, Ghost(bound2), Ghost(d)) {
         Some(unfolded) => {
-            let ghost cm = env_model_capped(*env, k as nat);
+            let ghost cm = env_model_nofv(*env);
             match verified_whnf_no_unfolding_step(ctx, unfolded, fuel, Ghost(bound2), Ghost(d2)) {
                 Some(r) => {
                     proof {
@@ -5577,8 +5553,8 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(DeltaRoundResult::Continue(x2, y2)) => {
-            &&& (x2 == x || pstep_star(env_model_capped(*env, k as nat), to_model(x), to_model(x2)))
-            &&& (y2 == y || pstep_star(env_model_capped(*env, k as nat), to_model(y), to_model(y2)))
+            &&& (x2 == x || pstep_star(env_model_nofv(*env), to_model(x), to_model(x2)))
+            &&& (y2 == y || pstep_star(env_model_nofv(*env), to_model(y), to_model(y2)))
             &&& nlbv(to_model(x2)) <= 0
             &&& max_var_below(to_model(x2), bound2 + d2 * d2 * d2 + d2 * d2)
             &&& depth(to_model(x2)) <= d2 * d2 + d2 + d2 + d2 + d2
@@ -5601,7 +5577,7 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     // nat-fold (P3): the kernel's `delta_try_nat` folds a literal
     // application on either side BEFORE any unfolding; mirror that.
     if fuel > 0 {
-        match crate::tc_model::verified_nat_fold_step_capped(ctx, env, memo, x, (fuel - 1) as u32, k) {
+        match crate::tc_model::verified_nat_fold_step_free(ctx, env, memo, x) {
             Some(xprime) => {
                 proof {
                     weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
@@ -5611,7 +5587,7 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
             }
             None => {}
         }
-        match crate::tc_model::verified_nat_fold_step_capped(ctx, env, memo, y, (fuel - 1) as u32, k) {
+        match crate::tc_model::verified_nat_fold_step_free(ctx, env, memo, y) {
             Some(yprime) => {
                 proof {
                     weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
@@ -5631,10 +5607,10 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(yprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
-                            env_model_capped(*env, k as nat).contains_key(k)
-                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
+                            env_model_nofv(*env).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_nofv(*env)[k]
                         by {}
-                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(y), to_model(yprime));
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_nofv(*env), to_model(y), to_model(yprime));
                         weaken_unchanged_bound(to_model(x), bound, d, bound2, d2);
                         weaken_proj_result_bound(to_model(yprime), bound, d, bound2, d2);
                     }
@@ -5656,10 +5632,10 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(xprime) => {
                     proof {
                         assert forall |k: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(k) implies
-                            env_model_capped(*env, k as nat).contains_key(k)
-                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_capped(*env, k as nat)[k]
+                            env_model_nofv(*env).contains_key(k)
+                            && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[k] == env_model_nofv(*env)[k]
                         by {}
-                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_capped(*env, k as nat), to_model(x), to_model(xprime));
+                        pstep_star_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), env_model_nofv(*env), to_model(x), to_model(xprime));
                         weaken_proj_result_bound(to_model(xprime), bound, d, bound2, d2);
                         weaken_unchanged_bound(to_model(y), bound, d, bound2, d2);
                     }

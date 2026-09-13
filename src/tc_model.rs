@@ -79,7 +79,7 @@ use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::arena_lctx;
 #[cfg(verus_only)]
-use crate::env_model::{env_model_capped, env_model_capped_has, env_model_nofv, env_model_nofv_has, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
+use crate::env_model::{env_model_capped, env_model_capped_has, env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
 #[cfg(verus_only)]
 use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
 #[cfg(verus_only)]
@@ -372,7 +372,7 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         k as nat <= bound,
     ensures match result {
         Some(r) => {
-            &&& pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r))
+            &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), bound)
             &&& depth(to_model(r)) <= k + d + d
@@ -433,7 +433,7 @@ pub fn verified_unfold_def_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
             let ghost id = name_id(name);
             let ghost ks = level_names(to_model_of_levels(def_uparams));
             let ghost val = to_model(def_value);
-            let ghost cm = env_model_capped(*env, k as nat);
+            let ghost cm = env_model_nofv(*env);
             assert(to_model_of_env(*env).contains_key(id));
             assert(to_model_of_env(*env)[id] == (ks, val));
             proof {
@@ -918,9 +918,34 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     e
 }
 
+/// The memoized face of the certified whnf: a hit returns the remembered
+/// reduct together with the claim its certificate carries, and every computed
+/// result is recorded. This is what `tc.rs` gets from `whnf_cache`, with the
+/// difference that an entry here cannot be believed without its proof. One
+/// key, not two -- the claim no longer mentions a cap.
+#[verifier::exec_allows_no_decreases_clause]
+pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    requires
+        memo.wf(), memo.spec_env() == *env,
+        nlbv(to_model(e)) <= 0,
+    ensures
+        final(memo).wf(), final(memo).spec_env() == *env,
+        pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
+        nlbv(to_model(result)) <= 0,
+{
+    match memo.get(e, env) {
+        Some(r) => r,
+        None => {
+            let out = verified_whnf_free_uncached(ctx, env, memo, e);
+            memo.put(WhnfCert::make(e, out, env));
+            out
+        }
+    }
+}
+
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
@@ -1208,22 +1233,19 @@ fn ptr_bits<'t>(e: ExprPtr<'t>) -> (result: u32)
 pub struct WhnfCert<'x, 't> {
     e: ExprPtr<'t>,
     r: ExprPtr<'t>,
-    k: u32,
     env: Ghost<Env<'x, 't>>,
 }
 
 impl<'x, 't> WhnfCert<'x, 't> {
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
-        self.k <= 60000
-            && pstep_star(env_model_capped(self.env@, self.k as nat), to_model(self.e), to_model(self.r))
+        pstep_star(env_model_nofv(self.env@), to_model(self.e), to_model(self.r))
             && nlbv(to_model(self.r)) <= 0
     }
 
     pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
     pub closed spec fn spec_src(self) -> ExprPtr<'t> { self.e }
     pub closed spec fn spec_dst(self) -> ExprPtr<'t> { self.r }
-    pub closed spec fn spec_cap(self) -> nat { self.k as nat }
 
     pub fn src(&self) -> (result: ExprPtr<'t>)
         ensures result == self.spec_src()
@@ -1233,24 +1255,23 @@ impl<'x, 't> WhnfCert<'x, 't> {
         ensures result == self.spec_dst()
     { self.r }
 
-    /// Does this entry answer the question being asked?
-    pub fn hit(&self, e: ExprPtr<'t>, k: u32) -> (result: bool)
-        ensures result == (self.spec_src() == e && self.spec_cap() == k as nat)
-    { expr_ptr_eq(self.e, e) && self.k == k }
+    /// Does this entry answer the question being asked? One key now, not two:
+    /// the claim no longer mentions a cap, so the term alone identifies it.
+    pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
+        ensures result == (self.spec_src() == e)
+    { expr_ptr_eq(self.e, e) }
 
     /// The only constructor: the caller must already hold the claim.
-    pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, k: u32, env: &Env<'x, 't>) -> (result: Self)
+    pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
         requires
-            k <= 60000,
-            pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)),
+            pstep_star(env_model_nofv(*env), to_model(e), to_model(r)),
             nlbv(to_model(r)) <= 0,
         ensures
             result.spec_env() == *env,
             result.spec_src() == e,
             result.spec_dst() == r,
-            result.spec_cap() == k as nat,
     {
-        WhnfCert { e, r, k, env: Ghost(*env) }
+        WhnfCert { e, r, env: Ghost(*env) }
     }
 }
 
@@ -1295,9 +1316,9 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// is proven to agree with this and `put` to make it answer with what was
     /// just inserted, so the table is specified as a map rather than merely as
     /// something that hands back proofs.
-    pub closed spec fn spec_get(self, e: ExprPtr<'t>, k: u32) -> Option<ExprPtr<'t>> {
+    pub closed spec fn spec_get(self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
         match self.slots@[(ptr_raw(e) % 8192) as int] {
-            Some(c) => if c.spec_src() == e && c.spec_cap() == k as nat { Some(c.spec_dst()) } else { None },
+            Some(c) => if c.spec_src() == e { Some(c.spec_dst()) } else { None },
             None => None,
         }
     }
@@ -1355,12 +1376,12 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     }
 
     /// A hit hands back the reduct together with its claim.
-    pub fn get(&self, e: ExprPtr<'t>, k: u32, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
+    pub fn get(&self, e: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
         requires self.wf(), self.spec_env() == *env
         ensures
-            result == self.spec_get(e, k),
+            result == self.spec_get(e),
             match result {
-                Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+                Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
                 None => true,
             }
     {
@@ -1373,7 +1394,7 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         match &self.slots[idx] {
             Some(c) => {
                 proof { use_type_invariant(c); }
-                if c.hit(e, k) {
+                if c.hit(e) {
                     Some(c.dst())
                 } else {
                     None
@@ -1388,7 +1409,7 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         ensures
             final(self).wf(),
             final(self).spec_env() == old(self).spec_env(),
-            (*final(self)).spec_get(cert.spec_src(), cert.spec_cap() as u32) == Some(cert.spec_dst()),
+            (*final(self)).spec_get(cert.spec_src()) == Some(cert.spec_dst()),
 
     {
         let src = cert.src();
@@ -1585,434 +1606,14 @@ fn whnf_seen_note<'t>(e: ExprPtr<'t>, k: u32) {
     }
 }
 
-/// `whnf_no_unfolding_aux`'s mirror: beta/zeta (the gate-free primitive),
-/// projection iota (through delta on the structure) and recursor iota, one
-/// step per recursion.
-pub fn verified_whnf_no_unfolding_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
-        nlbv(to_model(result)) <= 0,
-    decreases fuel, 1int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
-    proof { pstep_star_refl(cm, to_model(e)); }
-    if fuel == 0 {
-        return e;
-    }
-    // depth ceiling for the arena primitives (the kernel needs none; our
-    // `verified_inst`/`verified_peel_lambdas` carry an arena-wide bound)
-    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return e };
-    proof { depth_le_size(to_model(e)); }
-    // --- beta / zeta ---
-    match verified_whnf_no_unfolding_step_plain(ctx, e, 100000) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                proof {
-                    assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
-                    pstep_star_env_weaken(mt, cm, to_model(e), to_model(r));
-                }
-                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
-            }
-        }
-        None => {}
-    }
-    // --- projection iota (delta on the structure, as `reduce_proj` does) ---
-    match verified_proj_delta_step_capped(ctx, env, memo, e, (fuel - 1) as u32, k) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
-            }
-        }
-        None => {}
-    }
-    // --- recursor iota ---
-    match verified_rec_step_capped(ctx, env, memo, e, (fuel - 1) as u32, k) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
-            }
-        }
-        None => {}
-    }
-    e
-}
-
-/// `whnf`'s mirror: normalize without unfolding, then the nat fold, then
-/// The memoized face of the certified whnf: a hit returns the remembered
-/// reduct together with the claim its certificate carries, and every computed
-/// result is recorded. This is what `tc.rs` gets from `whnf_cache`, with the
-/// difference that an entry here cannot be believed without its proof.
-pub fn verified_whnf_rec<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
-        nlbv(to_model(result)) <= 0,
-    decreases fuel, 2int
-{
-    match memo.get(e, k, env) {
-        Some(r) => r,
-        None => {
-            let out = verified_whnf_rec_uncached(ctx, env, memo, e, fuel, k);
-            memo.put(WhnfCert::make(e, out, k, env));
-            out
-        }
-    }
-}
-
-/// delta; stop when both decline.
-pub fn verified_whnf_rec_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: ExprPtr<'t>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(result)),
-        nlbv(to_model(result)) <= 0,
-    decreases fuel, 1int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    proof { pstep_star_refl(cm, to_model(e)); }
-    whnf_seen_note(e, k);
-    if fuel == 0 {
-        return e;
-    }
-    let w = verified_whnf_no_unfolding_rec(ctx, env, memo, e, (fuel - 1) as u32, k);
-    // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
-    match verified_nat_fold_step_capped(ctx, env, memo, w, (fuel - 1) as u32, k) {
-        Some(r) => {
-            let out = verified_whnf_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
-            proof {
-                pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
-                pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
-            }
-            return out;
-        }
-        None => {}
-    }
-    // --- delta ---
-    let szw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return w };
-    proof {
-        depth_le_size(to_model(w));
-        nlbv_bound_implies_max_var_below(to_model(w), 0);
-        max_var_below_mono(to_model(w), (depth(to_model(w)) + 0) as nat, 60000);
-    }
-    match verified_unfold_def_step_capped(ctx, env, w, 100000, k, Ghost(60000 as nat), Ghost(60000 as nat)) {
-        Some(r) => {
-            if !expr_ptr_eq(r, w) {
-                let out = verified_whnf_rec(ctx, env, memo, r, (fuel - 1) as u32, k);
-                proof {
-                    pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
-                    pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
-                }
-                return out;
-            }
-        }
-        None => {}
-    }
-    w
-}
 
 
 
 
-/// Operand evaluation for the fold producer WITH reduction inside successor
-/// spines (2026-09-08): the kernel's `get_nat_val` whnf's under `Nat.succ`
-/// too, so `Nat.succ (OfNat.ofNat Nat 55296 inst)` evaluates; the one-shot
-/// whnf + structural read (`nat_operand_value`) stopped at the constructor.
-/// Returns the reduced operand `r` (a value shape) and its number.
-pub fn verified_nat_operand_reduce<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, v: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(v)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some((r, b)) =>
-            pstep_star(env_model_capped(*env, k as nat), to_model(v), to_model(r))
-            && nlbv(to_model(r)) <= 0
-            && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    if fuel == 0 {
-        return None;
-    }
-    let w = verified_whnf_rec(ctx, env, memo, v, (fuel - 1) as u32, k);
-    let el = ctx.read_expr(w);
-    if let Some(pn) = expr_as_nat_lit(w, &el) {
-        match read_bignum_value(ctx, pn) {
-            Some(b) => {
-                proof { is_nat_lit_shape_model(w); }
-                return Some((w, b));
-            }
-            None => return None,
-        }
-    }
-    if ctx.is_nat_zero(w) {
-        proof {
-            is_const_shape_model(w);
-            const_levels_vec_model(w);
-            nat_zero_arity_is_zero(w);
-            assert(to_model(w) == ExprSpec::Const(const_id(w), const_levels_vec(w)));
-            assert(const_levels_vec(w).len() == 0);
-        }
-        return Some((w, <num_bigint::BigUint as num_traits::Zero>::zero()));
-    }
-    match ctx.pred_of_nat_succ(w) {
-        Some(p) => {
-            let ghost fun = choose |fun: ExprPtr<'t>|
-                to_model(w) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
-            proof {
-                assert(nlbv(to_model(p)) <= nlbv(to_model(w)));
-            }
-            match verified_nat_operand_reduce(ctx, env, memo, p, (fuel - 1) as u32, k) {
-                Some((rp, bp)) => {
-                    let (f_exec, _) = match expr_as_app(&el) { Some(pr) => pr, None => return None };
-                    let r = ctx.mk_app(f_exec, rp);
-                    proof {
-                        assert(to_model(w) == ExprSpec::App(Box::new(to_model(f_exec)), Box::new(to_model(p))));
-                        assert(to_model(f_exec) == to_model(fun));
-                        is_const_shape_model(fun);
-                        const_levels_vec_model(fun);
-                        nat_succ_arity_is_zero(fun);
-                        assert(to_model(fun) == ExprSpec::Const(nat_succ_id(), const_levels_vec(fun)));
-                        assert(const_levels_vec(fun).len() == 0);
-                        pstep_star_app_arg_congr(cm, to_model(f_exec), to_model(p), to_model(rp));
-                        pstep_star_trans(cm, to_model(v), to_model(w), to_model(r));
-                        assert(nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(bp) + 1));
-                    }
-                    Some((r, crate::nat_lit_model::biguint_succ(bp)))
-                }
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
 
-/// NAT-LITERAL FOLD producer (rec-iota P3, 2026-09-05): the kernel's
-/// `try_reduce_nat`/`do_nat_bin` as a `pstep_star` -- a nat-op constant
-/// applied to exactly two operands, both operands whnf'd with the capped
-/// multi-round whnf (through `fuel`), both numerals, folded with the
-/// bridged bignum arithmetic (`add`/`sub`/`mul`/`div`/`mod`/`pow`/`gcd`;
-/// `beq`/`ble` give `Bool` constants). The claim composes two
-/// spine-argument reductions with ONE parallel fold step.
-pub fn verified_nat_fold_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0 && depth(to_model(r)) == 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
-    let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
-    let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
-    if args.len() != 2 {
-        return None;
-    }
-    let lvv = read_levels_vec(ctx, levels);
-    if lvv.len() != 0 {
-        return None;
-    }
-    if fuel == 0 {
-        return None;
-    }
-    let x = args[0];
-    let y = args[1];
-    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    proof {
-        spine_app_nlbv_decompose(to_model(fun), args_model);
-        assert(args_model[0] == to_model(x));
-        assert(args_model[1] == to_model(y));
-    }
-    let (vx, bx) = match verified_nat_operand_reduce(ctx, env, memo, x, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
-    let (vy, by) = match verified_nat_operand_reduce(ctx, env, memo, y, (fuel - 1) as u32, k) { Some(p) => p, None => return None };
-    let ghost a = crate::nat_lit_model::to_nat(bx);
-    let ghost b = crate::nat_lit_model::to_nat(by);
-    let r_opt = if op == 0 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_add(bx, by))
-    } else if op == 1 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_sub(bx, by))
-    } else if op == 2 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_mul(bx, by))
-    } else if op == 3 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_div(bx, by))
-    } else if op == 4 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::verified_nat_mod(bx, by))
-    } else if op == 5 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_pow(bx, by))
-    } else if op == 6 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_gcd(&bx, &by))
-    } else if op == 7 {
-        ctx.bool_to_expr(crate::nat_lit_model::biguint_eq(&bx, &by))
-    } else if op == 8 {
-        ctx.bool_to_expr(crate::nat_lit_model::biguint_le(&bx, &by))
-    } else if op == 9 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_land(bx, by))
-    } else if op == 10 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_lor(bx, by))
-    } else if op == 11 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_xor(&bx, &by))
-    } else if op == 12 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shl(bx, by))
-    } else if op == 13 {
-        ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shr(bx, by))
-    } else {
-        return None;
-    };
-    let r = match r_opt { Some(r) => r, None => return None };
-    proof {
-        // the spine after both operand reductions
-        is_const_shape_model(fun);
-        const_levels_vec_model(fun);
-        let fm = to_model(fun);
-        assert(fm == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-        assert(const_id(fun) == name_id(name));
-        assert(const_levels_vec(fun).len() == 0);
-        let args1 = args_model.update(0, to_model(vx));
-        let args2 = args1.update(1, to_model(vy));
-        pstep_star_spine_update(cm, fm, args_model, 0, to_model(vx));
-        assert(args1[1] == to_model(y));
-        pstep_star_spine_update(cm, fm, args1, 1, to_model(vy));
-        pstep_star_trans(cm, to_model(e), spine_app(fm, args1), spine_app(fm, args2));
-        let sp = spine_app(fm, args2);
-        // sp == App(App(fm, vx), vy)
-        assert(args2 =~= Seq::<ExprSpec>::empty().push(to_model(vx)).push(to_model(vy)));
-        spine_app_compose_last(fm, Seq::<ExprSpec>::empty().push(to_model(vx)), to_model(vy));
-        spine_app_compose_last(fm, Seq::<ExprSpec>::empty(), to_model(vx));
-        assert(spine_app(fm, Seq::<ExprSpec>::empty()) == fm);
-        let inner = ExprSpec::App(Box::new(fm), Box::new(to_model(vx)));
-        assert(sp == ExprSpec::App(Box::new(inner), Box::new(to_model(vy))));
-        // fold-ready with values a, b
-        spine_destruct_app(fm, args2);
-        assert(spine_head(sp) == fm);
-        assert(spine_args(sp) =~= args2);
-        assert(nat_fold_ready(sp));
-        // the folded literal is r
-        if op == 7 || op == 8 {
-            bool_true_arity_is_zero_any(r);
-            is_const_shape_model(r);
-            const_levels_vec_model(r);
-            assert(to_model(r) == ExprSpec::Const(const_id(r), const_levels_vec(r)));
-            const_expr_no_levels_canonical(to_model(r), const_id(r));
-        } else {
-            is_nat_lit_shape_model(r);
-        }
-        assert(nat_fold_result(sp) == to_model(r));
-        // one parallel fold step
-        assert(pstep(cm, inner, inner));
-        assert(pstep(cm, to_model(vy), to_model(vy)));
-        pstep_fold_intro(cm, Box::new(inner), Box::new(to_model(vy)), inner, to_model(vy), to_model(r));
-        pstep_star_one(cm, sp, to_model(r));
-        pstep_star_trans(cm, to_model(e), sp, to_model(r));
-        nat_fold_result_bounds(sp, 0, 0, 0);
-    }
-    Some(r)
-}
 
-/// PROJ-DELTA producer (2026-09-04): `reduce_proj(cheap = false)`'s
-/// missing half. The measured rounds' no-unfolding step only reduces a
-/// `Proj` whose structure is ALREADY a constructor spine after beta/zeta;
-/// the dominant real shape (`LE.le Nat instLENat n a` after one delta +
-/// beta = `%(instLENat).0 n a`) needs the structure DELTA-unfolded first
-/// (`instLENat` is a definition whose value is `LE.mk Nat.le`). Here the
-/// structure is reduced with the capped multi-round whnf (delta + rec +
-/// nested proj-delta, all through `fuel`), then proj-iota extracts the
-/// field and the outer args are re-applied. `pstep_star` composes as
-/// congruence-through-`Proj` (`pstep_star_proj_congr`) + one iota step
-/// (`pstep_star_iota`) + spine congruence (`pstep_spine_app_star`).
-pub fn verified_proj_delta_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
-    let head_el = ctx.read_expr(head);
-    let (_, idx, structure) = match expr_as_proj(&head_el) { Some(p) => p, None => return None };
-    if idx > 0xFFFF_0000 {
-        return None;
-    }
-    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    assert(to_model(head) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
-    proof {
-        spine_app_nlbv_decompose(to_model(head), args_model);
-        assert(nlbv(to_model(head)) <= 0);
-        assert(nlbv(to_model(structure)) <= 0);
-    }
-    if fuel == 0 {
-        return None;
-    }
-    let s2 = verified_whnf_rec(ctx, env, memo, structure, (fuel - 1) as u32, k);
-    let (fun, cargs) = match verified_unfold_apps(ctx, s2, 100000) { Some(p) => p, None => return None };
-    let fun_el = ctx.read_expr(fun);
-    let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
-    let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
-    let i = num_params as usize + idx;
-    if i >= cargs.len() {
-        return None;
-    }
-    let field = cargs[i];
-    let r = verified_foldl_apps(ctx, field, args.as_slice());
-    proof {
-        let ghost cargs_model = Seq::new(cargs@.len(), |j: int| to_model(cargs@[j]));
-        is_const_shape_model(fun);
-        const_levels_vec_model(fun);
-        assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-        assert(to_model(s2) == spine_app(to_model(fun), cargs_model));
-        assert(const_id(fun) == name_id(name));
-        assert(cargs_model[i as int] == to_model(field));
-        ctor_num_params_of_agrees(*env, name_id(name));
-        pstep_star_iota(cm, idx, to_model(structure), const_id(fun), const_levels_vec(fun), cargs_model, num_params);
-        assert(pstep_star(cm, to_model(head), to_model(field)));
-        assert(to_model(e) == spine_app(to_model(head), args_model));
-        assert(to_model(r) == spine_app(to_model(field), args_model));
-        pstep_spine_app_star(cm, to_model(head), to_model(field), args_model);
-        // nlbv: the field is a sub-spine element of the (nlbv <= 0) reduct
-        spine_app_nlbv_decompose(to_model(fun), cargs_model);
-        assert(nlbv(to_model(field)) <= 0);
-        assert forall |j: int| 0 <= j < args_model.len() implies nlbv(#[trigger] args_model[j]) <= 0 by {}
-        spine_app_nlbv(to_model(field), args_model);
-    }
-    Some(r)
-}
+
+
 
 
 
@@ -2081,203 +1682,6 @@ fn rec_stat(kind: u8) {
     crate::tc::route_stats::conv_leaf(kind);
 }
 
-pub fn verified_rec_step_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, k: u32) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(e)) <= 0,
-        k <= 60000,
-    ensures
-        final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => pstep_star(env_model_capped(*env, k as nat), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let ghost cm = env_model_capped(*env, k as nat);
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => { rec_stat(40); return None; } };
-    let fun_el = ctx.read_expr(fun);
-    let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => { rec_stat(41); return None; } };
-    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => { rec_stat(42); return None; } };
-    if args.len() > 64 || major_idx >= args.len() {
-        { rec_stat(49); return None; }
-    }
-    let nprefix: usize = (np as usize) + (nm as usize) + (nmin as usize);
-    if nprefix > major_idx {
-        { rec_stat(50); return None; }
-    }
-    let major = args[major_idx];
-    proof {
-        spine_app_nlbv_decompose(to_model(fun), args_model_of(args@));
-        assert(args_model_of(args@)[major_idx as int] == to_model(major));
-        assert(nlbv(to_model(major)) <= 0);
-    }
-    if fuel == 0 {
-        { rec_stat(51); return None; }
-    }
-    let majw0 = verified_whnf_rec(ctx, env, memo, major, (fuel - 1) as u32, k);
-    // A literal major converts to its constructor form (`Nat.zero` /
-    // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
-    let majw0_el = ctx.read_expr(majw0);
-    let majw = match expr_as_nat_lit(majw0, &majw0_el) {
-        Some(nptr) => match verified_nat_lit_to_constructor(ctx, nptr) {
-            Some(c) => {
-                proof {
-                    is_nat_lit_shape_model(majw0);
-                    assert(to_model(majw0) == ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(nptr)))));
-                    assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
-                        cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == cm[j]
-                    by {}
-                    pstep_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(majw0), to_model(c));
-                    pstep_star_one(cm, to_model(majw0), to_model(c));
-                    pstep_star_trans(cm, to_model(major), to_model(majw0), to_model(c));
-                }
-                c
-            }
-            None => { rec_stat(43); return None; },
-        },
-        None => majw0,
-    };
-    let (chead, cargs) = match verified_unfold_apps(ctx, majw, 100000) { Some(p) => p, None => { rec_stat(44); return None; } };
-    let chead_el = ctx.read_expr(chead);
-    let (cname, _clevels) = match expr_as_const(chead, &chead_el) {
-        Some(p) => p,
-        None => {
-            if expr_as_local(chead, &chead_el).is_some() { rec_stat(45); }
-            else if expr_as_lambda(&chead_el).is_some() { rec_stat(56); }
-            else if expr_as_proj(&chead_el).is_some() { rec_stat(57); }
-            else if expr_as_nat_lit(chead, &chead_el).is_some() { rec_stat(58); }
-            else { rec_stat(59); }
-            return None;
-        }
-    };
-    if cargs.len() > 64 {
-        { rec_stat(52); return None; }
-    }
-    let rule = match verified_find_rec_rule(&rules, cname) {
-        Some(rr) => rr,
-        None => {
-            match env.get_declar_val(&cname) {
-                Some(_) => { rec_stat(60); }
-                None => {
-                    match get_recursor_data(env, &cname) { Some(_) => { rec_stat(61); } None => { rec_stat(46); } }
-                }
-            }
-            return None;
-        }
-    };
-    let nf: usize = rec_rule_ctor_telescope_size_wo_params(&rule) as usize;
-    if nf > cargs.len() {
-        { rec_stat(53); return None; }
-    }
-    let rhs = rec_rule_val(&rule);
-    let sz = match verified_size(ctx, rhs, 100000) { Some(v) => v, None => { rec_stat(47); return None; } };
-    if sz > 500 {
-        { rec_stat(54); return None; }
-    }
-    let uv = read_levels_vec(ctx, uparams);
-    let lvv = read_levels_vec(ctx, rlevels);
-    if uv.len() != lvv.len() {
-        { rec_stat(55); return None; }
-    }
-    assert(to_model_of_levels(uparams).len() == to_model_of_levels(rlevels).len());
-    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) { Some(b) => b, None => { rec_stat(48); return None; } };
-    let prefix_args = &args[0..nprefix];
-    let field_args = &cargs[(cargs.len() - nf)..cargs.len()];
-    let post_args = &args[(major_idx + 1)..args.len()];
-    let s1 = verified_foldl_apps(ctx, body, prefix_args);
-    let s2 = verified_foldl_apps(ctx, s1, field_args);
-    let r = verified_foldl_apps(ctx, s2, post_args);
-    proof {
-        // Model views.
-        is_const_shape_model(fun);
-        const_levels_vec_model(fun);
-        is_const_shape_model(chead);
-        const_levels_vec_model(chead);
-        let rid = const_id(fun);
-        let lv = const_levels_vec(fun);
-        let head = ExprSpec::Const(rid, lv);
-        assert(rid == name_id(rname));
-        let cid = const_id(chead);
-        let clv = const_levels_vec(chead);
-        let chm = ExprSpec::Const(cid, clv);
-        assert(cid == name_id(cname));
-        let am = args_model_of(args@);
-        let mi = major_idx as int;
-        let am2 = am.update(mi, to_model(majw));
-        let sp2 = spine_app(head, am2);
-        assert(to_model(e) == spine_app(head, am));
-        // The major reduced under the spine.
-        pstep_star_spine_update(cm, head, am, mi, to_model(majw));
-        assert(pstep_star(cm, to_model(e), sp2));
-        // Recursor data at the model level.
-        let rd = RecDataSpec {
-            num_params: np as nat,
-            num_motives: nm as nat,
-            num_minors: nmin as nat,
-            major_idx: major_idx as nat,
-            uparams: level_names(to_model_of_levels(uparams)),
-            rules: rec_rules_model(rules@),
-        };
-        assert(to_model_of_recursors(*env)[rid] == rd);
-        rec_data_of_agrees(*env, rid);
-        assert(rec_data_of(rid) == Some(rd));
-        // The rule.
-        find_rule_of_find_index(rules@, cname);
-        find_index_hit(rec_rule_ctor_names(rules@), cname);
-        let ri = find_index(rec_rule_ctor_names(rules@), cname)->Some_0 as int;
-        assert(0 <= ri < rules@.len());
-        assert(rules@[ri] == rule);
-        assert(rec_rule_ctor_names(rules@)[ri] == cname);
-        assert(rec_rule_ctor_name_of(rule) == cname);
-        assert(find_rule(rd.rules, cid) == Some(ri));
-        assert(rd.rules[ri] == rec_rules_model(rules@)[ri]);
-        assert(rec_rules_model(rules@)[ri] == RecRuleSpec {
-            ctor_id: name_id(rec_rule_ctor_name_of(rules@[ri])),
-            nfields: rec_rule_ctor_telescope_size_wo_params_of(rules@[ri]) as nat,
-            rhs: to_model(rec_rule_val_of(rules@[ri])),
-        });
-        assert(rd.rules[ri] == RecRuleSpec { ctor_id: cid, nfields: nf as nat, rhs: to_model(rhs) });
-        // Spine shapes.
-        spine_destruct_app(head, am2);
-        let cam = args_model_of(cargs@);
-        assert(to_model(majw) == spine_app(chm, cam));
-        spine_destruct_app(chm, cam);
-        assert(am2[mi] == to_model(majw));
-        assert(rec_prefix(rd) == nprefix as nat);
-        assert(rec_ready(sp2));
-        // The rule instance equals the exec result.
-        let bm = crate::expr_model::subst_expr_levels(to_model(rhs), rd.uparams, lv);
-        assert(to_model(body) == bm);
-        assert(args_model_of(prefix_args@) =~= am2.subrange(0, nprefix as int));
-        assert(args_model_of(field_args@) =~= cam.subrange((cam.len() - nf) as int, cam.len() as int));
-        assert(args_model_of(post_args@) =~= am2.subrange(mi + 1, am2.len() as int));
-        assert(to_model(r) == rec_result(sp2));
-        // One recursor step at the outermost application node.
-        let init = am2.subrange(0, am2.len() - 1);
-        let last = am2[am2.len() - 1];
-        assert(am2 =~= init.push(last));
-        spine_app_compose_last(head, init, last);
-        let fpart = spine_app(head, init);
-        assert(sp2 == ExprSpec::App(Box::new(fpart), Box::new(last)));
-        assert(pstep(cm, fpart, fpart));
-        assert(pstep(cm, last, last));
-        pstep_rec_intro(cm, Box::new(fpart), Box::new(last), fpart, last, to_model(r));
-        pstep_star_one(cm, sp2, to_model(r));
-        pstep_star_trans(cm, to_model(e), sp2, to_model(r));
-        // The result is closed: every argument of the stepped spine is.
-        assert forall |i: int| 0 <= i < am2.len() implies nlbv(#[trigger] am2[i]) <= 0 by {
-            if i == mi {
-            } else {
-                assert(am2[i] == am[i]);
-                assert(am[i] == to_model(args@[i]));
-            }
-        }
-        crate::beta_model::spine_app_nlbv(head, am2);
-        crate::beta_model::rec_result_bounds(sp2, 0, 0, 0);
-    }
-    Some(r)
-}
 
 /// `2^exp`, defined recursively since Verus's `nat` has no built-in
 /// exponentiation -- needed to state `Shl`/`Shr`/`Pow`'s semantics
