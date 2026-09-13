@@ -3523,6 +3523,31 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             return Some(true);
         }
     }
+    // --- quotient computation (the kernel's `reduce_quot`) ---
+    // The `_p` family has had this leaf all along; the reduction-only family
+    // did not, and proof irrelevance compares its two propositions with THIS
+    // family -- it has to, because `proof_irrel_pair` is stated over
+    // `deq_any` and using the typed conversion there would be circular. So a
+    // quotient anywhere inside a proposition was an automatic decline.
+    // `verified_quot_step` already promises `deq_any`, so it drops straight
+    // in.
+    if let Some(rq) = verified_quot_step(ctx, env, memo, x) {
+        if let Some(true) = verified_conv(ctx, env, memo, rq, y, fuel, budget - 1) {
+            proof { deq_any_trans(em, to_model(x), to_model(rq), to_model(y)); }
+            conv_stat(34);
+            return Some(true);
+        }
+    }
+    if let Some(rq) = verified_quot_step(ctx, env, memo, y) {
+        if let Some(true) = verified_conv(ctx, env, memo, x, rq, fuel, budget - 1) {
+            proof {
+                deq_any_symm(em, to_model(y), to_model(rq));
+                deq_any_trans(em, to_model(x), to_model(rq), to_model(y));
+            }
+            conv_stat(34);
+            return Some(true);
+        }
+    }
     conv_trace(5, x, y, budget);
     None
 }
