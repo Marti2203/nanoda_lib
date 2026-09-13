@@ -3027,7 +3027,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     // the two types must be convertible: that is what makes an expansion read
     // off the OTHER side's structure valid for this one, and it is exactly the
     // check `try_eta_struct_aux` performs
-    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, conv_budget_total()) {
         Some(true) => {}
         _ => return None,
     }
@@ -3207,7 +3207,7 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         assert(unit_like_type_m(em, to_model(xt)));
     }
     let yt = match verified_infer_shadow(ctx, env, memo, y) { Some(v) => v, None => return None };
-    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, conv_budget_total()) {
         Some(true) => {
             proof {
                 let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
@@ -3257,7 +3257,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         Some(true) => {}
         _ => { conv_stat(32); return None; }
     }
-    match verified_conv(ctx, env, memo, xt, yt, fuel, 16) {
+    match verified_conv(ctx, env, memo, xt, yt, fuel, conv_budget_total()) {
         Some(true) => {
             proof {
                 let fx = choose |f: nat| #[trigger] infer_types_to(*env, x, xt, f);
@@ -3272,7 +3272,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
             }
             Some(true)
         }
-        _ => None,
+        _ => { conv_stat(33); None },
     }
 }
 
