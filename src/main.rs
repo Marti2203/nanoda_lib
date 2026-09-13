@@ -5,12 +5,26 @@ use std::path::Path;
 fn main() -> Result<(), MainError> {
     let mut args = std::env::args();
     let _ = args.next();
-    let out = match args.next().as_ref() {
-        None => Err(Box::from("This program expects a path to a configuration file.".to_string())),
-        Some(p) if p == "-h" || p == "--help" => return Ok(println!("{}", HELP_LONG)),
-        Some(p) => use_config(&Path::new(p)),
-    }
-    .map_err(|e| MainError(e))?;
+    // Run the checker on a thread with a large stack. Reduction recurses as
+    // deep as the term it is reducing -- the recursor case reduces its major
+    // premise before it can fire -- and the certified whnf carries no fuel to
+    // cut that short, so the depth is bounded by the stack rather than by a
+    // number. 1 GiB is a runtime resource, not a limit on what can be proven.
+    let arg = args.next();
+    let out = std::thread::Builder::new()
+        .stack_size(1024 * 1024 * 1024)
+        .spawn(move || match arg.as_ref() {
+            None => Err("This program expects a path to a configuration file.".to_string()),
+            Some(p) if p == "-h" || p == "--help" => {
+                println!("{}", HELP_LONG);
+                Ok(None)
+            }
+            Some(p) => use_config(&Path::new(p)).map_err(|e| e.to_string()),
+        })
+        .expect("could not start the checker thread")
+        .join()
+        .expect("the checker thread panicked")
+        .map_err(|e| MainError(Box::from(e)))?;
 
     if let Some(msg) = out {
         println!("{}", msg);

@@ -750,48 +750,64 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     let ghost cm = env_model_nofv(*env);
     let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
     proof { pstep_star_refl(cm, to_model(e)); }
-    // depth ceiling for the arena primitives (the kernel needs none; our
-    // `verified_inst`/`verified_peel_lambdas` carry an arena-wide bound)
-    let sz = match verified_size(ctx, e, 100000) { Some(v) => v, None => return e };
-    proof { depth_le_size(to_model(e)); }
-    // --- beta / zeta ---
-    match verified_whnf_no_unfolding_step_plain(ctx, e, 100000) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                proof {
-                    assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
-                    pstep_star_env_weaken(mt, cm, to_model(e), to_model(r));
+    let mut cur = e;
+    // ITERATIVE, not tail-recursive. `tc.rs`'s `whnf_no_unfolding_aux` fires
+    // one step and tail-calls itself; written that way here it costs one stack
+    // frame per reduction step, and with the fuel gone there is nothing to cap
+    // the count -- full `Init` overflowed the stack at 20,000+ frames, and at
+    // 64 MB too. The loop is the same algorithm with the frame reused, so the
+    // depth of a reduction no longer has to fit on the stack.
+    loop
+        invariant
+            memo.wf(), memo.spec_env() == *env,
+            cm == env_model_nofv(*env),
+            mt == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+            nlbv(to_model(cur)) <= 0,
+            pstep_star(cm, to_model(e), to_model(cur)),
+    {
+        // depth ceiling for the arena primitives (the kernel needs none; our
+        // `verified_inst`/`verified_peel_lambdas` carry an arena-wide bound)
+        let sz = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
+        proof { depth_le_size(to_model(cur)); }
+        // --- beta / zeta ---
+        match verified_whnf_no_unfolding_step_plain(ctx, cur, 100000) {
+            Some(r) => {
+                if !expr_ptr_eq(r, cur) {
+                    proof {
+                        assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
+                        pstep_star_env_weaken(mt, cm, to_model(cur), to_model(r));
+                        pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r));
+                    }
+                    cur = r;
+                    continue;
                 }
-                let out = verified_whnf_no_unfolding_free(ctx, env, memo, r);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
             }
+            None => {}
         }
-        None => {}
-    }
-    // --- projection iota (delta on the structure, as `reduce_proj` does) ---
-    match verified_proj_delta_step_free(ctx, env, memo, e) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_free(ctx, env, memo, r);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
+        // --- projection iota (delta on the structure, as `reduce_proj` does) ---
+        match verified_proj_delta_step_free(ctx, env, memo, cur) {
+            Some(r) => {
+                if !expr_ptr_eq(r, cur) {
+                    proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r)); }
+                    cur = r;
+                    continue;
+                }
             }
+            None => {}
         }
-        None => {}
-    }
-    // --- recursor iota ---
-    match verified_rec_step_free(ctx, env, memo, e) {
-        Some(r) => {
-            if !expr_ptr_eq(r, e) {
-                let out = verified_whnf_no_unfolding_free(ctx, env, memo, r);
-                proof { pstep_star_trans(cm, to_model(e), to_model(r), to_model(out)); }
-                return out;
+        // --- recursor iota ---
+        match verified_rec_step_free(ctx, env, memo, cur) {
+            Some(r) => {
+                if !expr_ptr_eq(r, cur) {
+                    proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r)); }
+                    cur = r;
+                    continue;
+                }
             }
+            None => {}
         }
-        None => {}
+        return cur;
     }
-    e
 }
 
 /// The memoized face of the certified whnf: a hit returns the remembered
@@ -799,6 +815,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
 /// result is recorded. This is what `tc.rs` gets from `whnf_cache`, with the
 /// difference that an entry here cannot be believed without its proof. One
 /// key, not two -- the claim no longer mentions a cap.
+#[verifier::exec_allows_no_decreases_clause]
 #[verifier::exec_allows_no_decreases_clause]
 pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
     requires
@@ -833,40 +850,47 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     let ghost cm = env_model_nofv(*env);
     proof { pstep_star_refl(cm, to_model(e)); }
     whnf_seen_note(e, 0);
-    let w = verified_whnf_no_unfolding_free(ctx, env, memo, e);
-    // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
-    match verified_nat_fold_step_free(ctx, env, memo, w) {
-        Some(r) => {
-            let out = verified_whnf_free(ctx, env, memo, r);
-            proof {
-                pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
-                pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
+    let mut cur = e;
+    // Iterative for the same reason as `verified_whnf_no_unfolding_free`:
+    // `tc.rs`'s `whnf` tail-calls itself after the nat fold and after delta,
+    // and with no fuel each of those is a stack frame per reduction step.
+    loop
+        invariant
+            memo.wf(), memo.spec_env() == *env,
+            cm == env_model_nofv(*env),
+            nlbv(to_model(cur)) <= 0,
+            pstep_star(cm, to_model(e), to_model(cur)),
+    {
+        let w = verified_whnf_no_unfolding_free(ctx, env, memo, cur);
+        proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(w)); }
+        // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
+        match verified_nat_fold_step_free(ctx, env, memo, w) {
+            Some(r) => {
+                proof { pstep_star_trans(cm, to_model(e), to_model(w), to_model(r)); }
+                cur = r;
+                continue;
             }
-            return out;
+            None => {}
         }
-        None => {}
-    }
-    // --- delta ---
-    let szw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return w };
-    proof {
-        depth_le_size(to_model(w));
-        nlbv_bound_implies_max_var_below(to_model(w), 0);
-        max_var_below_mono(to_model(w), (depth(to_model(w)) + 0) as nat, 60000);
-    }
-    match verified_unfold_def_step_free(ctx, env, w, 100000) {
-        Some(r) => {
-            if !expr_ptr_eq(r, w) {
-                let out = verified_whnf_free(ctx, env, memo, r);
-                proof {
-                    pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
-                    pstep_star_trans(cm, to_model(e), to_model(r), to_model(out));
+        // --- delta ---
+        let szw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return w };
+        proof {
+            depth_le_size(to_model(w));
+            nlbv_bound_implies_max_var_below(to_model(w), 0);
+            max_var_below_mono(to_model(w), (depth(to_model(w)) + 0) as nat, 60000);
+        }
+        match verified_unfold_def_step_free(ctx, env, w, 100000) {
+            Some(r) => {
+                if !expr_ptr_eq(r, w) {
+                    proof { pstep_star_trans(cm, to_model(e), to_model(w), to_model(r)); }
+                    cur = r;
+                    continue;
                 }
-                return out;
             }
+            None => {}
         }
-        None => {}
+        return w;
     }
-    w
 }
 
 #[verifier::exec_allows_no_decreases_clause]
