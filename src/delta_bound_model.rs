@@ -1341,6 +1341,12 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             // every argument of every application unmemoized took a 5-second
             // corpus past ten minutes
             let a_ty = match verified_infer_shadow(ctx, env, memo, a) { Some(v) => v, None => return None };
+            // Two mitigations MEASURED AND REJECTED (2026-09-14): a
+            // pointer-equality fast path before the conversion (the inferred
+            // type and the domain are rarely the same pointer -- no gain), and
+            // a 16x larger memo (no gain, so this is not cache thrashing).
+            // The cost is genuine: checked inference visits the whole term,
+            // where the old unsound rule only walked the head chain.
             if !matches!(verified_conv(ctx, env, memo, a_ty, aty, 100, conv_budget_total()), Some(true)) {
                 return None;
             }
