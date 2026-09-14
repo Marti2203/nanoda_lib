@@ -39,34 +39,6 @@ use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distr
 #[cfg(verus_only)]
 use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param};
 
-// These accessors' only "caller" is the `assume_specification` attributes
-// below, which are erased under plain (non-Verus) compilation — hence the
-// `allow(dead_code)`: real code, just not yet wired to any other caller.
-#[allow(dead_code)]
-pub(crate) fn level_is_zero(l: &Level) -> bool {
-    matches!(l, Level::Zero)
-}
-
-#[allow(dead_code)]
-pub(crate) fn level_as_succ<'t>(l: &Level<'t>) -> Option<LevelPtr<'t>> {
-    match l { Level::Succ(p, _) => Some(*p), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn level_as_max<'t>(l: &Level<'t>) -> Option<(LevelPtr<'t>, LevelPtr<'t>)> {
-    match l { Level::Max(a, b, _) => Some((*a, *b)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn level_as_imax<'t>(l: &Level<'t>) -> Option<(LevelPtr<'t>, LevelPtr<'t>)> {
-    match l { Level::IMax(a, b, _) => Some((*a, *b)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn level_as_param<'t>(l: &Level<'t>) -> Option<NamePtr<'t>> {
-    match l { Level::Param(n, _) => Some(*n), _ => None }
-}
-
 // Verus doesn't automatically connect an external type's real `==` (its
 // actual `PartialEq::eq`) to spec-level equality on the opaque ghost value —
 // tested directly: `assert(n == p)` failed even immediately inside an
@@ -101,15 +73,25 @@ verus! {
 #[verifier::external_body]
 pub struct ExTcCtx<'t, 'p>(TcCtx<'t, 'p>);
 
+/// `accept_recursive_types(A)` rather than `reject`: `Ptr<A>` is `{ raw: u32,
+/// ph: PhantomData<A> }` -- the parameter is purely phantom, so a `Ptr` holds
+/// no `A` at all and recursion through it is vacuous. Rejecting it is what
+/// stopped `Level` from being made transparent (`ExLevel`), since
+/// `LevelPtr = Ptr<Level>` then counts as a non-positive recursive use.
 #[allow(dead_code)]
-#[verifier::reject_recursive_types(A)]
+#[verifier::accept_recursive_types(A)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExPtr<A>(Ptr<A>);
 
+/// TRANSPARENT, not `external_body`. A single-field proxy struct without
+/// `external_body` makes an external ENUM's variants visible to Verus, which
+/// is what lets the kernel's own `match self.read_level(ptr) { Zero => ..,
+/// Succ(val, ..) => .. }` be verified as written instead of rewritten into
+/// accessor calls. (The proxy must be a struct even though `Level` is an
+/// enum -- Verus rejects an enum proxy outright.)
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExLevel<'a>(Level<'a>);
 
 #[allow(dead_code)]
@@ -202,37 +184,76 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::param] (ctx: &mut TcCtx<'t, '
 
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.
-pub uninterp spec fn to_model_of_level<'a>(l: Level<'a>) -> LevelSpec;
+///
+/// DEFINED, not uninterpreted. It could not be while `Level` was opaque to
+/// Verus; with `ExLevel` transparent the variants are visible and this is
+/// just the obvious structural map. Each child is still `to_model` of a
+/// POINTER -- that stays uninterpreted, and is where the arena's trust
+/// actually lives -- so this definition is not recursive.
+pub open spec fn to_model_of_level<'a>(l: Level<'a>) -> LevelSpec {
+    match l {
+        Level::Zero => LevelSpec::Zero,
+        Level::Succ(p, _) => LevelSpec::Succ(Box::new(to_model(p))),
+        Level::Max(a, b, _) => LevelSpec::Max(Box::new(to_model(a)), Box::new(to_model(b))),
+        Level::IMax(a, b, _) => LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b))),
+        Level::Param(n, _) => LevelSpec::Param(name_id(n)),
+    }
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_level] (ctx: &TcCtx<'t, 'p>, ptr: LevelPtr<'t>) -> (result: Level<'t>) where 'p: 't
     ensures to_model_of_level(result) == to_model(ptr);
 
-pub assume_specification [level_is_zero] (l: &Level) -> (result: bool)
-    ensures result == matches!(to_model_of_level(*l), LevelSpec::Zero);
+// PROVEN, not assumed. These five were `assume_specification`s only because
+// `Level` was opaque to Verus and its variants could not be matched in
+// verified code; with `ExLevel` transparent they are ordinary verified
+// functions and their contracts fall straight out of `to_model_of_level`'s
+// definition. Five fewer things on the trust surface.
+#[allow(dead_code)]
+pub fn level_is_zero(l: &Level) -> (result: bool)
+    ensures result == matches!(to_model_of_level(*l), LevelSpec::Zero)
+{
+    matches!(l, Level::Zero)
+}
 
-pub assume_specification<'t> [level_as_succ] (l: &Level<'t>) -> (result: Option<LevelPtr<'t>>)
+#[allow(dead_code)]
+pub fn level_as_succ<'t>(l: &Level<'t>) -> (result: Option<LevelPtr<'t>>)
     ensures match result {
         Some(p) => to_model_of_level(*l) == LevelSpec::Succ(Box::new(to_model(p))),
         None => !matches!(to_model_of_level(*l), LevelSpec::Succ(_)),
-    };
+    }
+{
+    match l { Level::Succ(p, _) => Some(*p), _ => None }
+}
 
-pub assume_specification<'t> [level_as_max] (l: &Level<'t>) -> (result: Option<(LevelPtr<'t>, LevelPtr<'t>)>)
+#[allow(dead_code)]
+pub fn level_as_max<'t>(l: &Level<'t>) -> (result: Option<(LevelPtr<'t>, LevelPtr<'t>)>)
     ensures match result {
         Some((a, b)) => to_model_of_level(*l) == LevelSpec::Max(Box::new(to_model(a)), Box::new(to_model(b))),
         None => !matches!(to_model_of_level(*l), LevelSpec::Max(_, _)),
-    };
+    }
+{
+    match l { Level::Max(a, b, _) => Some((*a, *b)), _ => None }
+}
 
-pub assume_specification<'t> [level_as_imax] (l: &Level<'t>) -> (result: Option<(LevelPtr<'t>, LevelPtr<'t>)>)
+#[allow(dead_code)]
+pub fn level_as_imax<'t>(l: &Level<'t>) -> (result: Option<(LevelPtr<'t>, LevelPtr<'t>)>)
     ensures match result {
         Some((a, b)) => to_model_of_level(*l) == LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b))),
         None => !matches!(to_model_of_level(*l), LevelSpec::IMax(_, _)),
-    };
+    }
+{
+    match l { Level::IMax(a, b, _) => Some((*a, *b)), _ => None }
+}
 
-pub assume_specification<'t> [level_as_param] (l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
+#[allow(dead_code)]
+pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
     ensures match result {
         Some(n) => to_model_of_level(*l) == LevelSpec::Param(name_id(n)),
         None => !matches!(to_model_of_level(*l), LevelSpec::Param(_)),
-    };
+    }
+{
+    match l { Level::Param(n, _) => Some(*n), _ => None }
+}
 
 /// A real function operating on the genuine arena (`TcCtx`/`LevelPtr`, not
 /// `LevelSpec`), reimplementing `TcCtx::combining`'s actual logic (push a
