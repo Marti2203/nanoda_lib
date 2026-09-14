@@ -43,7 +43,7 @@ use crate::expr_model::{nlbv, depth, subst_full, subst_expr_levels_rel};
 use crate::beta_model::{
     pstep, pstep_star, pstep_star_one, pstep_spine_app_star, spine_app, pstep_star_env_weaken,
     max_var_below, spine_app_bounds, spine_app_decompose, max_var_below_mono, spine_app_nlbv,
-    subst_expr_levels_rel_depth, subst_expr_levels_rel_max_var_below, subst_expr_levels_rel_nlbv,
+    subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv,
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
@@ -54,7 +54,7 @@ use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_
 use crate::expr_model::{NatLitPayload, StringLitPayload};
 #[cfg(verus_only)]
 use crate::beta_model::string_lit_expand_model;
-use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi, verified_peel_pis};
+use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
@@ -63,18 +63,16 @@ use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_mode
 use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
-#[cfg(verus_only)]
-use crate::expr_model::abstr_full_depth;
 use crate::expr_arena_bridge::get_eager_mode;
 use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, get_string_extension_flag, read_string_len};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit_ptr_of};
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::tc_model::{verified_infer_app_telescoped, verified_infer_sort, verified_infer_const, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_find_rec_rule, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
+use crate::tc_model::{verified_infer_sort, verified_infer_const, verified_def_eq, verified_def_eq_core, verified_def_eq_app, verified_def_eq_nat, verified_get_applied_def, verified_try_unfold_proj_app, verified_try_eq_const_app, verified_find_rec_rule, rec_rule_ctor_telescope_size_wo_params, rec_rule_val};
 #[cfg(verus_only)]
 use crate::tc_model::deq_p;
 #[cfg(verus_only)]
-use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_spine, types_to_mono, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
+use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_mono, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
 use crate::tc_model::def_eq_witness;
@@ -117,8 +115,8 @@ use crate::expr_arena_bridge::expr_as_proj;
 use crate::tc_model::{deq_leaf, deq_any_refl, deq_any_of_leaf, deq_any_app_congr, deq_any_bind_congr, deq_any_proj_congr, deq_any_symm, deq_any_trans};
 use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, env_global_wf, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
-use crate::expr_arena_bridge::{verified_size, verified_depth};
+use crate::env_model::{to_model_of_env, env_global_cap, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
+use crate::expr_arena_bridge::{verified_size};
 use crate::tc_model::{verified_rec_step_free, first_rule_ctor_name};
 #[cfg(verus_only)]
 use crate::inductive_model::contains_const_named;
@@ -188,122 +186,6 @@ pub enum DeltaRoundResult<'t> {
     Continue(crate::util::ExprPtr<'t>, crate::util::ExprPtr<'t>),
 }
 
-/// `verified_unfold_def_step` extended with a genuine, structurally-
-/// derived growth bound. See module doc comment for the full story.
-#[verifier::spinoff_prover]
-pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: crate::util::ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<crate::util::ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-    ensures match result {
-        Some(r) => {
-            &&& pstep_star(to_model_of_env(*env), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound + env_global_cap(*env))
-            &&& depth(to_model(r)) <= env_global_cap(*env) + d + d
-        },
-        None => true,
-    }
-{
-    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
-    let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) {
-        Some(p) => p,
-        None => return None,
-    };
-    let (def_uparams, def_value) = match env.get_declar_val(&name) {
-        Some(p) => p,
-        None => return None,
-    };
-    let levels_vec = read_levels_vec(ctx, levels);
-    let uparams_vec = read_levels_vec(ctx, def_uparams);
-    if levels_vec.len() != uparams_vec.len() {
-        return None;
-    }
-    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    proof {
-        is_const_shape_model(fun);
-        const_levels_vec_model(fun);
-    }
-    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-    proof {
-        spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
-    }
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
-        Some(def_val) => {
-            let ghost id = name_id(name);
-            let ghost ks = level_names(to_model_of_levels(def_uparams));
-            let ghost val = to_model(def_value);
-            assert(to_model_of_env(*env).contains_key(id));
-            assert(to_model_of_env(*env)[id] == (ks, val));
-            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-            assert(const_id(fun) == id);
-            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
-            proof {
-                assert(pstep(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                ));
-                pstep_star_one(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                );
-                pstep_spine_app_star(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                    Seq::new(args@.len(), |i: int| to_model(args@[i])),
-                );
-                let singleton = Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val));
-                assert forall |k: u64| #[trigger] singleton.contains_key(k) implies
-                    to_model_of_env(*env).contains_key(k) && singleton[k] == to_model_of_env(*env)[k]
-                by {
-                    assert(k == id);
-                }
-                pstep_star_env_weaken(singleton, to_model_of_env(*env), to_model(fun), to_model(def_val));
-            }
-            let result = verified_foldl_apps(ctx, def_val, &args);
-            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            proof {
-                pstep_spine_app_star(to_model_of_env(*env), to_model(fun), to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
-
-                env_global_wf(*env);
-                assert(nlbv(val) == 0);
-                assert(max_var_below(val, env_global_cap(*env)));
-                assert(depth(val) <= env_global_cap(*env));
-
-                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
-                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(levels), to_model(def_val), env_global_cap(*env));
-                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(levels), to_model(def_val));
-                assert(nlbv(to_model(def_val)) == 0);
-                assert(max_var_below(to_model(def_val), env_global_cap(*env)));
-                assert(depth(to_model(def_val)) <= env_global_cap(*env));
-
-                max_var_below_mono(to_model(def_val), env_global_cap(*env), bound + env_global_cap(*env));
-                let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-                assert forall |i: int| 0 <= i < args@.len() implies
-                    max_var_below(#[trigger] to_model(args@[i]), bound + env_global_cap(*env))
-                by {
-                    assert(args_model[i] == to_model(args@[i]));
-                    assert(max_var_below(args_model[i], bound));
-                    max_var_below_mono(to_model(args@[i]), bound, bound + env_global_cap(*env));
-                }
-                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
-                spine_app_bounds(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound + env_global_cap(*env), env_global_cap(*env), d);
-                assert(args@.len() <= d);
-            }
-            Some(result)
-        }
-        None => None,
-    }
-}
 
 
 
@@ -325,843 +207,16 @@ pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 
 
 
-/// `verified_infer_app_bounded`'s multi-argument generalization: unfolds
-/// the WHOLE applied spine (`verified_unfold_apps`, not just one `App`
-/// layer) rather than requiring `x` be a single `App(Const, arg)` node,
-/// then composes `verified_infer_const_bounded` with `verified_infer_app_
-/// telescoped` (`tc_model.rs`) instead of the single-argument `verified_
-/// infer_app_single`. Same "happy path" scope as `verified_infer_app_
-/// telescoped` itself: `None` if the head isn't a bare `Const` application,
-/// or if the callee's type doesn't have at least as many Pi-layers as
-/// there are args (the real `ensure_pi`/WHNF fallback, not modeled).
-pub fn verified_infer_app_bounded_multi<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(x)) <= dd,
-        nlbv(to_model(x)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => {
-            &&& exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
-                to_model(x) == spine_app(to_model(fun), args_model)
-                && (is_const_shape(fun) || is_local_shape(fun))
-                && to_model(r) == subst_full(body, args_model, 0)
-            &&& infer_types_to(*env, x, r, fuel as nat)
-            &&& depth(to_model(r)) <= d + dd
-            &&& nlbv(to_model(r)) <= 0
-        },
-        None => true,
-    }
-{
-    let (fun, args) = match verified_unfold_apps(ctx, x, 100000) {
-        Some(p) => p,
-        None => return { infer_exit(18); None },
-    };
-    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    proof {
-        assert(to_model(x) == spine_app(to_model(fun), args_model));
-        spine_app_depth_decompose(to_model(fun), args_model);
-        spine_app_nlbv_decompose(to_model(fun), args_model);
-        assert forall |i: int| 0 <= i < args@.len() implies #[trigger] depth(to_model(args@[i])) <= dd by {
-            assert(args_model[i] == to_model(args@[i]));
-            assert(depth(args_model[i]) <= depth(spine_app(to_model(fun), args_model)));
-            assert(depth(spine_app(to_model(fun), args_model)) == depth(to_model(x)));
-        }
-        assert forall |i: int| 0 <= i < args@.len() implies #[trigger] nlbv(to_model(args@[i])) <= 0 by {
-            assert(args_model[i] == to_model(args@[i]));
-            assert(nlbv(args_model[i]) <= nlbv(spine_app(to_model(fun), args_model)));
-            assert(nlbv(spine_app(to_model(fun), args_model)) == nlbv(to_model(x)));
-        }
-        assert forall |i: int| 0 <= i < args_model.len() implies nlbv(#[trigger] args_model[i]) <= 0 by {
-            assert(args_model[i] == to_model(args@[i]));
-        }
-    }
-    let fun_el = ctx.read_expr(fun);
-    // the function's type: a constant's instantiated declared type, or a local's binder type
-    let fun_ty = if let Some((c_name, c_uparams)) = expr_as_const(fun, &fun_el) {
-        match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
-            Some(t) => {
-                proof {
-                    is_const_shape_model(fun);
-                    const_levels_vec_model(fun);
-                    assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-                    assert(const_id(fun) == name_id(c_name));
-                    let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-                        to_model_of_declar_ty(*env).contains_key(name_id(c_name))
-                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-                        && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(t));
-                    types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(fun), const_levels_vec(fun), to_model(t), fuel as nat);
-                    assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(t), fuel as nat));
-                }
-                t
-            }
-            None => return { infer_exit(19); None },
-        }
-    } else if let Some((_, lt)) = expr_as_local(fun, &fun_el) {
-        proof {
-            local_type_wf(fun);
-            is_local_shape_model(fun);
-            arena_lctx_local(fun);
-            types_to_free(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), expr_id(fun), fuel as nat);
-            assert(arena_lctx()[expr_id(fun)] == to_model(lt));
-            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(lt), fuel as nat));
-        }
-        lt
-    } else {
-        return { infer_exit(20); None };
-    };
-    assert(depth(to_model(fun_ty)) <= d);
-    assert(nlbv(to_model(fun_ty)) == 0);
-    match verified_infer_app_telescoped(ctx, fun_ty, args.as_slice(), 100000, Ghost(d), Ghost(dd)) {
-        Some(r) => {
-            proof {
-                let body = choose |body: ExprSpec|
-                    spine_bind(to_model(fun_ty), args.len() as nat) == Some(body)
-                    && to_model(r) == subst_full(body, Seq::new(args@.len(), |i: int| to_model(args@[i])), 0);
-                assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model);
-                types_to_spine(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(fun_ty), args_model, body, fuel as nat);
-                assert(infer_types_to(*env, x, r, fuel as nat));
-            }
-            Some(r)
-        }
-        None => {
-            let ghost head_ok = is_const_shape(fun) || is_local_shape(fun);
-            match verified_infer_app_whnf_loop(ctx, env, memo, fun, fun_ty, args.as_slice(), x, fuel, Ghost(d), Ghost(dd)) {
-                Some(r) => {
-                    proof {
-                        // the shape-only conjunct: a closed result is its own body under the whole spine
-                        subst_full_noop(to_model(r), args_model, 0);
-                        assert(to_model(x) == spine_app(to_model(fun), args_model)
-                            && head_ok
-                            && to_model(r) == subst_full(to_model(r), args_model, 0));
-                    }
-                    Some(r)
-                }
-                None => { infer_exit(17); None },
-            }
-        }
-    }
-}
 
-/// Fallback for `verified_infer_app_bounded_multi` when the syntactic
-/// telescope stops early: instantiate the function type ONE argument at a
-/// time, weak-head normalizing the residual (measured rounds, cap 2000)
-/// whenever it isn't a syntactic `Pi` -- the kernel `infer_app` shape for
-/// motive applications `(fun δ => Pi ...) σ`, which was every sampled
-/// constant-headed inference decline on Init.Core (2026-09-06). Each step
-/// is `types_to_app` (the typing relation's reduction-aware application
-/// rule). The dispatcher's `d + dd` result-depth bound is enforced at
-/// RUNTIME: the result's depth may not exceed depth(x) + depth(fun_ty),
-/// both of which the requires bound by `dd` and `d`.
-#[verifier::spinoff_prover]
-pub fn verified_infer_app_whnf_loop<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, fun: ExprPtr<'t>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], x: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        d <= 60000,
-        depth(to_model(fun_ty)) <= d,
-        nlbv(to_model(fun_ty)) <= 0,
-        depth(to_model(x)) <= dd,
-        nlbv(to_model(x)) <= 0,
-        to_model(x) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
-        forall |i: int| 0 <= i < args@.len() ==> nlbv(to_model(#[trigger] args@[i])) <= 0,
-        types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(fun), to_model(fun_ty), fuel as nat),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_types_to(*env, x, r, fuel as nat) && depth(to_model(r)) <= d + dd && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-{
-    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-    let ghost dty = to_model_of_declar_ty(*env);
-    let ghost denv = to_model_of_env(*env);
-    let ghost lctx = arena_lctx();
-    let k: u32 = 2000;
-    let mut cur_ty = fun_ty;
-    let mut i: usize = 0;
-    proof {
-        assert(args_model.take(0) =~= Seq::<ExprSpec>::empty());
-        assert(spine_app(to_model(fun), args_model.take(0)) == to_model(fun));
-    }
-    while i < args.len()
-        invariant
-            memo.wf(), memo.spec_env() == *env,
-            0 <= i <= args.len(),
-            args_model == Seq::new(args@.len(), |j: int| to_model(args@[j])),
-            denv == to_model_of_env(*env),
-            dty == to_model_of_declar_ty(*env),
-            lctx == arena_lctx(),
-            k == 2000,
-            env_global_cap(*env) <= d,
-            d <= 60000,
-            forall |j: int| 0 <= j < args@.len() ==> nlbv(to_model(#[trigger] args@[j])) <= 0,
-            nlbv(to_model(cur_ty)) <= 0,
-            types_to(dty, denv, lctx, spine_app(to_model(fun), args_model.take(i as int)), to_model(cur_ty), fuel as nat),
-        decreases args.len() - i
-    {
-        let el = ctx.read_expr(cur_ty);
-        let (w, bt, body) = if let Some((_, _, bt0, body0)) = expr_as_pi(&el) {
-            proof { pstep_star_refl(denv, to_model(cur_ty)); }
-            (cur_ty, bt0, body0)
-        } else {
-            let w0 = verified_whnf_free(ctx, env, memo, cur_ty);
-            let wl = ctx.read_expr(w0);
-            match expr_as_pi(&wl) {
-                Some((_, _, bt0, body0)) => {
-                    proof {
-                        env_model_nofv_sub(*env);
-                        pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(cur_ty), to_model(w0));
-                    }
-                    (w0, bt0, body0)
-                }
-                None => return None,
-            }
-        };
-        assert(pstep_star(denv, to_model(cur_ty), to_model(w)));
-        assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(bt)), Box::new(to_model(body))));
-        // the instantiation needs a depth ceiling on the (possibly reduced) body
-        let sw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return None };
-        proof {
-            depth_le_size(to_model(w));
-            assert(depth(to_model(body)) < depth(to_model(w)));
-        }
-        let arg_slice: &[ExprPtr<'t>] = &args[i..i + 1];
-        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return None };
-        proof {
-            assert(arg_slice@.len() == 1);
-            assert(arg_slice@[0] == args@[i as int]);
-            assert(Seq::new(arg_slice@.len(), |j: int| to_model(arg_slice@[j])) =~= seq![to_model(args@[i as int])]);
-            assert(to_model(new_ty) == subst_full(to_model(body), seq![to_model(args@[i as int])], 0));
-            assert(nlbv(to_model(body)) <= 1);
-            subst_full_nlbv_bound(to_model(body), to_model(args@[i as int]), 0);
-            types_to_app(dty, denv, lctx, spine_app(to_model(fun), args_model.take(i as int)), to_model(args@[i as int]), to_model(cur_ty), to_model(bt), to_model(body), fuel as nat);
-            assert(args_model.take(i as int + 1).subrange(0, i as int) =~= args_model.take(i as int));
-            assert(args_model.take(i as int + 1)[i as int] == to_model(args@[i as int]));
-            assert(spine_app(to_model(fun), args_model.take(i as int + 1))
-                == ExprSpec::App(Box::new(spine_app(to_model(fun), args_model.take(i as int))), Box::new(to_model(args@[i as int]))));
-        }
-        cur_ty = new_ty;
-        i = i + 1;
-    }
-    proof {
-        assert(args_model.take(args.len() as int) =~= args_model);
-        assert(types_to(dty, denv, lctx, to_model(x), to_model(cur_ty), fuel as nat));
-    }
-    let dr = match verified_depth(ctx, cur_ty, 100000) { Some(v) => v, None => return None };
-    let dx = match verified_depth(ctx, x, 100000) { Some(v) => v, None => return None };
-    let df = match verified_depth(ctx, fun_ty, 100000) { Some(v) => v, None => return None };
-    if (dr as u64) > (dx as u64) + (df as u64) {
-        return None;
-    }
-    assert(depth(to_model(cur_ty)) <= d + dd);
-    Some(cur_ty)
-}
 
-/// "`dd` has enough headroom for `fuel` more nested `Let`-unwraps in
-/// `verified_infer`'s own recursion": substituting `val` into `body` can
-/// nearly DOUBLE `depth` per `Let`-nesting level (`subst_full_depth_
-/// bound_n`'s sum bound, `depth(body) + depth(val)`, each up to `dd - 1`),
-/// so this mirrors `whnf_fixpoint_ok`/`delta_round_fixpoint_ok` exactly:
-/// check this level's own headroom, then recurse on what the NEXT level
-/// would see (`dd + dd`) for the remaining `fuel - 1` unwraps -- no
-/// separate monotonicity lemma needed, Verus unfolds it one level per
-/// `verified_infer` recursive call matching its own `decreases fuel`.
-pub open spec fn infer_depth_fixpoint_ok(dd: nat, fuel: nat) -> bool
-    decreases fuel
-{
-    dd <= 60000 && (fuel == 0 || (infer_depth_fixpoint_ok(dd, (fuel - 1) as nat) && infer_depth_fixpoint_ok(dd + dd, ((fuel - 1) as nat) / 2)))
-}
 
-/// `verified_infer`'s own postcondition, factored into a standalone
-/// recursive predicate so its `Let` case (the only case that recurses)
-/// can refer to it directly. The four non-recursive disjuncts restate
-/// `verified_infer_local`/`verified_infer_sort`/`verified_infer_const`/
-/// `verified_infer_app_bounded_multi`'s own already-proven contracts
-/// verbatim; the fifth recurses on the REAL `ExprPtr` `verified_inst`
-/// actually produces for `Let`'s substituted body (not an abstract
-/// `ExprSpec` -- `subst_full`'s value and `verified_inst`'s real result
-/// coincide by `verified_inst`'s own postcondition, so the recursion stays
-/// entirely in terms of real arena pointers, exactly like every other
-/// function in this arc).
-/// Marker trigger for the fuel witness of `infer_spec`'s `Let` rule (same
-/// device as `tc_model::fuel_marker`).
-pub open spec fn infer_fuel_marker(f: nat) -> bool { true }
 
-/// Marker trigger for `infer_spec`'s `Proj` case (2026-09-06).
-pub open spec fn infer_proj_marker<'t>(idx: usize, s: ExprPtr<'t>, sty: ExprPtr<'t>, f2: nat) -> bool { true }
 
-pub open spec fn infer_spec<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool
-    decreases fuel
-{
-    ||| (is_local_shape(e) && local_binder_type_of(e) == r)
-    ||| (exists |l: LevelPtr<'t>|
-            to_model(e) == ExprSpec::Sort(level_to_model(l))
-            && to_model(r) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))))
-    ||| (exists |c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-            is_const_shape(e) && const_name_of(e) == c_name && const_levels_of(e) == c_uparams
-            && to_model_of_declar_ty(env).contains_key(name_id(c_name))
-            && to_model_of_declar_ty(env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-            && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r)))
-    ||| (exists |fun: ExprPtr<'t>, args_model: Seq<ExprSpec>, body: ExprSpec|
-            to_model(e) == spine_app(to_model(fun), args_model)
-            && (is_const_shape(fun) || is_local_shape(fun))
-            && to_model(r) == subst_full(body, args_model, 0))
-    ||| (is_nat_lit_shape(e) && is_const_shape(r) && const_id(r) == nat_type_id())
-    ||| (is_string_lit_shape(e) && is_const_shape(r) && const_id(r) == string_type_id())
-    ||| (fuel > 0 && exists |ty: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, substituted: ExprPtr<'t>|
-            to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body)))
-            && to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0)
-            && exists |f2: nat| #[trigger] infer_fuel_marker(f2) && f2 < fuel && infer_spec(env, substituted, r, f2))
-    ||| (fuel > 0 && exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, instd: ExprPtr<'t>, infd: ExprPtr<'t>|
-            to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
-            && to_model(local) == ExprSpec::Free(expr_id(local))
-            && to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0)
-            && infer_spec(env, instd, infd, (fuel - 1) as nat)
-            && to_model(r) == ExprSpec::Bind(
-                    Box::new(abstr_full(to_model(binder_type), seq![expr_id(local)], 0)),
-                    Box::new(abstr_full(to_model(infd), seq![expr_id(local)], 0)),
-                ))
-    ||| (fuel > 0 && exists |binder_type: ExprPtr<'t>, body: ExprPtr<'t>, local: ExprPtr<'t>, bt_ty: ExprPtr<'t>, dom_sort: ExprPtr<'t>, dom_level: LevelPtr<'t>, instd: ExprPtr<'t>, instd_ty: ExprPtr<'t>, cod_sort: ExprPtr<'t>, cod_level: LevelPtr<'t>|
-            to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
-            && to_model(local) == ExprSpec::Free(expr_id(local))
-            && infer_spec(env, binder_type, bt_ty, (fuel - 1) as nat)
-            && pstep_star(to_model_of_env(env), to_model(bt_ty), to_model(dom_sort))
-            && to_model(dom_sort) == ExprSpec::Sort(level_to_model(dom_level))
-            && to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0)
-            && infer_spec(env, instd, instd_ty, (fuel - 1) as nat)
-            && pstep_star(to_model_of_env(env), to_model(instd_ty), to_model(cod_sort))
-            && to_model(cod_sort) == ExprSpec::Sort(level_to_model(cod_level))
-            && to_model(r) == ExprSpec::Sort(LevelSpec::IMax(Box::new(level_to_model(dom_level)), Box::new(level_to_model(cod_level)))))
-    ||| (exists |idx: usize, s: ExprPtr<'t>, sty: ExprPtr<'t>, f2: nat|
-            #[trigger] infer_proj_marker(idx, s, sty, f2)
-            && to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(s)))
-            && f2 < fuel
-            && infer_spec(env, s, sty, f2))
-}
 
-/// Real-arena counterpart to `tc.rs::TypeChecker::infer`'s own dispatcher
-/// (`tc.rs:513-540`), `InferOnly` case, now covering EIGHT of its eleven
-/// shapes: the four non-recursive leaves (`Local`/`Sort`/`Const`/`App`),
-/// `NatLit`/`StringLit` (plain type-constant lookups), plus `Let`
-/// (`tc.rs:676-692`, `InferOnly` skips the `Check`-mode `assert_def_eq`
-/// well-formedness check same as everywhere else in this arc), `Lambda`
-/// (CURRIED chains included, not just one binder -- see below), and `Pi`
-/// (see further below). All three of `Let`/`Lambda`/`Pi` are genuinely
-/// recursive: `Let` via `verified_inst` substituting `val` into `body`
-/// then recursing on the result; `Lambda` the same way, one binder peeled
-/// via `mk_dbj_level`/`verified_inst`/`abstr_levels_with_locals`/`mk_pi`;
-/// `Pi` similarly plus two `infer_sort_of`-style compositions (see its
-/// own paragraph below). `Lambda`'s case is INLINED here rather than
-/// delegated
-/// to the already-existing `verified_infer_lambda_single` (which has the
-/// identical logic and an identical `exists`-shaped ensures) -- calling
-/// it from here would make it part of a mutually-recursive clique with
-/// `verified_infer`, and Verus's termination checker needs `fuel` to
-/// strictly decrease at EVERY edge of a clique, not just net-decrease
-/// around the whole cycle; `verified_infer_lambda_single`'s own single
-/// internal `verified_infer` call (fine on its own, no `decreases`
-/// needed for a non-recursive function) uses the SAME `fuel` it
-/// received, so folding it into the clique would need an extra fuel-
-/// burning edge that doesn't otherwise belong. Inlining keeps this ONE
-/// recursive function with ONE `decreases fuel`, exactly like `Let`'s
-/// own case already is. `dd` is a SEPARATE depth budget from `d` (the
-/// env cap `verified_infer_const`/`verified_infer_app_bounded_multi`
-/// need) -- `Let` and `Lambda` both consume it via `infer_depth_
-/// fixpoint_ok`'s doubling-per-level headroom, mirroring `delta_round_
-/// fixpoint_ok`/`whnf_fixpoint_ok`'s established shape exactly
-/// (`Lambda`'s `instd` never actually NEEDS the doubled headroom --
-/// substituting a depth-0 local can't grow depth -- but reusing the same
-/// `dd + dd` growth `Let` already uses lets the `infer_depth_fixpoint_
-/// ok` requirement fall out of a direct unfolding, with no separate
-/// monotonicity lemma needed).
-///
-/// **CURRIED `Lambda` is covered for free, not just the single-binder
-/// case**: the recursive `verified_infer(ctx, env, memo, instd, fuel - 1, Ghost(d),Ghost(/// dd + dd))` call re-reads `instd` fresh at the top of `verified_infer`'s
-/// own body -- if `instd` is ITSELF `Lambda`-shaped (a curried source
-/// term), the SAME branch fires again, peeling the next binder, with
-/// only `fuel` bounding how many layers can be peeled. `infer_spec`'s new
-/// `Bind` disjunct composes across levels the same way: the OUTER
-/// `abstr_full(infd, seq![expr_id(local)], 0)` call abstracts the outer
-/// `local`'s free-variable references WHEREVER they appear inside `infd`
-/// -- including nested arbitrarily deep inside an inner `Bind` structure
-/// the recursive call already built -- since `abstr_full` passes already-
-/// placed `Var` nodes through untouched and only ever rewrites matching
-/// `Free` nodes, at the correctly incremented offset. No "chain of
-/// `Bind`s over a `Seq`" relation was needed after all -- that idea
-/// (recorded in earlier project notes) applies only to `verified_infer_
-/// lambda_telescoped`'s separate, `Vec`-loop-based implementation, not to
-/// this inlined, self-recursive dispatcher path.
-///
-/// `Pi` is now ALSO covered (`infer` covers 8/11 real shapes): non-curried
-/// `Pi` (curried, per the SAME self-recursive argument `Lambda`'s own doc
-/// comment above makes, should generalize just as freely, though not
-/// independently re-verified here). `infer_pi` needs `infer_sort_of`
-/// (`infer` the binder type, THEN `whnf` the result to confirm `Sort`)
-/// TWICE per binder -- and every EXISTING `whnf`-with-bound-tracking
-/// function in this arc (`verified_whnf_step` and everything under it)
-/// REQUIRES an `nlbv`/`max_var_below`/`depth` bound on its input just to
-/// be called, a bound `infer`'s own result can't generally supply (the
-/// same wall `verified_infer_pi_single`'s externally-supplied `bt_ty`/
-/// `body_ty` parameters were originally built to route around). The fix
-/// was `verified_infer_sort_of_unbounded` (see its own doc comment): the
-/// bound-dependence lives ENTIRELY in beta/zeta reduction's substitution-
-/// equivalence proof, NOT in delta-unfolding (`verified_unfold_def_step`
-/// has no bound requirement at all, since substituting universe LEVELS is
-/// structurally unlike substituting expression VALUES for de-Bruijn
-/// indices) -- so chaining delta-unfolding ALONE, bound-free, covers the
-/// common case (already `Sort`, or reached by unfolding a definition)
-/// honestly incompletely (never beta/zeta-reduces) but soundly. `infer_
-/// spec`'s new `Pi` disjunct inlines this composition directly (twice,
-/// once per binder side) rather than factoring out a shared "infer_sort_
-/// of_spec" helper -- that helper would ALSO need to call `infer_spec`
-/// recursively, making IT part of the clique too, with the same "every
-/// edge must decrease" problem `Lambda`'s own wiring already hit once.
-///
-/// `Proj` still falls through to `None` for `infer` specifically: it's
-/// fully composed (`verified_infer_proj`) but not `infer_spec`-compatible
-/// (`ensures true`, plus several externally-supplied bound parameters
-/// `infer_spec`'s uniform signature has no room for) -- a separate,
-/// not-yet-attempted follow-up.
-///
-/// **`verified_infer`'s own result now ALSO carries a genuine depth
-/// bound** (`infer_result_depth_bound(dd, d, fuel)` below), closing the
-/// "`infer`'s own result has no derivable bound" wall this whole arc
-/// repeatedly worked around (`verified_infer_sort_of`'s `ty`, `verified_
-/// infer_pi_single`'s `bt_ty`/`body_ty`, `verified_infer_proj`'s `structure_
-/// ty`, all taken as EXTERNAL parameters specifically because of this gap)
-/// -- the missing piece for genuinely wiring `Proj`'s dispatcher case in a
-/// future pass, since `Proj` needs a depth bound on `infer(structure)` to
-/// call `verified_inst` on the constructor telescope. Established
-/// per-branch: `Local` via the NEW `local_type_cap`/`local_type_wf` axiom
-/// (mirroring `env_global_cap`/`env_global_wf_ty` for locals instead of
-/// declarations -- see its own doc comment for why touching every `mk_dbj_
-/// level` call site to derive this properly wasn't attempted instead);
-/// `Const`/`App` via `verified_infer_const`/`verified_infer_app_bounded_
-/// multi`'s own now-strengthened ensures; `Sort`/`NatLit`/`StringLit`/`Pi`
-/// trivially (`Sort`'s payload is a `LevelPtr`, not an `ExprSpec`, so
-/// `depth(Sort(_)) == 0` always); `Let` inductively (same recursive
-/// call); `Lambda` inductively PLUS `abstr_full_depth` (its result wraps
-/// the recursive call's own output in `abstr_full`, which preserves
-/// depth exactly).
-pub open spec fn infer_result_depth_bound(dd: nat, d: nat, fuel: nat) -> nat
-    decreases fuel
-{
-    let base = d + dd + 1;
-    if fuel == 0 {
-        base
-    } else {
-        let rec = infer_result_depth_bound(dd, d, (fuel - 1) as nat);
-        let recl = infer_result_depth_bound(dd + dd, d, ((fuel - 1) as nat) / 2);
-        let wrapped = 1 + rec;
-        let m = if base >= wrapped { base } else { wrapped };
-        if m >= recl { m } else { recl }
-    }
-}
 
-/// `types_to` instantiated the way `verified_infer` emits it: the real
-/// env's declaration-type and delta maps, the ambient arena local
-/// context. Non-recursive wrapper, inlines freely.
-#[verifier::spinoff_prover]
-pub fn verified_infer<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(e)) <= dd,
-        nlbv(to_model(e)) <= 0,
-        infer_depth_fixpoint_ok(dd, fuel as nat),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 1int
-{
-    let el = ctx.read_expr(e);
-    if let Some((_, ty)) = expr_as_local(e, &el) {
-        proof {
-            local_type_wf(e);
-            assert(depth(to_model(ty)) <= local_type_cap());
-            assert(depth(to_model(ty)) <= d + dd + 1);
-            assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
-            assert(nlbv(to_model(ty)) == 0);
-            is_local_shape_model(e);
-            arena_lctx_local(e);
-            types_to_free(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), expr_id(e), fuel as nat);
-            assert(to_model(e) == ExprSpec::Free(expr_id(e)));
-            assert(arena_lctx()[expr_id(e)] == to_model(ty));
-            assert(infer_types_to(*env, e, ty, fuel as nat));
-        }
-        return Some(ty);
-    }
-    if let Some(l) = expr_as_sort(&el) {
-        let result = verified_infer_sort(ctx, l);
-        assert(depth(to_model(result)) == 0);
-        assert(nlbv(to_model(result)) == 0);
-        proof {
-            types_to_sort(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), level_to_model(l), fuel as nat);
-            assert(to_model(e) == ExprSpec::Sort(level_to_model(l)));
-            assert(infer_types_to(*env, e, result, fuel as nat));
-        }
-        return Some(result);
-    }
-    if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
-        match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
-            Some(r) => {
-                assert(depth(to_model(r)) <= env_global_cap(*env));
-                assert(depth(to_model(r)) <= d + dd + 1);
-                assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
-                proof {
-                    let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-                        to_model_of_declar_ty(*env).contains_key(name_id(c_name))
-                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-                        && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r));
-                    is_const_shape_model(e);
-                    const_levels_vec_model(e);
-                    assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-                    assert(const_id(e) == name_id(c_name));
-                    assert(const_levels_vec(e) =~= to_model_of_levels(const_levels_of(e)));
-                    assert(const_levels_of(e) == c_uparams);
-                    assert(const_levels_vec(e) == to_model_of_levels(c_uparams));
-                    assert(to_model_of_declar_ty(*env)[const_id(e)].1 == to_model(ty));
-                    assert(to_model_of_declar_ty(*env)[const_id(e)].0 == level_names(to_model_of_levels(uparams)));
-                    assert(subst_expr_levels_rel(to_model_of_declar_ty(*env)[const_id(e)].1, to_model_of_declar_ty(*env)[const_id(e)].0, const_levels_vec(e), to_model(r)));
-                    types_to_const(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), const_id(e), const_levels_vec(e), to_model(r), fuel as nat);
-                    assert(infer_types_to(*env, e, r, fuel as nat));
-                }
-                return Some(r);
-            }
-            None => return None,
-        }
-    }
-    if expr_as_app(&el).is_some() {
-        match verified_infer_app_bounded_multi(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd)) {
-            Some(r) => {
-                assert(depth(to_model(r)) <= d + dd);
-                assert(depth(to_model(r)) <= d + dd + 1);
-                assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
-                assert(infer_types_to(*env, e, r, fuel as nat));
-                return Some(r);
-            }
-            None => return { infer_exit(15); None },
-        }
-    }
-    if expr_as_nat_lit(e, &el).is_some() {
-        match ctx.nat_type() {
-            Some(r) => {
-                proof {
-                    is_const_shape_model(r);
-                    is_nat_lit_shape_model(e);
-                    types_to_nat_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), fuel as nat);
-                    assert(infer_types_to(*env, e, r, fuel as nat));
-                }
-                assert(depth(to_model(r)) == 0);
-                assert(nlbv(to_model(r)) == 0);
-                return Some(r);
-            }
-            None => return None,
-        }
-    }
-    if expr_as_string_lit(e, &el) {
-        match ctx.string_type() {
-            Some(r) => {
-                proof {
-                    is_const_shape_model(r);
-                    is_string_lit_shape_model(e);
-                    types_to_string_lit(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(e), to_model(r), fuel as nat);
-                    assert(infer_types_to(*env, e, r, fuel as nat));
-                }
-                assert(depth(to_model(r)) == 0);
-                assert(nlbv(to_model(r)) == 0);
-                return Some(r);
-            }
-            None => return None,
-        }
-    }
-    if fuel == 0 {
-        return None;
-    }
-    if expr_as_lambda(&el).is_some() {
-        return verified_infer_lambda_arm(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd));
-    }
-    if expr_as_pi(&el).is_some() {
-        return verified_infer_pi_arm(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd));
-    }
-    if expr_as_let(&el).is_some() {
-        return verified_infer_let_arm(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd));
-    }
-    if expr_as_proj(&el).is_some() {
-        return verified_infer_proj_arm(ctx, env, memo, e, fuel, Ghost(d), Ghost(dd));
-    }
-    infer_exit(8);
-    None
-}
 
-/// `verified_infer`'s lambda arm, factored out so the dispatcher's SMT query
-/// stays small and the arms verify in parallel (the arm took most of
-/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
-/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
-#[verifier::spinoff_prover]
-pub fn verified_infer_lambda_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(e)) <= dd,
-        nlbv(to_model(e)) <= 0,
-        infer_depth_fixpoint_ok(dd, fuel as nat),
-        fuel >= 1,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let el = ctx.read_expr(e);
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        assert(nlbv(to_model(binder_type)) == 0);
-        assert(nlbv(to_model(body)) <= 1);
-        let start_pos = get_dbj_level_counter(ctx);
-        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
-        let locals_slice: &[ExprPtr<'t>] = &[local];
-        assert(depth(to_model(local)) == 0);
-        assert(nlbv(to_model(local)) == 0);
-        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
-            Some(v) => v,
-            None => { ctx.replace_dbj_level(local); infer_exit(1); return None; }
-        };
-        proof {
-            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
-            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
-            subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
-            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
-            assert(depth(to_model(instd)) <= depth(to_model(body)));
-            assert(depth(to_model(instd)) <= dd);
-            assert(depth(to_model(instd)) <= dd + dd);
-            assert(nlbv(to_model(instd)) <= 0);
-        }
-        let infd = match verified_infer(ctx, env, memo, instd, fuel - 1, Ghost(d), Ghost(dd)) {
-            Some(v) => v,
-            None => { ctx.replace_dbj_level(local); infer_exit(2); return None; }
-        };
-        let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
-        ctx.replace_dbj_level(local);
-        let abstrd_binder_type = abstr_levels_with_locals(ctx, binder_type, start_pos, locals_slice);
-        let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
-        let result_nlbv = ctx.num_loose_bvars(result);
-        if result_nlbv != 0 {
-            infer_exit(3);
-            return None;
-        }
-        proof {
-            assert(Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i])) =~= seq![expr_id(local)]);
-            let ghost ids = Seq::new(locals_slice@.len(), |i: int| expr_id(locals_slice@[i]));
-            abstr_full_depth(to_model(binder_type), ids, 0);
-            abstr_full_depth(to_model(infd), ids, 0);
-            assert(depth(to_model(abstrd_binder_type)) == depth(to_model(binder_type)));
-            assert(depth(to_model(abstrd_infd)) == depth(to_model(infd)));
-            assert(to_model(result) == ExprSpec::Bind(Box::new(to_model(abstrd_binder_type)), Box::new(to_model(abstrd_infd))));
-            assert(depth(to_model(binder_type)) <= dd);
-            assert(depth(to_model(infd)) <= infer_result_depth_bound(dd, d, (fuel - 1) as nat));
-            assert(dd <= infer_result_depth_bound(dd, d, (fuel - 1) as nat));
-            assert(depth(to_model(result)) <= 1 + infer_result_depth_bound(dd, d, (fuel - 1) as nat));
-            assert(infer_result_depth_bound(dd, d, fuel as nat) >= 1 + infer_result_depth_bound(dd, d, (fuel - 1) as nat));
-            assert(nlbv(to_model(result)) == 0);
-            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
-            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
-            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
-            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(infd), (fuel - 1) as nat));
-            assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
-            types_to_lambda(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body), expr_id(local), to_model(infd), fuel as nat);
-            assert(to_model(abstrd_binder_type) == abstr_full(to_model(binder_type), seq![expr_id(local)], 0));
-            assert(to_model(abstrd_infd) == abstr_full(to_model(infd), seq![expr_id(local)], 0));
-            assert(infer_types_to(*env, e, result, fuel as nat));
-        }
-        return Some(result);
-    }
-    None
-}
 
-/// `verified_infer`'s pi arm, factored out so the dispatcher's SMT query
-/// stays small and the arms verify in parallel (the arm took most of
-/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
-/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
-#[verifier::spinoff_prover]
-pub fn verified_infer_pi_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(e)) <= dd,
-        nlbv(to_model(e)) <= 0,
-        infer_depth_fixpoint_ok(dd, fuel as nat),
-        fuel >= 1,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let el = ctx.read_expr(e);
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        assert(nlbv(to_model(binder_type)) == 0);
-        assert(nlbv(to_model(body)) <= 1);
-        let bt_ty = match verified_infer(ctx, env, memo, binder_type, fuel - 1, Ghost(d), Ghost(dd)) {
-            Some(v) => v,
-            None => return { infer_exit(4); None },
-        };
-        let dom_univ = match verified_sort_of_capped(ctx, env, memo, bt_ty, fuel) {
-            Some(v) => v,
-            None => return { infer_exit(4); None },
-        };
-        proof {
-            let dom_sort = choose |r: ExprPtr<'t>|
-                pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(r))
-                && to_model(r) == ExprSpec::Sort(level_to_model(dom_univ));
-            assert(pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(dom_sort)));
-            assert(to_model(dom_sort) == ExprSpec::Sort(level_to_model(dom_univ)));
-        }
-        let start_pos = get_dbj_level_counter(ctx);
-        let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
-        let locals_slice: &[ExprPtr<'t>] = &[local];
-        assert(depth(to_model(local)) == 0);
-        assert(nlbv(to_model(local)) == 0);
-        let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
-            Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
-        };
-        proof {
-            assert(Seq::new(locals_slice@.len(), |i: int| to_model(locals_slice@[i])) =~= seq![to_model(local)]);
-            assert(to_model(instd) == subst_full(to_model(body), seq![to_model(local)], 0));
-            subst_full_depth_bound_n(to_model(body), seq![to_model(local)], 0, 0);
-            subst_full_nlbv_bound(to_model(body), to_model(local), 0);
-            assert(depth(to_model(instd)) <= depth(to_model(body)));
-            assert(depth(to_model(instd)) <= dd);
-            assert(depth(to_model(instd)) <= dd + dd);
-            assert(nlbv(to_model(instd)) <= 0);
-        }
-        let instd_ty = match verified_infer(ctx, env, memo, instd, fuel - 1, Ghost(d), Ghost(dd)) {
-            Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
-        };
-        let cod_univ = match verified_sort_of_capped(ctx, env, memo, instd_ty, fuel) {
-            Some(v) => v,
-            None => { ctx.replace_dbj_level(local); return { infer_exit(4); None }; }
-        };
-        proof {
-            let cod_sort = choose |r: ExprPtr<'t>|
-                pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(r))
-                && to_model(r) == ExprSpec::Sort(level_to_model(cod_univ));
-            assert(pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(cod_sort)));
-            assert(to_model(cod_sort) == ExprSpec::Sort(level_to_model(cod_univ)));
-        }
-        ctx.replace_dbj_level(local);
-        let result_level = ctx.imax(dom_univ, cod_univ);
-        let result = ctx.mk_sort(result_level);
-        assert(depth(to_model(result)) == 0);
-        assert(nlbv(to_model(result)) == 0);
-        proof {
-            let dom_sort = choose |r: ExprPtr<'t>|
-                pstep_star(to_model_of_env(*env), to_model(bt_ty), to_model(r))
-                && to_model(r) == ExprSpec::Sort(level_to_model(dom_univ));
-            let cod_sort = choose |r: ExprPtr<'t>|
-                pstep_star(to_model_of_env(*env), to_model(instd_ty), to_model(r))
-                && to_model(r) == ExprSpec::Sort(level_to_model(cod_univ));
-            assert(pstep_star(to_model_of_env(*env), to_model(bt_ty), ExprSpec::Sort(level_to_model(dom_univ))));
-            assert(pstep_star(to_model_of_env(*env), to_model(instd_ty), ExprSpec::Sort(level_to_model(cod_univ))));
-            assert(to_model(local) == ExprSpec::Free(expr_id(local)));
-            assert(seq![to_model(local)] =~= seq![ExprSpec::Free(expr_id(local))]);
-            assert(to_model(instd) == subst_full(to_model(body), seq![ExprSpec::Free(expr_id(local))], 0));
-            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(bt_ty), (fuel - 1) as nat));
-            assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(instd), to_model(instd_ty), (fuel - 1) as nat));
-            assert((fuel as nat - 1) as nat == (fuel - 1) as nat);
-            types_to_pi(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(binder_type), to_model(body), expr_id(local), to_model(bt_ty), level_to_model(dom_univ), to_model(instd_ty), level_to_model(cod_univ), fuel as nat);
-            assert(to_model(result) == ExprSpec::Sort(level_to_model(result_level)));
-            assert(level_to_model(result_level) == LevelSpec::IMax(Box::new(level_to_model(dom_univ)), Box::new(level_to_model(cod_univ))));
-            assert(infer_types_to(*env, e, result, fuel as nat));
-        }
-        return Some(result);
-    }
-    None
-}
 
-/// `verified_infer`'s let arm, factored out so the dispatcher's SMT query
-/// stays small and the arms verify in parallel (the arm took most of
-/// `verified_infer`'s 31 s). Same contract; `fuel >= 1`; lexicographic
-/// measure `(fuel, 0)` under the dispatcher's `(fuel, 1)`.
-#[verifier::spinoff_prover]
-pub fn verified_infer_let_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(e)) <= dd,
-        nlbv(to_model(e)) <= 0,
-        infer_depth_fixpoint_ok(dd, fuel as nat),
-        fuel >= 1,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let el = ctx.read_expr(e);
-    if let Some((_, ty, val, body, _nondep)) = expr_as_let(&el) {
-        assert(depth(to_model(body)) <= dd);
-        assert(depth(to_model(val)) <= dd);
-        assert(nlbv(to_model(val)) <= 0);
-        assert(nlbv(to_model(body)) <= 1);
-        let val_slice: &[ExprPtr<'t>] = &[val];
-        match verified_inst(ctx, body, val_slice, 0, 100000) {
-            Some(substituted) => {
-                proof {
-                    assert(Seq::new(val_slice@.len(), |i: int| to_model(val_slice@[i])) =~= seq![to_model(val)]);
-                    assert(to_model(substituted) == subst_full(to_model(body), seq![to_model(val)], 0));
-                    subst_full_depth_bound_n(to_model(body), seq![to_model(val)], 0, dd);
-                    subst_full_nlbv_bound(to_model(body), to_model(val), 0);
-                    assert(nlbv(to_model(substituted)) <= 0);
-                }
-                let half: u32 = (fuel - 1) / 2;
-                let result = verified_infer(ctx, env, memo, substituted, half, Ghost(d), Ghost(dd + dd));
-                proof {
-                    if let Some(r) = result {
-                        assert(half as nat == ((fuel - 1) as nat) / 2);
-                        assert(depth(to_model(r)) <= infer_result_depth_bound(dd + dd, d, half as nat));
-                        assert(infer_result_depth_bound(dd, d, fuel as nat) >= infer_result_depth_bound(dd + dd, d, half as nat));
-                        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(val)), Box::new(to_model(body))));
-                        assert(types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(substituted), to_model(r), half as nat));
-                        assert(half < fuel);
-                        types_to_let(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(ty), to_model(val), to_model(body), to_model(r), half as nat, fuel as nat);
-                        assert(infer_spec(*env, substituted, r, half as nat));
-                        assert(infer_fuel_marker(half as nat));
-                        assert(infer_spec(*env, e, r, fuel as nat));
-                        assert(infer_types_to(*env, e, r, fuel as nat));
-                    }
-                }
-                result
-            }
-            None => None,
-        }
-    } else {
-        None
-    }
-}
 
 /// "Ensure Pi" with capped reduction: a syntactic `Pi` is returned as is;
 /// otherwise the capped measured whnf (32 rounds, cap `k`) is tried once.
@@ -1198,223 +253,6 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     }
 }
 
-/// `Proj` arm of `verified_infer` (2026-09-06): the kernel's `infer_proj`
-/// (`tc.rs`) with capped reduction -- infer the structure's type, reduce
-/// it to a constant spine `I ls args`, look up `I`'s constructor and its
-/// parameter count, instantiate the constructor's type through the
-/// parameters (with `args`) and the earlier fields (with `Proj(j, s)`),
-/// and read the field type off the next binder. The typing claim is the
-/// relation's `Proj` rule (`types_to_proj`); its forward-recursive
-/// telescope chain (`proj_field_type`) is discharged by a universally
-/// quantified implication invariant that composes one step per iteration.
-/// The dispatcher's `d + dd` result-depth bound is enforced at runtime
-/// (depth(result) <= depth(e) + depth(constructor type)).
-#[verifier::spinoff_prover]
-pub fn verified_infer_proj_arm<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(d): Ghost<nat>, Ghost(dd): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        memo.wf(), memo.spec_env() == *env,
-        env_global_cap(*env) <= d,
-        local_type_cap() <= d,
-        d <= 60000,
-        depth(to_model(e)) <= dd,
-        nlbv(to_model(e)) <= 0,
-        infer_depth_fixpoint_ok(dd, fuel as nat),
-        fuel >= 1,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
-        match result {
-        Some(r) => infer_spec(*env, e, r, fuel as nat) && infer_types_to(*env, e, r, fuel as nat) && depth(to_model(r)) <= infer_result_depth_bound(dd, d, fuel as nat) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
-    decreases fuel, 0int
-{
-    let el = ctx.read_expr(e);
-    let (idx, structure) = match expr_as_proj(&el) { Some((_, i, s)) => (i, s), None => return { infer_exit(6); None } };
-    assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
-    assert(depth(to_model(structure)) < depth(to_model(e)));
-    assert(nlbv(to_model(structure)) <= 0);
-    let ghost dty = to_model_of_declar_ty(*env);
-    let ghost denv = to_model_of_env(*env);
-    let ghost lctx = arena_lctx();
-    let ghost f2: nat = (fuel - 1) as nat;
-    let ghost s_m = to_model(structure);
-    let ghost idxn: nat = idx as nat;
-    let sty = match verified_infer(ctx, env, memo, structure, fuel - 1, Ghost(d), Ghost(dd)) { Some(v) => v, None => return { infer_exit(6); None } };
-    assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
-    let k: u32 = 2000;
-    let w = verified_whnf_free(ctx, env, memo, sty);
-    proof {
-        env_model_nofv_sub(*env);
-        pstep_star_env_weaken(env_model_nofv(*env), denv, to_model(sty), to_model(w));
-    }
-    let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-    let args_s: &[ExprPtr<'t>] = args.as_slice();
-    let ghost args_model = Seq::new(args_s@.len(), |i: int| to_model(args_s@[i]));
-    let ghost ind_id = name_id(ind_name);
-    let ghost ls = to_model_of_levels(ind_levels);
-    proof {
-        is_const_shape_model(f);
-        const_levels_vec_model(f);
-        assert(to_model(f) == ExprSpec::Const(const_id(f), const_levels_vec(f)));
-        assert(const_id(f) == ind_id);
-        assert(const_levels_vec(f) =~= ls);
-        assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model);
-        assert(to_model(w) == spine_app(ExprSpec::Const(ind_id, ls), args_model));
-        spine_app_nlbv_decompose(ExprSpec::Const(ind_id, ls), args_model);
-        assert forall |j: int| 0 <= j < args_s@.len() implies nlbv(to_model(#[trigger] args_s@[j])) <= 0 by {
-            assert(args_model[j] == to_model(args_s@[j]));
-            assert(nlbv(args_model[j]) <= nlbv(spine_app(ExprSpec::Const(ind_id, ls), args_model)));
-        }
-    }
-    let ctor_name = match get_structure_first_ctor(env, &ind_name, true) { Some(c) => c, None => return { infer_exit(6); None } };
-    let ghost ctor_id = name_id(ctor_name);
-    proof {
-        struct_ctor_of_agrees(*env, ind_id);
-        assert(struct_ctor_of(ind_id) == Some(ctor_id));
-    }
-    let np = match get_constructor_num_params(env, &ctor_name) { Some(n) => n, None => return { infer_exit(6); None } };
-    proof {
-        ctor_num_params_of_agrees(*env, ctor_id);
-        assert(ctor_num_params_of(ctor_id) == Some(np));
-    }
-    if (np as usize) > args_s.len() {
-        return { infer_exit(6); None };
-    }
-    let ghost npn: nat = np as nat;
-    let ctor_ty0 = match verified_infer_const(ctx, env, ctor_name, ind_levels, 100000) { Some(t) => t, None => return { infer_exit(6); None } };
-    proof {
-        let (uparams, ty) = choose |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-            to_model_of_declar_ty(*env).contains_key(name_id(ctor_name))
-            && to_model_of_declar_ty(*env)[name_id(ctor_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-            && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(ind_levels), to_model(ctor_ty0));
-        types_to_const(dty, denv, lctx, ctor_id, ls, to_model(ctor_ty0), f2);
-    }
-    let mut cur = ctor_ty0;
-    let mut i: usize = 0;
-    proof {
-        assert(args_model.skip(0) =~= args_model);
-    }
-    while i < np as usize
-        invariant
-            memo.wf(), memo.spec_env() == *env,
-            0 <= i <= np as usize,
-            np as usize <= args_s@.len(),
-            args_model == Seq::new(args_s@.len(), |j: int| to_model(args_s@[j])),
-            denv == to_model_of_env(*env),
-            k == 2000,
-            env_global_cap(*env) <= d,
-            d <= 60000,
-            npn == np as nat,
-            s_m == to_model(structure),
-            idxn == idx as nat,
-            nlbv(to_model(cur)) <= 0,
-            forall |j: int| 0 <= j < args_s@.len() ==> nlbv(to_model(#[trigger] args_s@[j])) <= 0,
-            forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t)
-                ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
-        decreases np as usize - i
-    {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
-        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-        proof {
-            depth_le_size(to_model(w2));
-            assert(depth(to_model(body)) < depth(to_model(w2)));
-            assert(nlbv(to_model(body)) <= 1);
-        }
-        let arg_slice: &[ExprPtr<'t>] = &args_s[i..i + 1];
-        let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-        proof {
-            assert(arg_slice@.len() == 1);
-            assert(arg_slice@[0] == args_s@[i as int]);
-            assert(Seq::new(arg_slice@.len(), |j: int| to_model(arg_slice@[j])) =~= seq![to_model(args_s@[i as int])]);
-            assert(to_model(new_ty) == subst_full(to_model(body), seq![to_model(args_s@[i as int])], 0));
-            subst_full_nlbv_bound(to_model(body), to_model(args_s@[i as int]), 0);
-            assert(args_model.skip(i as int).len() > 0);
-            assert(args_model.skip(i as int)[0] == to_model(args_s@[i as int]));
-            assert(args_model.skip(i as int).drop_first() =~= args_model.skip(i as int + 1));
-            assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(new_ty), args_model.skip(i as int + 1), (npn - ((i + 1) as nat)) as nat, 0, idxn, s_m, t)
-                implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
-                proj_field_type_param_step(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t);
-            }
-        }
-        cur = new_ty;
-        i = i + 1;
-    }
-    proof {
-        assert(i == np as usize);
-        assert((npn - (i as nat)) as nat == 0);
-        assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, 0, (idxn - (0 as nat)) as nat, s_m, t)
-            implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
-            assert(proj_field_type(denv, to_model(cur), args_model.skip(i as int), (npn - (i as nat)) as nat, 0, idxn, s_m, t));
-        }
-    }
-    let mut j: usize = 0;
-    while j < idx
-        invariant
-            memo.wf(), memo.spec_env() == *env,
-            0 <= j <= idx,
-            np as usize <= args_s@.len(),
-            args_model == Seq::new(args_s@.len(), |q: int| to_model(args_s@[q])),
-            denv == to_model_of_env(*env),
-            k == 2000,
-            env_global_cap(*env) <= d,
-            d <= 60000,
-            npn == np as nat,
-            s_m == to_model(structure),
-            nlbv(s_m) <= 0,
-            idxn == idx as nat,
-            nlbv(to_model(cur)) <= 0,
-            forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, j, (idxn - (j as nat)) as nat, s_m, t)
-                ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
-        decreases idx - j
-    {
-        let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
-        let sw = match verified_size(ctx, w2, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-        proof {
-            depth_le_size(to_model(w2));
-            assert(depth(to_model(body)) < depth(to_model(w2)));
-            assert(nlbv(to_model(body)) <= 1);
-        }
-        let pj = ctx.mk_proj(ind_name, j, structure);
-        let pj_slice: &[ExprPtr<'t>] = &[pj];
-        let new_ty = match verified_inst(ctx, body, pj_slice, 0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-        proof {
-            assert(to_model(pj) == ExprSpec::Proj(j, Box::new(s_m)));
-            assert(nlbv(to_model(pj)) <= 0);
-            assert(Seq::new(pj_slice@.len(), |q: int| to_model(pj_slice@[q])) =~= seq![to_model(pj)]);
-            assert(to_model(new_ty) == subst_full(to_model(body), seq![ExprSpec::Proj(j, Box::new(s_m))], 0));
-            subst_full_nlbv_bound(to_model(body), to_model(pj), 0);
-            assert forall |t: ExprSpec| #[trigger] proj_field_type(denv, to_model(new_ty), args_model.skip(npn as int), 0, (j + 1) as usize, (idxn - ((j + 1) as nat)) as nat, s_m, t)
-                implies proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t) by {
-                proj_field_type_field_step(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), j, (idxn - (j as nat)) as nat, s_m, t);
-            }
-        }
-        cur = new_ty;
-        j = j + 1;
-    }
-    let (w3, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) { Some(v) => v, None => return { infer_exit(6); None } };
-    proof {
-        proj_field_type_final(denv, to_model(cur), to_model(bt), to_model(body), args_model.skip(npn as int), idx, s_m);
-        assert(j == idx);
-        assert((idxn - (j as nat)) as nat == 0);
-        assert(proj_field_type(denv, to_model(cur), args_model.skip(npn as int), 0, j, (idxn - (j as nat)) as nat, s_m, to_model(bt)));
-        assert(proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, to_model(bt)));
-        types_to_proj(dty, denv, lctx, idx, s_m, to_model(bt), f2, to_model(sty), ind_id, ls, args_model, ctor_id, np, to_model(ctor_ty0), fuel as nat);
-        assert(infer_types_to(*env, e, bt, fuel as nat));
-        assert(nlbv(to_model(bt)) <= 0);
-        assert(infer_proj_marker(idx, structure, sty, f2));
-        assert(infer_spec(*env, structure, sty, f2));
-        assert(infer_spec(*env, e, bt, fuel as nat));
-    }
-    let dr = match verified_depth(ctx, bt, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-    let de = match verified_depth(ctx, e, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-    let dc = match verified_depth(ctx, ctor_ty0, 100000) { Some(v) => v, None => return { infer_exit(6); None } };
-    if (dr as u64) > (de as u64) + (dc as u64) {
-        return { infer_exit(6); None };
-    }
-    assert(depth(to_model(ctor_ty0)) <= d);
-    assert(depth(to_model(bt)) <= d + dd);
-    assert(infer_result_depth_bound(dd, d, fuel as nat) >= d + dd + 1);
-    Some(bt)
-}
 
 
 
@@ -2463,7 +1301,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             }
         }
         let ht = match verified_infer_free(ctx, env, memo, hd) { Some(v) => v, None => return None };
-        let ghost h = choose |f: nat| #[trigger] infer_types_to(*env, hd, ht, f);
+        let ghost mut h = choose |f: nat| #[trigger] infer_types_to(*env, hd, ht, f);
         let mut cur_ty = ht;
         let mut i: usize = 0;
         while i < args.len()
@@ -2493,6 +1331,19 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             }
             proof { depth_le_size(to_model(bt)); }
             let a = args[i];
+            // THE ARGUMENT MUST HAVE THE DOMAIN TYPE. Without this the whole
+            // relation is not a typing relation: `types_to`'s application rule
+            // used to bind the domain and never use it, so any argument at all
+            // typed, and `h #0` could be given a type with `#0` of the wrong
+            // proposition. That is what let eta + proof irrelevance certify two
+            // proofs of DIFFERENT propositions as equal.
+            // the MEMOIZED entry, not `verified_infer_free` directly: inferring
+            // every argument of every application unmemoized took a 5-second
+            // corpus past ten minutes
+            let a_ty = match verified_infer_shadow(ctx, env, memo, a) { Some(v) => v, None => return None };
+            if !matches!(verified_conv(ctx, env, memo, a_ty, aty, 100, conv_budget_total()), Some(true)) {
+                return None;
+            }
             let ls: &[ExprPtr<'t>] = &[a];
             let instd = match verified_inst(ctx, bt, ls, 0, 100000) { Some(v) => v, None => return None };
             proof {
@@ -2505,8 +1356,17 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
                 assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt))));
                 assert(pstep_star(to_model_of_env(*env), to_model(cur_ty),
                     ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt)))));
+                // lift the head's derivation and the argument's to a common
+                // height before applying the rule
+                let fa = choose |f: nat| #[trigger] infer_types_to(*env, a, a_ty, f);
+                let hm: nat = if h >= fa { h } else { fa };
+                types_to_mono(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(),
+                    spine_app(to_model(hd), args_all.subrange(0, i as int)), to_model(cur_ty), h, hm);
+                types_to_mono(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(),
+                    to_model(a), to_model(a_ty), fa, hm);
                 types_to_app(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), spine_app(to_model(hd), args_all.subrange(0, i as int)),
-                    to_model(a), to_model(cur_ty), to_model(aty), to_model(bt), h);
+                    to_model(a), to_model(cur_ty), to_model(aty), to_model(bt), hm, to_model(a_ty));
+                h = hm;
                 spine_app_compose_last(to_model(hd), args_all.subrange(0, i as int), to_model(a));
                 assert(args_all.subrange(0, i as int).push(to_model(a)) =~= args_all.subrange(0, i as int + 1));
             }
@@ -2731,6 +1591,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 }
 
 /// nothing here is trusted: `InferCert`'s type invariant carries the proof.
+#[verifier::exec_allows_no_decreases_clause]
 pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
@@ -2754,6 +1615,7 @@ pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
 }
 
+#[verifier::exec_allows_no_decreases_clause]
 fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,

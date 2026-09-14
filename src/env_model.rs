@@ -732,39 +732,6 @@ pub uninterp spec fn old_declar_names<'x, 'a>(env: Env<'x, 'a>) -> Set<u64>;
 pub assume_specification<'x, 'a> [old_declar_is_some] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool)
     ensures result == old_declar_names(*env).contains(name_id(*n));
 
-/// States exactly the `nlbv`/`max_var_below`/`depth` conjuncts of `env_wf`
-/// directly, rather than calling `env_wf` itself -- NOT for opacity
-/// reasons, but because of a real, empirically-isolated finding: an
-/// UNCONDITIONAL, hypothesis-free fact of this shape that includes `size`
-/// (the fourth `env_wf` conjunct) makes the full-crate `cargo-verus check`
-/// blow up from ~10s to several minutes, even though this lemma is never
-/// called anywhere yet. Bisected by re-adding `env_wf`'s four conjuncts
-/// one at a time: `nlbv` alone, `nlbv`+`depth`, and `nlbv`+`max_var_below`
-/// each stayed fast; `size` alone (or combined with anything) reliably
-/// reproduced the multi-minute blowup. Root cause not fully understood
-/// (likely `size`'s role in `beta_model.rs`'s existing nonlinear-
-/// arithmetic reasoning, e.g. `pstep_bounds`'s `cap * size_growth(...)`
-/// scaling, combining badly with a brand-new UNCONDITIONAL `size` fact
-/// over an uninterpreted `Env` domain -- see [[feedback_verus_nonlinear_arith]]
-/// for the general pattern), but the FIX is simple and low-risk: this
-/// lemma never actually needed `size` in the first place (nothing in
-/// `delta_bound_model.rs`'s consumer references it), so it's just omitted
-/// here rather than routed around with opaquing tricks (tried first,
-/// and did NOT fix it: wrapping `env_wf` in a fresh, otherwise-unused
-/// `#[verifier::opaque]` predicate reproduced the exact same slowdown,
-/// showing the issue is about the SEMANTIC content, not the `env_wf` name
-/// or its transparency). `env_wf` itself is untouched -- still fully
-/// transparent, still used by `pstep_bounds`/`pstep_diamond` exactly as
-/// before.
-#[verifier::external_body]
-pub proof fn env_global_wf<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id) ==> {
-        &&& nlbv(to_model_of_env(env)[id].1) == 0
-        &&& max_var_below(to_model_of_env(env)[id].1, env_global_cap(env))
-        &&& depth(to_model_of_env(env)[id].1) <= env_global_cap(env)
-    }
-{
-}
 
 /// `env_global_wf`'s counterpart for `to_model_of_declar_ty` (declaration
 /// TYPES, needed by `infer_const`'s own depth-boundedness -- a completely

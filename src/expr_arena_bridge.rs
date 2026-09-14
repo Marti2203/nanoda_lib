@@ -46,7 +46,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_depth, find_from_end, subst_expr_levels_rel, subst_expr_levels};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, find_from_end, subst_expr_levels_rel, subst_expr_levels};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
@@ -876,104 +876,6 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
     None
 }
 
-/// Exec mirror of `depth` (`expr_model.rs`), sibling of `verified_size`:
-/// `Some(n)` is the exact depth. Depth never exceeds size, so the
-/// `u32` arithmetic is safe whenever the term is walkable at all (2026-09-06,
-/// for the whnf-retry application arm's runtime depth check).
-pub fn verified_depth<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u32>)
-    ensures match result {
-        Some(n) => n as nat == depth(to_model(e)) && n <= 60000,
-        None => true,
-    }
-    decreases fuel
-{
-    if fuel == 0 {
-        return None;
-    }
-    let el = ctx.read_expr(e);
-    if let Some((f, a)) = expr_as_app(&el) {
-        let nf = match verified_depth(ctx, f, fuel - 1) { Some(v) => v, None => return None };
-        let na = match verified_depth(ctx, a, fuel - 1) { Some(v) => v, None => return None };
-        let m: u32 = if nf >= na { nf } else { na };
-        if m >= 60000 {
-            return None;
-        }
-        assert(depth(to_model(e)) == 1 + if depth(to_model(f)) >= depth(to_model(a)) { depth(to_model(f)) } else { depth(to_model(a)) });
-        return Some(m + 1);
-    }
-    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
-        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v) => v, None => return None };
-        let m: u32 = if nt >= nb { nt } else { nb };
-        if m >= 60000 {
-            return None;
-        }
-        assert(depth(to_model(e)) == 1 + if depth(to_model(ty)) >= depth(to_model(body)) { depth(to_model(ty)) } else { depth(to_model(body)) });
-        return Some(m + 1);
-    }
-    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
-        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v) => v, None => return None };
-        let m: u32 = if nt >= nb { nt } else { nb };
-        if m >= 60000 {
-            return None;
-        }
-        assert(depth(to_model(e)) == 1 + if depth(to_model(ty)) >= depth(to_model(body)) { depth(to_model(ty)) } else { depth(to_model(body)) });
-        return Some(m + 1);
-    }
-    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
-        let nt = match verified_depth(ctx, ty, fuel - 1) { Some(v2) => v2, None => return None };
-        let nv = match verified_depth(ctx, v, fuel - 1) { Some(v2) => v2, None => return None };
-        let nb = match verified_depth(ctx, body, fuel - 1) { Some(v2) => v2, None => return None };
-        let tv: u32 = if nt >= nv { nt } else { nv };
-        let m: u32 = if tv >= nb { tv } else { nb };
-        if m >= 60000 {
-            return None;
-        }
-        assert(depth(to_model(e)) == {
-            let tvs = if depth(to_model(ty)) >= depth(to_model(v)) { depth(to_model(ty)) } else { depth(to_model(v)) };
-            1 + if tvs >= depth(to_model(body)) { tvs } else { depth(to_model(body)) }
-        });
-        return Some(m + 1);
-    }
-    if let Some((_, _, st)) = expr_as_proj(&el) {
-        let ns = match verified_depth(ctx, st, fuel - 1) { Some(v) => v, None => return None };
-        if ns >= 60000 {
-            return None;
-        }
-        assert(depth(to_model(e)) == 1 + depth(to_model(st)));
-        return Some(ns + 1);
-    }
-    if expr_as_var(&el).is_some() {
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    if expr_as_sort(&el).is_some() {
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    if expr_as_const(e, &el).is_some() {
-        proof { is_const_shape_model(e); }
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    if expr_as_local(e, &el).is_some() {
-        proof { is_local_shape_model(e); }
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    if expr_as_nat_lit(e, &el).is_some() {
-        proof { is_nat_lit_shape_model(e); }
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    if expr_as_string_lit(e, &el) {
-        proof { is_string_lit_shape_model(e); }
-        assert(depth(to_model(e)) == 0);
-        return Some(0);
-    }
-    None
-}
 
 /// Freshness walker for the binder fresh-instance rule: `Some(true)`
 /// certifies `fv_absent(to_model(e), expr_id(local))` by POINTER
@@ -2006,42 +1908,6 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, ar
     }
 }
 
-/// `verified_peel_lambdas`'s exact structural twin for `Pi` binders --
-/// `spine_bind`/`spine_reduce` don't distinguish `Pi` from `Lambda` at all
-/// (both are the same `ExprSpec::Bind` shape at the model level, the real
-/// arena's `BinderStyle` tag is the only place they differ), so this is a
-/// verbatim copy with `expr_as_pi` in place of `expr_as_lambda`. Mirrors
-/// `infer_app`'s own peeling loop (`tc.rs:560-597`) the same way `verified_
-/// peel_lambdas` mirrors `whnf_no_unfolding_aux`'s.
-pub fn verified_peel_pis<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_len: usize, fuel: u32) -> (result: Option<(ExprPtr<'t>, usize)>)
-    ensures match result {
-        Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(to_model(body)),
-        None => true,
-    }
-    decreases fuel
-{
-    if fuel == 0 {
-        return None;
-    }
-    if args_len == 0 {
-        assert(spine_bind(to_model(e), 0) == Some(to_model(e)));
-        return Some((e, 0));
-    }
-    let fuel1 = fuel - 1;
-    let el = ctx.read_expr(e);
-    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))));
-        match verified_peel_pis(ctx, body, args_len - 1, fuel1) {
-            Some((b2, n2)) => {
-                assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(to_model(body), n2 as nat));
-                Some((b2, n2 + 1))
-            }
-            None => None,
-        }
-    } else {
-        Some((e, 0))
-    }
-}
 
 
 

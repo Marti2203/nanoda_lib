@@ -2526,43 +2526,6 @@ pub proof fn subst_expr_levels_rel_size(e: ExprSpec, ks: Seq<u64>, vs: Seq<Level
     }
 }
 
-#[verifier::spinoff_prover]
-pub proof fn subst_expr_levels_rel_max_var_below(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, e2: ExprSpec, bound: nat)
-    requires crate::expr_model::subst_expr_levels_rel(e, ks, vs, e2)
-    ensures max_var_below(e2, bound) == max_var_below(e, bound)
-    decreases e
-{
-    match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_)
-        | ExprSpec::Sort(_) | ExprSpec::Const(_, _) => {}
-        ExprSpec::App(f, a) => match e2 {
-            ExprSpec::App(f2, a2) => {
-                subst_expr_levels_rel_max_var_below(*f, ks, vs, *f2, bound);
-                subst_expr_levels_rel_max_var_below(*a, ks, vs, *a2, bound);
-            }
-            _ => {}
-        },
-        ExprSpec::Bind(t, b) => match e2 {
-            ExprSpec::Bind(t2, b2) => {
-                subst_expr_levels_rel_max_var_below(*t, ks, vs, *t2, bound);
-                subst_expr_levels_rel_max_var_below(*b, ks, vs, *b2, bound);
-            }
-            _ => {}
-        },
-        ExprSpec::Let(t, v, b) => match e2 {
-            ExprSpec::Let(t2, v2, b2) => {
-                subst_expr_levels_rel_max_var_below(*t, ks, vs, *t2, bound);
-                subst_expr_levels_rel_max_var_below(*v, ks, vs, *v2, bound);
-                subst_expr_levels_rel_max_var_below(*b, ks, vs, *b2, bound);
-            }
-            _ => {}
-        },
-        ExprSpec::Proj(pidx, s) => match e2 {
-            ExprSpec::Proj(pidx2, s2) => subst_expr_levels_rel_max_var_below(*s, ks, vs, *s2, bound),
-            _ => {}
-        },
-    }
-}
 
 /// Same preservation story as `subst_expr_levels_rel_size`/`_max_var_below`
 /// above, for `nlbv`. Needed by `pstep_shift`/`pstep_shift_down`/`pstep_

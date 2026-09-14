@@ -43,7 +43,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_peel_pis, verified_whnf_no_unfolding_step_plain};
+use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_whnf_no_unfolding_step_plain};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
@@ -104,7 +104,7 @@ use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, ctor_num_fiel
 #[cfg(verus_only)]
 use crate::beta_model::spine_app_concat;
 #[cfg(verus_only)]
-use crate::env_model::{env_global_wf_ty, env_global_wf, env_global_cap};
+use crate::env_model::{env_global_wf_ty, env_global_cap};
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_declar_ty;
 #[cfg(verus_only)]
@@ -115,7 +115,7 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model as reducibility_hint_to_model;
 use crate::env::ReducibilityHint;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, subst_expr_levels_rel_max_var_below, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, depth_le_size};
+use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, depth_le_size};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id, bool_true_arity_is_zero_any};
 use crate::expr_arena_bridge::verified_size;
@@ -235,125 +235,6 @@ pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: Na
 }
 
 
-/// `verified_unfold_def_step`'s own stronger sibling: ALSO exposes `nlbv`/
-/// `max_var_below`/`depth` on the result, not just the `pstep_star` fact --
-/// needed so a delta step's own output can be fed back into a FURTHER
-/// round of reduction (the ORIGINAL `verified_unfold_def_step`/`verified_
-/// whnf_step` can't be chained into a genuine multi-round `whnf`, since
-/// their `ensures` drops these bounds entirely). Every piece needed
-/// already existed: `env_global_wf` (the definition body's own depth/nlbv/
-/// max_var_below cap), `subst_expr_levels_rel_{nlbv,depth,max_var_below}`
-/// (level substitution preserves all three exactly), and `spine_app_
-/// decompose`/`spine_app_bounds`/`spine_app_nlbv` (already used throughout
-/// this project for exactly this "peel a spine, recombine with a new
-/// head" shape) -- this is pure composition, no new lemmas. Requires
-/// `env_global_cap(*env) <= bound` so the definition body's own natural
-/// cap and the caller's `bound` can be unified via `max_var_below_mono`.
-pub fn verified_unfold_def_step_bounded<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        nlbv(to_model(e)) <= 0,
-        max_var_below(to_model(e), bound),
-        depth(to_model(e)) <= d,
-        env_global_cap(*env) <= bound,
-    ensures match result {
-        Some(r) => {
-            &&& exists |id: u64, ks: Seq<u64>, val: ExprSpec| {
-                &&& to_model_of_env(*env).contains_key(id)
-                &&& to_model_of_env(*env)[id] == (ks, val)
-                &&& pstep_star(
-                        Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                        to_model(e),
-                        to_model(r),
-                    )
-            }
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound)
-            &&& depth(to_model(r)) <= env_global_cap(*env) + d + d
-        },
-        None => true,
-    }
-{
-    let (fun, args) = match verified_unfold_apps(ctx, e, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
-    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-    proof {
-        spine_app_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound);
-    }
-    assert(args@.len() <= d);
-    let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) {
-        Some(p) => p,
-        None => return None,
-    };
-    let (def_uparams, def_value) = match env.get_declar_val(&name) {
-        Some(p) => p,
-        None => return None,
-    };
-    let levels_vec = read_levels_vec(ctx, levels);
-    let uparams_vec = read_levels_vec(ctx, def_uparams);
-    if levels_vec.len() != uparams_vec.len() {
-        return None;
-    }
-    assert(to_model_of_levels(levels).len() == to_model_of_levels(def_uparams).len());
-    match verified_subst_expr_levels(ctx, def_value, def_uparams, levels, 100000) {
-        Some(def_val) => {
-            let ghost id = name_id(name);
-            let ghost ks = level_names(to_model_of_levels(def_uparams));
-            let ghost val = to_model(def_value);
-            assert(to_model_of_env(*env).contains_key(id));
-            assert(to_model_of_env(*env)[id] == (ks, val));
-            proof {
-                is_const_shape_model(fun);
-                const_levels_vec_model(fun);
-            }
-            assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-            assert(const_id(fun) == id);
-            assert(const_levels_vec(fun) =~= to_model_of_levels(levels));
-            proof {
-                assert(pstep(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                ));
-                pstep_star_one(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                );
-                pstep_spine_app_star(
-                    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(id, (ks, val)),
-                    to_model(fun),
-                    to_model(def_val),
-                    Seq::new(args@.len(), |i: int| to_model(args@[i])),
-                );
-            }
-            proof {
-                env_global_wf(*env);
-                subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
-                subst_expr_levels_rel_depth(val, ks, to_model_of_levels(levels), to_model(def_val));
-                subst_expr_levels_rel_max_var_below(val, ks, to_model_of_levels(levels), to_model(def_val), env_global_cap(*env));
-                max_var_below_mono(to_model(def_val), env_global_cap(*env), bound);
-            }
-            assert(nlbv(to_model(def_val)) == 0);
-            assert(depth(to_model(def_val)) <= env_global_cap(*env));
-            assert(max_var_below(to_model(def_val), bound));
-            let result = verified_foldl_apps(ctx, def_val, &args);
-            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            proof {
-                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
-                spine_app_bounds(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])), bound, env_global_cap(*env), d);
-            }
-            assert(nlbv(to_model(result)) <= 0);
-            assert(max_var_below(to_model(result), bound));
-            assert(depth(to_model(result)) <= env_global_cap(*env) + d + args@.len());
-            Some(result)
-        }
-        None => None,
-    }
-}
 
 
 
@@ -2394,10 +2275,13 @@ pub open spec fn types_to(
     // the spine inferring only the HEAD and instantiating, so it would have
     // to infer and check every argument, and 144 sites mention `types_to`.
     ||| (match e {
-        ExprSpec::App(f, a) => exists |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec|
-            #![trigger pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))]
-            types_to(dty, denv, lctx, *f, ft, fuel)
+        ExprSpec::App(f, a) => exists |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+            #![trigger app_marker(ft, aty, bt, aty2)]
+            app_marker(ft, aty, bt, aty2)
+            && types_to(dty, denv, lctx, *f, ft, fuel)
             && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
+            && types_to(dty, denv, lctx, *a, aty2, fuel)
+            && deq_any(denv, aty2, aty)
             && t == subst_full(bt, seq![*a], 0),
         _ => false,
     })
@@ -2483,13 +2367,22 @@ pub proof fn types_to_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (
 {
     // App: the premise is on a syntactic subterm at the SAME height.
     if let ExprSpec::App(f, a) = e {
-        let (ft, aty, bt) = choose |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec|
-            #![trigger pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))]
-            types_to(dty, denv, lctx, *f, ft, f1)
+        let (ft, aty, bt, aty2) = choose |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+            #![trigger app_marker(ft, aty, bt, aty2)]
+            app_marker(ft, aty, bt, aty2)
+            && types_to(dty, denv, lctx, *f, ft, f1)
             && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
+            && types_to(dty, denv, lctx, *a, aty2, f1)
+            && deq_any(denv, aty2, aty)
             && t == subst_full(bt, seq![*a], 0);
         types_to_mono(dty, denv, lctx, *f, ft, f1, f2);
+        // the ARGUMENT's derivation has to be lifted too, now that the rule
+        // actually requires one
+        types_to_mono(dty, denv, lctx, *a, aty2, f1, f2);
+        assert(app_marker(ft, aty, bt, aty2));
         assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
+        assert(types_to(dty, denv, lctx, *a, aty2, f2));
+        assert(deq_any(denv, aty2, aty));
         assert(types_to(dty, denv, lctx, e, t, f2));
     }
     // Leaves: these disjuncts do not mention the height at all, but the goal
@@ -2577,121 +2470,29 @@ pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, 
 {
 }
 
-pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, a: ExprSpec, ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, fuel: nat)
+/// Marker trigger for the application rule's four witnesses. Same idiom as
+/// `irrel_marker`/`fuel_marker` elsewhere in this file: a multi-binder
+/// `exists` needs one trigger term mentioning every bound variable, and no
+/// natural term here mentions all four.
+pub open spec fn app_marker(ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec) -> bool { true }
+
+pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, a: ExprSpec, ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, fuel: nat, aty2: ExprSpec)
     requires
         types_to(dty, denv, lctx, f, ft, fuel),
         pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        types_to(dty, denv, lctx, a, aty2, fuel),
+        deq_any(denv, aty2, aty),
     ensures types_to(dty, denv, lctx, ExprSpec::App(Box::new(f), Box::new(a)), subst_full(bt, seq![a], 0), fuel)
 {
-    assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
-        && subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
+    assert(app_marker(ft, aty, bt, aty2));
+    assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
+    assert(types_to(dty, denv, lctx, a, aty2, fuel));
+    assert(deq_any(denv, aty2, aty));
+    assert(subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
 }
 
-/// `spine_app` peels from the FRONT too: `f a0 rest... == (f a0) rest...`.
-pub proof fn spine_app_front(f: ExprSpec, args: Seq<ExprSpec>)
-    requires args.len() >= 1
-    ensures spine_app(f, args) == spine_app(ExprSpec::App(Box::new(f), Box::new(args[0])), args.subrange(1, args.len() as int))
-    decreases args.len()
-{
-    let a0 = args[0];
-    let f2 = ExprSpec::App(Box::new(f), Box::new(a0));
-    if args.len() == 1 {
-        let e = Seq::<ExprSpec>::empty();
-        assert(args =~= e.push(a0));
-        spine_app_compose_last(f, e, a0);
-        assert(spine_app(f, e) == f);
-        assert(spine_app(f, args) == f2);
-        assert(args.subrange(1, 1) =~= e);
-        assert(spine_app(f2, e) == f2);
-    } else {
-        let init = args.subrange(0, args.len() - 1);
-        let last = args[args.len() - 1];
-        assert(args =~= init.push(last));
-        spine_app_compose_last(f, init, last);
-        assert(spine_app(f, args) == ExprSpec::App(Box::new(spine_app(f, init)), Box::new(last)));
-        assert(init[0] == a0);
-        spine_app_front(f, init);
-        let rest = args.subrange(1, args.len() as int);
-        let rest_init = init.subrange(1, init.len() as int);
-        assert(spine_app(f, init) == spine_app(f2, rest_init));
-        assert(rest =~= rest_init.push(last));
-        spine_app_compose_last(f2, rest_init, last);
-        assert(spine_app(f2, rest) == ExprSpec::App(Box::new(spine_app(f2, rest_init)), Box::new(last)));
-    }
-}
 
-/// A syntactic binder telescope survives substitution at its base offset:
-/// `spine_bind(subst_full(h, s, o), k) == Some(subst_full(body, s, o + k))`.
-pub proof fn spine_bind_subst_full(h: ExprSpec, k: nat, body: ExprSpec, s: Seq<ExprSpec>, o: nat)
-    requires spine_bind(h, k) == Some(body)
-    ensures spine_bind(subst_full(h, s, o), k) == Some(subst_full(body, s, (o + k) as nat))
-    decreases k
-{
-    if k == 0 {
-    } else {
-        match h {
-            ExprSpec::Bind(ty, b) => {
-                spine_bind_subst_full(*b, (k - 1) as nat, body, s, (o + 1) as nat);
-            }
-            _ => {}
-        }
-    }
-}
 
-/// THE TELESCOPE: a function whose type is a syntactic binder telescope of
-/// `args.len()` binders, applied to `args`, has the multi-substitution type
-/// -- by iterating the single-application rule from the front
-/// (`spine_app_front`), where each peeled binder is a reduction-free
-/// (`pstep_star_refl`) instance and `subst_full_compose` folds the
-/// substitutions.
-pub proof fn types_to_spine(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, fty: ExprSpec, args: Seq<ExprSpec>, body: ExprSpec, fuel: nat)
-    requires
-        types_to(dty, denv, lctx, f, fty, fuel),
-        spine_bind(fty, args.len()) == Some(body),
-        nlbv(fty) <= 0,
-        forall |i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) <= 0,
-    ensures types_to(dty, denv, lctx, spine_app(f, args), subst_full(body, args, 0), fuel)
-    decreases args.len()
-{
-    if args.len() == 0 {
-        assert(fty == body);
-        assert(args =~= Seq::<ExprSpec>::empty());
-        subst_full_empty(body, 0);
-    } else {
-        let a0 = args[0];
-        let rest = args.subrange(1, args.len() as int);
-        let n = args.len();
-        // fty == Bind(aty, r0) with spine_bind(r0, n-1) == Some(body)
-        match fty {
-            ExprSpec::Bind(aty, r0) => {
-                let ft2 = subst_full(*r0, seq![a0], 0);
-                pstep_star_refl(denv, fty);
-                types_to_app(dty, denv, lctx, f, a0, fty, *aty, *r0, fuel);
-                let f2 = ExprSpec::App(Box::new(f), Box::new(a0));
-                assert(types_to(dty, denv, lctx, f2, ft2, fuel));
-                spine_bind_subst_full(*r0, (n - 1) as nat, body, seq![a0], 0);
-                let body2 = subst_full(body, seq![a0], (n - 1) as nat);
-                assert(spine_bind(ft2, rest.len()) == Some(body2));
-                // closedness of the peeled telescope
-                assert(nlbv(*r0) <= 1);
-                subst_full_nlbv_bound(*r0, a0, 0);
-                assert(nlbv(ft2) <= 0);
-                assert forall |i: int| 0 <= i < rest.len() implies nlbv(#[trigger] rest[i]) <= 0 by {
-                    assert(rest[i] == args[i + 1]);
-                }
-                types_to_spine(dty, denv, lctx, f2, ft2, rest, body2, fuel);
-                spine_app_front(f, args);
-                assert(spine_app(f, args) == spine_app(f2, rest));
-                // fold the substitutions: body[a0 @ n-1][rest @ 0] == body[args @ 0]
-                spine_bind_nlbv(fty, n, body, 0);
-                assert(nlbv(body) <= n);
-                subst_full_compose(body, a0, rest, (n - 1) as nat, 0);
-                assert(seq![a0] + rest =~= args);
-            }
-            _ => { assert(false); }
-        }
-    }
-}
 
 pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, f2: nat, fuel: nat)
     requires
@@ -5069,75 +4870,6 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 }
 
 
-/// Telescopes `verified_infer_app_single` from ONE argument to arbitrarily
-/// many, matching `infer_app`'s own peeling loop (`tc.rs:560-597`) for the
-/// "happy path" where `fun_ty`'s Pi-telescope has AT LEAST as many layers
-/// as there are args -- i.e. `read_expr(fun)` stays literally `Pi`-shaped
-/// at every step, never falling into the `ensure_pi`/WHNF-forcing
-/// fallback branch (`tc.rs:584-595`, itself not modeled: it would need a
-/// full `infer`+`whnf` composition this arc's `infer` dispatcher doesn't
-/// cover yet). Also skips `Check`-mode's `assert_def_eq` well-formedness
-/// checking of each argument against its binder type (`InferOnly`-only,
-/// consistent with this whole arc's convention). `None` conflates "ran
-/// out of fuel" with "would need the `ensure_pi` fallback" -- both honest
-/// incompleteness, not unsoundness.
-///
-/// Reuses `verified_peel_pis` (`expr_arena_bridge.rs`'s real-arena Pi
-/// analogue of `verified_peel_lambdas`) and `spine_bind_depth` (peeling
-/// binders never increases `depth`, needed to re-establish `verified_
-/// inst`'s own depth precondition on the peeled body). Deliberately
-/// states its ensures directly via `subst_full` -- exactly `verified_
-/// infer_app_single`'s own shape, generalized from a one-element `seq!`
-/// to `args`' whole `Seq` -- rather than routing through `spine_reduce`/
-/// `spine_reduce_eq_subst_full` (which `verified_whnf_beta_step` needs):
-/// `verified_inst` already proves the `subst_full` equation unconditionally,
-/// with NO closedness/`max_var_below` requirement on `args` at all, so
-/// adding one here would only narrow this function's callers for no
-/// benefit -- the same reason `verified_infer_app_single` never needed one
-/// either.
-pub fn verified_infer_app_telescoped<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun_ty: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(d): Ghost<nat>, Ghost(args_d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
-    requires
-        depth(to_model(fun_ty)) <= d,
-        d <= 60000,
-        nlbv(to_model(fun_ty)) == 0,
-        forall |i: int| 0 <= i < args@.len() ==> #[trigger] depth(to_model(args@[i])) <= args_d,
-        forall |i: int| 0 <= i < args@.len() ==> #[trigger] nlbv(to_model(args@[i])) <= 0,
-    ensures match result {
-        Some(r) => {
-            &&& exists |body: ExprSpec|
-                spine_bind(to_model(fun_ty), args.len() as nat) == Some(body)
-                && to_model(r) == subst_full(body, Seq::new(args@.len(), |i: int| to_model(args@[i])), 0)
-            &&& depth(to_model(r)) <= d + args_d
-            &&& nlbv(to_model(r)) <= 0
-        },
-        None => true,
-    }
-{
-    match verified_peel_pis(ctx, fun_ty, args.len(), fuel) {
-        Some((peeled, n)) => {
-            if n != args.len() {
-                return None;
-            }
-            proof {
-                spine_bind_depth(to_model(fun_ty), n as nat, to_model(peeled));
-                spine_bind_nlbv(to_model(fun_ty), n as nat, to_model(peeled), 0);
-            }
-            let result = verified_inst(ctx, peeled, args, 0, fuel);
-            proof {
-                if let Some(r) = result {
-                    let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-                    subst_full_depth_bound_n(to_model(peeled), args_model, 0, args_d);
-                    subst_full_nlbv_bound_n(to_model(peeled), args_model, 0);
-                    assert(depth(to_model(r)) <= depth(to_model(peeled)) + args_d);
-                    assert(depth(to_model(r)) <= d + args_d);
-                    assert(nlbv(to_model(r)) <= 0);
-                }
-            }
-            result
-        }
-        None => None,
-    }
-}
 
 
 

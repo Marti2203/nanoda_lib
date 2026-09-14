@@ -82,37 +82,6 @@ pub assume_specification<A> [Ptr::<A>::idx] (p: &Ptr<A>) -> (result: usize)
 pub assume_specification<A> [Ptr::<A>::dag_marker] (p: &Ptr<A>) -> (result: DagMarker)
     ensures dm_is_tc(result) == (ptr_raw(*p) & 0x8000_0000u32 != 0);
 
-/// The actual mathematical content: combining the three faithfully-
-/// transcribed formulas above, `from`'s encoding and `idx`/`dag_marker`'s
-/// decoding are mutual inverses whenever `idx` fits in the 31 bits
-/// available to it (exactly the precondition `Ptr::from`'s own
-/// `debug_assert!` enforces at runtime).
-#[allow(unused_variables)]
-pub fn verified_ptr_roundtrip<A>(dag_marker: DagMarker, idx: usize) -> (result: (usize, bool))
-    requires idx < 0x8000_0000
-    ensures
-        result.0 == idx,
-        result.1 == dm_is_tc(dag_marker),
-{
-    let p: Ptr<A> = Ptr::from(dag_marker, idx);
-    let got_idx = p.idx();
-    let marker = p.dag_marker();
-    let got_is_tc = dag_marker_is_tc(&marker);
-
-    let idx_u32 = idx as u32;
-    assert(idx_u32 as int == idx as int);
-    assert(idx_u32 < 0x8000_0000u32);
-    let is_tc = dag_marker_is_tc(&dag_marker);
-    assert(is_tc == dm_is_tc(dag_marker));
-    let tag: u32 = if is_tc { 0x8000_0000u32 } else { 0u32 };
-    assert(ptr_raw(p) == tag | idx_u32);
-    assert((tag | idx_u32) & 0x7FFF_FFFFu32 == idx_u32) by (bit_vector)
-        requires idx_u32 < 0x8000_0000u32, tag == 0x8000_0000u32 || tag == 0u32;
-    assert(((tag | idx_u32) & 0x8000_0000u32 != 0) == (tag == 0x8000_0000u32)) by (bit_vector)
-        requires idx_u32 < 0x8000_0000u32, tag == 0x8000_0000u32 || tag == 0u32;
-
-    (got_idx, got_is_tc)
-}
 
 /// Abstract model of the two-tier "hash-consing" pattern every
 /// `alloc_X`/`read_X` pair in `util.rs` follows (`alloc_name`/`alloc_level`/

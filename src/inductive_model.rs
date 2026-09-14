@@ -73,15 +73,13 @@ use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::beta_model::depth_le_size;
 #[cfg(verus_only)]
-use crate::delta_bound_model::{infer_depth_fixpoint_ok, infer_result_depth_bound};
-#[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
 use crate::level_arena_bridge::read_levels_vec;
 #[cfg(verus_only)]
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound};
-use crate::name_arena_bridge::{name_as_str, alloc_string_rec};
+use crate::name_arena_bridge::{alloc_string_rec};
 use crate::name::Name;
 use crate::env::{DeclarInfo, RecursorData};
 use crate::expr_arena_bridge::{verified_subst_expr_levels};

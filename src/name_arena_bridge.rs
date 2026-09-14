@@ -100,32 +100,8 @@ pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);
 
-#[allow(dead_code)]
-pub fn name_is_anon(n: &Name) -> (result: bool)
-    ensures result == (to_model_of_name(*n) == NameSpec::Anon)
-{
-    matches!(n, Name::Anon)
-}
 
-#[allow(dead_code)]
-pub fn name_as_str<'t>(n: &Name<'t>) -> (result: Option<(NamePtr<'t>, StringPtr<'t>)>)
-    ensures match result {
-        Some((pfx, sfx)) => to_model_of_name(*n) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
-        None => !matches!(to_model_of_name(*n), NameSpec::Str(_, _)),
-    }
-{
-    match n { Name::Str(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
-}
 
-#[allow(dead_code)]
-pub fn name_as_num<'t>(n: &Name<'t>) -> (result: Option<(NamePtr<'t>, u64)>)
-    ensures match result {
-        Some((pfx, sfx)) => to_model_of_name(*n) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
-        None => !matches!(to_model_of_name(*n), NameSpec::Num(_, _)),
-    }
-{
-    match n { Name::Num(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
-}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, 'p>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Anon;
