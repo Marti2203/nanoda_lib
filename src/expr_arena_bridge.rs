@@ -58,16 +58,6 @@ use crate::quot_model::local_type;
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
-#[allow(dead_code)]
-pub(crate) fn expr_as_var(e: &Expr) -> Option<u16> {
-    match e { Expr::Var { dbj_idx, .. } => Some(*dbj_idx), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn expr_as_sort<'t>(e: &Expr<'t>) -> Option<LevelPtr<'t>> {
-    match e { Expr::Sort { level, .. } => Some(*level), _ => None }
-}
-
 /// Takes the pointer itself (not just the shallow value) purely so its
 /// Verus contract below can talk about `expr_id(ptr)` -- see the module doc
 /// comment on why `Local`'s identity is modeled via the pointer, not the
@@ -83,11 +73,6 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 /// OTHER one might be what actually matched), so a caller needing "this is
 /// definitely NOT Bind-shaped" after both return `None` needs this separate,
 /// combined check instead.
-#[allow(dead_code)]
-pub(crate) fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> bool {
-    matches!(e, Expr::Pi { .. } | Expr::Lambda { .. })
-}
-
 /// A direct, BICONDITIONAL check that `e` is `Const`-shaped -- unlike
 /// `is_const_shape`/`expr_as_const`'s `None`-case (`!is_const_shape(ptr)`,
 /// a fact about the opaque FLAG, not directly about `to_model`'s pattern:
@@ -97,11 +82,6 @@ pub(crate) fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> bool {
 /// conclude "must be `Closed`/one of the leaf shapes" without needing a
 /// converse axiom for the `is_const_shape` flag (which doesn't exist, by
 /// design -- flags are intentionally forward-only).
-#[allow(dead_code)]
-pub(crate) fn expr_is_const_shape<'t>(e: &Expr<'t>) -> bool {
-    matches!(e, Expr::Const { .. })
-}
-
 /// `Sort`/`Const`/`StringLit`/`NatLit`: all four always have
 /// `num_loose_bvars() == 0` and `has_fvars() == false` (see
 /// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
@@ -119,11 +99,6 @@ pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
 }
 
-#[allow(dead_code)]
-pub(crate) fn expr_as_app<'t>(e: &Expr<'t>) -> Option<(ExprPtr<'t>, ExprPtr<'t>)> {
-    match e { Expr::App { fun, arg, .. } => Some((*fun, *arg)), _ => None }
-}
-
 /// Unlike the other accessors, `Const`'s payload (a name plus universe
 /// levels) is otherwise erased entirely into `ExprSpec::Closed` (see
 /// `expr_is_closed_leaf`'s doc comment) -- content-blind is right for
@@ -135,26 +110,6 @@ pub(crate) fn expr_as_app<'t>(e: &Expr<'t>) -> Option<(ExprPtr<'t>, ExprPtr<'t>)
 #[allow(dead_code)]
 pub(crate) fn expr_as_const<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(NamePtr<'t>, LevelsPtr<'t>)> {
     match e { Expr::Const { name, levels, .. } => Some((*name, *levels)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn expr_as_pi<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)> {
-    match e { Expr::Pi { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn expr_as_lambda<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)> {
-    match e { Expr::Lambda { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn expr_as_let<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool)> {
-    match e { Expr::Let { binder_name, binder_type, val, body, nondep, .. } => Some((*binder_name, *binder_type, *val, *body, *nondep)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn expr_as_proj<'t>(e: &Expr<'t>) -> Option<(NamePtr<'t>, usize, ExprPtr<'t>)> {
-    match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
 }
 
 /// `Local`'s payload (the real `def_eq_local` compares `id`/`binder_type`,
@@ -352,7 +307,42 @@ pub uninterp spec fn to_model<'a>(ptr: ExprPtr<'a>) -> ExprSpec;
 
 /// What a *shallow* `Expr` value (as returned by `read_expr`, before
 /// following any of its child pointers) denotes.
-pub uninterp spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec;
+/// The `FVarId` a `Local` node's model is keyed by. Uninterpreted, and the
+/// ONE case of `to_model_of_expr` that cannot be structural: a `Local`'s
+/// model is `Free(expr_id(ptr))`, keyed by the POINTER, which a function of
+/// the shallow value cannot see. Everything else below is determined.
+pub uninterp spec fn local_fvar_id_of<'a>(e: Expr<'a>) -> u32;
+
+/// What a *shallow* `Expr` value (as returned by `read_expr`, before
+/// following any of its child pointers) denotes.
+///
+/// DEFINED, not uninterpreted -- possible now that `ExExpr` is transparent.
+/// Children are `to_model` of a POINTER, which stays uninterpreted, so this
+/// is not recursive.
+///
+/// Note there is no `Closed` case: no real `Expr` variant denotes it. That
+/// matters, because `expr_is_closed_leaf`'s contract mentions `Closed`, and
+/// this file already records one silent unsoundness in exactly that spot
+/// (see its doc comment) -- an axiom that was true when `Sort` collapsed
+/// into `Closed` and became false when `Sort` got its own payload. A
+/// definition makes that class of drift a verification failure instead of a
+/// silent one.
+pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
+    match e {
+        Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+        Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
+        Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
+        Expr::App { fun, arg, .. } => ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))),
+        Expr::Pi { binder_type, body, .. } => ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))),
+        Expr::Lambda { binder_type, body, .. } => ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))),
+        Expr::Let { binder_type, val, body, .. } =>
+            ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))),
+        Expr::Proj { idx, structure, .. } => ExprSpec::Proj(idx, Box::new(to_model(structure))),
+        Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
+        Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+        Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(e)),
+    }
+}
 
 /// A `Local` pointer's free-variable identity, standing in for genuine
 /// `ExprPtr` identity (see the module doc comment).
@@ -370,31 +360,47 @@ pub assume_specification<'t> [expr_ptr_eq] (a: ExprPtr<'t>, b: ExprPtr<'t>) -> (
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures to_model_of_expr(result) == to_model(ptr);
 
-pub assume_specification [expr_as_var] (e: &Expr) -> (result: Option<u16>)
+#[allow(dead_code)]
+pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
     ensures match result {
         Some(i) => to_model_of_expr(*e) == ExprSpec::Var(i as u32),
         None => !matches!(to_model_of_expr(*e), ExprSpec::Var(_)),
-    };
+    }
+{
+    match e { Expr::Var { dbj_idx, .. } => Some(*dbj_idx), _ => None }
+}
 
 pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
     ensures
         result ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
         !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
 
-pub assume_specification<'t> [expr_is_bind_shape] (e: &Expr<'t>) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _));
+#[allow(dead_code)]
+pub fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> (result: bool)
+    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _))
+{
+    matches!(e, Expr::Pi { .. } | Expr::Lambda { .. })
+}
 
-pub assume_specification<'t> [expr_is_const_shape] (e: &Expr<'t>) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Const(_, _));
+#[allow(dead_code)]
+pub fn expr_is_const_shape<'t>(e: &Expr<'t>) -> (result: bool)
+    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Const(_, _))
+{
+    matches!(e, Expr::Const { .. })
+}
 
 pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
     ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr) || is_nat_lit_shape(ptr) || is_string_lit_shape(ptr));
 
-pub assume_specification<'t> [expr_as_app] (e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
+#[allow(dead_code)]
+pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
         Some((f, a)) => to_model_of_expr(*e) == ExprSpec::App(Box::new(to_model(f)), Box::new(to_model(a))),
         None => !matches!(to_model_of_expr(*e), ExprSpec::App(_, _)),
-    };
+    }
+{
+    match e { Expr::App { fun, arg, .. } => Some((*fun, *arg)), _ => None }
+}
 
 /// `Const`'s name/levels, keyed by the pointer (like `expr_id`) --
 /// `const_name_of`/`const_levels_of` are a separate side channel from
@@ -1348,35 +1354,55 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_nat_lit_quick] (ctx: &mut 
 /// silently unsound axiom once `Sort` became a distinct variant, not just
 /// an underspecified one (nothing previously exercised it against a
 /// genuine `Sort` node to surface the inconsistency).
-pub assume_specification<'t> [expr_as_sort] (e: &Expr<'t>) -> (result: Option<LevelPtr<'t>>)
+#[allow(dead_code)]
+pub fn expr_as_sort<'t>(e: &Expr<'t>) -> (result: Option<LevelPtr<'t>>)
     ensures match result {
         Some(level) => to_model_of_expr(*e) == ExprSpec::Sort(level_to_model(level)),
         None => !matches!(to_model_of_expr(*e), ExprSpec::Sort(_)),
-    };
+    }
+{
+    match e { Expr::Sort { level, .. } => Some(*level), _ => None }
+}
 
-pub assume_specification<'t> [expr_as_pi] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
+#[allow(dead_code)]
+pub fn expr_as_pi<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
         Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))),
         None => true,
-    };
+    }
+{
+    match e { Expr::Pi { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
+}
 
-pub assume_specification<'t> [expr_as_lambda] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
+#[allow(dead_code)]
+pub fn expr_as_lambda<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
     ensures match result {
         Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))),
         None => true,
-    };
+    }
+{
+    match e { Expr::Lambda { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
+}
 
-pub assume_specification<'t> [expr_as_let] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool)>)
+#[allow(dead_code)]
+pub fn expr_as_let<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool)>)
     ensures match result {
         Some((_, ty, v, body, _)) => to_model_of_expr(*e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(v)), Box::new(to_model(body))),
         None => !matches!(to_model_of_expr(*e), ExprSpec::Let(_, _, _)),
-    };
+    }
+{
+    match e { Expr::Let { binder_name, binder_type, val, body, nondep, .. } => Some((*binder_name, *binder_type, *val, *body, *nondep)), _ => None }
+}
 
-pub assume_specification<'t> [expr_as_proj] (e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, ExprPtr<'t>)>)
+#[allow(dead_code)]
+pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, ExprPtr<'t>)>)
     ensures match result {
         Some((_, idx, s)) => to_model_of_expr(*e) == ExprSpec::Proj(idx, Box::new(to_model(s))),
         None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_, _)),
-    };
+    }
+{
+    match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num_loose_bvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: u16) where 'p: 't
     ensures result as nat == nlbv(to_model(e));
