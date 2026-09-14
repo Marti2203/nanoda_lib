@@ -1060,18 +1060,35 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 /// there rather than derived from a ghost parameter -- no `d`, no `dd`, no
 /// `infer_result_depth_bound`, no `infer_depth_fixpoint_ok`.
 /// Diagnostics-only (no contract): report an argument check that declined,
-/// with both sides reduced, so the remaining declines can be classified.
-/// Gated on `NANODA_ARGFAIL=N`.
+/// and whether a FULL conversion would have settled it. Gated on
+/// `NANODA_ARGFAIL=N`.
+///
+/// What it established (Init.Data.Fin.Lemmas, 300 samples): 59% of the
+/// remaining declines WOULD succeed under a full conversion, and 41% would
+/// not. The second group is the interesting one -- those are CORRECT
+/// declines. Our inference is sound, so the type it returns really is a type
+/// of the argument; if it is not convertible with the domain then the
+/// application is genuinely ill-typed, which happens because the kernel
+/// hands the certifier whatever pair it is probing, including speculative
+/// ones it will go on to reject.
+///
+/// So the floor here is not zero. Closing the recoverable 59% needs real
+/// conversion in the argument check, which is measured as unaffordable
+/// twice over; the remaining 41% cannot be closed at all without the
+/// well-typedness invariant the kernel has and the shadow does not.
 #[verifier::external_body]
-fn arg_check_fail_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, a_ty: ExprPtr<'t>, aty: ExprPtr<'t>) {
+fn arg_check_fail_note<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, a_ty: ExprPtr<'t>, aty: ExprPtr<'t>) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static LEFT: AtomicU64 = AtomicU64::new(u64::MAX);
     let cap = crate::tc::route_stats::knob("NANODA_ARGFAIL", 0) as u64;
     if cap == 0 { return; }
     let _ = LEFT.compare_exchange(u64::MAX, cap, Ordering::Relaxed, Ordering::Relaxed);
     if LEFT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| if v > 0 { Some(v - 1) } else { None }).is_err() { return; }
-    eprintln!("ARGCHECK-FAIL\n  arg-type: {:?}\n  domain  : {:?}",
-        ctx.debug_print(a_ty), ctx.debug_print(aty));
+    // would a FULL conversion settle it? that separates "we are missing a
+    // rule" from "these types genuinely differ and declining is correct"
+    let conv = matches!(verified_conv(ctx, env, memo, a_ty, aty, 100, crate::tc::route_stats::conv_budget()), Some(true));
+    eprintln!("ARGCHECK-FAIL conv-would-succeed={}\n  arg-type: {:?}\n  domain  : {:?}",
+        conv, ctx.debug_print(a_ty), ctx.debug_print(aty));
 }
 
 /// A STRUCTURAL whnf join: reduce both sides, and if they are not the same
@@ -1552,7 +1569,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
                 return None;
             }
             if !verified_whnf_join_deep(ctx, env, memo, a_ty, aty) {
-                arg_check_fail_note(ctx, a_ty, aty);
+                arg_check_fail_note(ctx, env, memo, a_ty, aty);
                 return None;
             }
             let ls: &[ExprPtr<'t>] = &[a];
