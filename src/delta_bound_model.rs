@@ -72,6 +72,8 @@ use crate::tc_model::{verified_infer_sort, verified_infer_const, verified_def_eq
 #[cfg(verus_only)]
 use crate::tc_model::deq_p;
 #[cfg(verus_only)]
+use crate::tc_model::deq_any_spine_congr;
+#[cfg(verus_only)]
 use crate::tc_model::{deq_p_any_spine_update, deq_p_any_bind_fresh, deq_p_any_refl, deq_p_any_symm, deq_p_any_trans, deq_p_any_app_congr, deq_p_any_bind_congr, deq_p_any_proj_congr, deq_p_any_of_defeq, deq_p_any_of_leaf, deq_p_any_of_irrel, is_proof_type_m, irrel_marker, proof_type_marker, types_to_proj, proj_field_type, proj_field_type_param_step, proj_field_type_field_step, proj_field_type_final, deq_any_of_defeq, deq_p_any, deq_p_any_of_deq_any, nat_found_claim, const_app_found_claim, deq_core_claim, deq_full_claim, deq_any, deq_eta, types_to, types_to_free, types_to_sort, types_to_const, types_to_app, types_to_nat_lit, types_to_string_lit, types_to_let, types_to_lambda, types_to_pi, proof_irrel_pair, types_to_mono, infer_types_to, infer_shadow_claim, unit_pair, unit_like_type, unit_like_type_m, unit_like_head, unit_marker, deq_p_any_of_unit, eta_struct_pair, eta_struct_expand, eta_struct_marker, struct_type_of, deq_p_any_of_eta_struct};
 use crate::tc_model::{InferCert, ConvCert};
 #[cfg(verus_only)]
@@ -1057,6 +1059,91 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 /// for. Where an arena operation needs a depth ceiling, it is MEASURED right
 /// there rather than derived from a ghost parameter -- no `d`, no `dd`, no
 /// `infer_result_depth_bound`, no `infer_depth_fixpoint_ok`.
+/// A STRUCTURAL whnf join: reduce both sides, and if they are not the same
+/// pointer, compare them as spines -- same head, same arity, arguments
+/// pairwise. This is a faithful SUBSET of what `def_eq` does after reduction
+/// (`def_eq_app`'s congruence), restricted to the part that cannot re-enter
+/// conversion: no delta beyond whnf, no eta, no proof irrelevance. That
+/// restriction is the point -- inference must not call conversion, because
+/// conversion calls inference.
+///
+/// Used for the argument check in the application arm, where plain pointer
+/// equality after whnf was declining on types that differ only inside their
+/// arguments (`Fin (2^w)` against a differently-reduced form of the same).
+#[verifier::exec_allows_no_decreases_clause]
+pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+    requires memo.wf(), memo.spec_env() == *env,
+        nlbv(to_model(x)) <= 0, nlbv(to_model(y)) <= 0,
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        result ==> deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+{
+    let ghost em = to_model_of_env(*env);
+    let wx = verified_whnf_free(ctx, env, memo, x);
+    let wy = verified_whnf_free(ctx, env, memo, y);
+    proof {
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(wx));
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
+        defeq_of_pstep_star(em, to_model(x), to_model(wx));
+        defeq_of_pstep_star(em, to_model(y), to_model(wy));
+        deq_any_of_defeq(em, to_model(x), to_model(wx));
+        deq_any_of_defeq(em, to_model(y), to_model(wy));
+    }
+    if expr_ptr_eq(wx, wy) {
+        proof {
+            deq_any_symm(em, to_model(y), to_model(wy));
+            deq_any_trans(em, to_model(x), to_model(wx), to_model(y));
+        }
+        return true;
+    }
+    let (hx, ax) = match verified_unfold_apps(ctx, wx, 100000) { Some(p) => p, None => return false };
+    let (hy, ay) = match verified_unfold_apps(ctx, wy, 100000) { Some(p) => p, None => return false };
+    if !expr_ptr_eq(hx, hy) || ax.len() != ay.len() || ax.len() == 0 {
+        return false;
+    }
+    let ghost axm = Seq::new(ax@.len(), |q: int| to_model(ax@[q]));
+    let ghost aym = Seq::new(ay@.len(), |q: int| to_model(ay@[q]));
+    proof {
+        spine_app_nlbv_decompose(to_model(hx), axm);
+        spine_app_nlbv_decompose(to_model(hy), aym);
+    }
+    let mut i: usize = 0;
+    while i < ax.len()
+        invariant
+            memo.wf(), memo.spec_env() == *env,
+            em == to_model_of_env(*env),
+            ax@.len() == ay@.len(),
+            i <= ax@.len(),
+            axm == Seq::new(ax@.len(), |q: int| to_model(ax@[q])),
+            aym == Seq::new(ay@.len(), |q: int| to_model(ay@[q])),
+            to_model(wx) == spine_app(to_model(hx), axm),
+            to_model(wy) == spine_app(to_model(hy), aym),
+            forall |q: int| 0 <= q < ax@.len() ==> nlbv(#[trigger] axm[q]) <= 0,
+            forall |q: int| 0 <= q < ay@.len() ==> nlbv(#[trigger] aym[q]) <= 0,
+            forall |q: int| 0 <= q < i ==> deq_any(em, #[trigger] axm[q], aym[q]),
+        decreases ax.len() - i
+    {
+        proof {
+            assert(axm[i as int] == to_model(ax@[i as int]));
+            assert(aym[i as int] == to_model(ay@[i as int]));
+        }
+        if !verified_whnf_join_deep(ctx, env, memo, ax[i], ay[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(to_model(hx) == to_model(hy));
+        deq_any_refl(em, to_model(hx));
+        deq_any_spine_congr(em, to_model(hx), to_model(hy), axm, aym);
+        assert(deq_any(em, to_model(wx), to_model(wy)));
+        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+        deq_any_symm(em, to_model(y), to_model(wy));
+        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+    }
+    true
+}
+
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
 pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
@@ -1388,21 +1475,8 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             if ctx.num_loose_bvars(a_ty) != 0 || ctx.num_loose_bvars(aty) != 0 {
                 return None;
             }
-            let a_tyw = verified_whnf_free(ctx, env, memo, a_ty);
-            let atyw = verified_whnf_free(ctx, env, memo, aty);
-            if !expr_ptr_eq(a_tyw, atyw) {
+            if !verified_whnf_join_deep(ctx, env, memo, a_ty, aty) {
                 return None;
-            }
-            proof {
-                env_model_nofv_sub(*env);
-                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
-                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(aty), to_model(atyw));
-                defeq_of_pstep_star(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
-                defeq_of_pstep_star(to_model_of_env(*env), to_model(aty), to_model(atyw));
-                deq_any_of_defeq(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
-                deq_any_of_defeq(to_model_of_env(*env), to_model(aty), to_model(atyw));
-                deq_any_symm(to_model_of_env(*env), to_model(aty), to_model(atyw));
-                deq_any_trans(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw), to_model(aty));
             }
             let ls: &[ExprPtr<'t>] = &[a];
             let instd = match verified_inst(ctx, bt, ls, 0, 100000) { Some(v) => v, None => return None };

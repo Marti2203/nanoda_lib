@@ -1811,6 +1811,37 @@ pub proof fn deq_any_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: 
     assert(deq(env, x, z, hm));
 }
 
+/// Spine congruence for the untyped relation: equal heads and pointwise
+/// equal arguments give equal spines. Induction on the argument list, one
+/// `deq_any_app_congr` per step.
+pub proof fn deq_any_spine_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, h1: ExprSpec, h2: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+    requires
+        deq_any(env, h1, h2),
+        a1.len() == a2.len(),
+        forall |i: int| 0 <= i < a1.len() ==> deq_any(env, #[trigger] a1[i], a2[i]),
+    ensures deq_any(env, spine_app(h1, a1), spine_app(h2, a2))
+    decreases a1.len()
+{
+    if a1.len() == 0 {
+        assert(spine_app(h1, a1) == h1);
+        assert(spine_app(h2, a2) == h2);
+    } else {
+        let n = a1.len() - 1;
+        let p1 = a1.subrange(0, n);
+        let p2 = a2.subrange(0, n);
+        assert forall |i: int| 0 <= i < p1.len() implies deq_any(env, #[trigger] p1[i], p2[i]) by {
+            assert(p1[i] == a1[i]);
+            assert(p2[i] == a2[i]);
+        }
+        deq_any_spine_congr(env, h1, h2, p1, p2);
+        assert(p1.push(a1[n]) =~= a1);
+        assert(p2.push(a2[n]) =~= a2);
+        spine_app_compose_last(h1, p1, a1[n]);
+        spine_app_compose_last(h2, p2, a2[n]);
+        deq_any_app_congr(env, spine_app(h1, p1), spine_app(h2, p2), a1[n], a2[n]);
+    }
+}
+
 pub proof fn deq_any_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
     requires deq_any(env, f1, f2), deq_any(env, a1, a2)
     ensures deq_any(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
