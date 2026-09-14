@@ -134,9 +134,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    fn is_any_max(&self, level: LevelPtr<'t>) -> bool { matches!(self.read_level(level), Max(..) | IMax(..)) }
-
-    fn is_param(&self, level: LevelPtr<'t>) -> bool { matches!(self.read_level(level), Param(..)) }
 
     fn subst_simp(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
         let l = self.subst_level(level, ks, vs);
@@ -292,11 +289,25 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat};
+use crate::level_model::{interp, max_nat, LevelSpec};
 
 verus! {
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// The two shape guards `leq_core` branches on. Verified AS WRITTEN.
+    /// They are what make two of that function's three `panic!()` arms
+    /// unreachable: each is reached only under `is_any_max(b)`, and the inner
+    /// match then covers `Max` and `IMax` exhaustively. (The third, the final
+    /// catch-all, needs the simplified-form invariant and is not addressed
+    /// here.)
+    pub(crate) fn is_any_max(&self, level: LevelPtr<'t>) -> (result: bool)
+        ensures result == matches!(to_model(level), LevelSpec::Max(_, _) | LevelSpec::IMax(_, _))
+    { matches!(self.read_level(level), Max(..) | IMax(..)) }
+
+    pub(crate) fn is_param(&self, level: LevelPtr<'t>) -> (result: bool)
+        ensures result == matches!(to_model(level), LevelSpec::Param(_))
+    { matches!(self.read_level(level), Param(..)) }
+
     /// `max` that folds through matching `Succ`s instead of building a `Max`
     /// node over them. Verified AS WRITTEN -- the body below is the kernel's,
     /// unchanged; only the contract is new.
