@@ -1341,14 +1341,41 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             // every argument of every application unmemoized took a 5-second
             // corpus past ten minutes
             let a_ty = match verified_infer_shadow(ctx, env, memo, a) { Some(v) => v, None => return None };
-            // Two mitigations MEASURED AND REJECTED (2026-09-14): a
-            // pointer-equality fast path before the conversion (the inferred
-            // type and the domain are rarely the same pointer -- no gain), and
-            // a 16x larger memo (no gain, so this is not cache thrashing).
-            // The cost is genuine: checked inference visits the whole term,
-            // where the old unsound rule only walked the head chain.
-            if !matches!(verified_conv(ctx, env, memo, a_ty, aty, 100, conv_budget_total()), Some(true)) {
+            // A WHNF JOIN, not a full conversion. Two reasons, and the second
+            // is structural: a conversion here would make inference call
+            // conversion, and conversion already calls inference (eta,
+            // proof irrelevance), so the two become mutually recursive and
+            // every member of the conversion family loses its termination
+            // proof. Reducing both sides and comparing pointers cannot
+            // re-enter conversion at all.
+            //
+            // It is also much cheaper, which matters: checked inference
+            // already visits the whole term where the old unsound rule only
+            // walked the head chain. (Two other mitigations were measured and
+            // gave nothing: a pointer-equality fast path -- the inferred type
+            // and the domain are rarely the same pointer -- and a 16x larger
+            // memo, which rules out cache thrashing.)
+            //
+            // Incomplete, deliberately: types that need real conversion to
+            // agree make this decline, and declining is sound.
+            if ctx.num_loose_bvars(a_ty) != 0 || ctx.num_loose_bvars(aty) != 0 {
                 return None;
+            }
+            let a_tyw = verified_whnf_free(ctx, env, memo, a_ty);
+            let atyw = verified_whnf_free(ctx, env, memo, aty);
+            if !expr_ptr_eq(a_tyw, atyw) {
+                return None;
+            }
+            proof {
+                env_model_nofv_sub(*env);
+                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
+                pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(aty), to_model(atyw));
+                defeq_of_pstep_star(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
+                defeq_of_pstep_star(to_model_of_env(*env), to_model(aty), to_model(atyw));
+                deq_any_of_defeq(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw));
+                deq_any_of_defeq(to_model_of_env(*env), to_model(aty), to_model(atyw));
+                deq_any_symm(to_model_of_env(*env), to_model(aty), to_model(atyw));
+                deq_any_trans(to_model_of_env(*env), to_model(a_ty), to_model(a_tyw), to_model(aty));
             }
             let ls: &[ExprPtr<'t>] = &[a];
             let instd = match verified_inst(ctx, bt, ls, 0, 100000) { Some(v) => v, None => return None };
@@ -2153,6 +2180,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     }
 }
 
+#[verifier::spinoff_prover]
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
@@ -2406,43 +2434,65 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // irrelevance can only use the reduction-only one. The claim is untyped
     // anyway -- `deq_eta` is a leaf of `deq` -- so it belongs here at least
     // as much as there.
+    // THE BINDER COMES FROM THE OTHER SIDE'S INFERRED TYPE, not from the
+    // lambda term's own binder. `tc.rs::try_eta_expansion_aux` does exactly
+    // this -- `infer_then_whnf(y)`, match a `Pi`, use ITS binder -- and the
+    // difference is not cosmetic. Building `lambda (_ : t). f #0` with `t`
+    // taken from the wrong side makes `f #0` ill-typed, which is how eta
+    // combined with proof irrelevance certified two proofs of DIFFERENT
+    // propositions as equal (see `types_to`'s application rule). Taking the
+    // binder from `f`'s own type makes `f #0` well-typed by construction.
     match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
-        (Some((n1, s1, t1, _)), None) => {
+        (Some(_), None) => {
             if ctx.num_loose_bvars(y) == 0 {
-                let v0 = ctx.mk_var(0);
-                let body = ctx.mk_app(y, v0);
-                let new_lambda = ctx.mk_lambda(n1, s1, t1, body);
-                if let Some(true) = verified_conv(ctx, env, memo, x, new_lambda, fuel, budget - 1) {
-                    proof {
-                        nlbv_shift_noop(1, 0, to_model(y));
-                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
-                        assert(eta_expands_to(to_model(new_lambda), to_model(y)));
-                        assert(deq_eta(to_model(new_lambda), to_model(y)));
-                        deq_any_of_eta(em, to_model(new_lambda), to_model(y));
-                        deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                if let Some(y_ty) = verified_infer_shadow(ctx, env, memo, y) {
+                    if ctx.num_loose_bvars(y_ty) != 0 { return None; }
+                    let y_tyw = verified_whnf_free(ctx, env, memo, y_ty);
+                    let tyl = ctx.read_expr(y_tyw);
+                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
+                        let v0 = ctx.mk_var(0);
+                        let body = ctx.mk_app(y, v0);
+                        let new_lambda = ctx.mk_lambda(bn, bs, dom, body);
+                        if let Some(true) = verified_conv(ctx, env, memo, x, new_lambda, fuel, budget - 1) {
+                            proof {
+                                nlbv_shift_noop(1, 0, to_model(y));
+                                assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(dom)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(y))), Box::new(ExprSpec::Var(0))))));
+                                assert(eta_expands_to(to_model(new_lambda), to_model(y)));
+                                assert(deq_eta(to_model(new_lambda), to_model(y)));
+                                deq_any_of_eta(em, to_model(new_lambda), to_model(y));
+                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                            }
+                            conv_stat(35);
+                            return Some(true);
+                        }
                     }
-                    conv_stat(35);
-                    return Some(true);
                 }
             }
         }
-        (None, Some((n2, s2, t2, _))) => {
+        (None, Some(_)) => {
             if ctx.num_loose_bvars(x) == 0 {
-                let v0 = ctx.mk_var(0);
-                let body = ctx.mk_app(x, v0);
-                let new_lambda = ctx.mk_lambda(n2, s2, t2, body);
-                if let Some(true) = verified_conv(ctx, env, memo, new_lambda, y, fuel, budget - 1) {
-                    proof {
-                        nlbv_shift_noop(1, 0, to_model(x));
-                        assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
-                        assert(eta_expands_to(to_model(new_lambda), to_model(x)));
-                        assert(deq_eta(to_model(new_lambda), to_model(x)));
-                        deq_any_of_eta(em, to_model(new_lambda), to_model(x));
-                        deq_any_symm(em, to_model(new_lambda), to_model(x));
-                        deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                if let Some(x_ty) = verified_infer_shadow(ctx, env, memo, x) {
+                    if ctx.num_loose_bvars(x_ty) != 0 { return None; }
+                    let x_tyw = verified_whnf_free(ctx, env, memo, x_ty);
+                    let tyl = ctx.read_expr(x_tyw);
+                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
+                        let v0 = ctx.mk_var(0);
+                        let body = ctx.mk_app(x, v0);
+                        let new_lambda = ctx.mk_lambda(bn, bs, dom, body);
+                        if let Some(true) = verified_conv(ctx, env, memo, new_lambda, y, fuel, budget - 1) {
+                            proof {
+                                nlbv_shift_noop(1, 0, to_model(x));
+                                assert(to_model(new_lambda) == ExprSpec::Bind(Box::new(to_model(dom)), Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(x))), Box::new(ExprSpec::Var(0))))));
+                                assert(eta_expands_to(to_model(new_lambda), to_model(x)));
+                                assert(deq_eta(to_model(new_lambda), to_model(x)));
+                                deq_any_of_eta(em, to_model(new_lambda), to_model(x));
+                                deq_any_symm(em, to_model(new_lambda), to_model(x));
+                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                            }
+                            conv_stat(35);
+                            return Some(true);
+                        }
                     }
-                    conv_stat(35);
-                    return Some(true);
                 }
             }
         }
