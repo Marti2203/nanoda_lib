@@ -40,33 +40,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (l, num_succs)
     }
 
-    pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> LevelPtr<'t> {
-        match self.read_level(ptr) {
-            Zero | Param(..) => ptr,
-            Succ(val, ..) => {
-                let val = self.simplify(val);
-                self.succ(val)
-            }
-            Max(l, r, ..) => {
-                let l = self.simplify(l);
-                let r = self.simplify(r);
-                self.combining(l, r)
-            }
-            IMax(l, r, ..) => {
-                let l_simp = self.simplify(l);
-                let r_simp = self.simplify(r);
-                if self.is_zero(l_simp) || self.is_one(l_simp) {
-                    r_simp
-                } else {
-                  match self.read_level(r_simp) {
-                      Zero => r_simp,
-                      Succ(..) => self.combining(l_simp, r_simp),
-                      _ => self.imax(l_simp, r_simp)
-                  }
-                }
-            }
-        }
-    }
 
     /// returns `true` iff every element in `ls` is a `Param`, and `ls` has no duplicate elements.
     pub(crate) fn no_dupes_all_params(&mut self, ls: LevelsPtr<'t>) -> bool {
@@ -293,6 +266,16 @@ use crate::level_model::{imax_normal, interp, max_nat, LevelSpec};
 
 verus! {
 
+// NO ensures on either of these: they claim nothing, and exist only so the
+// kernel's `simplify` can be verified in place while the rest of its cycle
+// (`is_zero` -> `leq` -> `leq_core` -> `simplify`) stays outside `verus!`.
+// `simplify` calls them only to pick a branch, and the simplified-form
+// invariant holds on both branches, so no property of them is needed.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_zero] (ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>) -> (result: bool) where 'p: 't;
+
+assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_one] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: bool) where 'p: 't;
+
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The two shape guards `leq_core` branches on. Verified AS WRITTEN.
     /// They are what make two of that function's three `panic!()` arms
@@ -341,6 +324,53 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 out
             }
             _ => self.max(l, r),
+        }
+    }
+
+    /// Verified AS WRITTEN: the body below is the kernel's, unchanged.
+    ///
+    /// The second ensures is the one that matters for `leq_core`: the `IMax`
+    /// arm builds an `IMax` node only in the `_` case, i.e. only when
+    /// `r_simp` is neither `Zero` nor `Succ` -- which is exactly
+    /// `imax_normal`. The `Zero` and `Succ(..)` cases collapse instead.
+    ///
+    /// `is_zero`/`is_one` are called here only to CHOOSE a branch, and the
+    /// invariant holds on both sides of that choice, so THIS proof needs
+    /// nothing from them (see their zero-claim specs above).
+    ///
+    /// Interp-preservation (`interp(result) == interp(ptr)`) is deliberately
+    /// NOT claimed here, and cannot be until the rest of the cycle moves in:
+    /// returning `r_simp` for `IMax(l, r)` is sound only because
+    /// `interp(l_simp)` is 0 or 1, which is precisely what `is_zero` and
+    /// `is_one` would have to promise.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        ensures imax_normal(to_model(result)),
+    {
+        match self.read_level(ptr) {
+            Zero | Param(..) => ptr,
+            Succ(val, ..) => {
+                let val = self.simplify(val);
+                self.succ(val)
+            }
+            Max(l, r, ..) => {
+                let l = self.simplify(l);
+                let r = self.simplify(r);
+                self.combining(l, r)
+            }
+            IMax(l, r, ..) => {
+                let l_simp = self.simplify(l);
+                let r_simp = self.simplify(r);
+                if self.is_zero(l_simp) || self.is_one(l_simp) {
+                    r_simp
+                } else {
+                  match self.read_level(r_simp) {
+                      Zero => r_simp,
+                      Succ(..) => self.combining(l_simp, r_simp),
+                      _ => self.imax(l_simp, r_simp)
+                  }
+                }
+            }
         }
     }
 }
