@@ -71,7 +71,23 @@ FoundEqResult(short) => short   →   FoundEqResult(short) => { legacy_branch(5)
 self.def_eq(x_n, y_n)           →   let r = self.def_eq(x_n, y_n); legacy_branch(7); r
 ```
 
-No kernel logic was removed, reordered or rewritten.
+No kernel logic was removed, reordered or rewritten. `main.rs` is the one
+structural change: it now runs the checker on a thread with a 1 GiB stack (§3.3).
+
+**This claim was once false, and the way it failed is worth keeping.** Upstream's
+`8a327a1` rejects "orphan" recursors -- every recursor must name an inductive that
+exists, is an inductive, and was exported before it. That commit was an ancestor
+here, but its loop had been *adapted* into an off-by-default diagnostic: the whole
+check sat behind `shadow_enabled()`, a recursor naming a non-existent inductive fell
+through in silence, and one preceding its inductive printed a note where upstream
+rejects the file. Only `all_inductives[0]` was still guarded, so for a mutual family
+every entry after the first was unchecked. Restored verbatim in `4bb3a9c`.
+
+Two things made that possible. Having a *shadow* category at all made "make this a
+shadow-only observation" look like a reasonable edit. And nothing could have caught
+it: every theorem in this project is about the verified routes, so a hole in the
+original checker is invisible to all of them. `git diff -w upstream/master` over the
+kernel files is the check that would have, and it is now part of the routine.
 
 The baseline kernel is 9,496 lines. The verification layer beside it is 24,289 — down from
 48,025 once every definition nothing reaches was removed (§8 of the history: 27,676 lines,
@@ -150,6 +166,21 @@ The verification layer's trust surface is:
 | `assume_specification` | 164 | contracts for real kernel functions and arena operations |
 | `#[verifier::external_body]` | 83 | bridges whose bodies Verus does not check |
 | `uninterp spec fn` | 68 | uninterpreted model functions the bridges relate |
+
+There is a fourth thing on the trust surface that no count captures: **the
+environment itself**. Every theorem here is of the form "this reduction, conversion
+or inference is correct *relative to* `to_model_of_env(env)`". Nothing verifies that
+the environment was populated only with legitimately-derived declarations. An orphan
+recursor -- a `Recursor` with no backing inductive -- would simply be a member of
+that map, and every certificate would still discharge, and every one of them would be
+worthless, because the environment is the lie. We verify what the kernel *computes*,
+never what it *admits*. The admission checks in `check_declar` are trusted code.
+
+That is a real gap rather than a technicality: upstream fixed exactly this bug in
+`8a327a1`, and nothing in this project would have caught it (§2). It is also
+addressable -- "every recursor in the environment names an inductive declared before
+it" is a perfectly good spec over `to_model_of_env`, and it is the obvious next thing
+to prove about the original checker rather than beside it.
 
 These fall into a few groups:
 
