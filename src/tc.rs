@@ -1298,7 +1298,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             route_stats::bump(&route_stats::QUICK);
             return easy
         }
-
+        let defeq_fail_cache_key = (x, y, self.ctx.eager_mode);
+        if self.tc_cache.defeq_fail_cache.contains(&defeq_fail_cache_key) {
+            // Certify the cached rejection too. Upstream's negative memo
+            // returns here without consulting anything, so left alone it
+            // would hide precisely the mistake it could make: a pair that IS
+            // convertible, wrongly remembered as a failure. A verified
+            // confirmation of a pair this cache rejects is the alarm.
+            self.shadow_check_rooted(x, y, false, entry_uncert);
+            return false
+        }
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 
@@ -1364,6 +1373,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
         } else {
             route_stats::bump(&route_stats::LEGACY_FALSE);
+            self.tc_cache.defeq_fail_cache.insert(defeq_fail_cache_key);
         }
         self.shadow_check_rooted(x, y, result, entry_uncert);
         result
@@ -1847,11 +1857,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     fn failure_cache_contains(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-        self.tc_cache.failure_cache.contains(&SortedPair::new(x, y))
+        self.tc_cache.congr_fail_cache.contains(&SortedPair::new(x, y))
     }
 
     fn failure_cache_insert(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) {
-        self.tc_cache.failure_cache.insert(SortedPair::new(x, y));
+        self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
     }
 
     fn try_eq_const_app(
@@ -1884,7 +1894,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     (Const { levels: l_levels, .. }, Const { levels: r_levels, .. })
                         if l_args.len() == r_args.len()
                             && !self.failure_cache_contains(x, y)
-                            && l_args.iter().copied().zip(r_args.iter().copied()).all(|(x, y)| self.def_eq(x, y))
+                            && l_args.iter().copied().zip(r_args.iter().copied()).rev().all(|(x, y)| self.def_eq(x, y))
                             && self.ctx.eq_antisymm_many(l_levels, r_levels) =>
                         Some(FoundEqResult(true)),
                     (Const { .. }, Const { .. }) => {

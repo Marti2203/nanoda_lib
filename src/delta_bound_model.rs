@@ -4517,8 +4517,26 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             deq_p_any(dtym, em, lcm, to_model(x), to_model(cur)),
         decreases rounds - i
     {
-        let rw = match verified_major_eta_spine(ctx, env, memo, cur) {
-            Some(v) => v,
+        // Try the spine rewriter, then the projection one. FIRST-MATCH-WINS
+        // was wrong here: a spine rewrite that comes back pointer-equal to
+        // `cur` is no rewrite at all, and it used to shadow the projection
+        // rewriter completely -- the loop broke out instead of falling
+        // through. The two rewriters see different shapes (a stuck recursor
+        // at the head, versus one under a projection), so the one that
+        // declines tells you nothing about the other. Both carry the same
+        // `deq_p_any(cur, r)` ensures, so the fallback needs no new proof.
+        let sp = verified_major_eta_spine(ctx, env, memo, cur);
+        let rw = match sp {
+            Some(v) => {
+                if expr_ptr_eq(v, cur) {
+                    match verified_major_eta_proj(ctx, env, memo, cur) {
+                        Some(w) => w,
+                        None => break,
+                    }
+                } else {
+                    v
+                }
+            }
             None => match verified_major_eta_proj(ctx, env, memo, cur) {
                 Some(v) => v,
                 None => break,
