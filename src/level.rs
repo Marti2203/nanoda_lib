@@ -289,7 +289,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat, LevelSpec};
+use crate::level_model::{imax_normal, interp, max_nat, LevelSpec};
 
 verus! {
 
@@ -314,7 +314,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
-            == max_nat(interp(to_model(l), rho), interp(to_model(r), rho))
+            == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)),
+            // preserves the simplified form: every arm returns an input, a
+            // `Succ` over a combined pair, or a `Max` -- none builds an `IMax`
+            imax_normal(to_model(l)) && imax_normal(to_model(r)) ==> imax_normal(to_model(result)),
     {
         // the `Succ` arm shadows `l` and `r`, so the proof needs names for the
         // originals; these are ghost and erased, the body below is unchanged

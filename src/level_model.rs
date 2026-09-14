@@ -39,6 +39,110 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
 /// The value a level denotes under a parameter assignment `rho`. Unassigned
 /// params default to 0, matching Lean's convention that missing substitutions
 /// leave the level unconstrained-but-well-defined for our purposes here.
+/// The SIMPLIFIED-FORM invariant: hereditarily, no `IMax`'s second argument
+/// is a `Zero` or a `Succ`.
+///
+/// This is what makes `leq_core`'s final catch-all `panic!()` unreachable.
+/// Enumerating that function's arms, the pairs left uncovered are exactly
+/// those whose `IMax` has a `Zero` or `Succ` in second position -- every
+/// other shape is caught by an earlier arm, by `is_param(b)`, or by
+/// `is_any_max(b)`. `simplify` establishes the invariant: those two cases are
+/// precisely the ones its `IMax` arm collapses (to `r_simp`, and through
+/// `combining`) instead of building an `IMax` node.
+pub open spec fn imax_normal(l: LevelSpec) -> bool
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => true,
+        LevelSpec::Param(_) => true,
+        LevelSpec::Succ(a) => imax_normal(*a),
+        LevelSpec::Max(a, b) => imax_normal(*a) && imax_normal(*b),
+        LevelSpec::IMax(a, b) => imax_normal(*a) && imax_normal(*b) && match *b {
+            LevelSpec::Zero => false,
+            LevelSpec::Succ(_) => false,
+            _ => true,
+        },
+    }
+}
+
+pub open spec fn ls_is_zero(l: LevelSpec) -> bool { matches!(l, LevelSpec::Zero) }
+pub open spec fn ls_is_param(l: LevelSpec) -> bool { matches!(l, LevelSpec::Param(_)) }
+pub open spec fn ls_is_succ(l: LevelSpec) -> bool { matches!(l, LevelSpec::Succ(_)) }
+pub open spec fn ls_is_max(l: LevelSpec) -> bool { matches!(l, LevelSpec::Max(_, _)) }
+pub open spec fn ls_is_imax(l: LevelSpec) -> bool { matches!(l, LevelSpec::IMax(_, _)) }
+pub open spec fn ls_is_any_max(l: LevelSpec) -> bool { matches!(l, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) }
+/// The second argument of an `IMax` (`Zero` elsewhere -- never consulted).
+pub open spec fn ls_imax_snd(l: LevelSpec) -> LevelSpec {
+    match l { LevelSpec::IMax(_, b) => *b, _ => LevelSpec::Zero }
+}
+
+/// The disjunction of `leq_core`'s arm guards, in the order the function
+/// tests them. Its final `_ => panic!()` is reached exactly when this is
+/// false.
+pub open spec fn leq_core_covered(l: LevelSpec, r: LevelSpec, diff: int) -> bool {
+    ||| (ls_is_zero(l) && diff >= 0)
+    ||| (ls_is_zero(r) && diff < 0)
+    ||| (ls_is_param(l) && ls_is_param(r))
+    ||| (ls_is_param(l) && ls_is_zero(r))
+    ||| (ls_is_zero(l) && ls_is_param(r))
+    ||| ls_is_succ(l)
+    ||| ls_is_succ(r)
+    ||| ls_is_max(l)
+    ||| (ls_is_param(l) && ls_is_max(r))
+    ||| (ls_is_zero(l) && ls_is_max(r))
+    ||| (ls_is_imax(l) && ls_is_param(ls_imax_snd(l)))
+    ||| (ls_is_imax(r) && ls_is_param(ls_imax_snd(r)))
+    ||| (ls_is_imax(l) && ls_is_any_max(ls_imax_snd(l)))
+    ||| (ls_is_imax(r) && ls_is_any_max(ls_imax_snd(r)))
+}
+
+/// THE CATCH-ALL IS UNREACHABLE under the simplified-form invariant.
+///
+/// This is the load-bearing fact for putting the kernel's `leq_core` into
+/// `verus!` as written: its final `_ => panic!()` can only be reached by a
+/// pair that `leq_core_covered` rejects, and no such pair satisfies
+/// `imax_normal` on both sides. The single case that does the work is
+/// `IMax(a, b)`: `imax_normal` rules `b` out of being `Zero` or `Succ`,
+/// which leaves `Param`, `Max` and `IMax` -- and those are precisely the
+/// shapes the `is_param(b)` and `is_any_max(b)` guards catch.
+pub proof fn imax_normal_covers_leq_core(l: LevelSpec, r: LevelSpec, diff: int)
+    requires imax_normal(l), imax_normal(r),
+    ensures leq_core_covered(l, r, diff),
+{
+    match l {
+        LevelSpec::Succ(_) => {}
+        LevelSpec::Max(_, _) => {}
+        LevelSpec::IMax(_, b) => {
+            // `imax_normal(l)` leaves `b` a Param, a Max or an IMax
+            assert(ls_imax_snd(l) == *b);
+            assert(ls_is_param(*b) || ls_is_any_max(*b));
+        }
+        // l is Zero or Param: the pair is settled by r's shape
+        _ => {
+            match r {
+                LevelSpec::IMax(_, y) => {
+                    assert(ls_imax_snd(r) == *y);
+                    assert(ls_is_param(*y) || ls_is_any_max(*y));
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Non-vacuity check for the lemma above (a conditional lemma that happens
+/// to have an always-true conclusion would prove nothing). `IMax(p, 0)`
+/// against `Zero` at `diff = 0` falls through every one of `leq_core`'s
+/// arms -- so the catch-all IS reachable in general -- and it is exactly the
+/// shape `imax_normal` forbids. The invariant is therefore load-bearing
+/// rather than decorative.
+pub proof fn leq_core_covered_is_not_vacuous()
+    ensures
+        !leq_core_covered(LevelSpec::IMax(Box::new(LevelSpec::Param(0)), Box::new(LevelSpec::Zero)), LevelSpec::Zero, 0),
+        !imax_normal(LevelSpec::IMax(Box::new(LevelSpec::Param(0)), Box::new(LevelSpec::Zero))),
+{
+}
+
 pub open spec fn interp(l: LevelSpec, rho: Map<nat, nat>) -> nat
     decreases l
 {
