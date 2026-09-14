@@ -1341,6 +1341,18 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             // every argument of every application unmemoized took a 5-second
             // corpus past ten minutes
             let a_ty = match verified_infer_shadow(ctx, env, memo, a) { Some(v) => v, None => return None };
+            // MEASURED AGAIN 2026-09-14, after the eta fix, in case eta's
+            // ill-typed lambdas had been what made a full conversion here
+            // unaffordable. They were not. Swapping the join for
+            // `verified_conv` recovers coverage -- Core 7 -> 3 uncertified,
+            // Int.Basic 7 -> 3 -- and costs 5x (Core 1.2s -> 6.4s) while
+            // STILL failing to finish List.Lemmas in ten minutes, where the
+            // join takes 7 seconds. It also forces the whole reduction-only
+            // conversion family (`verified_conv`, `_inner`, `_spine`,
+            // `_bind_fresh`) to drop its `decreases` and lose its termination
+            // proof, because inference would then call conversion and
+            // conversion already calls inference. Not worth it twice over.
+            //
             // A WHNF JOIN, not a full conversion. Two reasons, and the second
             // is structural: a conversion here would make inference call
             // conversion, and conversion already calls inference (eta,
