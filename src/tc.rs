@@ -122,20 +122,24 @@ impl<'p> ExportFile<'p> {
                 }
                 let recursor_idx = self.declars.get_index_of(&recursor_data.info.name).unwrap();
                 for ind_name in recursor_data.all_inductives.iter() {
-                    // Shadow-only observation (never a verdict): the original
-                    // checker does not require an inductive to be exported
-                    // before its recursor; report it when the shadow is on.
-                    if crate::tc::route_stats::shadow_enabled() {
-                        if let Some(ind_idx) = self.declars.get_index_of(ind_name) {
-                            if recursor_idx <= ind_idx {
-                                self.with_ctx(|ctx| {
-                                    eprintln!(
-                                        "SHADOW NOTE: recursor {:?} (index {}) precedes its inductive {:?} (index {})",
-                                        ctx.debug_print(recursor_data.info.name), recursor_idx, ctx.debug_print(*ind_name), ind_idx
-                                    )
-                                });
-                                assert!(self.declars.get(ind_name).is_some())
-                }
+                    match self.declars.get_index_of(ind_name) {
+                        None => self.with_ctx(|ctx| {
+                            panic!(
+                                "Recursor {:?} references inductive declaration {:?} which does not exist.",
+                                ctx.debug_print(recursor_data.info.name),
+                                ctx.debug_print(*ind_name)
+                            )
+                        }),
+                        Some(ind_idx) => if recursor_idx <= ind_idx {
+                            self.with_ctx(|ctx| {
+                                panic!(
+                                    "Inductive declarations must be exported prior to any derived recursors. ({:?}, {}), ({:?}, {})",
+                                    ctx.debug_print(recursor_data.info.name),
+                                    recursor_idx,
+                                    ctx.debug_print(*ind_name),
+                                    ind_idx
+                                )
+                            })
                         }
                     }
                 }
