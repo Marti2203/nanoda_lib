@@ -1629,8 +1629,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
             } else {
                 route_stats::bump(&route_stats::SHADOW_DISAGREE);
-                eprintln!("SHADOW DISAGREEMENT (route {}, leaf {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}",
-                    which, route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y));
+                let before: Vec<u64> = (0..64).map(|q| route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed)).collect();
+                let again = matches!(crate::delta_bound_model::verified_conv_inner_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true));
+                let used: Vec<(usize, u64)> = (0..64)
+                    .map(|q| (q, route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed) - before[q]))
+                    .filter(|(_, d)| *d > 0).collect();
+                eprintln!("  reproduces-here={} leaves-used={:?}", again, used);
+                let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget());
+                let xt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
+                let yt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y);
+                let (tc_untyped, tc_typed) = match (xt, yt) {
+                    (Some(a), Some(b)) => (
+                        matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, a, b, 100, route_stats::conv_budget()), Some(true)),
+                        matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, a, b, 100, route_stats::conv_budget()), Some(true)),
+                    ),
+                    _ => (false, false),
+                };
+                eprintln!("SHADOW DISAGREEMENT (route {}, leaf {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}\n  proof_irrel={:?} types-conv-untyped={} types-conv-typed={}",
+                    which, route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
+                    pir, tc_untyped, tc_typed);
             }
         }
     }
