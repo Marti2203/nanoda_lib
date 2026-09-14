@@ -1629,7 +1629,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
             } else {
                 route_stats::bump(&route_stats::SHADOW_DISAGREE);
-                eprintln!("SHADOW DISAGREEMENT (route {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}", which, self.ctx.debug_print(x), self.ctx.debug_print(y));
+                eprintln!("SHADOW DISAGREEMENT (route {}, leaf {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}",
+                    which, route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y));
             }
         }
     }
