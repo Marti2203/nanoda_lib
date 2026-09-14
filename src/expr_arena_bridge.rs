@@ -326,9 +326,11 @@ pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
 
 verus! {
 
+/// TRANSPARENT, like `ExLevel`. The variants are visible to Verus, so the
+/// kernel's own `match self.read_expr(p) { .. }` can be verified as written
+/// and the `expr_as_*` accessors below become provable rather than assumed.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExExpr<'a>(Expr<'a>);
 
 #[allow(dead_code)]
