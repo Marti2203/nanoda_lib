@@ -154,19 +154,22 @@ mod tests {
     use super::*;
     use crate::util::DagMarker;
 
+    // These exercise the real `Ptr::from`/`idx`/`dag_marker` -- the same
+    // functions the Verus proof above is about -- at the two ends of the
+    // 31-bit index range.
     #[test]
     fn roundtrip_export_file_zero() {
-        let (idx, is_tc) = verified_ptr_roundtrip::<u64>(DagMarker::ExportFile, 0);
-        assert_eq!(idx, 0);
-        assert!(!is_tc);
+        let p: Ptr<u64> = Ptr::from(DagMarker::ExportFile, 0);
+        assert_eq!(p.idx(), 0);
+        assert!(!dag_marker_is_tc(&p.dag_marker()));
     }
 
     #[test]
     fn roundtrip_tc_ctx_max_idx() {
         let big = 0x7FFF_FFFFusize; // largest 31-bit index
-        let (idx, is_tc) = verified_ptr_roundtrip::<u64>(DagMarker::TcCtx, big);
-        assert_eq!(idx, big);
-        assert!(is_tc);
+        let p: Ptr<u64> = Ptr::from(DagMarker::TcCtx, big);
+        assert_eq!(p.idx(), big);
+        assert!(dag_marker_is_tc(&p.dag_marker()));
     }
 
     #[test]
