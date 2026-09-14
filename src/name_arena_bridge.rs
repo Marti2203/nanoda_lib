@@ -51,21 +51,6 @@ use vstd::set_lib::*;
 
 // These accessors' only "caller" is the `assume_specification` attributes
 // below, erased under plain compilation -- hence `allow(dead_code)`.
-#[allow(dead_code)]
-pub(crate) fn name_is_anon(n: &Name) -> bool {
-    matches!(n, Name::Anon)
-}
-
-#[allow(dead_code)]
-pub(crate) fn name_as_str<'t>(n: &Name<'t>) -> Option<(NamePtr<'t>, StringPtr<'t>)> {
-    match n { Name::Str(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
-}
-
-#[allow(dead_code)]
-pub(crate) fn name_as_num<'t>(n: &Name<'t>) -> Option<(NamePtr<'t>, u64)> {
-    match n { Name::Num(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
-}
-
 /// `TcCtx::alloc_string(Cow::Borrowed("rec"))`, wrapped so Verus never
 /// needs a `Cow` parameter type at all (`Cow` isn't registered with this
 /// vstd fork, and doing so just to move ONE hardcoded literal through
@@ -94,7 +79,16 @@ pub uninterp spec fn to_model_name<'a>(ptr: NamePtr<'a>) -> NameSpec;
 
 /// Ditto, keyed by an already-read `Name` value rather than a pointer --
 /// mirrors `expr_arena_bridge::to_model_of_expr`'s split from `to_model`.
-pub uninterp spec fn to_model_of_name<'a>(n: Name<'a>) -> NameSpec;
+/// DEFINED, not uninterpreted -- possible now that `ExName` is transparent.
+/// Children are `to_model_name` of a POINTER, which stays uninterpreted, so
+/// this is not recursive.
+pub open spec fn to_model_of_name<'a>(n: Name<'a>) -> NameSpec {
+    match n {
+        Name::Anon => NameSpec::Anon,
+        Name::Str(pfx, sfx, _) => NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
+        Name::Num(pfx, sfx, _) => NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
+    }
+}
 
 /// A `StringPtr`'s opaque identity, standing in for `Str`'s suffix content
 /// (never inspected by `replace_pfx`/`get_pfx`/`concat_name`, only moved
@@ -106,20 +100,32 @@ pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);
 
-pub assume_specification [name_is_anon] (n: &Name) -> (result: bool)
-    ensures result == (to_model_of_name(*n) == NameSpec::Anon);
+#[allow(dead_code)]
+pub fn name_is_anon(n: &Name) -> (result: bool)
+    ensures result == (to_model_of_name(*n) == NameSpec::Anon)
+{
+    matches!(n, Name::Anon)
+}
 
-pub assume_specification<'t> [name_as_str] (n: &Name<'t>) -> (result: Option<(NamePtr<'t>, StringPtr<'t>)>)
+#[allow(dead_code)]
+pub fn name_as_str<'t>(n: &Name<'t>) -> (result: Option<(NamePtr<'t>, StringPtr<'t>)>)
     ensures match result {
         Some((pfx, sfx)) => to_model_of_name(*n) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
         None => !matches!(to_model_of_name(*n), NameSpec::Str(_, _)),
-    };
+    }
+{
+    match n { Name::Str(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
+}
 
-pub assume_specification<'t> [name_as_num] (n: &Name<'t>) -> (result: Option<(NamePtr<'t>, u64)>)
+#[allow(dead_code)]
+pub fn name_as_num<'t>(n: &Name<'t>) -> (result: Option<(NamePtr<'t>, u64)>)
     ensures match result {
         Some((pfx, sfx)) => to_model_of_name(*n) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
         None => !matches!(to_model_of_name(*n), NameSpec::Num(_, _)),
-    };
+    }
+{
+    match n { Name::Num(pfx, sfx, ..) => Some((*pfx, *sfx)), _ => None }
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, 'p>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Anon;

@@ -94,9 +94,9 @@ pub struct ExPtr<A>(Ptr<A>);
 #[verifier::external_type_specification]
 pub struct ExLevel<'a>(Level<'a>);
 
+/// TRANSPARENT, like `ExLevel` and `ExExpr`.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExName<'a>(Name<'a>);
 
 /// What a `LevelPtr` denotes in our `LevelSpec` model. Uninterpreted: we
