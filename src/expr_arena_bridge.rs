@@ -94,11 +94,6 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 /// not `Closed` alone. The real boolean result is unchanged, still true
 /// for all four variants; only the trust boundary's own precision keeps
 /// catching up as `ExprSpec` gains new variants.
-#[allow(dead_code)]
-pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
-    matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
-}
-
 /// Unlike the other accessors, `Const`'s payload (a name plus universe
 /// levels) is otherwise erased entirely into `ExprSpec::Closed` (see
 /// `expr_is_closed_leaf`'s doc comment) -- content-blind is right for
@@ -279,6 +274,11 @@ pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
     ctx.abstr_levels(e, start_pos)
 }
 
+#[allow(dead_code)]
+pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
+    matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
+}
+
 verus! {
 
 /// TRANSPARENT, like `ExLevel`. The variants are visible to Verus, so the
@@ -389,6 +389,41 @@ pub fn expr_is_const_shape<'t>(e: &Expr<'t>) -> (result: bool)
     matches!(e, Expr::Const { .. })
 }
 
+/// No real expression denotes `ExprSpec::Closed`. Every `Expr` variant maps
+/// to a variant carrying its own content; `Closed` survives in `ExprSpec`
+/// only as the model's payload-free leaf, which the arena never builds.
+/// A one-line consequence of `to_model_of_expr`'s definition -- and the fact
+/// the old `expr_is_closed_leaf` axiom got wrong in the other direction back
+/// when `Sort` still collapsed into `Closed`.
+pub proof fn to_model_of_expr_never_closed<'a>(e: Expr<'a>)
+    ensures to_model_of_expr(e) != ExprSpec::Closed
+{
+}
+
+/// STILL ASSUMED, and the attempt to prove it is recorded here because the
+/// obstacle is the next piece of work rather than a dead end.
+///
+/// This contract mixes a shallow VALUE with three POINTER flags and never
+/// requires the two to correspond -- `e` is not obliged to be what `ptr`
+/// reads as. Now that `to_model_of_expr` is defined it can be restated purely
+/// against the value,
+///
+///   result == matches!(to_model_of_expr(*e),
+///       Closed | Sort(_) | Const(_, _) | NatLit(_) | StringLit(_))
+///
+/// and in that form it PROVES, straight from the definition. Its caller in
+/// `verified_subst_expr_levels` then stops verifying, for a structural
+/// reason: that caller eliminates `Const`/`NatLit`/`StringLit` via
+/// `expr_as_const` and friends, whose `None` case yields only
+/// `!is_const_shape(ptr)` -- a fact about the FLAG. Nothing carries it to
+/// `to_model`, because the flags are forward-only by design
+/// (`is_const_shape(ptr) ==> to_model(ptr) == Const(..)`, no converse).
+///
+/// So that branch is dead in reality and not provably dead. Closing the gap
+/// means establishing the flag/model correspondence in both directions, most
+/// cleanly by DEFINING `is_const_shape` and friends in terms of `to_model`
+/// rather than leaving them uninterpreted -- a real change to the trust
+/// boundary, and worth its own sitting rather than the end of this one.
 pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
     ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr) || is_nat_lit_shape(ptr) || is_string_lit_shape(ptr));
 
