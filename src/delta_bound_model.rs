@@ -1314,15 +1314,30 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
                 types_to(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), spine_app(to_model(hd), args_all.subrange(0, i as int)), to_model(cur_ty), h),
             decreases args.len() - i
         {
-            let kr: u32 = 500;
-            let ghost cmr = env_model_nofv(*env);
-            let w = verified_whnf_free(ctx, env, memo, cur_ty);
+            // `tc.rs::ensure_pi`: if the type is ALREADY a `Pi`, use it; only
+            // reduce when it is not. We were reducing unconditionally.
+            // Measured: no difference (Core 1.28s -> 1.30s) because the whnf
+            // is memoized, so the saved call was already cheap. Kept because
+            // it is what the kernel does, not because it is faster.
+            let cur_el = ctx.read_expr(cur_ty);
+            let (w, aty, bt) = match expr_as_pi(&cur_el) {
+                Some((_bn, _bs, d, b)) => {
+                    proof { pstep_star_refl(env_model_nofv(*env), to_model(cur_ty)); }
+                    (cur_ty, d, b)
+                }
+                None => {
+                    let w0 = verified_whnf_free(ctx, env, memo, cur_ty);
+                    let wel = ctx.read_expr(w0);
+                    match expr_as_pi(&wel) {
+                        Some((_bn, _bs, d, b)) => (w0, d, b),
+                        None => return None,
+                    }
+                }
+            };
             proof {
                 env_model_nofv_sub(*env);
                 pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(cur_ty), to_model(w));
             }
-            let wel = ctx.read_expr(w);
-            let (_bn, _bs, aty, bt) = match expr_as_pi(&wel) { Some(p) => p, None => return None };
             assert(to_model(w) == ExprSpec::Bind(Box::new(to_model(aty)), Box::new(to_model(bt))));
             // the instantiation's depth ceiling is MEASURED here
             let bsz = match verified_size(ctx, bt, 100000) { Some(v) => v, None => return None };
