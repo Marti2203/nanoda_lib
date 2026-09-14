@@ -340,11 +340,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Convenience function for reading two items as a tuple.
-    pub fn read_level_pair(&self, a: LevelPtr<'t>, x: LevelPtr<'t>) -> (Level<'t>, Level<'t>) {
-        (self.read_level(a), self.read_level(x))
-    }
-
     pub fn read_expr(&self, p: ExprPtr<'t>) -> Expr<'t> {
         match p.dag_marker() {
             DagMarker::ExportFile => self.export_file.dag.exprs.get_index(p.idx()).copied().unwrap(),
@@ -1027,3 +1022,29 @@ struct ExitStatus {
     pp_err: Option<String>
 }
 
+
+// ===========================================================================
+// VERIFIED KERNEL CODE. Methods that live here rather than in the plain
+// `impl` above are the real thing, not a parallel copy: the kernel calls
+// exactly these, and Verus checks their bodies against a contract. Moving a
+// method down here is the migration -- one fewer `assume_specification`, one
+// more proof.
+// ===========================================================================
+use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{to_model, to_model_of_level};
+
+verus! {
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Convenience function for reading two items as a tuple.
+    pub fn read_level_pair(&self, a: LevelPtr<'t>, x: LevelPtr<'t>) -> (result: (Level<'t>, Level<'t>))
+        ensures
+            to_model_of_level(result.0) == to_model(a),
+            to_model_of_level(result.1) == to_model(x),
+    {
+        (self.read_level(a), self.read_level(x))
+    }
+}
+
+}

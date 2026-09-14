@@ -40,18 +40,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (l, num_succs)
     }
 
-    fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> LevelPtr<'t> {
-        match self.read_level_pair(l, r) {
-            (Zero, _) => r,
-            (_, Zero) => l,
-            (Succ(l, ..), Succ(r, ..)) => {
-                let pred = self.combining(l, r);
-                self.succ(pred)
-            }
-            _ => self.max(l, r),
-        }
-    }
-
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> LevelPtr<'t> {
         match self.read_level(ptr) {
             Zero | Param(..) => ptr,
@@ -285,4 +273,62 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             IMax(_, r, ..) => self.is_never_zero(r),
         }
     }
+}
+
+
+// ===========================================================================
+// VERIFIED KERNEL CODE (see the same banner in `util.rs`). These are the
+// kernel's own functions with a contract attached, not parallel copies --
+// the checker calls exactly these. Each one that moves down here retires a
+// hand-written twin in `level_arena_bridge.rs`.
+//
+// They carry `exec_allows_no_decreases_clause` because the recursion is over
+// the ARENA, which Verus cannot see a measure for, and because the module is
+// one mutual clique (`simplify` -> `is_zero` -> `leq` -> `simplify`). What is
+// proven is partial correctness: if it returns, the answer denotes what it
+// should. That is the same contract the reduction side already carries.
+// ===========================================================================
+use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model;
+#[cfg(verus_only)]
+use crate::level_model::{interp, max_nat};
+
+verus! {
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// `max` that folds through matching `Succ`s instead of building a `Max`
+    /// node over them. Verified AS WRITTEN -- the body below is the kernel's,
+    /// unchanged; only the contract is new.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+            == max_nat(interp(to_model(l), rho), interp(to_model(r), rho))
+    {
+        // the `Succ` arm shadows `l` and `r`, so the proof needs names for the
+        // originals; these are ghost and erased, the body below is unchanged
+        let ghost l0 = l;
+        let ghost r0 = r;
+        match self.read_level_pair(l, r) {
+            (Zero, _) => r,
+            (_, Zero) => l,
+            (Succ(l, ..), Succ(r, ..)) => {
+                let pred = self.combining(l, r);
+                let out = self.succ(pred);
+                proof {
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(out), rho)
+                        == max_nat(interp(to_model(l0), rho), interp(to_model(r0), rho)) by {
+                        assert(interp(to_model(pred), rho)
+                            == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)));
+                        assert(interp(to_model(l0), rho) == interp(to_model(l), rho) + 1);
+                        assert(interp(to_model(r0), rho) == interp(to_model(r), rho) + 1);
+                    }
+                }
+                out
+            }
+            _ => self.max(l, r),
+        }
+    }
+}
+
 }

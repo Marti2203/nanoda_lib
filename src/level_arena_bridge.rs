@@ -270,37 +270,6 @@ pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
 /// (`max` genuinely computes `max_nat`, just without `combining`'s
 /// `Succ`-pushing simplification), so the postcondition holds
 /// unconditionally, for any fuel amount including zero.
-pub fn verified_combining<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, fuel: u32) -> (result: LevelPtr<'t>)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
-        == max_nat(interp(to_model(l), rho), interp(to_model(r), rho))
-    decreases fuel
-{
-    if fuel == 0 {
-        return ctx.max(l, r);
-    }
-    let fuel1 = fuel - 1;
-    let ll = ctx.read_level(l);
-    let rl = ctx.read_level(r);
-    if level_is_zero(&ll) {
-        return r;
-    }
-    if level_is_zero(&rl) {
-        return l;
-    }
-    match (level_as_succ(&ll), level_as_succ(&rl)) {
-        (Some(l2), Some(r2)) => {
-            let sub = verified_combining(ctx, l2, r2, fuel1);
-            let result = ctx.succ(sub);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sub), rho)
-                == max_nat(interp(to_model(l2), rho), interp(to_model(r2), rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(sub), rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(l2), rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho) == interp(to_model(r2), rho) + 1);
-            result
-        }
-        _ => ctx.max(l, r),
-    }
-}
 
 /// Real-arena counterpart to `level_model::simplify_full`: normalizes a
 /// level while preserving what it denotes, including the `IMax` case (via
@@ -346,7 +315,7 @@ pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, f
     if let Some((a, b)) = level_as_max(&ll) {
         let sa = verified_simplify(ctx, a, fuel1);
         let sb = verified_simplify(ctx, b, fuel1);
-        let result = verified_combining(ctx, sa, sb, fuel1);
+        let result = ctx.combining(sa, sb);
         assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sa), rho) == interp(to_model(a), rho));
         assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(sb), rho) == interp(to_model(b), rho));
         assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
@@ -400,7 +369,7 @@ pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, f
         } else if level_is_zero(&sbl) {
             sb
         } else if level_as_succ(&sbl).is_some() {
-            verified_combining(ctx, sa, sb, fuel1)
+            ctx.combining(sa, sb)
         } else {
             ctx.imax(sa, sb)
         };
