@@ -1078,6 +1078,25 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 /// conversion in the argument check, which is measured as unaffordable
 /// twice over; the remaining 41% cannot be closed at all without the
 /// well-typedness invariant the kernel has and the shadow does not.
+/// Diagnostics-only (no contract): report an argument check that declined,
+/// with both sides reduced. Gated on `NANODA_ARGFAIL=N`.
+///
+/// A temporary extension of this note (since removed -- it had to borrow the
+/// memo mutably, which havocs it and costs the caller its postcondition)
+/// also ran a full conversion on each declining pair, to ask how many of
+/// these are recoverable at all. On Init.Data.Fin.Lemmas, 300 samples: 59% of the
+/// remaining declines WOULD succeed under a full conversion, and 41% would
+/// not. The second group is the interesting one -- those are CORRECT
+/// declines. Our inference is sound, so the type it returns really is a type
+/// of the argument; if it is not convertible with the domain then the
+/// application is genuinely ill-typed, which happens because the kernel
+/// hands the certifier whatever pair it is probing, including speculative
+/// ones it will go on to reject.
+///
+/// So the floor here is not zero. Closing the recoverable 59% needs real
+/// conversion in the argument check, which is measured as unaffordable
+/// twice over; the remaining 41% cannot be closed at all without the
+/// well-typedness invariant the kernel has and the shadow does not.
 #[verifier::external_body]
 fn arg_check_fail_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, a_ty: ExprPtr<'t>, aty: ExprPtr<'t>) {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1090,19 +1109,70 @@ fn arg_check_fail_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, a_ty: ExprPtr<'t>, aty: 
         ctx.debug_print(a_ty), ctx.debug_print(aty));
 }
 
-/// A STRUCTURAL whnf join: reduce both sides, and if they are not the same
-/// pointer, compare them as spines -- same head, same arity, arguments
-/// pairwise. This is a faithful SUBSET of what `def_eq` does after reduction
-/// (`def_eq_app`'s congruence), restricted to the part that cannot re-enter
-/// conversion: no delta beyond whnf, no eta, no proof irrelevance. That
-/// restriction is the point -- inference must not call conversion, because
-/// conversion calls inference.
+/// How many fresh-instance binder openings the structural join may spend
+/// along one path. Each opening mints a fresh local, so the terms it
+/// produces are new on every call and the whnf memo can never hit them --
+/// which is why this is bounded rather than free (unbounded, Init.Omega
+/// went from 3.4 s to over ten minutes). One is the settled value: raising
+/// it to 2 left every corpus at an identical certified count for the same
+/// runtime, so nested openings buy nothing.
+pub const JOIN_OPENS: u32 = 1;
+
+/// The FRESH-INSTANCE binder rule for the structural join, mirroring
+/// `verified_conv_bind_fresh` but recursing through the join rather than the
+/// typed conversion (so it cannot re-enter the conversion family and
+/// re-create the inference/conversion cycle).
 ///
-/// Used for the argument check in the application arm, where plain pointer
-/// equality after whnf was declining on types that differ only inside their
-/// arguments (`Fin (2^w)` against a differently-reduced form of the same).
+/// Why it matters: the join can only reduce CLOSED terms, so under a binder
+/// it was comparing raw bodies structurally with every reduction route shut
+/// off. Opening both bodies with one fresh local makes them closed, which
+/// turns whnf, delta and iota back on underneath the binder. This is the
+/// disjunct `deq_c`'s `Bind` arm already provides -- "the opened bodies may
+/// need reduction steps that raw bodies cannot take" -- and the rule the
+/// real checker uses.
 #[verifier::exec_allows_no_decreases_clause]
-pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, name: NamePtr<'t>, style: BinderStyle, t1: ExprPtr<'t>, t2: ExprPtr<'t>, b1: ExprPtr<'t>, b2: ExprPtr<'t>, opens: u32) -> (result: bool)
+    requires
+        memo.wf(), memo.spec_env() == *env,
+        deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
+    ensures final(memo).wf(), final(memo).spec_env() == *env,
+        result ==> deq_any(to_model_of_env(*env), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
+{
+    let ghost em = to_model_of_env(*env);
+    // `verified_inst` needs `depth <= 60000`; `verified_size` both computes
+    // the size and declines above that ceiling, and depth is bounded by size.
+    let _sb1 = match verified_size(ctx, b1, 100000) { Some(v) => v, None => return false };
+    let _sb2 = match verified_size(ctx, b2, 100000) { Some(v) => v, None => return false };
+    proof {
+        depth_le_size(to_model(b1));
+        depth_le_size(to_model(b2));
+    }
+    let local = ctx.mk_dbj_level(name, style, t1);
+    let substs: [ExprPtr<'t>; 1] = [local];
+    let mut ok = false;
+    let ib1 = verified_inst(ctx, b1, &substs, 0, 100000);
+    let ib2 = verified_inst(ctx, b2, &substs, 0, 100000);
+    if let (Some(ib1), Some(ib2)) = (ib1, ib2) {
+        if verified_fv_absent(ctx, b1, local, 100000) == Some(true) && verified_fv_absent(ctx, b2, local, 100000) == Some(true) {
+            if verified_whnf_join_deep(ctx, env, memo, ib1, ib2, opens) {
+                proof {
+                    let kk = expr_id(local);
+                    let sm = Seq::new(substs@.len(), |i: int| to_model(substs@[i]));
+                    assert(sm =~= seq![ExprSpec::Free(kk)]);
+                    assert(to_model(ib1) == inst_free(to_model(b1), kk));
+                    assert(to_model(ib2) == inst_free(to_model(b2), kk));
+                    deq_any_bind_fresh(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2), kk);
+                }
+                ok = true;
+            }
+        }
+    }
+    ctx.replace_dbj_level(local);
+    ok
+}
+
+#[verifier::exec_allows_no_decreases_clause]
+pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, opens: u32) -> (result: bool)
     requires memo.wf(), memo.spec_env() == *env,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         result ==> deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
@@ -1139,32 +1209,56 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let xel = ctx.read_expr(wx);
     let yel = ctx.read_expr(wy);
     match (expr_as_pi(&xel), expr_as_pi(&yel)) {
-        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
-            if verified_whnf_join_deep(ctx, env, memo, t1, t2)
-                && verified_whnf_join_deep(ctx, env, memo, b1, b2) {
-                proof {
-                    deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
-                    deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                    deq_any_symm(em, to_model(y), to_model(wy));
-                    deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+        (Some((name, style, t1, b1)), Some((_, _, t2, b2))) => {
+            if verified_whnf_join_deep(ctx, env, memo, t1, t2, opens) {
+                // raw bodies first -- it is the cheap test and it is what
+                // succeeds whenever no reduction is needed underneath
+                if verified_whnf_join_deep(ctx, env, memo, b1, b2, opens) {
+                    proof {
+                        deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
+                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                        deq_any_symm(em, to_model(y), to_model(wy));
+                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                    }
+                    return true;
                 }
-                return true;
+                // then the fresh-instance rule, which lets the bodies reduce
+                if opens > 0 && verified_join_bind_fresh(ctx, env, memo, name, style, t1, t2, b1, b2, opens - 1) {
+                    proof {
+                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                        deq_any_symm(em, to_model(y), to_model(wy));
+                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                    }
+                    return true;
+                }
             }
             return false;
         }
         _ => {}
     }
     match (expr_as_lambda(&xel), expr_as_lambda(&yel)) {
-        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
-            if verified_whnf_join_deep(ctx, env, memo, t1, t2)
-                && verified_whnf_join_deep(ctx, env, memo, b1, b2) {
-                proof {
-                    deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
-                    deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                    deq_any_symm(em, to_model(y), to_model(wy));
-                    deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+        (Some((name, style, t1, b1)), Some((_, _, t2, b2))) => {
+            if verified_whnf_join_deep(ctx, env, memo, t1, t2, opens) {
+                // raw bodies first -- it is the cheap test and it is what
+                // succeeds whenever no reduction is needed underneath
+                if verified_whnf_join_deep(ctx, env, memo, b1, b2, opens) {
+                    proof {
+                        deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
+                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                        deq_any_symm(em, to_model(y), to_model(wy));
+                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                    }
+                    return true;
                 }
-                return true;
+                // then the fresh-instance rule, which lets the bodies reduce
+                if opens > 0 && verified_join_bind_fresh(ctx, env, memo, name, style, t1, t2, b1, b2, opens - 1) {
+                    proof {
+                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                        deq_any_symm(em, to_model(y), to_model(wy));
+                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                    }
+                    return true;
+                }
             }
             return false;
         }
@@ -1188,17 +1282,19 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let (hx, ax) = match verified_unfold_apps(ctx, wx, 100000) { Some(p) => p, None => return false };
     let (hy, ay) = match verified_unfold_apps(ctx, wy, 100000) { Some(p) => p, None => return false };
     if !expr_ptr_eq(hx, hy) || ax.len() != ay.len() || ax.len() == 0 {
+        // Measured 2026-09-14 (4000 samples, Init.Data.Fin.Lemmas): in 99%
+        // of these neither head has a VALUE in the environment -- only 35 of
+        // 4000 had one on either side. There is no delta step available
+        // here, so a lazy-delta retry at this point would recover nothing.
         return false;
     }
-    if !closed {
-        return false;
-    }
+    // NB: no closedness gate here. Neither `deq_any_spine_congr` nor
+    // `deq_any_bind_congr` requires closed terms -- the gate and the `nlbv`
+    // invariants below it were left over from when this whole function
+    // demanded closedness, and they were making every spine under a binder
+    // decline for no reason.
     let ghost axm = Seq::new(ax@.len(), |q: int| to_model(ax@[q]));
     let ghost aym = Seq::new(ay@.len(), |q: int| to_model(ay@[q]));
-    proof {
-        spine_app_nlbv_decompose(to_model(hx), axm);
-        spine_app_nlbv_decompose(to_model(hy), aym);
-    }
     let mut i: usize = 0;
     while i < ax.len()
         invariant
@@ -1210,8 +1306,6 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
             aym == Seq::new(ay@.len(), |q: int| to_model(ay@[q])),
             to_model(wx) == spine_app(to_model(hx), axm),
             to_model(wy) == spine_app(to_model(hy), aym),
-            forall |q: int| 0 <= q < ax@.len() ==> nlbv(#[trigger] axm[q]) <= 0,
-            forall |q: int| 0 <= q < ay@.len() ==> nlbv(#[trigger] aym[q]) <= 0,
             forall |q: int| 0 <= q < i ==> deq_any(em, #[trigger] axm[q], aym[q]),
         decreases ax.len() - i
     {
@@ -1219,7 +1313,7 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
             assert(axm[i as int] == to_model(ax@[i as int]));
             assert(aym[i as int] == to_model(ay@[i as int]));
         }
-        if !verified_whnf_join_deep(ctx, env, memo, ax[i], ay[i]) {
+        if !verified_whnf_join_deep(ctx, env, memo, ax[i], ay[i], opens) {
             return false;
         }
         i = i + 1;
@@ -1567,7 +1661,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             if ctx.num_loose_bvars(a_ty) != 0 || ctx.num_loose_bvars(aty) != 0 {
                 return None;
             }
-            if !verified_whnf_join_deep(ctx, env, memo, a_ty, aty) {
+            if !verified_whnf_join_deep(ctx, env, memo, a_ty, aty, JOIN_OPENS) {
                 arg_check_fail_note(ctx, a_ty, aty);
                 return None;
             }
