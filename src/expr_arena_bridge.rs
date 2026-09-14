@@ -274,11 +274,6 @@ pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
     ctx.abstr_levels(e, start_pos)
 }
 
-#[allow(dead_code)]
-pub(crate) fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
-    matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
-}
-
 verus! {
 
 /// TRANSPARENT, like `ExLevel`. The variants are visible to Verus, so the
@@ -400,32 +395,21 @@ pub proof fn to_model_of_expr_never_closed<'a>(e: Expr<'a>)
 {
 }
 
-/// STILL ASSUMED, and the attempt to prove it is recorded here because the
-/// obstacle is the next piece of work rather than a dead end.
-///
-/// This contract mixes a shallow VALUE with three POINTER flags and never
-/// requires the two to correspond -- `e` is not obliged to be what `ptr`
-/// reads as. Now that `to_model_of_expr` is defined it can be restated purely
-/// against the value,
-///
-///   result == matches!(to_model_of_expr(*e),
-///       Closed | Sort(_) | Const(_, _) | NatLit(_) | StringLit(_))
-///
-/// and in that form it PROVES, straight from the definition. Its caller in
-/// `verified_subst_expr_levels` then stops verifying, for a structural
-/// reason: that caller eliminates `Const`/`NatLit`/`StringLit` via
-/// `expr_as_const` and friends, whose `None` case yields only
-/// `!is_const_shape(ptr)` -- a fact about the FLAG. Nothing carries it to
-/// `to_model`, because the flags are forward-only by design
-/// (`is_const_shape(ptr) ==> to_model(ptr) == Const(..)`, no converse).
-///
-/// So that branch is dead in reality and not provably dead. Closing the gap
-/// means establishing the flag/model correspondence in both directions, most
-/// cleanly by DEFINING `is_const_shape` and friends in terms of `to_model`
-/// rather than leaving them uninterpreted -- a real change to the trust
-/// boundary, and worth its own sitting rather than the end of this one.
-pub assume_specification<'t> [expr_is_closed_leaf] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
-    ensures result == (matches!(to_model_of_expr(*e), ExprSpec::Closed | ExprSpec::Sort(_)) || is_const_shape(ptr) || is_nat_lit_shape(ptr) || is_string_lit_shape(ptr));
+/// PROVEN, and restated. The old contract mixed a shallow VALUE with three
+/// POINTER flags and never required the two to correspond; it was also
+/// unprovable, because the flags were forward-only and nothing could derive
+/// `is_const_shape(ptr)` from a `Const`-shaped model. Both halves are fixed:
+/// `to_model_of_expr` is a definition, and the flags are now defined AS the
+/// model's shape, so the contract can be stated where the function actually
+/// looks -- at the value -- and discharged from those definitions.
+#[allow(dead_code)]
+pub fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
+    ensures result == matches!(to_model_of_expr(*e),
+        ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _)
+        | ExprSpec::NatLit(_) | ExprSpec::StringLit(_))
+{
+    matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
+}
 
 #[allow(dead_code)]
 pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
@@ -450,7 +434,15 @@ pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t
 /// `const_levels_vec_model` below. `is_const_shape_model` is the trusted
 /// fact that a `Const`-shaped pointer's `to_model` is exactly
 /// `ExprSpec::Const(const_id(ptr), const_levels_vec(ptr))`.
-pub uninterp spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+/// DEFINED, not uninterpreted: the flag IS the model's shape. Leaving it
+/// opaque made it forward-only (`is_const_shape(ptr) ==> to_model(ptr) ==
+/// Const(..)`, no converse), which is what stopped `expr_is_closed_leaf`
+/// being provable -- nothing could derive the flag from a `Const`-shaped
+/// model. The side channels `const_id`/`const_levels_vec` stay
+/// uninterpreted; `is_const_shape_model` still ties them to the payload.
+pub open spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool {
+    matches!(to_model(ptr), ExprSpec::Const(_, _))
+}
 pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
 pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
 pub open spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u64 {
@@ -494,7 +486,9 @@ pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
 /// `expr_id`, which models pointer identity, not the `FVarId` field value
 /// -- see the module doc comment), and `local_binder_type_of` is its
 /// `binder_type: ExprPtr`.
-pub uninterp spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub open spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool {
+    matches!(to_model(ptr), ExprSpec::Free(_))
+}
 pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
 pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 
@@ -1171,7 +1165,9 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::string_type] (ctx: &mut TcCtx
 /// exactly the same "pointer identity, not structural content" pattern
 /// `name_id`/`expr_id` already use), and `nat_lit_value` composes the two
 /// so callers can talk about "the nat this `ExprPtr` denotes" in one step.
-pub uninterp spec fn is_nat_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub open spec fn is_nat_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
+    matches!(to_model(ptr), ExprSpec::NatLit(_))
+}
 pub uninterp spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr<'a>;
 pub uninterp spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat;
 pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
@@ -1199,7 +1195,9 @@ pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) 
 /// previously noted this accessor didn't exist yet; it's needed now that
 /// `ExprSpec::StringLit` carries real content (its length) instead of
 /// collapsing into `Closed`.
-pub uninterp spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool;
+pub open spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
+    matches!(to_model(ptr), ExprSpec::StringLit(_))
+}
 pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
 
 pub assume_specification<'t> [expr_as_string_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
