@@ -1059,6 +1059,21 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 /// for. Where an arena operation needs a depth ceiling, it is MEASURED right
 /// there rather than derived from a ghost parameter -- no `d`, no `dd`, no
 /// `infer_result_depth_bound`, no `infer_depth_fixpoint_ok`.
+/// Diagnostics-only (no contract): report an argument check that declined,
+/// with both sides reduced, so the remaining declines can be classified.
+/// Gated on `NANODA_ARGFAIL=N`.
+#[verifier::external_body]
+fn arg_check_fail_note<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, a_ty: ExprPtr<'t>, aty: ExprPtr<'t>) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LEFT: AtomicU64 = AtomicU64::new(u64::MAX);
+    let cap = crate::tc::route_stats::knob("NANODA_ARGFAIL", 0) as u64;
+    if cap == 0 { return; }
+    let _ = LEFT.compare_exchange(u64::MAX, cap, Ordering::Relaxed, Ordering::Relaxed);
+    if LEFT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| if v > 0 { Some(v - 1) } else { None }).is_err() { return; }
+    eprintln!("ARGCHECK-FAIL\n  arg-type: {:?}\n  domain  : {:?}",
+        ctx.debug_print(a_ty), ctx.debug_print(aty));
+}
+
 /// A STRUCTURAL whnf join: reduce both sides, and if they are not the same
 /// pointer, compare them as spines -- same head, same arity, arguments
 /// pairwise. This is a faithful SUBSET of what `def_eq` does after reduction
@@ -1073,21 +1088,29 @@ fn infer_seen_note<'t>(e: ExprPtr<'t>) {
 #[verifier::exec_allows_no_decreases_clause]
 pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
     requires memo.wf(), memo.spec_env() == *env,
-        nlbv(to_model(x)) <= 0, nlbv(to_model(y)) <= 0,
     ensures final(memo).wf(), final(memo).spec_env() == *env,
         result ==> deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
 {
     let ghost em = to_model_of_env(*env);
-    let wx = verified_whnf_free(ctx, env, memo, x);
-    let wy = verified_whnf_free(ctx, env, memo, y);
+    // Reduce only when both sides are closed. Under a binder the bodies carry
+    // a loose bvar and cannot be whnf'd, but they can still be compared
+    // structurally -- which is what lets this recurse into `Bind`.
+    let closed = ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0;
+    let wx = if closed { verified_whnf_free(ctx, env, memo, x) } else { x };
+    let wy = if closed { verified_whnf_free(ctx, env, memo, y) } else { y };
     proof {
         env_model_nofv_sub(*env);
-        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(wx));
-        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
-        defeq_of_pstep_star(em, to_model(x), to_model(wx));
-        defeq_of_pstep_star(em, to_model(y), to_model(wy));
-        deq_any_of_defeq(em, to_model(x), to_model(wx));
-        deq_any_of_defeq(em, to_model(y), to_model(wy));
+        if closed {
+            pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(wx));
+            pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
+            defeq_of_pstep_star(em, to_model(x), to_model(wx));
+            defeq_of_pstep_star(em, to_model(y), to_model(wy));
+            deq_any_of_defeq(em, to_model(x), to_model(wx));
+            deq_any_of_defeq(em, to_model(y), to_model(wy));
+        } else {
+            deq_any_refl(em, to_model(x));
+            deq_any_refl(em, to_model(y));
+        }
     }
     if expr_ptr_eq(wx, wy) {
         proof {
@@ -1096,9 +1119,62 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         }
         return true;
     }
+    // --- binder congruence (`def_eq`'s `Bind` arm) ---
+    let xel = ctx.read_expr(wx);
+    let yel = ctx.read_expr(wy);
+    match (expr_as_pi(&xel), expr_as_pi(&yel)) {
+        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+            if verified_whnf_join_deep(ctx, env, memo, t1, t2)
+                && verified_whnf_join_deep(ctx, env, memo, b1, b2) {
+                proof {
+                    deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
+                    deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                    deq_any_symm(em, to_model(y), to_model(wy));
+                    deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                }
+                return true;
+            }
+            return false;
+        }
+        _ => {}
+    }
+    match (expr_as_lambda(&xel), expr_as_lambda(&yel)) {
+        (Some((_, _, t1, b1)), Some((_, _, t2, b2))) => {
+            if verified_whnf_join_deep(ctx, env, memo, t1, t2)
+                && verified_whnf_join_deep(ctx, env, memo, b1, b2) {
+                proof {
+                    deq_any_bind_congr(em, to_model(t1), to_model(t2), to_model(b1), to_model(b2));
+                    deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+                    deq_any_symm(em, to_model(y), to_model(wy));
+                    deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                }
+                return true;
+            }
+            return false;
+        }
+        _ => {}
+    }
+    // --- sorts by level equivalence (`def_eq_sort`) ---
+    if let Some(true) = verified_def_eq_sort(ctx, wx, wy, 100000) {
+        proof {
+            let (lx, ly) = choose |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                to_model(wx) == ExprSpec::Sort(level_to_model(lx))
+                && to_model(wy) == ExprSpec::Sort(level_to_model(ly))
+                && (true ==> forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho));
+            assert(deq_leaf(to_model(wx), to_model(wy)));
+            deq_any_of_leaf(em, to_model(wx), to_model(wy));
+            deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
+            deq_any_symm(em, to_model(y), to_model(wy));
+            deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+        }
+        return true;
+    }
     let (hx, ax) = match verified_unfold_apps(ctx, wx, 100000) { Some(p) => p, None => return false };
     let (hy, ay) = match verified_unfold_apps(ctx, wy, 100000) { Some(p) => p, None => return false };
     if !expr_ptr_eq(hx, hy) || ax.len() != ay.len() || ax.len() == 0 {
+        return false;
+    }
+    if !closed {
         return false;
     }
     let ghost axm = Seq::new(ax@.len(), |q: int| to_model(ax@[q]));
@@ -1476,6 +1552,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
                 return None;
             }
             if !verified_whnf_join_deep(ctx, env, memo, a_ty, aty) {
+                arg_check_fail_note(ctx, a_ty, aty);
                 return None;
             }
             let ls: &[ExprPtr<'t>] = &[a];
