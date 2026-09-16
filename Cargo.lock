@@ -263,9 +263,9 @@ checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
 name = "verus_builtin"
-version = "0.0.0-2026-09-06-0133"
+version = "0.0.0-2026-09-16-0054"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "856c9979b5ed3b75a2371d8667602da1839ab0cbb3720a2c1c8a182bcdb27cf7"
+checksum = "5e4a9e69d45ddbe303075756d3fc2fcc965eb9dc70c80651d0e4458a6af1ed83"
 
 [[package]]
 name = "verus_builtin_macros"
@@ -317,9 +317,9 @@ dependencies = [
 
 [[package]]
 name = "vstd"
-version = "0.0.0-2026-09-06-0133"
+version = "0.0.0-2026-09-16-0054"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5391d6f656ab9a485169f7e9fe87d3db1f0a6aa116fcb630dd0bef224170e7"
+checksum = "8a24779ccfd6ca1be2c0eebfcef2234b7f56f0d3482e82efe123d610c149c1a7"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
