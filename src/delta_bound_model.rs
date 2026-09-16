@@ -1659,6 +1659,20 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             // Incomplete, deliberately: types that need real conversion to
             // agree make this decline, and declining is sound.
             //
+            // MEASURED AT ITS LIMIT (2026-09-16, Init.Data.Fin.Lemmas).
+            // Classifying the pairs this declines on, by constructor shape:
+            //   - `deq_c` has four arms the join does not use -- `deq_eta`,
+            //     `deq_quot`, `Let` and `Proj` congruence. Proj and Let pairs
+            //     NEVER OCCUR in the declines, so neither rule would buy
+            //     anything.
+            //   - `Pi vs Pi` dominates (35675 of the top-level failures), but
+            //     that shape is already covered by binder congruence plus the
+            //     fresh-instance rule; domains account for only 8% of binder
+            //     failures (487k of 6.17M pairs).
+            //   - The fresh-instance rule earns its keep: 3.46M of those
+            //     6.17M pairs fall through raw-body comparison to it.
+            // What is left needs real conversion, not another congruence.
+            //
             // WHY WE DO NOT FOLLOW THE KERNEL HERE (2026-09-16). `infer_app`
             // runs this check only under `Check`, and its proof irrelevance
             // infers with `InferOnly` -- "expressions we know to be
