@@ -49,6 +49,113 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
 /// `is_any_max(b)`. `simplify` establishes the invariant: those two cases are
 /// precisely the ones its `IMax` arm collapses (to `r_simp`, and through
 /// `combining`) instead of building an `IMax` node.
+/// Candidate termination weight for `leq_core`, the missing piece behind the
+/// `diff` overflow obligation.
+///
+/// The two hard arms are the ones that REWRITE rather than descend, and they
+/// grow the term, so no size or subterm measure works:
+///
+///     IMax(a, IMax(x, y))  ->  Max(IMax(a, y), IMax(x, y))     (y duplicated)
+///     IMax(a, Max(x, y))   ->  Max(IMax(a, x), IMax(a, y))     (a duplicated)
+///
+/// A multiset of second-argument sizes handles the first and fails on the
+/// second; a max over them fails on both, since duplication is invisible to a
+/// max and `a` may carry a heavier `IMax` than the one being rewritten.
+///
+/// This weight charges an `IMax`'s SECOND argument double and a `Max` a
+/// constant. Doubling makes pushing an `IMax`/`Max` out of second position
+/// strictly cheaper, and the `Max` constant pays for the duplication.
+///
+/// `leq_core`'s `diff - 1` is an `isize` overflow
+/// obligation, and bounding `diff` means bounding how many `Succ` strips a
+/// call can perform -- i.e. `leq_core`'s termination argument, which is what
+/// `exec_allows_no_decreases_clause` gives up. The intended measure is
+/// lexicographic:
+///
+///     (lw(l) + lw(r),  params_in_imax(l) + params_in_imax(r),  size(l) + size(r))
+///
+/// with each arm paid for by exactly one component:
+///
+///   - `Max` descent, and both `IMax` rewrites  -> first  (proven above)
+///   - `leq_imax_by_cases`                      -> second (a `Param` in
+///     second position is substituted by `0`/`succ p`, and `simplify` then
+///     collapses that `IMax` node away; `lw` alone is only non-increasing
+///     there, since `lw(Succ p) == lw(p) == 0`)
+///   - `Succ` strip, which is where `diff` moves -> third
+///
+/// The second and third components are not built yet: the second needs
+/// `subst_simp` shown not to increase `lw` and to drop a `Param`-second-arg
+/// `IMax`, which is a fact about `simplify` rather than about the weight.
+pub open spec fn lw(l: LevelSpec) -> nat
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => 0,
+        LevelSpec::Param(_) => 0,
+        LevelSpec::Succ(a) => lw(*a),
+        LevelSpec::Max(a, b) => 1 + max_nat(lw(*a), lw(*b)),
+        LevelSpec::IMax(a, b) => lw(*a) + 2 * lw(*b) + 1,
+    }
+}
+
+/// `IMax(a, IMax(x, y))  ->  Max(IMax(a, y), IMax(x, y))` strictly decreases.
+pub proof fn lw_decreases_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        lw(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        )) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))),
+{
+    let n1 = LevelSpec::IMax(Box::new(a), Box::new(y));
+    let n2 = LevelSpec::IMax(Box::new(x), Box::new(y));
+    assert(lw(n1) == lw(a) + 2 * lw(y) + 1);
+    assert(lw(n2) == lw(x) + 2 * lw(y) + 1);
+    assert(lw(LevelSpec::Max(Box::new(n1), Box::new(n2))) == 1 + max_nat(lw(n1), lw(n2)));
+    assert(lw(LevelSpec::IMax(Box::new(a), Box::new(n2))) == lw(a) + 2 * lw(n2) + 1);
+    // max(A, B) <= A + B when both are nats, which is all the slack needed
+    assert(max_nat(lw(n1), lw(n2)) <= lw(a) + lw(x) + 2 * lw(y) + 1);
+}
+
+/// `IMax(a, Max(x, y))  ->  Max(IMax(a, x), IMax(a, y))` strictly decreases.
+/// This is the arm that duplicates `a`, and the one every simpler measure
+/// fails on.
+pub proof fn lw_decreases_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        lw(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        )) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y))))),
+{
+    let m1 = LevelSpec::IMax(Box::new(a), Box::new(x));
+    let m2 = LevelSpec::IMax(Box::new(a), Box::new(y));
+    assert(lw(m1) == lw(a) + 2 * lw(x) + 1);
+    assert(lw(m2) == lw(a) + 2 * lw(y) + 1);
+    assert(lw(LevelSpec::Max(Box::new(m1), Box::new(m2))) == 1 + max_nat(lw(m1), lw(m2)));
+    let mx = LevelSpec::Max(Box::new(x), Box::new(y));
+    assert(lw(mx) == 1 + max_nat(lw(x), lw(y)));
+    assert(lw(LevelSpec::IMax(Box::new(a), Box::new(mx))) == lw(a) + 2 * lw(mx) + 1);
+    // both branches carry the same `lw(a)`, so the Max constant is the margin
+    assert(max_nat(lw(m1), lw(m2)) == lw(a) + 2 * max_nat(lw(x), lw(y)) + 1);
+}
+
+/// The descending arms: `(Max(a, b), _)` recurses on `a` and on `b`, and
+/// `(Param|Zero, Max(x, y))` recurses on `x` and on `y`.
+pub proof fn lw_max_gt_parts(a: LevelSpec, b: LevelSpec)
+    ensures
+        lw(a) < lw(LevelSpec::Max(Box::new(a), Box::new(b))),
+        lw(b) < lw(LevelSpec::Max(Box::new(a), Box::new(b))),
+{
+}
+
+/// Stripping a `Succ` leaves the weight ALONE -- `lw(Succ a) == lw(a)`. That
+/// is deliberate: those arms are the ones that move `diff`, and they shrink
+/// the term, so they are paid for by the third component below rather than
+/// by `lw`.
+pub proof fn lw_succ_eq(a: LevelSpec)
+    ensures lw(LevelSpec::Succ(Box::new(a))) == lw(a),
+{
+}
+
 pub open spec fn imax_normal(l: LevelSpec) -> bool
     decreases l
 {
