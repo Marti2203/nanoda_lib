@@ -83,9 +83,22 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
 ///     there, since `lw(Succ p) == lw(p) == 0`)
 ///   - `Succ` strip, which is where `diff` moves -> third
 ///
-/// The second and third components are not built yet: the second needs
-/// `subst_simp` shown not to increase `lw` and to drop a `Param`-second-arg
-/// `IMax`, which is a fact about `simplify` rather than about the weight.
+/// The first half of the second component is DONE: `simplify` now proves
+/// `lw(result) <= lw(ptr)` (and `combining` the bound that induction needs),
+/// both on the kernel's own code.
+///
+/// The other half is blocked, and worth recording because the blocker is not
+/// where it looks. `leq_imax_by_cases` substitutes through `subst_simp` =
+/// `subst_level` then `simplify`, so the second component needs
+/// `subst_level`'s semantics -- that substituting a `Param` by `0`/`succ p`
+/// leaves `lw` alone and drops that param from second position. But
+/// `subst_level` cannot be migrated into `verus!` at all: its `Param` arm
+/// walks `.iter().copied().zip(..)`, and Verus has no spec for
+/// `Iterator::copied`. So this arc and the upstream `copied` gap are the same
+/// blocker, not two.
+///
+/// Giving `subst_level` a trusted `assume_specification` would unblock it at
+/// the cost of an assumption on the very function the measure rests on.
 pub open spec fn lw(l: LevelSpec) -> nat
     decreases l
 {

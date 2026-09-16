@@ -262,7 +262,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, max_nat, LevelSpec};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec};
 
 verus! {
 
@@ -301,6 +301,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // preserves the simplified form: every arm returns an input, a
             // `Succ` over a combined pair, or a `Max` -- none builds an `IMax`
             imax_normal(to_model(l)) && imax_normal(to_model(r)) ==> imax_normal(to_model(result)),
+            // and costs no more than the `Max` it stands in for -- the bound
+            // `simplify` needs to stay weight-non-increasing
+            lw(to_model(result)) <= 1 + max_nat(lw(to_model(l)), lw(to_model(r))),
     {
         // the `Succ` arm shadows `l` and `r`, so the proof needs names for the
         // originals; these are ghost and erased, the body below is unchanged
@@ -345,7 +348,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `is_one` would have to promise.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures imax_normal(to_model(result)),
+        ensures
+            imax_normal(to_model(result)),
+            // `simplify` never increases the termination weight. This is the
+            // fact `leq_imax_by_cases` needs: it substitutes a `Param` and
+            // re-simplifies, and the measure argument requires that step not
+            // to grow `lw`.
+            lw(to_model(result)) <= lw(to_model(ptr)),
     {
         match self.read_level(ptr) {
             Zero | Param(..) => ptr,
