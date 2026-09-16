@@ -151,6 +151,77 @@ pub proof fn lw_decreases_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
     assert(max_nat(lw(m1), lw(m2)) == lw(a) + 2 * max_nat(lw(x), lw(y)) + 1);
 }
 
+/// Second component of `leq_core`'s measure: how many `IMax` nodes carry a
+/// `Param` in second position. Those are the ones `leq_imax_by_cases`
+/// eliminates -- it substitutes the param by `0`/`succ p`, and `simplify`
+/// then collapses the `IMax` away (its `IMax` arm returns `r_simp` for a
+/// `Zero` second argument, and folds through `combining` for a `Succ` one).
+pub open spec fn params_in_imax(l: LevelSpec) -> nat
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => 0,
+        LevelSpec::Param(_) => 0,
+        LevelSpec::Succ(a) => params_in_imax(*a),
+        LevelSpec::Max(a, b) => params_in_imax(*a) + params_in_imax(*b),
+        LevelSpec::IMax(a, b) => params_in_imax(*a) + params_in_imax(*b)
+            + (if matches!(*b, LevelSpec::Param(_)) { 1nat } else { 0nat }),
+    }
+}
+
+/// NOT monotone under `simplify`, which is a trap worth recording. Take
+/// `IMax(l, Max(Zero, Param p))`: the second argument is a `Max`, so it
+/// contributes 0. `simplify` turns `Max(Zero, Param p)` into `Param p` (via
+/// `combining`'s `(Zero, _)` arm), and the node then contributes 1 -- the
+/// count went UP.
+///
+/// So the lexicographic argument cannot lean on this component alone across
+/// a `simplify`. In that example `lw` strictly decreases (`lw(Max(Zero, p))`
+/// is 1 and `lw(Param p)` is 0, so the `IMax` drops from `lw(l)+3` to at
+/// most `lw(l)+1`), which is what saves it -- but that has to be PROVEN as a
+/// relation between the two components, not assumed.
+pub proof fn params_in_imax_not_monotone_under_simplify()
+    ensures
+        params_in_imax(LevelSpec::IMax(
+            Box::new(LevelSpec::Zero),
+            Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
+        )) == 0,
+        params_in_imax(LevelSpec::IMax(
+            Box::new(LevelSpec::Zero),
+            Box::new(LevelSpec::Param(0)),
+        )) == 1,
+        // and the weight moves the other way, which is the saving grace
+        lw(LevelSpec::IMax(
+            Box::new(LevelSpec::Zero),
+            Box::new(LevelSpec::Param(0)),
+        )) < lw(LevelSpec::IMax(
+            Box::new(LevelSpec::Zero),
+            Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
+        )),
+{
+    assert(params_in_imax(LevelSpec::Zero) == 0);
+    assert(params_in_imax(LevelSpec::Param(0)) == 0);
+    assert(params_in_imax(LevelSpec::Max(
+        Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) == 0) by {
+        reveal_with_fuel(params_in_imax, 3);
+    }
+    assert(lw(LevelSpec::Max(
+        Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) == 1) by {
+        reveal_with_fuel(lw, 3);
+    }
+}
+
+/// The `Succ`-stripping arms -- the ones that MOVE `diff`, and so the ones
+/// the overflow obligation is really about -- leave both of the first two
+/// components alone, and are paid for by `size` instead.
+///
+/// `lw` is handled by `lw_succ_eq`; this is its counterpart for the second
+/// component, and together they are what lets the third do the work.
+pub proof fn params_in_imax_succ_eq(a: LevelSpec)
+    ensures params_in_imax(LevelSpec::Succ(Box::new(a))) == params_in_imax(a),
+{
+}
+
 /// The descending arms: `(Max(a, b), _)` recurses on `a` and on `b`, and
 /// `(Param|Zero, Max(x, y))` recurses on `x` and on `y`.
 pub proof fn lw_max_gt_parts(a: LevelSpec, b: LevelSpec)
