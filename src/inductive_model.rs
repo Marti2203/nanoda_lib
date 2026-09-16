@@ -44,9 +44,8 @@ use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_l
 use crate::env::{Env, RecRule, Declar};
 use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some, get_constructor_inductive_name};
 #[cfg(verus_only)]
-use crate::env_model::old_declar_names;
 #[cfg(verus_only)]
-use crate::env_model::{ind_all_ind_names, ind_all_ctor_names, ind_num_params, env_global_cap};
+use crate::env_model::env_global_cap;
 #[cfg(verus_only)]
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::tc_model::verified_def_eq;
@@ -86,7 +85,7 @@ use crate::expr_arena_bridge::{verified_subst_expr_levels};
 #[cfg(verus_only)]
 use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty, mutual_block_cap};
+use crate::env_model::{to_model_of_declar_ty, env_global_wf_ty};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
 #[cfg(verus_only)]
@@ -132,19 +131,6 @@ verus! {
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExDeclar<'a>(Declar<'a>);
-
-pub assume_specification<'t> [mk_recursor_declar] (
-    name: NamePtr<'t>,
-    uparams: LevelsPtr<'t>,
-    ty: ExprPtr<'t>,
-    all_inductives: Vec<NamePtr<'t>>,
-    num_params: u16,
-    num_indices: u16,
-    num_motives: u16,
-    num_minors: u16,
-    rec_rules: Vec<RecRule<'t>>,
-    is_k: bool,
-) -> (result: Declar<'t>);
 
 
 

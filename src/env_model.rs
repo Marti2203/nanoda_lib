@@ -622,65 +622,7 @@ pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>
         None => true,
     };
 
-pub assume_specification<'x, 'a> [get_constructor_inductive_name] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
-
-pub assume_specification<'x, 'a> [get_inductive_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<NamePtr<'a>>);
-
-/// `ind_all_ind_names`/`ind_all_ctor_names`: deterministic, `name_id`-keyed
-/// re-expressions of `get_inductive_all_names`'s two returned `Vec`s,
-/// same "fresh uninterpreted function of (env, n)" shape as `env_global_
-/// cap`/`local_type_cap` -- no domain/"is-inductive" fact is needed beyond
-/// what each individual call's own `Some`/`None` already gives, since
-/// nothing downstream relates two separate calls to a shared ground truth
-/// (same "plain per-call fact" convention as `get_recursor_data` above).
-pub uninterp spec fn ind_all_ind_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
-pub uninterp spec fn ind_all_ctor_names<'x, 'a>(env: Env<'x, 'a>, n: NamePtr<'a>) -> Seq<u64>;
-
-
-
-pub assume_specification<'x, 'a> [get_inductive_all_names] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
-    ensures match result {
-        Some((ind_names, ctor_names)) =>
-            ind_all_ind_names(*env, *n) =~= Seq::new(ind_names@.len(), |i: int| name_id(ind_names@[i]))
-            && ind_all_ctor_names(*env, *n) =~= Seq::new(ctor_names@.len(), |i: int| name_id(ctor_names@[i]))
-            && ind_names@.len() <= mutual_block_cap(*env),
-        None => true,
-    };
-
-/// `ind_num_params`: same "fresh uninterpreted function of (env, n)",
-/// `name_id`-keyed shape as `ind_all_ind_names`/`ind_all_ctor_names` --
-/// kept as a keyed map rather than a plain per-call fact since a later
-/// piece of the nested-inductive termination argument may need to relate
-/// TWO separate `get_inductive_num_params` calls for the same name back
-/// to the same ground truth (e.g. the two `get_inductive` calls in
-/// `is_nested_ind_app` and `replace_if_nested` for what's conceptually
-/// the same real declaration).
-pub uninterp spec fn ind_num_params<'x, 'a>(env: Env<'x, 'a>, n: u64) -> u16;
-
-pub assume_specification<'x, 'a> [get_inductive_num_params] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
-    ensures match result {
-        Some(num_params) => ind_num_params(*env, name_id(*n)) == num_params,
-        None => true,
-    };
-
 pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<bool>);
-
-/// Same whole-environment depth bound `env_global_wf_ty` already asserts
-/// for `to_model_of_declar_ty`'s (merged old-then-temp) domain, restated
-/// for the OLD-specific and TEMP-specific lookups directly: one real
-/// environment has one real deepest declaration regardless of which view
-/// finds it, so this is the same fact, not a new independent one.
-pub assume_specification<'x, 'a> [get_old_declar_inductive_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
-    ensures match result {
-        Some((_, ty, ..)) => nlbv(expr_to_model(ty)) == 0 && depth(expr_to_model(ty)) <= env_global_cap(*env),
-        None => true,
-    };
-
-pub assume_specification<'x, 'a> [get_temp_declar_inductive_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)>)
-    ensures match result {
-        Some((_, ty, ..)) => nlbv(expr_to_model(ty)) == 0 && depth(expr_to_model(ty)) <= env_global_cap(*env),
-        None => true,
-    };
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
 /// returns a plain `bool`, no struct field extraction required), same
@@ -704,33 +646,6 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, '
 /// arc's multi-round `whnf`/`reduce_proj` chaining and `lazy_delta_
 /// step`'s outer loop have both independently been blocked on needing.
 pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
-
-/// A SINGLE, uniform bound on how many names can ever appear in one
-/// mutual (`all_ind_names`) block, for any real declaration in this
-/// environment -- same "name the max, don't compute it" convention as
-/// `env_global_cap` itself. Needed by `verified_replace_if_nested`'s own
-/// fan-out loop (`inductive_model.rs`) purely for `u64` overflow
-/// bookkeeping: each sibling in the loop makes its own `mk_unique_name`
-/// call, and the starting index for call `k+1` must be safely derivable
-/// from call `k`'s own winning index without risking a `u64` overflow --
-/// this bounds how many SUCH calls one fan-out can make, letting the
-/// caller supply enough headroom up front. Not a new kind of trust: any
-/// real, finite Lean environment obviously has SOME largest mutual
-/// block, exactly as it obviously has SOME deepest declaration
-/// (`env_global_cap`) and SOME largest declaration count
-/// (`old_declar_names_finite`).
-pub uninterp spec fn mutual_block_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
-
-
-
-/// The SET of name-ids present in the OLD (persistent, pre-temp-
-/// extension) declaration map -- `mk_unique_name`'s (`inductive.rs:588-
-/// 597`) own fresh-name search checks membership against exactly this.
-pub uninterp spec fn old_declar_names<'x, 'a>(env: Env<'x, 'a>) -> Set<u64>;
-
-
-pub assume_specification<'x, 'a> [old_declar_is_some] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool)
-    ensures result == old_declar_names(*env).contains(name_id(*n));
 
 
 /// `env_global_wf`'s counterpart for `to_model_of_declar_ty` (declaration

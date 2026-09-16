@@ -112,8 +112,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, '
 /// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't;
 
-pub assume_specification<'t, 'p> [alloc_string_rec] (ctx: &mut TcCtx<'t, 'p>) -> (result: StringPtr<'t>) where 'p: 't;
-
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx));
 

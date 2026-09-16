@@ -576,12 +576,6 @@ pub assume_specification<'t> [expr_as_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) ->
         None => !is_local_shape(ptr),
     };
 
-pub assume_specification<'t> [expr_as_local_named] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>)>)
-    ensures match result {
-        Some((_, _, t)) => is_local_shape(ptr) && local_binder_type_of(ptr) == t,
-        None => !is_local_shape(ptr),
-    };
-
 /// A freshly-constructed `Const` node is `is_const_shape` with exactly the
 /// given name/levels -- the construction-side mirror of `expr_as_const`'s
 /// read-side contract above (same three facts), letting `is_const_shape_
@@ -655,8 +649,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_bool_true] (ctx: &mut TcCtx
         Some(e) => is_const_shape(e) && const_id(e) == bool_true_id(),
         None => true,
     };
-
-pub assume_specification<'t, 'p> [get_eager_mode] (ctx: &TcCtx<'t, 'p>) -> (result: bool) where 'p: 't;
 
 /// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
 /// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`
@@ -1210,12 +1202,6 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
 {
 }
 
-pub assume_specification<'t> [expr_as_string_lit_ptr] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<StringPtr<'t>>)
-    ensures match result {
-        Some(p) => is_string_lit_shape(ptr) && string_lit_ptr_of(ptr) == p,
-        None => !is_string_lit_shape(ptr),
-    };
-
 /// A string's character count -- an uninterpreted quantity (this arc
 /// never models string CONTENT, only, here, its LENGTH) needed to state
 /// `str_lit_to_constructor`'s real depth growth honestly: the real
@@ -1252,13 +1238,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx:
         },
         None => true,
     };
-
-pub assume_specification<'t, 'p> [get_string_of_list_name] (ctx: &TcCtx<'t, 'p>) -> (result: Option<NamePtr<'t>>) where 'p: 't;
-
-pub assume_specification<'t, 'p> [get_string_extension_flag] (ctx: &TcCtx<'t, 'p>) -> (result: bool) where 'p: 't;
-
-pub assume_specification<'t, 'p> [read_string_len] (ctx: &TcCtx<'t, 'p>, s: StringPtr<'t>) -> (result: usize) where 'p: 't
-    ensures result as nat == string_len(s);
 
 pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
     ensures match result {
