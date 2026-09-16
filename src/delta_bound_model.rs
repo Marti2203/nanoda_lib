@@ -1658,6 +1658,29 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             //
             // Incomplete, deliberately: types that need real conversion to
             // agree make this decline, and declining is sound.
+            //
+            // WHY WE DO NOT FOLLOW THE KERNEL HERE (2026-09-16). `infer_app`
+            // runs this check only under `Check`, and its proof irrelevance
+            // infers with `InferOnly` -- "expressions we know to be
+            // well-typed". We have no such ambient invariant, and we cannot
+            // simply adopt it:
+            //
+            //   - Dropping the check means dropping `deq_any(aty2, aty)` from
+            //     `types_to`'s App rule, and then `types_to` is no longer a
+            //     typing relation. Proof irrelevance's soundness rests on it.
+            //   - The sound form is a bridge lemma -- if `e` is well-typed
+            //     then the InferOnly derivation IS a typing derivation. Its
+            //     App case needs the domains of two types of `f` to agree,
+            //     i.e. UNIQUENESS OF TYPING up to defeq. That is a
+            //     metatheorem about the system, not a local fix.
+            //   - Assuming well-typedness globally instead would weaken every
+            //     certificate we issue to "conditional on the kernel only
+            //     ever calling def_eq on well-typed terms".
+            //
+            // So this check is a deliberate STRENGTHENING over what Lean
+            // needs, not a gap. It is also why 41% of the remaining declines
+            // are correct: the kernel hands the certifier speculative pairs
+            // that really are ill-typed (measured 2026-09-14).
             if ctx.num_loose_bvars(a_ty) != 0 || ctx.num_loose_bvars(aty) != 0 {
                 return None;
             }
