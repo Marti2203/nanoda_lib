@@ -34,6 +34,8 @@ use crate::name_arena_bridge::{ptr_index, ptr_is_tc, child_ok};
 #[allow(unused_imports)]
 use crate::util::TcCtx;
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
+#[allow(unused_imports)]
+use crate::util::IterSpec;
 use crate::expr::{Expr, BinderStyle, FVarId};
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
@@ -1978,45 +1980,29 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
 // to the model.
 // -----------------------------------------------------------------------
 
-/// Real-arena counterpart to `spine_app`: `TcCtx::foldl_apps`'s actual
-/// iterative loop (`for arg in args { fun = mk_app(fun, arg) }`),
-/// reformulated recursively (processing `args[0]` first, matching the
-/// real loop's order) since a real exec loop can't easily carry a Verus
-/// proof obligation across iterations the way recursion can. Structural
-/// `decreases` on `args.len()` -- no fuel needed, `args` is a real slice,
-/// not an opaque `ExprPtr` to descend into.
+/// A slice-shaped call into the kernel's own `TcCtx::foldl_apps`, which is
+/// now verified in place (`expr.rs`). This used to be a mirror: the loop
+/// reformulated as a recursion, because a real exec loop could not carry the
+/// proof obligation across iterations. It can now -- the obstacle was a Verus
+/// bug in `for` over a generic iterator, since fixed -- so the recursion and
+/// its `spine_app_compose` bridge are gone and this is only an adapter.
 ///
-/// `spine_app` itself recurses the OPPOSITE way (peeling `args[len-1]`
-/// off the end, see its own doc comment) -- `spine_app_compose` (already
-/// proven, `beta_model.rs`) is exactly the bridge reconciling the two
-/// recursion directions, the same role it played for
-/// `pstep_star_spine_reduce`.
+/// What it adapts is the argument shape: callers hold a `&[ExprPtr]`, the
+/// kernel takes an `Iterator`. The two asserts are the two extensionality
+/// steps that bridge them -- `iter().copied()`'s `remaining()` to the slice
+/// view, and `ptr_models` to the `Seq::new` spelling the callers use.
 pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>, args: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
     ensures to_model(result) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-    decreases args.len()
 {
-    if args.len() == 0 {
-        assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= Seq::<ExprSpec>::empty());
-        fun
-    } else {
-        let a0 = args[0];
-        let rest = &args[1..args.len()];
-        assert(rest@ =~= args@.subrange(1, args@.len() as int));
-        assert(rest@.len() == args@.len() - 1);
-        let fun2 = ctx.mk_app(fun, a0);
-        let result = verified_foldl_apps(ctx, fun2, rest);
-        proof {
-            assert(Seq::new(rest@.len(), |i: int| to_model(rest@[i]))
-                =~= Seq::new(args@.len(), |i: int| to_model(args@[i])).subrange(1, args@.len() as int));
-            spine_app_compose(to_model(fun), to_model(a0), Seq::new(rest@.len(), |i: int| to_model(rest@[i])));
-            assert(spine_app(to_model(fun), seq![to_model(a0)] + Seq::new(rest@.len(), |i: int| to_model(rest@[i])))
-                == spine_app(ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(a0))), Seq::new(rest@.len(), |i: int| to_model(rest@[i]))));
-            assert(to_model(fun2) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(a0))));
-            assert(seq![to_model(a0)] + Seq::new(rest@.len(), |i: int| to_model(rest@[i]))
-                =~= Seq::new(args@.len(), |i: int| to_model(args@[i])));
-        }
-        result
+    let it = args.iter().copied();
+    proof {
+        assert(it.remaining() =~= args@);
     }
+    let r = ctx.foldl_apps(fun, it);
+    proof {
+        assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= ptr_models(args@));
+    }
+    r
 }
 
 
