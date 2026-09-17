@@ -347,20 +347,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
 
-    pub fn subst_expr_levels(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> ExprPtr<'t> {
-        if let Some(cached) = self.expr_cache.dsubst_cache.get(&(e, ks, vs)).copied() {
-            return cached
-        }
-        if self.expr_cache.subst_cache.capacity() > 1024 { 
-            self.expr_cache.subst_cache = crate::util::new_fx_hash_map(); 
-        } else { 
-            self.expr_cache.subst_cache.clear(); 
-        } 
-        assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());
-        let out = self.subst_aux(e, ks, vs);
-        self.expr_cache.dsubst_cache.insert((e, ks, vs), out);
-        out
-    }
 
     pub(crate) fn subst_declar_info_levels(
         &mut self,
@@ -887,6 +873,69 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None,
         }
     }
+    /// Verified in place. The outer level-substitution cache; `subst_aux`
+    /// beneath it uses its own scratch cache, which this function resets first.
+    ///
+    /// VERUS-REWRITE(assert_eq): the original body has
+    /// `assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());`.
+    /// Verus cannot compile `assert_eq!` at all (`core::panicking::AssertKind`
+    /// is unsupported), so it is spelled as the `if`/`panic!` it desugars to --
+    /// same panic on the same condition, and provably unreachable here given
+    /// the precondition. See `docs/VERUS_REWRITES.md`.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn subst_expr_levels(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::level_arena_bridge::to_model_of_levels(ks).len() == crate::level_arena_bridge::to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
+                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
+            crate::expr_arena_bridge::dsubst_cache_sound(*old(self)),
+            !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
+                crate::expr_arena_bridge::to_model(e),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
+                crate::level_arena_bridge::to_model_of_levels(vs)),
+            crate::expr_arena_bridge::dsubst_cache_sound(*final(self)),
+    {
+        proof {
+            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::ptr_triple_obeys_key_model::<
+                &'t crate::expr::Expr<'t>,
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>>();
+        }
+        if let Some(cached) = self.expr_cache.dsubst_cache.get(&(e, ks, vs)).copied() {
+            proof {
+                let k = (e, ks, vs);
+                assert(self.expr_cache.dsubst_cache@.contains_key(k));
+                assert(self.expr_cache.dsubst_cache@[k] == cached);
+            }
+            return cached
+        }
+        if self.expr_cache.subst_cache.capacity() > 1024 {
+            self.expr_cache.subst_cache = crate::util::new_fx_hash_map();
+        } else {
+            self.expr_cache.subst_cache.clear();
+        }
+        proof {
+            // Whichever branch ran, the scratch cache is empty, so
+            // `subst_cache_sound` holds vacuously -- which is what lets
+            // `subst_aux` be called at all.
+            assert(self.expr_cache.subst_cache@ =~= Map::empty());
+            assert(crate::expr_arena_bridge::subst_cache_sound(*self));
+        }
+        if self.read_levels(ks).len() != self.read_levels(vs).len() {
+            panic!("subst_expr_levels: ks and vs have different lengths");
+        }
+        let out = self.subst_aux(e, ks, vs);
+        let ghost before = self.expr_cache.dsubst_cache@;
+        self.expr_cache.dsubst_cache.insert((e, ks, vs), out);
+        proof {
+            assert(self.expr_cache.dsubst_cache@ =~= before.insert((e, ks, vs), out));
+        }
+        out
+    }
+
     /// Verified in place, body unchanged apart from proof annotations and
     /// binding each arm's result so its fact reaches `r`.
     ///

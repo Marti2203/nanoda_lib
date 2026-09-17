@@ -139,7 +139,12 @@ pub type BigUintPtr<'a> = Ptr<&'a BigUint>;
 
 pub(crate) fn new_fx_index_map<K, V>() -> FxIndexMap<K, V> { FxIndexMap::with_hasher(Default::default()) }
 
-pub(crate) fn new_fx_hash_map<K, V>() -> FxHashMap<K, V> { FxHashMap::with_hasher(Default::default()) }
+::vstd::prelude::verus! {
+/// Inside `verus!` so the memo caches' reset path is expressible; body unchanged.
+pub(crate) fn new_fx_hash_map<K, V>() -> (result: FxHashMap<K, V>)
+    ensures result@ == vstd::map::Map::<K, V>::empty()
+{ FxHashMap::with_hasher(Default::default()) }
+}
 
 pub(crate) fn new_fx_hash_set<K>() -> FxHashSet<K> { FxHashSet::with_hasher(Default::default()) }
 

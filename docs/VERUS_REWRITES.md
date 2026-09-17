@@ -64,6 +64,27 @@ and could be done at any time — it would be a sibling of the
 `alloc_levels_slice` axiom already present. Doing (b) would remove the argument
 above entirely, and is the cheaper of the two to undo.
 
+### 2. `TcCtx::subst_expr_levels` — `src/expr.rs`
+
+`assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());` becomes
+
+```ignore
+if self.read_levels(ks).len() != self.read_levels(vs).len() {
+    panic!("subst_expr_levels: ks and vs have different lengths");
+}
+```
+
+Verus cannot compile `assert_eq!` at all — `core::panicking::AssertKind` and
+`core::panicking::assert_failed` are both unsupported types/functions, so this
+is a hard stop rather than a proof difficulty.
+
+**Lowest risk of anything in this file.** It is the desugaring of the macro:
+same panic, same condition, same message channel. It is also *provably
+unreachable* given the function's precondition, so the check is dead code under
+the contract — which is why swapping it costs nothing semantically. Restore it
+when Verus supports the `assert_eq!` expansion.
+
 | # | Function | File | Construct | Reason |
 |---|---|---|---|---|
 | 1 | `subst_levels` | `src/level.rs` | closure capturing `&mut self`; unspecified `alloc` variant | see above |
+| 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |

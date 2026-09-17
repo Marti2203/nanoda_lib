@@ -501,6 +501,19 @@ pub open spec fn subst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
                     to_model_of_levels(k.2))
 }
 
+/// Same invariant for the OUTER level-substitution cache. `subst_expr_levels`
+/// keys this one and clears `subst_cache` beneath it, so the two are
+/// independent: the inner one is scratch for a single call, this one persists.
+pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
+    forall |k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)|
+        #[trigger] ctx.expr_cache.dsubst_cache@.contains_key(k) ==>
+            to_model(ctx.expr_cache.dsubst_cache@[k])
+                == subst_expr_levels(
+                    to_model(k.0),
+                    crate::level_model::level_names(to_model_of_levels(k.1)),
+                    to_model_of_levels(k.2))
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
