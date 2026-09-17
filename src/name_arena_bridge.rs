@@ -254,8 +254,11 @@ pub open spec fn child_ok<A>(c: crate::util::Ptr<A>, is_tc: bool, i: nat) -> boo
 pub open spec fn name_children_below2<'a>(n: Name<'a>, tc: bool, i: nat) -> bool {
     match n {
         Name::Anon => true,
-        Name::Str(pfx, _, _) | Name::Num(pfx, _, _) =>
-            if ptr_is_tc(pfx) { tc && ptr_index(pfx) < i } else { true },
+        // Exactly `child_ok`: an earlier version said `true` for any
+        // export-file child, which wrongly permits an export-file node to
+        // reference a LATER export-file node -- and then the unfold lemma
+        // below is false, which is how it was caught.
+        Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => child_ok(pfx, tc, i),
     }
 }
 
@@ -294,6 +297,30 @@ pub open spec fn name_model_at2<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc:
                 } else { NameSpec::Anon },
         }
     }
+}
+
+/// Under two-tier acyclicity, the well-foundedness guards are never taken:
+/// the computed denotation agrees with the structural reading of the stored
+/// node, with each child interpreted at ITS OWN tier. This is what turns a
+/// reader's returned `Name` into a statement about the pointer's denotation.
+pub proof fn name_model_at2_unfold<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc: bool, i: nat)
+    requires
+        names_two_tier_wf(ef, tc),
+        i < (if is_tc { tc.len() } else { ef.len() }),
+    ensures
+        ({
+            let store = if is_tc { tc } else { ef };
+            match store[i as int] {
+                Name::Anon => name_model_at2(ef, tc, is_tc, i) == NameSpec::Anon,
+                Name::Str(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i)
+                    == NameSpec::Str(Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))), string_id(sfx)),
+                Name::Num(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i)
+                    == NameSpec::Num(Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))), sfx),
+            }
+        }),
+{
+    let store = if is_tc { tc } else { ef };
+    assert(name_children_below2(store[i as int], is_tc, i));
 }
 
 /// MONOTONICITY across tiers: appending to the LOCAL tier never changes what
