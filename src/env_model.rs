@@ -212,20 +212,8 @@ pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
     env.get_constructor(n).map(|cd| cd.num_fields)
 }
 
-#[allow(dead_code)]
-pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> bool {
-    matches!(h, ReducibilityHint::Opaque)
-}
 
-#[allow(dead_code)]
-pub(crate) fn reducibility_hint_is_abbrev(h: &ReducibilityHint) -> bool {
-    matches!(h, ReducibilityHint::Abbrev)
-}
 
-#[allow(dead_code)]
-pub(crate) fn reducibility_hint_as_regular(h: &ReducibilityHint) -> Option<u16> {
-    match h { ReducibilityHint::Regular(n) => Some(*n), _ => None }
-}
 
 verus! {
 
@@ -251,35 +239,52 @@ pub open spec fn is_lt(a: ReducibilityHintSpec, b: ReducibilityHintSpec) -> bool
 
 
 
+/// TRANSPARENT. Opaque, the three variants could only be reached through
+/// three `assume_specification`s and `to_model` had to be uninterpreted; the
+/// model is a three-arm relabelling of a three-variant enum, so there was
+/// never anything to assume.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExReducibilityHint(ReducibilityHint);
 
-pub uninterp spec fn to_model(h: ReducibilityHint) -> ReducibilityHintSpec;
+/// DEFINED, not uninterpreted.
+pub open spec fn to_model(h: ReducibilityHint) -> ReducibilityHintSpec {
+    match h {
+        ReducibilityHint::Opaque => ReducibilityHintSpec::Opaque,
+        ReducibilityHint::Regular(n) => ReducibilityHintSpec::Regular(n),
+        ReducibilityHint::Abbrev => ReducibilityHintSpec::Abbrev,
+    }
+}
 
-pub assume_specification [reducibility_hint_is_opaque] (h: &ReducibilityHint) -> (result: bool)
-    ensures result == (to_model(*h) == ReducibilityHintSpec::Opaque);
+#[allow(dead_code)]
+pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> (result: bool)
+    ensures result == (to_model(*h) == ReducibilityHintSpec::Opaque)
+{
+    matches!(h, ReducibilityHint::Opaque)
+}
 
-pub assume_specification [reducibility_hint_is_abbrev] (h: &ReducibilityHint) -> (result: bool)
-    ensures result == (to_model(*h) == ReducibilityHintSpec::Abbrev);
+#[allow(dead_code)]
+pub(crate) fn reducibility_hint_is_abbrev(h: &ReducibilityHint) -> (result: bool)
+    ensures result == (to_model(*h) == ReducibilityHintSpec::Abbrev)
+{
+    matches!(h, ReducibilityHint::Abbrev)
+}
 
-pub assume_specification [reducibility_hint_as_regular] (h: &ReducibilityHint) -> (result: Option<u16>)
+#[allow(dead_code)]
+pub(crate) fn reducibility_hint_as_regular(h: &ReducibilityHint) -> (result: Option<u16>)
     ensures match result {
         Some(n) => to_model(*h) == ReducibilityHintSpec::Regular(n),
         None => !matches!(to_model(*h), ReducibilityHintSpec::Regular(_)),
-    };
+    }
+{
+    match h { ReducibilityHint::Regular(n) => Some(*n), _ => None }
+}
 
-/// Trusted directly, unlike the recursive algorithms bridged elsewhere
-/// (`verified_combining`, `verified_inst`, ...): `is_lt`'s real
-/// implementation is a flat, non-recursive 5-arm match over a 3-variant
-/// value type, built from exactly the primitives already trusted above --
-/// so this is really "trust a composition of primitives already trusted,"
-/// not a separate leap. This is what makes the order-property proofs above
-/// (stated purely about `ReducibilityHintSpec`) actually say something
-/// about the real `ReducibilityHint::is_lt`.
-pub assume_specification [ReducibilityHint::is_lt] (a: &ReducibilityHint, b: &ReducibilityHint) -> (result: bool)
-    ensures result == is_lt(to_model(*a), to_model(*b));
+// `ReducibilityHint::is_lt` is verified in place now (`env.rs`); it used to
+// be assumed here, with `verified_is_lt` below as a from-scratch check that
+// the assumption was as trivial as claimed. The check is kept -- it is now an
+// independent reimplementation agreeing with a PROVEN function rather than
+// with an axiom.
 
 /// A from-scratch reimplementation using only the axiomatized accessors,
 /// proven equal to `is_lt` independently of the trust step above --

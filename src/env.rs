@@ -15,11 +15,19 @@ pub enum ReducibilityHint {
     Abbrev,
 }
 
+::vstd::prelude::verus! {
 impl ReducibilityHint {
     /// Check whether `self` is "less than" `other` in terms of reducibility; during
     /// delta reduction in equality checking, we want to unfold the greater of the two
     /// definitions to try and bring the two closer.
-    pub(crate) fn is_lt(&self, other: &Self) -> bool {
+    ///
+    /// Verified AS WRITTEN. `ReducibilityHint` is transparent to Verus now, so
+    /// the real five-arm match is checked against the model's own five-arm
+    /// `is_lt` rather than related to it by assumption.
+    pub(crate) fn is_lt(&self, other: &Self) -> (result: bool)
+        ensures result == crate::env_model::is_lt(
+            crate::env_model::to_model(*self), crate::env_model::to_model(*other))
+    {
         use ReducibilityHint::*;
         match (self, other) {
             (_, Opaque) => false,
@@ -29,6 +37,7 @@ impl ReducibilityHint {
             (Regular(h1), Regular(h2)) => h1 < h2,
         }
     }
+}
 }
 
 /// Convenience declaration for the elements common across all kinds
