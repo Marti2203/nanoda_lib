@@ -372,7 +372,11 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
 /// THE storage primitive for names -- the analogue of `alloc_expr`'s and
 /// `alloc_level`'s, justified the same way by `name_model_at_append` above.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_name] (ctx: &mut TcCtx<'t, 'p>, n: Name<'t>) -> (result: NamePtr<'t>) where 'p: 't
-    ensures to_model_name(result) == to_model_of_name(n);
+    ensures
+        to_model_name(result) == to_model_of_name(n),
+        // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
+        // dag, never the memo caches.
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);

@@ -486,6 +486,21 @@ pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
     a == b
 }
 
+/// The memo caches are sound: every entry maps its key to a pointer denoting
+/// exactly what the key's function computes. `subst_aux`'s `return cached`
+/// branch is correct precisely when this holds, and its `insert` branch is what
+/// preserves it -- so this is a genuine invariant to be CHECKED, not a fact to
+/// be assumed about the cache.
+pub open spec fn subst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
+    forall |k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)|
+        #[trigger] ctx.expr_cache.subst_cache@.contains_key(k) ==>
+            to_model(ctx.expr_cache.subst_cache@[k])
+                == subst_expr_levels(
+                    to_model(k.0),
+                    crate::level_model::level_names(to_model_of_levels(k.1)),
+                    to_model_of_levels(k.2))
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
@@ -761,7 +776,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
     ensures
         is_const_shape(result),
         const_name_of(result) == name,
-        const_levels_of(result) == levels;
+        const_levels_of(result) == levels,
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 /// Construction-side mirror for `Local`, same pattern as `mk_const` above:
 /// `mk_dbj_level` (`util.rs:612-623`, "open a binder with a fresh free
@@ -1526,7 +1542,12 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::has_fvars] (ctx: &TcCtx<'t, '
 ///
 /// The `mk_*` contracts are DERIVED from this rather than assumed separately.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<'t, 'p>, e: Expr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == to_model_of_expr(e);
+    ensures
+        to_model(result) == to_model_of_expr(e),
+        // FRAME. Allocation touches the dag, never the memo caches. Without
+        // this, every constructor call inside a cache-wrapped function havocs
+        // the cache and its soundness invariant cannot survive the body.
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 // HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
 //

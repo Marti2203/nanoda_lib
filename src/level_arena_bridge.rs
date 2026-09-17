@@ -178,13 +178,16 @@ pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mut TcCtx<'t, 'p>, ls: &[LevelPtr<'t>]) -> (result: LevelsPtr<'t>) where 'p: 't
     ensures
         to_model_of_levels(result).len() == ls@.len(),
-        forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]);
+        forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 /// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
 /// justified the same way by `level_model_at_append` above. The constructor
 /// contracts below are derived from it rather than assumed.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx<'t, 'p>, l: Level<'t>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == to_model_of_level(l);
+    ensures
+        to_model(result) == to_model_of_level(l),
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;

@@ -40,6 +40,47 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+#[cfg(verus_only)]
+use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
+
+// ---------------------------------------------------------------------
+// The two facts vstd needs before a `FxHashMap` has a usable `Map` view.
+// vstd's `HashMap::get`/`insert` specifications are gated on
+// `obeys_key_model::<Key>()` and `builds_valid_hashers::<S>()`, and it ships
+// axioms only for primitive keys and for `RandomState`. These are what let the
+// kernel's memo caches be reasoned about at all.
+//
+// Both are genuinely small. Contradiction detectors for them are recorded
+// below.
+// ---------------------------------------------------------------------
+
+/// `FxHasher` is a deterministic, state-free hasher and `BuildHasherDefault`
+/// builds it from `Default`, so every builder produces the same hasher -- which
+/// is what `builds_valid_hashers` asserts. Unlike `RandomState` (which vstd can
+/// prove this for) there is no seed to vary.
+#[verifier::external_body]
+pub proof fn fx_builds_valid_hashers()
+    ensures builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>()
+{
+}
+
+/// `Ptr` obeys the hash-table key model: its `Hash` is derived over a single
+/// `u32` so it is deterministic, its derived `==` is exactly spec equality
+/// (`Ptr::eq`'s specification, `ExPtr` being transparent), and `Clone` is
+/// `Copy`. Stated for the tuple key shapes the kernel's caches actually use.
+#[verifier::external_body]
+pub proof fn ptr_triple_obeys_key_model<A, B, C>()
+    ensures obeys_key_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>()
+{
+}
+
+/// Same, for the `(pointer, offset)` keys `inst_cache`/`abstr_cache` use.
+#[verifier::external_body]
+pub proof fn ptr_u16_obeys_key_model<A>()
+    ensures obeys_key_model::<(Ptr<A>, u16)>()
+{
+}
+
 
 // TcCtx's three composite field types, registered so `TcCtx` itself can be a
 // TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay

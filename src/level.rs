@@ -377,13 +377,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
             forall |j: int| 0 <= j < to_model_of_levels(ks).len()
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
-        ensures to_model_of_levels(result) =~= subst_levels_spec(
-            to_model_of_levels(uparams),
-            level_names(to_model_of_levels(ks)),
-            to_model_of_levels(vs)),
+        ensures
+            to_model_of_levels(result) =~= subst_levels_spec(
+                to_model_of_levels(uparams),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs)),
+            final(self).expr_cache == old(self).expr_cache,
     {
         let ghost names = level_names(to_model_of_levels(ks));
         let ghost vals = to_model_of_levels(vs);
+        let ghost cache0 = self.expr_cache;
         let ls = self.read_levels(uparams).clone();
         let mut out: Vec<LevelPtr<'t>> = Vec::new();
         for l in it: ls.iter().copied()
@@ -397,6 +400,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     ==> #[trigger] to_model_of_levels(ks)[j] is Param,
                 names == level_names(to_model_of_levels(ks)),
                 vals == to_model_of_levels(vs),
+                self.expr_cache == cache0,
                 out@.len() == it.index(),
                 forall |j: int| 0 <= j < out@.len()
                     ==> #[trigger] to_model(out@[j])
@@ -426,10 +430,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
             forall |j: int| 0 <= j < to_model_of_levels(ks).len()
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
-        ensures to_model(result) == subst_level_spec(
-            to_model(level),
-            level_names(to_model_of_levels(ks)),
-            to_model_of_levels(vs)),
+        ensures
+            to_model(result) == subst_level_spec(
+                to_model(level),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs)),
+            final(self).expr_cache == old(self).expr_cache,
     {
         match self.read_level(level) {
             Zero => self.zero(),
