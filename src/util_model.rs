@@ -40,6 +40,7 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+
 // TcCtx's three composite field types, registered so `TcCtx` itself can be a
 // TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay
 // opaque -- nothing needs their internals yet; registering them is only what
@@ -54,9 +55,18 @@ pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
 #[verifier::external_body]
 pub struct ExLeanDag<'t>(crate::util::LeanDag<'t>);
 
+/// `FxHashMap`'s hasher factory, registered so `ExprCache`'s fields have a
+/// type Verus knows. Opaque -- only `builds_valid_hashers` is ever needed of it.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
+#[verifier::reject_recursive_types(H)]
+pub struct ExBuildHasherDefault<H>(core::hash::BuildHasherDefault<H>);
+
+/// TRANSPARENT: the five memo caches are what the cache-soundness invariants
+/// are stated over.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
 pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
 
 /// `Ptr`'s derived `PartialEq` compares its one real field (`raw: u32`; the

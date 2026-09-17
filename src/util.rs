@@ -226,16 +226,16 @@ pub struct ExprCache<'t> {
     /// Caches (e, offset) |-> output for instantiation. This cache is reset
     /// before every new call to `inst`, so there's no need to cache the sequence
     /// of substitutions.
-    pub(crate) inst_cache: FxHashMap<(ExprPtr<'t>, u16), ExprPtr<'t>>,
+    pub inst_cache: FxHashMap<(ExprPtr<'t>, u16), ExprPtr<'t>>,
     /// Caches (e, ks, vs) |-> output for level substitution.
-    pub(crate) subst_cache: FxHashMap<(ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>), ExprPtr<'t>>,
-    pub(crate) dsubst_cache: FxHashMap<(ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>), ExprPtr<'t>>,
+    pub subst_cache: FxHashMap<(ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>), ExprPtr<'t>>,
+    pub dsubst_cache: FxHashMap<(ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>), ExprPtr<'t>>,
     /// Caches (e, offset) |-> output for abstraction (re-binding free variables).
     /// This cache is reset before every new call to `inst`, so there's no need to
     /// cache the sequence of free variables.
-    pub(crate) abstr_cache: FxHashMap<(ExprPtr<'t>, u16), ExprPtr<'t>>,
+    pub abstr_cache: FxHashMap<(ExprPtr<'t>, u16), ExprPtr<'t>>,
     /// A cache for (expr, starting deBruijn level, current deBruijn level)
-    pub(crate) abstr_cache_levels: FxHashMap<(ExprPtr<'t>, u16, u16), ExprPtr<'t>>,
+    pub abstr_cache_levels: FxHashMap<(ExprPtr<'t>, u16, u16), ExprPtr<'t>>,
 }
 
 impl<'t> ExprCache<'t> {
