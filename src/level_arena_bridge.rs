@@ -41,21 +41,7 @@ use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distr
 #[cfg(verus_only)]
 use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param};
 
-// Verus doesn't automatically connect an external type's real `==` (its
-// actual `PartialEq::eq`) to spec-level equality on the opaque ghost value —
-// tested directly: `assert(n == p)` failed even immediately inside an
-// `if n == p { ... }` branch. This wrapper plus its `assume_specification`
-// below is what supplies that connection, the same way the `level_as_*`
-// accessors supply pattern-matching.
-#[allow(dead_code)]
-pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> bool {
-    a == b
-}
 
-#[allow(dead_code)]
-pub(crate) fn level_ptr_eq<'t>(a: LevelPtr<'t>, b: LevelPtr<'t>) -> bool {
-    a == b
-}
 
 /// Plain owned-`Vec` counterpart of `TcCtx::read_levels`, purely so Verus
 /// has something to attach a contract to -- `Arc<[LevelPtr]>` (what
@@ -122,11 +108,21 @@ pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
 {
 }
 
-pub assume_specification<'t> [name_ptr_eq] (a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
-    ensures result == (a == b);
+/// Were `assume_specification`s; `Ptr`'s own `PartialEq` is specified now
+/// (`util_model.rs`), so both bodies prove their contract.
+#[allow(dead_code)]
+pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
+    ensures result == (a == b)
+{
+    a == b
+}
 
-pub assume_specification<'t> [level_ptr_eq] (a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
-    ensures result == (a == b);
+#[allow(dead_code)]
+pub(crate) fn level_ptr_eq<'t>(a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
+    ensures result == (a == b)
+{
+    a == b
+}
 
 /// Hash-consing's contrapositive for `Param`-shaped levels specifically:
 /// two `Param` pointers denoting DIFFERENT names can never be the same

@@ -107,10 +107,6 @@ pub(crate) fn expr_as_string_lit_ptr<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Opt
     match e { Expr::StringLit { ptr, .. } => Some(*ptr), _ => None }
 }
 
-#[allow(dead_code)]
-pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
-    a == b
-}
 
 /// `BinderStyle` is registered `external_body` (`ExBinderStyle` below),
 /// so its OWN enum variants can't be constructed directly inside
@@ -518,8 +514,14 @@ pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
 {
 }
 
-pub assume_specification<'t> [expr_ptr_eq] (a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
-    ensures result == (a == b);
+/// Was an `assume_specification`; `Ptr`'s own `PartialEq` is specified now
+/// (`util_model.rs`), so the body proves the contract.
+#[allow(dead_code)]
+pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
+    ensures result == (a == b)
+{
+    a == b
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
