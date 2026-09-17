@@ -166,58 +166,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Instantiate `e` with the substitutions in `substs`
-    pub fn inst(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>]) -> ExprPtr<'t> {
-        if self.expr_cache.inst_cache.capacity() > 1024 { 
-            self.expr_cache.inst_cache = crate::util::new_fx_hash_map(); 
-        } else { 
-            self.expr_cache.inst_cache.clear(); 
-        }
-        self.inst_aux(e, substs, 0)
-    }
 
-    fn inst_aux(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16) -> ExprPtr<'t> {
-        if self.num_loose_bvars(e) <= offset {
-            e
-        } else if let Some(cached) = self.expr_cache.inst_cache.get(&(e, offset)) {
-            *cached
-        } else {
-            let calcd = match self.read_expr(e) {
-                // These expressions should be unreachable since they return `n_loose_bvars() == 0`
-                Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => panic!(),
-                Var { dbj_idx, .. } => {
-                    debug_assert!(dbj_idx >= offset);
-                    substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)
-                }
-                App { fun, arg, .. } => {
-                    let fun = self.inst_aux(fun, substs, offset);
-                    let arg = self.inst_aux(arg, substs, offset);
-                    self.mk_app(fun, arg)
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.inst_aux(binder_type, substs, offset);
-                    let body = self.inst_aux(body, substs, offset + 1);
-                    self.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.inst_aux(binder_type, substs, offset);
-                    let body = self.inst_aux(body, substs, offset + 1);
-                    self.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.inst_aux(binder_type, substs, offset);
-                    let val = self.inst_aux(val, substs, offset);
-                    let body = self.inst_aux(body, substs, offset + 1);
-                    self.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.inst_aux(structure, substs, offset);
-                    self.mk_proj(ty_name, idx, structure)
-                }
-            };
-            self.expr_cache.inst_cache.insert((e, offset), calcd);
-            calcd
-        }
-    }
 
     /// From `e[x_1..x_n/v_1..v_n]`, abstract and re-inst, creating `e[y_1..y_n/v_1..v_n]`.
     pub(crate) fn replace_params(
@@ -873,6 +822,191 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None,
         }
     }
+    /// Verified in place, body unchanged apart from proof annotations.
+    ///
+    /// Note what the contract does NOT require: any cache invariant. `inst`
+    /// RESETS the instantiation cache before descending, so it establishes
+    /// `inst_cache_sound` itself rather than demanding it from callers. That is
+    /// what keeps the invariant from propagating out into the shadow routes.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn inst(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
+        requires
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            substs@.len() < 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
+                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::ptr_models(substs@), 0),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+    {
+        if self.expr_cache.inst_cache.capacity() > 1024 {
+            self.expr_cache.inst_cache = crate::util::new_fx_hash_map();
+        } else {
+            self.expr_cache.inst_cache.clear();
+        }
+        proof {
+            // Either branch leaves it empty, so soundness holds vacuously --
+            // which is exactly the obligation `inst_aux` needs.
+            assert(self.expr_cache.inst_cache@ =~= vstd::map::Map::empty());
+            assert(crate::expr_arena_bridge::inst_cache_sound(*self, substs@));
+        }
+        self.inst_aux(e, substs, 0)
+    }
+
+    /// Verified in place. Body unchanged apart from proof annotations, binding
+    /// each arm's result, and the `Var` arm's index arithmetic (registered).
+    ///
+    /// Two preconditions the kernel only stated in comments:
+    ///   - `inst_cache_sound`, relative to `substs` -- the cache key omits the
+    ///     substitution list because `inst` resets the cache each call.
+    ///   - an `offset` ceiling, so `offset + 1` under a binder cannot overflow.
+    ///
+    /// The `panic!()` arm is discharged, not assumed: the kernel's comment says
+    /// those shapes "should be unreachable since they return
+    /// `n_loose_bvars() == 0`", and past the short-circuit `nlbv > offset >= 0`,
+    /// so a zero-`nlbv` shape is a contradiction.
+    ///
+    /// VERUS-REWRITE(iterator-nth): the `Var` arm's original body is
+    /// `substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`.
+    /// Verus has no spec for `nth`. See `docs/VERUS_REWRITES.md`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn inst_aux(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
+        requires
+            crate::expr_arena_bridge::inst_cache_sound(*old(self), substs@),
+            offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            substs@.len() < 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
+                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::ptr_models(substs@), offset as nat),
+            crate::expr_arena_bridge::inst_cache_sound(*final(self), substs@),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+    {
+        let ghost sm = crate::expr_arena_bridge::ptr_models(substs@);
+        proof {
+            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+        }
+        if self.num_loose_bvars(e) <= offset {
+            proof {
+                crate::expr_model::subst_full_noop(crate::expr_arena_bridge::to_model(e), sm, offset as nat);
+            }
+            e
+        } else if let Some(cached) = self.expr_cache.inst_cache.get(&(e, offset)) {
+            proof {
+                let k = (e, offset);
+                assert(self.expr_cache.inst_cache@.contains_key(k));
+                assert(self.expr_cache.inst_cache@[k] == *cached);
+            }
+            *cached
+        } else {
+            let calcd = match self.read_expr(e) {
+                // These expressions should be unreachable since they return `n_loose_bvars() == 0`
+                Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => {
+                    proof { assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == 0); }
+                    panic!()
+                }
+                Var { dbj_idx, .. } => {
+                    debug_assert!(dbj_idx >= offset);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::Var(dbj_idx as u32));
+                        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == dbj_idx as nat + 1);
+                    }
+                    let k = (dbj_idx - offset) as usize;
+                    let res = if k < substs.len() { substs[substs.len() - 1 - k] } else { e };
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+                App { fun, arg, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(fun), sm, offset as nat)),
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(arg), sm, offset as nat))));
+                    }
+                    let fun2 = self.inst_aux(fun, substs, offset);
+                    let arg2 = self.inst_aux(arg, substs, offset);
+                    let res = self.mk_app(fun2, arg2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.inst_aux(binder_type, substs, offset);
+                    let body2 = self.inst_aux(body, substs, offset + 1);
+                    let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.inst_aux(binder_type, substs, offset);
+                    let body2 = self.inst_aux(body, substs, offset + 1);
+                    let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Let(
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(val), sm, offset as nat)),
+                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.inst_aux(binder_type, substs, offset);
+                    let val2 = self.inst_aux(val, substs, offset);
+                    let body2 = self.inst_aux(body, substs, offset + 1);
+                    let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+                Proj { ty_name, idx, structure, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat)
+                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(structure), sm, offset as nat))));
+                    }
+                    let structure2 = self.inst_aux(structure, substs, offset);
+                    let res = self.mk_proj(ty_name, idx, structure2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                    }
+                    res
+                }
+            };
+            let ghost before = self.expr_cache.inst_cache@;
+            self.expr_cache.inst_cache.insert((e, offset), calcd);
+            proof {
+                assert(self.expr_cache.inst_cache@ =~= before.insert((e, offset), calcd));
+            }
+            calcd
+        }
+    }
+
     /// Verified in place. The outer level-substitution cache; `subst_aux`
     /// beneath it uses its own scratch cache, which this function resets first.
     ///

@@ -84,7 +84,30 @@ unreachable* given the function's precondition, so the check is dead code under
 the contract — which is why swapping it costs nothing semantically. Restore it
 when Verus supports the `assert_eq!` expansion.
 
+### 3. `TcCtx::inst_aux` — `src/expr.rs`, `Var` arm only
+
+```ignore
+// original
+substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)
+
+// now
+let k = (dbj_idx - offset) as usize;
+if k < substs.len() { substs[substs.len() - 1 - k] } else { e }
+```
+
+`Iterator::nth` has no spec in vstd — and unlike `Option::copied` (which this
+line also needed, and which was added upstream instead of worked around), `nth`
+is a consuming adapter method whose spec is not a one-liner.
+
+Risk: low, but higher than entry 2. `iter().rev().nth(k)` is the `k`-th element
+from the end, i.e. `substs[len - 1 - k]`, and `None`/`unwrap_or(e)` is the
+`k >= len` case. The index arithmetic is the thing to re-check if this is ever
+suspected — it reads the same way the model's own `subst_full` does
+(`substs[(substs.len() - 1 - (i - offset))]`), which is some independent
+confirmation. Restore when `nth` gets a spec.
+
 | # | Function | File | Construct | Reason |
 |---|---|---|---|---|
 | 1 | `subst_levels` | `src/level.rs` | closure capturing `&mut self`; unspecified `alloc` variant | see above |
 | 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |
+| 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |

@@ -514,6 +514,17 @@ pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
                     to_model_of_levels(k.2))
 }
 
+/// The instantiation cache. Unlike the level caches, this one is keyed by
+/// `(expr, offset)` only -- the substitution list is NOT part of the key,
+/// because `inst` clears the cache on every call. So soundness is relative to
+/// the `substs` in flight, and the reset is what makes that safe.
+pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPtr<'t>>) -> bool {
+    forall |k: (ExprPtr<'t>, u16)|
+        #[trigger] ctx.expr_cache.inst_cache@.contains_key(k) ==>
+            to_model(ctx.expr_cache.inst_cache@[k])
+                == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
