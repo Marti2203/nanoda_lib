@@ -148,6 +148,14 @@ pub proof fn level_ptr_eq_iff_same_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>, n
 /// as `to_model` itself, just lifted to lists.
 pub uninterp spec fn to_model_of_levels<'a>(ptr: LevelsPtr<'a>) -> Seq<LevelSpec>;
 
+/// The `Arc`-returning reader the kernel's own `subst_level` uses -- same
+/// contract as the `Vec` wrapper below, which exists for the mirror. This one
+/// is what lets the kernel function be verified in place rather than around.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_levels] (ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: std::sync::Arc<[LevelPtr<'t>]>) where 'p: 't
+    ensures
+        result@.len() == to_model_of_levels(p).len(),
+        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
+
 pub assume_specification<'t, 'p> [read_levels_vec] (ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<LevelPtr<'t>>)
     ensures
         result@.len() == to_model_of_levels(p).len(),

@@ -66,34 +66,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Return `uparam [ks |-> vs]`
-    pub fn subst_level(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
-        match self.read_level(level) {
-            Zero => self.zero(),
-            Succ(val, ..) => {
-                let val = self.subst_level(val, ks, vs);
-                self.succ(val)
-            }
-            Max(l, r, ..) => {
-                let l_prime = self.subst_level(l, ks, vs);
-                let r_prime = self.subst_level(r, ks, vs);
-                self.max(l_prime, r_prime)
-            }
-            IMax(l, r, ..) => {
-                let l_prime = self.subst_level(l, ks, vs);
-                let r_prime = self.subst_level(r, ks, vs);
-                self.imax(l_prime, r_prime)
-            }
-            Param(..) => {
-                let (ks, vs) = (self.read_levels(ks), self.read_levels(vs));
-                for (k, v) in ks.iter().copied().zip(vs.iter().copied()) {
-                    if level == k {
-                        return v
-                    }
-                }
-                level
-            }
-        }
-    }
 
     /// for some level `l` and list of params `ps`, assert that:\
     /// `forall Param(n) e. l, n e. params`
@@ -379,6 +351,40 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                       _ => self.imax(l_simp, r_simp)
                   }
                 }
+            }
+        }
+    }
+    /// Verified AS WRITTEN: the body below is the kernel's, unchanged apart
+    /// from the loop's proof annotations. The `Param` arm matches by POINTER
+    /// where the spec matches by NAME; the two agree because the arena is
+    /// hash-consed (`level_ptr_eq_iff_same_param`).
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn subst_level(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
+        match self.read_level(level) {
+            Zero => self.zero(),
+            Succ(val, ..) => {
+                let val = self.subst_level(val, ks, vs);
+                self.succ(val)
+            }
+            Max(l, r, ..) => {
+                let l_prime = self.subst_level(l, ks, vs);
+                let r_prime = self.subst_level(r, ks, vs);
+                self.max(l_prime, r_prime)
+            }
+            IMax(l, r, ..) => {
+                let l_prime = self.subst_level(l, ks, vs);
+                let r_prime = self.subst_level(r, ks, vs);
+                self.imax(l_prime, r_prime)
+            }
+            Param(..) => {
+                let (ks, vs) = (self.read_levels(ks), self.read_levels(vs));
+                for (k, v) in ks.iter().copied().zip(vs.iter().copied())
+                {
+                    if level == k {
+                        return v
+                    }
+                }
+                level
             }
         }
     }
