@@ -240,6 +240,89 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 {
 }
 
+/// The parameters appearing DIRECTLY as an `IMax`'s second argument.
+///
+/// This is the third component of `leq_core`'s termination measure, and the
+/// only one that `leq_imax_by_cases` decreases: that arm substitutes a
+/// parameter `p` with `Zero` or `Succ(Param p)`, and `simplify` collapses both
+/// of the resulting `IMax` shapes, so `p` leaves this set. `lw` cannot see that
+/// step at all -- both replacements have weight 0, exactly like the `Param`
+/// they replace. See `docs/LEQ_CORE_TERMINATION.md`.
+pub open spec fn imax_params(l: LevelSpec) -> Set<u64>
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => Set::empty(),
+        LevelSpec::Param(_) => Set::empty(),
+        LevelSpec::Succ(a) => imax_params(*a),
+        LevelSpec::Max(a, b) => imax_params(*a).union(imax_params(*b)),
+        LevelSpec::IMax(a, b) => {
+            let here = match *b {
+                LevelSpec::Param(q) => Set::empty().insert(q),
+                _ => Set::empty(),
+            };
+            imax_params(*a).union(imax_params(*b)).union(here)
+        }
+    }
+}
+
+/// The set is finite, so `.len()` is meaningful -- needed before it can be a
+/// measure component at all.
+pub proof fn imax_params_finite(l: LevelSpec)
+    ensures imax_params(l).finite()
+    decreases l
+{
+    match l {
+        LevelSpec::Succ(a) => { imax_params_finite(*a); }
+        LevelSpec::Max(a, b) => { imax_params_finite(*a); imax_params_finite(*b); }
+        LevelSpec::IMax(a, b) => { imax_params_finite(*a); imax_params_finite(*b); }
+        _ => {}
+    }
+}
+
+/// `Succ` is transparent to the set -- which is what makes `leq_core`'s two
+/// `Succ`-peeling arms leave the second component alone, so the third (`depth`)
+/// can do the work there.
+pub proof fn imax_params_succ(a: LevelSpec)
+    ensures imax_params(LevelSpec::Succ(Box::new(a))) == imax_params(a)
+{
+}
+
+/// Both `Max` children are covered, so descending into either cannot grow it.
+pub proof fn imax_params_max_sub(a: LevelSpec, b: LevelSpec)
+    ensures
+        imax_params(a).subset_of(imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
+        imax_params(b).subset_of(imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
+{
+}
+
+/// The `IMax(a, IMax(x,y)) -> Max(IMax(a,y), IMax(x,y))` rewrite does not grow
+/// the set: the only parameter the rewrite puts into a second position is `y`'s,
+/// and `IMax(x, y)` already had it there.
+pub proof fn imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures imax_params(LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+            .subset_of(imax_params(LevelSpec::IMax(
+                Box::new(a),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))))
+{
+    let inner = LevelSpec::IMax(Box::new(x), Box::new(y));
+    let lhs = LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+    let rhs = LevelSpec::IMax(Box::new(a), Box::new(inner));
+    // Both sides unfold to ip(a) u ip(x) u ip(y) u here(y): on the left the
+    // `here(y)` comes from either branch, on the right from the inner `IMax`.
+    // `here` of the right's second argument is empty, an `IMax` not being a
+    // `Param`.
+    assert forall |q: u64| imax_params(lhs).contains(q) implies
+        imax_params(rhs).contains(q) by {
+        assert(imax_params(lhs) == imax_params(LevelSpec::IMax(Box::new(a), Box::new(y)))
+            .union(imax_params(inner)));
+    }
+}
+
 pub open spec fn imax_normal(l: LevelSpec) -> bool
     decreases l
 {

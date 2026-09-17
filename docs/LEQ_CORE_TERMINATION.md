@@ -75,7 +75,7 @@ Both **duplicate a subterm** (`y` in the first, `a` in the second), so any
 measure that counts `Succ` nodes can grow there — which rules out the direct
 "bound `diff` by the number of remaining `Succ`s" argument.
 
-## 4. The lexicographic measure — tried on paper, REFUTED
+## 4. The measure: a viable candidate, with one open lemma
 
 `lw` was built in an earlier session specifically for the rewrite arms and has
 the lemmas `lw_decreases_imax_imax` and `lw_decreases_imax_max`. Checking the
@@ -96,73 +96,89 @@ decreases on exactly those. That makes
 a candidate **termination** measure — which would be a result in its own right,
 since the kernel currently guarantees no termination for `leq_core`.
 
-**But one arm breaks it, and I worked the case out rather than leaving it
-open.** `leq_imax_by_cases` fires when an `IMax`'s second argument is a `Param`.
-It substitutes that parameter with `Zero` and with `Succ(param)`, re-simplifies,
-and recurses on both.
-
-- The `Zero` case is fine. `IMax(a, Zero)` simplifies to `Zero`, so `lw` drops
-  from `lw(a) + 1` to `0`.
-- The **`Succ(param)` case is flat**, which is fatal for a lexicographic measure
-  whose second component also fails to decrease:
+**One arm needs a third component.** `leq_imax_by_cases` fires when an `IMax`'s
+second argument is a `Param`. It substitutes that parameter with `Zero` and with
+`Succ(param)`, re-simplifies, and recurses on both. On that arm `lw` is **flat**:
 
 ```
-before:  lw(IMax(a, Param p))      = lw(a) + 2*lw(Param p) + 1 = lw(a) + 1
-
-after:   simplify(IMax(a, Succ(p)))  takes simplify's `Succ` sub-arm,
-         which returns combining(simplify(a), Succ(p)) = Max(a', Succ(p))
-         (combining only folds when BOTH sides are Succ; otherwise Max)
-
-         lw(Max(a', Succ(p)))      = 1 + max(lw(a'), lw(Succ(p)))
-                                   = 1 + max(lw(a'), 0)
-                                   = 1 + lw(a')
+lw(Param p) == 0,  lw(Zero) == 0,  lw(Succ(Param p)) == lw(Param p) == 0
 ```
 
-and `lw(a') <= lw(a)` is all `simplify` guarantees (it is weight-**non**-increasing,
-not decreasing), so the result is `<= lw(a) + 1` — **equal in the worst case**.
+so both replacements have the same weight as what they replace, `lw` is
+compositional, and therefore `lw(subst(l)) == lw(l)`. `simplify` is
+weight-non-increasing (already proven), so `lw` cannot increase — but it need
+not strictly decrease either. `depth` does not help: `Max(a', Succ(p))` is no
+shallower than `IMax(a, Param p)`.
 
-`depth` does not save it either: `Max(a', Succ(p))` is no shallower than
-`IMax(a, Param p)`, and generally deeper.
+> **Correction.** An earlier version of this note claimed `lw` *increases* here
+> and called the measure refuted. That computation charged `Succ` a weight of 1,
+> which is a different function from `lw` — `lw(Succ(a)) == lw(a)`. The
+> conclusion was wrong and the measure is not refuted.
 
-**So `(lw, depth)` lexicographic is refuted.** A working measure has to charge
-the `Succ(param)` substitution something that `lw` does not — the substitution
-replaces a weight-0 leaf (`Param`) with another weight-0 term (`Succ(Param)`),
-which is precisely why `lw` cannot see it. Any candidate should be tested
-against this case *first*; it is the cheapest way to rule one out.
+### The third component: parameters in `IMax` second position
 
-## 5. Even with termination, `diff` needs its own argument
+Let `imax_params(l)` be the set of `p` such that `IMax(_, Param p)` occurs in
+`l`. This is exactly what `by_cases` consumes: substituting `p` turns every
+`IMax(_, Param p)` into `IMax(_, Zero)` or `IMax(_, Succ(Param p))`, and
+`simplify` collapses both, so `p` leaves the set and nothing new enters.
 
-Termination does not hand over a `diff` bound: the number of `Succ` peels along
-a path is bounded by a *function of* the measure, not by the measure. Because
-the rewrite arms duplicate subterms, that function is not obviously linear.
+| arm | `lw` sum | `imax_params` count | `depth` sum |
+|---|---|---|---|
+| `Succ` peel (both) | flat | flat | **decreases** |
+| `Max` arms | **decreases** | — | — |
+| both `IMax` rewrites | **decreases** | — | — |
+| `leq_imax_by_cases` | flat | **decreases** | — |
 
-Two routes, neither attempted:
+which makes
 
-1. **Ghost bound parameter.** Add `Ghost(bound): Ghost<nat>` to `leq_core` and
-   `leq_imax_by_cases`, require `|diff| <= bound`, and let the termination proof
-   justify a concrete initial value. A `Ghost` parameter is **erased at compile
-   time**, so this is closer to a proof annotation than to a rewrite — it does
-   not change the executable. It does change the signature, so call sites need
-   `Ghost(..)` arguments. See the `Ghost(x): Ghost<nat>` pattern-param form.
-2. **Weaken the contract.** State `leq_core`'s postcondition only under a
-   hypothesis that `diff` stayed in range, and discharge that hypothesis at the
-   `leq` entry point where `diff == 0`. Probably unsatisfying, since the
-   hypothesis is what we cannot prove.
+> **`(lw(l)+lw(r), |imax_params(l) ∪ imax_params(r)|, depth(l)+depth(r))`,
+> lexicographic**
+
+the candidate. Note the `IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))` rewrite
+*can* add a parameter to the set (if `x` is a `Param`), which is why the count
+cannot come first — `lw` has to absorb those arms, and it does.
+
+### The crux, still unproven
+
+`imax_params(simplify(subst(l, p, v))) ⊆ imax_params(l) \ {p}`.
+
+The containment is not free, because `simplify` can in principle *introduce* an
+`IMax(_, Param q)` that was not there: its fall-through arm builds
+`imax(l_simp, r_simp)`, and `r_simp = simplify(r)` may be a `Param` where `r`
+was not — e.g. `simplify(Max(Param q, Zero)) == Param q`. On an **already
+simplified** argument that cannot happen, and `leq_core`'s arguments are
+simplified — but `imax_normal` is too weak to say so (it only forbids `Zero` and
+`Succ` in `IMax` second position). Closing this needs either a stronger
+"fully simplified" predicate on `simplify`'s output, or a direct argument that
+the fall-through preserves the set on `imax_normal` inputs.
+
+## 5. Termination gives the `diff` bound for free
+
+Once a strictly-decreasing measure `M` exists, the overflow problem dissolves.
+Carry
+
+> `|diff| + M(l, r) <= 1_000_000_000`
+
+as a precondition. Every arm that moves `diff` by one also strictly decreases
+`M`, so the sum is non-increasing; every other arm leaves `diff` alone and
+decreases `M`, so the sum decreases. No interval needs to be closed under ±1 —
+that was the thing that looked impossible, and it is only impossible *without*
+a measure.
+
+This is why §4 is the whole task. There is no second problem after it.
 
 ## 6. Order of work, if resumed
 
-1. **Find a measure that charges the `Succ(param)` substitution.** `(lw, depth)`
-   is refuted (§4) and its failure case is the cheap test for any replacement.
-   The substitution swaps a weight-0 `Param` for a weight-0 `Succ(Param)`, so
-   the measure must see something other than weight — perhaps the number of
-   distinct parameters still eligible for the `by_cases` split, which strictly
-   decreases each time one is eliminated.
-2. Prove termination with it. Drop `exec_allows_no_decreases_clause` from
-   `leq_core`.
-3. Only then attack the `diff` bound, via the ghost parameter.
+1. **Close §4's crux:** `imax_params` does not grow under `simplify`. This is
+   the whole problem; everything below is ordinary work.
+2. Prove termination with the three-component measure. Drop
+   `exec_allows_no_decreases_clause` from `leq_core`.
+3. The `diff` bound then follows *immediately*, with no extra argument: carry
+   `|diff| + M <= 1_000_000_000` where `M` is the measure. Every arm that moves
+   `diff` by one strictly decreases `M`, so the sum is non-increasing. This is
+   why termination is worth having — it is not a separate problem from the
+   overflow, it is the same one.
 4. Retire `verified_leq_core` (131 lines, 15 call sites).
-
-Step 1 is the whole problem. Steps 2-4 are ordinary work.
 
 Also still open on that branch: `leq_imax_by_cases` exceeds the rlimit — try
 `#[verifier::spinoff_prover]` before raising the limit.
