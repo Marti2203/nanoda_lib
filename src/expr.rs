@@ -346,54 +346,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.abstr_aux(e, locals, 0u16)
     }
 
-    fn subst_aux(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> ExprPtr<'t> {
-        if let Some(cached) = self.expr_cache.subst_cache.get(&(e, ks, vs)) {
-            *cached
-        } else {
-            let r = match self.read_expr(e) {
-                Var { .. } | NatLit { .. } | StringLit { .. } => e,
-                Sort { level, .. } => {
-                    let level = self.subst_level(level, ks, vs);
-                    self.mk_sort(level)
-                }
-                Const { name, levels, .. } => {
-                    let levels = self.subst_levels(levels, ks, vs);
-                    self.mk_const(name, levels)
-                }
-                App { fun, arg, .. } => {
-                    let fun = self.subst_aux(fun, ks, vs);
-                    let arg = self.subst_aux(arg, ks, vs);
-                    self.mk_app(fun, arg)
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.subst_aux(binder_type, ks, vs);
-                    let body = self.subst_aux(body, ks, vs);
-                    self.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.subst_aux(binder_type, ks, vs);
-                    let body = self.subst_aux(body, ks, vs);
-                    self.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.subst_aux(binder_type, ks, vs);
-                    let val = self.subst_aux(val, ks, vs);
-                    let body = self.subst_aux(body, ks, vs);
-                    self.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                // Level subst is only used in const inference, and when unfolding definitions;
-                // in both cases you're substituting in expressions that were just pulled out of the
-                // environment, so they should have no locals.
-                Local { .. } => panic!("level substitution should not find locals"),
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.subst_aux(structure, ks, vs);
-                    self.mk_proj(ty_name, idx, structure)
-                }
-            };
-            self.expr_cache.subst_cache.insert((e, ks, vs), r);
-            r
-        }
-    }
 
     pub fn subst_expr_levels(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> ExprPtr<'t> {
         if let Some(cached) = self.expr_cache.dsubst_cache.get(&(e, ks, vs)).copied() {
@@ -935,6 +887,186 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None,
         }
     }
+    /// Verified in place, body unchanged apart from proof annotations and
+    /// binding each arm's result so its fact reaches `r`.
+    ///
+    /// This is the first memo-cache wrapper to be verified. The cache branch is
+    /// correct EXACTLY because `subst_cache_sound` holds, and the insert branch
+    /// is what re-establishes it -- so the invariant is CHECKED here, not
+    /// assumed about the cache.
+    ///
+    /// `!has_fv` is the kernel's own comment on the `Local` arm made formal:
+    /// "expressions that were just pulled out of the environment, so they
+    /// should have no locals". It is what discharges the `panic!`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn subst_aux(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::level_arena_bridge::to_model_of_levels(ks).len() == crate::level_arena_bridge::to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
+                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
+            crate::expr_arena_bridge::subst_cache_sound(*old(self)),
+            !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
+                crate::expr_arena_bridge::to_model(e),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
+                crate::level_arena_bridge::to_model_of_levels(vs)),
+            crate::expr_arena_bridge::subst_cache_sound(*final(self)),
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+    {
+        let ghost names = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks));
+        let ghost vals = crate::level_arena_bridge::to_model_of_levels(vs);
+        proof {
+            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::ptr_triple_obeys_key_model::<
+                &'t crate::expr::Expr<'t>,
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>>();
+        }
+        if let Some(cached) = self.expr_cache.subst_cache.get(&(e, ks, vs)) {
+            proof {
+                // The one place the invariant is CONSUMED.
+                let k = (e, ks, vs);
+                assert(self.expr_cache.subst_cache@.contains_key(k));
+                assert(self.expr_cache.subst_cache@[k] == *cached);
+            }
+            *cached
+        } else {
+            let r = match self.read_expr(e) {
+                Var { .. } | NatLit { .. } | StringLit { .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_arena_bridge::to_model(e));
+                    }
+                    e
+                }
+                Sort { level, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
+                            == crate::expr_model::ExprSpec::Sort(crate::level_model::subst_level_spec(crate::level_arena_bridge::to_model(level), names, vals)));
+                    }
+                    let level2 = self.subst_level(level, ks, vs);
+                    let res = self.mk_sort(level2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                Const { name, levels, .. } => {
+                    proof {
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
+                            == crate::expr_model::ExprSpec::Const(crate::level_arena_bridge::name_id(name),
+                                crate::level_model::subst_levels_spec(crate::level_arena_bridge::to_model_of_levels(levels), names, vals)));
+                    }
+                    let levels2 = self.subst_levels(levels, ks, vs);
+                    let res = self.mk_const(name, levels2);
+                    proof {
+                        crate::expr_arena_bridge::is_const_shape_model(res);
+                        crate::expr_arena_bridge::const_levels_vec_model(res);
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                App { fun, arg, .. } => {
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(fun)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(arg)));
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(fun), names, vals)),
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(arg), names, vals))));
+                    }
+                    let fun2 = self.subst_aux(fun, ks, vs);
+                    let arg2 = self.subst_aux(arg, ks, vs);
+                    let res = self.mk_app(fun2, arg2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                    }
+                    let binder_type2 = self.subst_aux(binder_type, ks, vs);
+                    let body2 = self.subst_aux(body, ks, vs);
+                    let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                    }
+                    let binder_type2 = self.subst_aux(binder_type, ks, vs);
+                    let body2 = self.subst_aux(body, ks, vs);
+                    let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type))
+                            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(val))
+                            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Let(
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(val), names, vals)),
+                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                    }
+                    let binder_type2 = self.subst_aux(binder_type, ks, vs);
+                    let val2 = self.subst_aux(val, ks, vs);
+                    let body2 = self.subst_aux(body, ks, vs);
+                    let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+                // Level subst is only used in const inference, and when unfolding definitions;
+                // in both cases you're substituting in expressions that were just pulled out of the
+                // environment, so they should have no locals.
+                Local { .. } => panic!("level substitution should not find locals"),
+                Proj { ty_name, idx, structure, .. } => {
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(structure)));
+                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
+                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(structure), names, vals))));
+                    }
+                    let structure2 = self.subst_aux(structure, ks, vs);
+                    let res = self.mk_proj(ty_name, idx, structure2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                    }
+                    res
+                }
+            };
+            let ghost before = self.expr_cache.subst_cache@;
+            self.expr_cache.subst_cache.insert((e, ks, vs), r);
+            proof {
+                // ...and the one place it is RE-ESTABLISHED.
+                assert(self.expr_cache.subst_cache@ =~= before.insert((e, ks, vs), r));
+            }
+            r
+        }
+    }
+
     /// Verified AS WRITTEN. Non-degeneracy witness for the `Const` clause on
     /// `read_expr`'s specification: `const_name_of`/`const_levels_of` are
     /// uninterpreted, so without that clause nothing in the `Const { .. }` arm
