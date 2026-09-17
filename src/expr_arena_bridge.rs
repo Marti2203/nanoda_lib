@@ -1948,10 +1948,9 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
 /// args in the SAME `[a_0, .. a_N]` order the real loop produces only
 /// after its own explicit `args.reverse()`. `ExprPtr` is opaque (no
 /// structural `decreases`), so this needs fuel, like `verified_inst`.
-/// `Vec::reverse`, which vstd does not specify. The kernel's `unfold_apps`
-/// pushes spine arguments in reverse order and reverses once at the end.
-pub assume_specification<T> [<[T]>::reverse] (v: &mut [T])
-    ensures final(v)@ =~= old(v)@.reverse();
+// `<[T]>::reverse` used to be assumed here. It is in vstd now (the spec is
+// general, not nanoda-specific, so that is where it belongs) and this crate
+// picks it up from there.
 
 // `foldl_apps` -- the dual of `unfold_apps` -- was attempted and backed out
 // (2026-09-17). Its contract and invariant are straightforward:
