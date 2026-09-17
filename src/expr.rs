@@ -245,35 +245,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.subst_expr_levels(info.ty, info.uparams, in_vals)
     }
 
-    pub fn num_args(&self, e: ExprPtr<'t>) -> usize {
-        let (mut cursor, mut num_args) = (e, 0);
-        while let App { fun, .. } = self.read_expr(cursor) {
-            cursor = fun;
-            num_args += 1;
-        }
-        num_args
-    }
 
-    /// From `f a_0 .. a_N`, return `f`
-    pub fn unfold_apps_fun(&self, mut e: ExprPtr<'t>) -> ExprPtr<'t> {
-        while let App { fun, .. } = self.read_expr(e) {
-            e = fun;
-        }
-        e
-    }
+
 
     /// From `f a_0 .. a_N`, return `(f, [a_0, ..a_N])`
     
     /// If this is a const application, return (Const {..}, name, levels, args)
 
-    pub(crate) fn unfold_apps_stack(&self, mut e: ExprPtr<'t>) -> (ExprPtr<'t>, Vec<ExprPtr<'t>>) {
-        let mut args = Vec::new();
-        while let App { fun, arg, .. } = self.read_expr(e) {
-            args.push(arg);
-            e = fun;
-        }
-        (e, args)
-    }
 
 
     pub(crate) fn abstr_pis<I>(&mut self, mut binders: I, mut body: ExprPtr<'t>) -> ExprPtr<'t>
@@ -765,6 +743,120 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Abstraction of unique identifiers; replaces free variables with the appropriate
     /// bound variable, if the free variable is in `locals`.
     ///
+    /// Verified in place. Same `VERUS-REWRITE(while-let-exit)` as
+    /// `unfold_apps_fun` above, and the same loop `ensures` for the exit fact.
+    ///
+    /// The `usize` counter needs a ceiling -- nothing else in the function
+    /// bounds the spine, so `num_args + 1` could overflow.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn num_args(&self, e0: ExprPtr<'t>) -> (result: usize)
+        requires crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
+        ensures result == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len()
+    {
+        let (mut cursor, mut num_args) = (e0, 0);
+        loop
+            invariant
+                num_args + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(cursor)).len()
+                    == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
+                crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
+            ensures num_args == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
+        {
+            match self.read_expr(cursor) {
+                App { fun, .. } => { cursor = fun; num_args += 1; }
+                other => {
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(cursor));
+                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(cursor)).len() == 0);
+                    }
+                    break
+                }
+            }
+        }
+        num_args
+    }
+
+    /// Verified in place. Pushes args OUTERMOST-first, which is the reverse of
+    /// `spine_args`' order -- the contract says so rather than papering over it.
+    /// Same `VERUS-REWRITE(while-let-exit)` as the two above.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn unfold_apps_stack(&self, e0: ExprPtr<'t>) -> (result: (ExprPtr<'t>, Vec<ExprPtr<'t>>))
+        ensures
+            crate::expr_arena_bridge::to_model(result.0) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+            crate::expr_arena_bridge::ptr_models(result.1@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+    {
+        let mut e = e0;
+        let mut args = Vec::new();
+        loop
+            invariant
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+                crate::expr_arena_bridge::ptr_models(args@) + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse()
+                    =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+            ensures
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::ptr_models(args@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+        {
+            match self.read_expr(e) {
+                App { fun, arg, .. } => {
+                    proof {
+                        crate::expr_arena_bridge::ptr_models_push(args@, arg);
+                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse()
+                            =~= seq![crate::expr_arena_bridge::to_model(arg)] + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(fun)).reverse());
+                    }
+                    args.push(arg);
+                    e = fun;
+                }
+                other => {
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(e));
+                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse() =~= Seq::<crate::expr_model::ExprSpec>::empty());
+                    }
+                    break
+                }
+            }
+        }
+        (e, args)
+    }
+
+    /// From `f a_0 .. a_N`, return `f`
+    ///
+    /// Verified in place. The cheapest of the spine helpers: no counter and no
+    /// `Vec`, so nothing to bound.
+    ///
+    /// VERUS-REWRITE(while-let-exit): the original body is
+    /// `while let App { fun, .. } = self.read_expr(e) { e = fun; }`. Verus takes
+    /// that and proves the invariant, but carries no information out of the
+    /// loop about WHY it stopped, so the exit cannot conclude the head is not an
+    /// `App`. Spelled as the `loop`/`match` it desugars to -- which is how
+    /// `unfold_apps` a few functions below is already written in the kernel.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn unfold_apps_fun(&self, e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        ensures crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0))
+    {
+        let mut e = e0;
+        loop
+            invariant crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+            // A fact proven just before `break` does NOT survive the loop --
+            // only the invariant does. The exit fact has to be stated here.
+            ensures crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+                    crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
+        {
+            match self.read_expr(e) {
+                App { fun, .. } => { e = fun; }
+                other => {
+                    proof {
+                        // The read said this is not an `App`, and no other
+                        // `Expr` variant denotes one, so the spine stops here.
+                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(e));
+                        assert(crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e));
+                    }
+                    break
+                }
+            }
+        }
+        e
+    }
+
     /// Verified in place. Like `inst`, it RESETS its cache before descending, so
     /// it establishes `abstr_cache_sound` itself and pushes no invariant onto
     /// callers.

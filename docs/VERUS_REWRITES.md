@@ -142,3 +142,26 @@ re-checking if anything here is ever suspected:
 | 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
 | 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
+| 5 | `unfold_apps_fun`, `num_args`, `unfold_apps_stack` | `src/expr.rs` | `while let` carries no exit reason | see below |
+
+
+### 5. The three spine helpers — `src/expr.rs`
+
+```ignore
+// original
+while let App { fun, .. } = self.read_expr(e) { e = fun; }
+
+// now
+loop { match self.read_expr(e) { App { fun, .. } => { e = fun; } other => { .. break } } }
+```
+
+Verus accepts `while let` and proves the invariant — but carries nothing out of
+the loop about *why* it stopped, so the exit cannot conclude the head is not an
+`App`. The `loop`/`match` form is its literal desugaring, and is how
+`unfold_apps` is already written in the kernel a few functions away.
+
+**Lowest risk in this file, with entry 2.** It is a desugaring, not a
+reformulation. Two things were needed on top, and neither is a body change: a
+loop `ensures` clause (a fact proven just before `break` does *not* survive the
+loop — only the invariant does), and `num_args` gaining a ceiling on the spine
+length, since nothing else in it bounds the `usize` counter.
