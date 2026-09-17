@@ -3410,6 +3410,40 @@ pub open spec fn spine_app(base: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
 /// `depth(base) <= depth(spine_app(base, args))` similarly carries a
 /// `depth`-headroom bound on the whole spine down to just the head.
 #[verifier::spinoff_prover]
+/// FRONT peeling. `spine_app` is defined by peeling the LAST argument, which
+/// suits recursive consumers; a loop that walks `App(fun, arg)` down the
+/// spine accumulates from the FRONT instead, so it needs this direction.
+///
+///     spine_app(base, [a] + rest) == spine_app(App(base, a), rest)
+pub proof fn spine_app_peel_front(base: ExprSpec, a: ExprSpec, rest: Seq<ExprSpec>)
+    ensures spine_app(base, seq![a] + rest)
+        == spine_app(ExprSpec::App(Box::new(base), Box::new(a)), rest),
+    decreases rest.len(),
+{
+    let joined = seq![a] + rest;
+    let app = ExprSpec::App(Box::new(base), Box::new(a));
+    if rest.len() == 0 {
+        assert(joined =~= seq![a]);
+        assert(joined.len() == 1);
+        assert(joined.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(spine_app(base, joined) == ExprSpec::App(
+            Box::new(spine_app(base, joined.subrange(0, 0))), Box::new(joined[0])));
+        assert(spine_app(base, joined.subrange(0, 0)) == base);
+        assert(rest =~= Seq::<ExprSpec>::empty());
+        assert(spine_app(app, rest) == app);
+    } else {
+        let init = rest.subrange(0, rest.len() - 1);
+        spine_app_peel_front(base, a, init);
+        assert(joined.len() == rest.len() + 1);
+        assert(joined.subrange(0, joined.len() - 1) =~= seq![a] + init);
+        assert(joined[joined.len() - 1] == rest[rest.len() - 1]);
+        assert(spine_app(base, joined) == ExprSpec::App(
+            Box::new(spine_app(base, seq![a] + init)), Box::new(rest[rest.len() - 1])));
+        assert(spine_app(app, rest) == ExprSpec::App(
+            Box::new(spine_app(app, init)), Box::new(rest[rest.len() - 1])));
+    }
+}
+
 pub proof fn spine_app_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound: nat)
     requires
         nlbv(spine_app(base, args)) == 0,
