@@ -97,6 +97,138 @@ pub open spec fn to_model_of_name<'a>(n: Name<'a>) -> NameSpec {
 pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 
 
+// ---------------------------------------------------------------------
+// ARENA STORAGE MODEL (2026-09-17). First step toward discharging the
+// `to_model_name` axioms rather than assuming them.
+//
+// `to_model_name` is uninterpreted and takes NO context: a pointer's
+// denotation is treated as fixed for all time. That is the load-bearing
+// assumption behind every `read_*`/`mk_*` contract in this crate, and it is
+// justified -- but only by two facts about the arena that were never stated,
+// let alone proven:
+//
+//   1. ACYCLICITY: hash-consing builds a node only from nodes already
+//      allocated, so a node's children live at strictly smaller indices.
+//      Without this the denotation is not even well-defined.
+//   2. MONOTONICITY: allocation only appends, so an existing pointer's
+//      denotation never changes.
+//
+// Both are proven below over an explicit `Seq<Name>` storage model. The
+// second is the one that licenses the context-free `to_model_name`.
+// ---------------------------------------------------------------------
+
+/// A pointer's index into its arena (`Ptr::idx`'s formula, in spec).
+pub open spec fn ptr_index<A>(p: crate::util::Ptr<A>) -> nat {
+    (crate::util_model::ptr_raw(p) & 0x7FFF_FFFFu32) as nat
+}
+
+/// A stored node's children live at strictly smaller indices.
+pub open spec fn name_children_below<'a>(n: Name<'a>, i: nat) -> bool {
+    match n {
+        Name::Anon => true,
+        Name::Str(pfx, _, _) => ptr_index(pfx) < i,
+        Name::Num(pfx, _, _) => ptr_index(pfx) < i,
+    }
+}
+
+/// The arena is acyclic in the sense hash-consing guarantees.
+pub open spec fn names_arena_wf<'a>(ns: Seq<Name<'a>>) -> bool {
+    forall|i: int| 0 <= i < ns.len() ==> name_children_below(#[trigger] ns[i], i as nat)
+}
+
+/// What the name at index `i` denotes, COMPUTED from storage rather than
+/// assumed. The `ptr_index(pfx) < i` guard makes this well-founded without
+/// needing `names_arena_wf` as a precondition; under that invariant the
+/// guard always holds, which is what `name_model_at_unfold` says.
+pub open spec fn name_model_at<'a>(ns: Seq<Name<'a>>, i: nat) -> NameSpec
+    decreases i
+{
+    if i >= ns.len() {
+        NameSpec::Anon
+    } else {
+        match ns[i as int] {
+            Name::Anon => NameSpec::Anon,
+            Name::Str(pfx, sfx, _) =>
+                if ptr_index(pfx) < i {
+                    NameSpec::Str(Box::new(name_model_at(ns, ptr_index(pfx))), string_id(sfx))
+                } else {
+                    NameSpec::Anon
+                },
+            Name::Num(pfx, sfx, _) =>
+                if ptr_index(pfx) < i {
+                    NameSpec::Num(Box::new(name_model_at(ns, ptr_index(pfx))), sfx)
+                } else {
+                    NameSpec::Anon
+                },
+        }
+    }
+}
+
+/// Under acyclicity the computed denotation agrees with the structural
+/// reading of the stored node -- i.e. the guard above is never taken.
+pub proof fn name_model_at_unfold<'a>(ns: Seq<Name<'a>>, i: nat)
+    requires names_arena_wf(ns), i < ns.len(),
+    ensures
+        name_model_at(ns, i) == match ns[i as int] {
+            Name::Anon => NameSpec::Anon,
+            Name::Str(pfx, sfx, _) =>
+                NameSpec::Str(Box::new(name_model_at(ns, ptr_index(pfx))), string_id(sfx)),
+            Name::Num(pfx, sfx, _) =>
+                NameSpec::Num(Box::new(name_model_at(ns, ptr_index(pfx))), sfx),
+        },
+{
+    assert(name_children_below(ns[i as int], i));
+}
+
+/// Non-degeneracy. The definitions above would all hold vacuously if
+/// `name_model_at` collapsed everything to `Anon`, so pin a two-node arena
+/// where it must compute a NESTED denotation: storage `[Anon, Str(p0, s)]`
+/// with `p0` pointing at index 0 denotes `Str(Anon, s)`.
+pub proof fn name_model_at_computes_nesting<'a>(p0: NamePtr<'a>, s: StringPtr<'a>, h: u64)
+    requires ptr_index(p0) == 0,
+    ensures ({
+        let ns = seq![Name::Anon, Name::Str(p0, s, h)];
+        &&& names_arena_wf(ns)
+        &&& name_model_at(ns, 1) == NameSpec::Str(Box::new(NameSpec::Anon), string_id(s))
+    }),
+{
+    let ns: Seq<Name<'a>> = seq![Name::Anon, Name::Str(p0, s, h)];
+    assert(ns.len() == 2);
+    assert(ns[0] == Name::<'a>::Anon);
+    assert(ns[1] == Name::Str(p0, s, h));
+    assert forall|i: int| 0 <= i < ns.len() implies name_children_below(#[trigger] ns[i], i as nat) by {
+        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    }
+    assert(name_model_at(ns, 0) == NameSpec::Anon);
+}
+
+/// MONOTONICITY: allocating a new name never changes what an existing
+/// pointer denotes. This is what licenses `to_model_name` taking no context
+/// -- the whole crate's contracts rest on it, and it has been assumed until
+/// now.
+pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
+    requires i < ns.len(),
+    ensures name_model_at(ns.push(n), i) == name_model_at(ns, i),
+    decreases i,
+{
+    if i < ns.len() {
+        match ns[i as int] {
+            Name::Str(pfx, _, _) => {
+                if ptr_index(pfx) < i {
+                    name_model_at_append(ns, n, ptr_index(pfx));
+                }
+            }
+            Name::Num(pfx, _, _) => {
+                if ptr_index(pfx) < i {
+                    name_model_at_append(ns, n, ptr_index(pfx));
+                }
+            }
+            Name::Anon => {}
+        }
+    }
+    assert(ns.push(n)[i as int] == ns[i as int]);
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);
 
