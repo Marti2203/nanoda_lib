@@ -438,13 +438,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// From `f a_0 .. a_N`, return `(f, [a_0, ..a_N])`
     
     /// If this is a const application, return (Const {..}, name, levels, args)
-    /// If this is an application of `Const(name, levels)`, return `(name, levels)`
-    pub fn try_const_info(&self, e: ExprPtr<'t>) -> Option<(NamePtr<'t>, LevelsPtr<'t>)> {
-        match self.read_expr(e) {
-            Const { name, levels, .. } => Some((name, levels)),
-            _ => None,
-        }
-    }
 
     pub(crate) fn unfold_apps_stack(&self, mut e: ExprPtr<'t>) -> (ExprPtr<'t>, Vec<ExprPtr<'t>>) {
         let mut args = Vec::new();
@@ -916,6 +909,32 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// BUILDS a spine where that one decomposes it, so the invariant carries
     /// the consumed PREFIX rather than a reversal.
 
+
+    /// If this is an application of `Const(name, levels)`, return `(name, levels)`
+    ///
+    /// Verified AS WRITTEN, and now the only route to a `Const` node's payload:
+    /// `expr_arena_bridge::expr_as_const` used to be the route, and was an
+    /// `assume_specification` taking a `(ptr, e)` pair whose correspondence
+    /// nothing checked. This function reads the node itself, so the same
+    /// contract holds with no assumption behind it.
+    ///
+    /// The `None` arm is exact here, unlike `unfold_const_apps`'s, because the
+    /// callers that replaced `expr_as_const` branch on it: a non-`Const` node
+    /// maps to a non-`Const` model, which is a case analysis over
+    /// `to_model_of_expr`, not a converse shape axiom.
+    pub fn try_const_info(&self, e: ExprPtr<'t>) -> (result: Option<(NamePtr<'t>, LevelsPtr<'t>)>)
+        ensures match result {
+            Some((n, l)) => crate::expr_arena_bridge::is_const_shape(e)
+                && crate::expr_arena_bridge::const_name_of(e) == n
+                && crate::expr_arena_bridge::const_levels_of(e) == l,
+            None => !crate::expr_arena_bridge::is_const_shape(e),
+        }
+    {
+        match self.read_expr(e) {
+            Const { name, levels, .. } => Some((name, levels)),
+            _ => None,
+        }
+    }
     /// Verified AS WRITTEN. Non-degeneracy witness for the `Const` clause on
     /// `read_expr`'s specification: `const_name_of`/`const_levels_of` are
     /// uninterpreted, so without that clause nothing in the `Const { .. }` arm

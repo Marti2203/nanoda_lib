@@ -47,7 +47,7 @@ use crate::beta_model::{
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
-use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_foldl_apps, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id, is_nat_lit_shape_model, nat_lit_value, bignum_ptr_value};
 #[cfg(verus_only)]
@@ -1366,7 +1366,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         return Some(r);
     }
     // --- constant ---
-    if let Some((c_name, c_uparams)) = expr_as_const(e, &el) {
+    if let Some((c_name, c_uparams)) = ctx.try_const_info(e) {
         match verified_infer_const(ctx, env, c_name, c_uparams, 100000) {
             Some(r) => {
                 proof {
@@ -3060,7 +3060,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         spine_app_nlbv_decompose(to_model(head), args_model);
     }
     let hl = ctx.read_expr(head);
-    let (rname, _rlevels) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let (rname, _rlevels) = match ctx.try_const_info(head) { Some(p) => p, None => return None };
     match get_recursor_is_k(env, &rname) {
         Some(true) => {}
         _ => return None,
@@ -3233,7 +3233,7 @@ fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, i
     let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
     let (head, args) = ctx.unfold_apps(e);
     let hl = ctx.read_expr(head);
-    let (hname, _hlv) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let (hname, _hlv) = match ctx.try_const_info(head) { Some(p) => p, None => return None };
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
         is_const_shape_model(head);
@@ -3256,7 +3256,7 @@ fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, i
         decreases ind_consts.len() - i
     {
         let cl = ctx.read_expr(ind_consts[i]);
-        if let Some((cname, _)) = expr_as_const(ind_consts[i], &cl) {
+        if let Some((cname, _)) = ctx.try_const_info(ind_consts[i]) {
             if name_ptr_eq(cname, hname) && args.len() == arities[i] {
                 proof {
                     is_const_shape_model(ind_consts@[i as int]);
@@ -3429,7 +3429,7 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
         }
         let (head, args) = ctx.unfold_apps(ty);
         let hl = ctx.read_expr(head);
-        let (hname, _) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+        let (hname, _) = match ctx.try_const_info(head) { Some(p) => p, None => return None };
         if !name_ptr_eq(hname, parent) || args.len() != parent_arity {
             return None;
         }
@@ -4243,7 +4243,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
         spine_app_nlbv_decompose(to_model(head), args_model);
     }
     let hl = ctx.read_expr(head);
-    let (hname, _hlv) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
+    let (hname, _hlv) = match ctx.try_const_info(head) { Some(p) => p, None => return None };
     let kind = match ctx.quot_kind_code(hname) { Some(c) => c, None => return None };
     let qi: usize = if kind == 0 { 5 } else if kind == 1 { 4 } else { return None };
     if args.len() <= qi {
@@ -4272,7 +4272,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     // the reduced major must be `Quot.mk A r a`
     let (mkhead, mkargs) = ctx.unfold_apps(mw);
     let mkl = ctx.read_expr(mkhead);
-    let (mkname, _mklv) = match expr_as_const(mkhead, &mkl) { Some(p) => p, None => return None };
+    let (mkname, _mklv) = match ctx.try_const_info(mkhead) { Some(p) => p, None => return None };
     match ctx.quot_kind_code(mkname) {
         Some(2) => {}
         _ => return None,

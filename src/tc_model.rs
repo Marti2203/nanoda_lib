@@ -43,7 +43,7 @@ use crate::util::LevelPtr;
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_whnf_no_unfolding_step_plain};
+use crate::expr_arena_bridge::{expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_whnf_no_unfolding_step_plain};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
 #[allow(unused_imports)]
@@ -261,7 +261,7 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         spine_app_nlbv_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])));
     }
     let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) {
+    let (name, levels) = match ctx.try_const_info(fun) {
         Some(p) => p,
         None => return None,
     };
@@ -374,7 +374,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let ghost cm = env_model_nofv(*env);
     let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
-    let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => { rec_stat(41); return None; } };
+    let (rname, rlevels) = match ctx.try_const_info(fun) { Some(p) => p, None => { rec_stat(41); return None; } };
     let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => { rec_stat(42); return None; } };
     if args.len() > 64 || major_idx >= args.len() {
         { rec_stat(49); return None; }
@@ -414,7 +414,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     };
     let (chead, cargs) = ctx.unfold_apps(majw);
     let chead_el = ctx.read_expr(chead);
-    let (cname, _clevels) = match expr_as_const(chead, &chead_el) {
+    let (cname, _clevels) = match ctx.try_const_info(chead) {
         Some(p) => p,
         None => {
             if expr_as_local(chead, &chead_el).is_some() { rec_stat(45); }
@@ -583,7 +583,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
     let s2 = verified_whnf_free(ctx, env, memo, structure);
     let (fun, cargs) = ctx.unfold_apps(s2);
     let fun_el = ctx.read_expr(fun);
-    let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
+    let (name, _levels) = match ctx.try_const_info(fun) { Some(p) => p, None => return None };
     let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
     let i = num_params as usize + idx;
     if i >= cargs.len() {
@@ -787,7 +787,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     let ghost cm = env_model_nofv(*env);
     let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
+    let (name, levels) = match ctx.try_const_info(fun) { Some(p) => p, None => return None };
     let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
     if args.len() != 2 {
         return None;
@@ -1594,12 +1594,12 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
             forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho)
 {
     let x_el = ctx.read_expr(x);
-    let (x_name, x_levels) = match expr_as_const(x, &x_el) {
+    let (x_name, x_levels) = match ctx.try_const_info(x) {
         Some(p) => p,
         None => return false,
     };
     let y_el = ctx.read_expr(y);
-    let (y_name, y_levels) = match expr_as_const(y, &y_el) {
+    let (y_name, y_levels) = match ctx.try_const_info(y) {
         Some(p) => p,
         None => return false,
     };
@@ -4627,7 +4627,7 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'
 {
     let (fun, _args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
-    let (name, _levels) = match expr_as_const(fun, &fun_el) {
+    let (name, _levels) = match ctx.try_const_info(fun) {
         Some(p) => p,
         None => return None,
     };
@@ -4686,12 +4686,12 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     let (l_fun, l_args) = ctx.unfold_apps(x);
     let (r_fun, r_args) = ctx.unfold_apps(y);
     let l_fun_el = ctx.read_expr(l_fun);
-    let (l_name, l_levels) = match expr_as_const(l_fun, &l_fun_el) {
+    let (l_name, l_levels) = match ctx.try_const_info(l_fun) {
         Some(p) => p,
         None => return None,
     };
     let r_fun_el = ctx.read_expr(r_fun);
-    let (r_name, r_levels) = match expr_as_const(r_fun, &r_fun_el) {
+    let (r_name, r_levels) = match ctx.try_const_info(r_fun) {
         Some(p) => p,
         None => return None,
     };

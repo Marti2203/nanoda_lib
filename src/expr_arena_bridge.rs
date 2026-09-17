@@ -71,45 +71,6 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
     matches!(e, Expr::Local { .. })
 }
 
-/// `Pi`/`Lambda` both collapse to the SAME `ExprSpec::Bind` (see `ExprSpec`'s
-/// doc comment) -- `expr_as_pi`/`expr_as_lambda`'s own `None`-case ensures
-/// are each just `true` (neither can individually rule out `Bind`, since the
-/// OTHER one might be what actually matched), so a caller needing "this is
-/// definitely NOT Bind-shaped" after both return `None` needs this separate,
-/// combined check instead.
-/// A direct, BICONDITIONAL check that `e` is `Const`-shaped -- unlike
-/// `is_const_shape`/`expr_as_const`'s `None`-case (`!is_const_shape(ptr)`,
-/// a fact about the opaque FLAG, not directly about `to_model`'s pattern:
-/// see [[feedback_verus_shape_flag_vs_pattern]]), this one's contract is
-/// phrased directly against `to_model_of_expr`'s own `Const(_, _)` pattern,
-/// so a caller who has excluded every OTHER shape via elimination can
-/// conclude "must be `Closed`/one of the leaf shapes" without needing a
-/// converse axiom for the `is_const_shape` flag (which doesn't exist, by
-/// design -- flags are intentionally forward-only).
-/// `Sort`/`Const`/`StringLit`/`NatLit`: all four always have
-/// `num_loose_bvars() == 0` and `has_fvars() == false` (see
-/// `Expr::num_loose_bvars`/`has_fvars` in `expr.rs`), i.e. they're all
-/// bound-variable-inert for `inst`/`abstr`'s purposes regardless of
-/// payload. `Sort`/`Const`/`StringLit`/`NatLit` each get their own distinct
-/// `ExprSpec` variant now (see `ExprSpec`'s doc comment in
-/// `expr_model.rs`) -- only genuinely payload-free leaves collapse to
-/// `ExprSpec::Closed` -- so this function's *contract* gives `matches!(...,
-/// Closed | Sort(_) | NatLit(_) | StringLit(_)) || is_const_shape(ptr)`,
-/// not `Closed` alone. The real boolean result is unchanged, still true
-/// for all four variants; only the trust boundary's own precision keeps
-/// catching up as `ExprSpec` gains new variants.
-/// Unlike the other accessors, `Const`'s payload (a name plus universe
-/// levels) is otherwise erased entirely into `ExprSpec::Closed` (see
-/// `expr_is_closed_leaf`'s doc comment) -- content-blind is right for
-/// `inst`/`abstr`'s purposes, but some later proofs (e.g.
-/// `tc_model.rs::get_rec_rule`) need to know *which* `Const` this is.
-/// Takes the pointer itself, same reason as `expr_is_local`: so the
-/// contract can talk about the pointer's identity, not just the shallow
-/// value's.
-#[allow(dead_code)]
-pub(crate) fn expr_as_const<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(NamePtr<'t>, LevelsPtr<'t>)> {
-    match e { Expr::Const { name, levels, .. } => Some((*name, *levels)), _ => None }
-}
 
 /// `Local`'s payload (the real `def_eq_local` compares `id`/`binder_type`,
 /// not the pointer itself) -- takes the pointer too, same reason
@@ -723,11 +684,6 @@ pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
 {
 }
 
-pub assume_specification<'t> [expr_as_const] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, LevelsPtr<'t>)>)
-    ensures match result {
-        Some((n, l)) => is_const_shape(ptr) && const_name_of(ptr) == n && const_levels_of(ptr) == l,
-        None => !is_const_shape(ptr),
-    };
 
 /// `Local`'s payload, same trust-boundary shape as `Const`'s
 /// `is_const_shape`/`const_name_of`/`const_levels_of`: `local_id_of` is the
@@ -1088,7 +1044,7 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
-    if expr_as_const(e, &el).is_some() {
+    if expr_is_const_shape(&el) {
         proof { is_const_shape_model(e); }
         assert(size(to_model(e)) == 1);
         return Some(1);
@@ -1159,7 +1115,7 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
     if expr_as_sort(&el).is_some() {
         return Some(true);
     }
-    if expr_as_const(e, &el).is_some() {
+    if expr_is_const_shape(&el) {
         proof { is_const_shape_model(e); }
         return Some(true);
     }
@@ -1893,7 +1849,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             None => None,
         };
     }
-    if let Some((name, levels)) = expr_as_const(e, &el) {
+    if let Expr::Const { name, levels, .. } = el {
         assert(is_const_shape(e) && const_name_of(e) == name && const_levels_of(e) == levels);
         proof {
             is_const_shape_model(e);

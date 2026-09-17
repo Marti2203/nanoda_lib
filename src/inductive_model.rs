@@ -40,7 +40,7 @@ use crate::level_arena_bridge::{name_id, name_id_injective};
 use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, const_name_of, const_levels_of, const_id, const_levels_vec};
 #[cfg(verus_only)]
 use crate::beta_model::spine_app;
-use crate::expr_arena_bridge::{expr_as_const, expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
+use crate::expr_arena_bridge::{expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::{Env, RecRule, Declar};
 use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some, get_constructor_inductive_name};
 #[cfg(verus_only)]
@@ -226,7 +226,7 @@ pub fn verified_find_const_named<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>
     let el = ctx.read_expr(e);
     if expr_is_const_shape(&el) {
         assert(matches!(to_model(e), ExprSpec::Const(_, _)));
-        if let Some((name, _levels)) = expr_as_const(e, &el) {
+        if let Some((name, _levels)) = ctx.try_const_info(e) {
             assert(is_const_shape(e) && const_name_of(e) == name);
             proof { is_const_shape_model(e); }
             assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
@@ -337,7 +337,7 @@ pub fn verified_extract_const_names<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, haystack: &
         decreases haystack.len() - i
     {
         let el = ctx.read_expr(haystack[i]);
-        if let Some((name, _levels)) = expr_as_const(haystack[i], &el) {
+        if let Some((name, _levels)) = ctx.try_const_info(haystack[i]) {
             assert(is_const_shape(haystack@[i as int]) && const_name_of(haystack@[i as int]) == name);
             proof { is_const_shape_model(haystack@[i as int]); }
             assert(const_id(haystack@[i as int]) == name_id(name));
