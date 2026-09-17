@@ -115,6 +115,70 @@ pub assume_specification<A> [Ptr::<A>::dag_marker] (p: &Ptr<A>) -> (result: DagM
     ensures dm_is_tc(result) == (ptr_raw(*p) & 0x8000_0000u32 != 0);
 
 
+// ---------------------------------------------------------------------
+// `indexmap::IndexSet`, modelled by its DOCUMENTED observable contract: an
+// insertion-ordered sequence of distinct elements. `get_index` retrieves by
+// position, `get_index_of` finds an equal element if one exists, and
+// `insert_full` appends when absent and is a no-op when present.
+//
+// This is not a verification of indexmap -- it is the boundary at which the
+// arena's storage behaviour is assumed, and it is a much better boundary
+// than the per-accessor denotation axioms it is meant to replace: a
+// wrong-index or stale-entry bug contradicts these, whereas a free-floating
+// `to_model` cannot notice one.
+// ---------------------------------------------------------------------
+
+#[verifier::external_type_specification]
+#[verifier::external_body]
+#[verifier::reject_recursive_types(T)]
+#[verifier::reject_recursive_types(S)]
+pub struct ExIndexSet<T, S>(indexmap::IndexSet<T, S>);
+
+/// The set's elements, in insertion order.
+pub uninterp spec fn index_set_seq<T, S>(s: indexmap::IndexSet<T, S>) -> Seq<T>;
+
+/// Elements are distinct -- the property that makes `get_index_of` a
+/// function rather than a choice.
+pub open spec fn index_set_distinct<T, S>(s: indexmap::IndexSet<T, S>) -> bool {
+    forall|i: int, j: int|
+        0 <= i < index_set_seq(s).len() && 0 <= j < index_set_seq(s).len()
+        && #[trigger] index_set_seq(s)[i] == #[trigger] index_set_seq(s)[j] ==> i == j
+}
+
+/// `get_index`: retrieve by position.
+pub assume_specification<T, S> [indexmap::IndexSet::<T, S>::get_index] (
+    s: &indexmap::IndexSet<T, S>, index: usize) -> (r: Option<&T>)
+    ensures
+        (index < index_set_seq(*s).len()) == (r is Some),
+        r matches Some(x) ==> *x == index_set_seq(*s)[index as int];
+
+/// `insert_full`: append when absent, no-op when present. Together with
+/// `get_index` this is what makes hash-consing observable -- the returned
+/// index always locates the value afterwards, whichever branch was taken.
+pub assume_specification<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> [indexmap::IndexSet::<T, S>::insert_full] (
+    s: &mut indexmap::IndexSet<T, S>, value: T) -> (r: (usize, bool))
+    ensures
+        ({
+            let before = index_set_seq(*old(s));
+            let after = index_set_seq(*final(s));
+            &&& r.0 < after.len()
+            &&& after[r.0 as int] == value
+            // appended when absent, unchanged when already present
+            &&& if r.1 { after =~= before.push(value) && r.0 == before.len() }
+                else   { after =~= before }
+        });
+
+// `get_index_of` is deliberately NOT specified. indexmap's signature is
+// generic over any `Q: Equivalent<T>`, Verus requires an
+// `assume_specification` to match that signature exactly, and at that
+// generality there is nothing truthful to say -- no spec can relate an
+// arbitrary `Q` to `T`. Pinning it at `Q = T` (the instantiation the kernel
+// uses) is rejected for signature mismatch.
+//
+// It is not needed for the readers, which only index by position. It would
+// be needed to verify `alloc_*`'s hash-consing LOOKUP branch, so that stays
+// out of reach until Verus can express the instantiation.
+
 /// Abstract model of the two-tier "hash-consing" pattern every
 /// `alloc_X`/`read_X` pair in `util.rs` follows (`alloc_name`/`alloc_level`/
 /// `alloc_expr`/`alloc_string`/`alloc_bignum`/`alloc_levels`, paired with
