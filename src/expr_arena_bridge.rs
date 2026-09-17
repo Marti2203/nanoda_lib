@@ -87,13 +87,6 @@ pub(crate) fn expr_as_local_named<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option
     match e { Expr::Local { binder_name, binder_style, binder_type, .. } => Some((*binder_name, *binder_style, *binder_type)), _ => None }
 }
 
-/// Verus can't relate an external type's real `==` to spec-level equality
-/// on the opaque ghost value without an explicit bridge -- same trick as
-/// `level_arena_bridge::name_ptr_eq`.
-#[allow(dead_code)]
-pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> bool {
-    a == b
-}
 
 
 
@@ -108,25 +101,6 @@ pub(crate) fn expr_as_string_lit_ptr<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Opt
 }
 
 
-/// `BinderStyle` is registered `external_body` (`ExBinderStyle` below),
-/// so its OWN enum variants can't be constructed directly inside
-/// `verus!`-checked code ("disallowed: constructor for an opaque
-/// datatype") -- every OTHER function in this crate that needs a
-/// `BinderStyle` value takes it as a parameter, threaded through from
-/// real, already-existing data (e.g. a `Pi`'s own stored `binder_style`);
-/// `mk_majors`/`mk_motive_dep` (`inductive.rs:1049-1071`) are the first
-/// real functions that construct FRESH ones (`BinderStyle::Default`/
-/// `::Implicit`), so these two trivial helpers exist purely to move that
-/// one enum-literal construction outside verus's own checking.
-#[allow(dead_code)]
-pub(crate) fn binder_style_default() -> BinderStyle {
-    BinderStyle::Default
-}
-
-#[allow(dead_code)]
-pub(crate) fn binder_style_implicit() -> BinderStyle {
-    BinderStyle::Implicit
-}
 
 /// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: dereference
 /// and clone the arena-stored `BigUint` (real `read_bignum` returns
@@ -222,17 +196,16 @@ verus! {
 #[verifier::external_type_specification]
 pub struct ExExpr<'a>(Expr<'a>);
 
+/// TRANSPARENT, like `ExExpr`. Opaque, it needed two helper functions just to
+/// name `Default` and `Implicit` inside `verus!`.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExBinderStyle(BinderStyle);
 
-pub assume_specification [binder_style_default] () -> (result: BinderStyle);
-pub assume_specification [binder_style_implicit] () -> (result: BinderStyle);
-
+/// TRANSPARENT, like `ExExpr`: the two variants are visible, so `fvar_id_eq`'s
+/// contract is provable from the derived `PartialEq` rather than assumed.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExFVarId(FVarId);
 
 /// What an `ExprPtr` denotes in our `ExprSpec` model. Uninterpreted, same
@@ -760,8 +733,20 @@ pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
 {
 }
 
-pub assume_specification [fvar_id_eq] (a: FVarId, b: FVarId) -> (result: bool)
-    ensures result == (a == b);
+/// Was an `assume_specification`. `ExFVarId` is transparent now, so comparing
+/// the variants explicitly proves what the derived `PartialEq` only asserted:
+/// making the type transparent is not by itself enough, because `==` on it is
+/// still an unspecified external call -- the match is what discharges it.
+#[allow(dead_code)]
+pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> (result: bool)
+    ensures result == (a == b)
+{
+    match (a, b) {
+        (FVarId::DbjLevel(x), FVarId::DbjLevel(y)) => x == y,
+        (FVarId::Unique(x), FVarId::Unique(y)) => x == y,
+        _ => false,
+    }
+}
 
 /// Was an `assume_specification` over a `(ptr, e)` pair whose correspondence
 /// nothing checked; reads the node itself now, so the same contract is proven.

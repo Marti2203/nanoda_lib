@@ -43,16 +43,6 @@ use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match
 
 
 
-/// Plain owned-`Vec` counterpart of `TcCtx::read_levels`, purely so Verus
-/// has something to attach a contract to -- `Arc<[LevelPtr]>` (what
-/// `read_levels` actually returns) isn't given a spec contract elsewhere
-/// in this bridge, matching how this file already routes real-`Expr`
-/// pattern-matching through plain helper functions before axiomatizing
-/// them (see `level_as_succ` etc. above).
-#[allow(dead_code)]
-pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> Vec<LevelPtr<'t>> {
-    ctx.read_levels(p).iter().copied().collect()
-}
 
 verus! {
 
@@ -171,10 +161,16 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_levels] (ctx: &TcCtx<'t,
         result@.len() == to_model_of_levels(p).len(),
         forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
 
-pub assume_specification<'t, 'p> [read_levels_vec] (ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<LevelPtr<'t>>)
+/// Was an `assume_specification`. The body is a `collect()` over
+/// `iter().copied()`, which `Copied`'s concretely-defined `remaining()` now
+/// supports, so the contract follows from `read_levels`'s.
+pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<LevelPtr<'t>>)
     ensures
         result@.len() == to_model_of_levels(p).len(),
-        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
+        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i]
+{
+    ctx.read_levels(p).iter().copied().collect()
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mut TcCtx<'t, 'p>, ls: &[LevelPtr<'t>]) -> (result: LevelsPtr<'t>) where 'p: 't
     ensures
