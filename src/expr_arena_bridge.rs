@@ -1480,6 +1480,32 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num_loose_bvars] (ctx: &TcCtx
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::has_fvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
     ensures result == has_fv(to_model(e));
 
+// HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
+//
+// Every `mk_*` body is two lines: compute a hash, call `alloc_expr`. So ONE
+// storage primitive
+//
+//     assume_specification [TcCtx::alloc_expr](ctx, e) -> (result: ExprPtr)
+//         ensures to_model(result) == to_model_of_expr(e);
+//
+// derives all nine denotation contracts, once the bodies are inside
+// `verus!`. That primitive is justified by the facts proven above:
+// hash-consing may return an existing pointer rather than appending, but
+// either way the stored node IS `e`, and children keep their denotations by
+// `expr_model_at_append`.
+//
+// What stops the bodies moving in is `hash64!`, not the denotation
+// reasoning. Piloted on `mk_var`: registering `rustc_hash::FxHasher` as an
+// external type clears the hasher, and then `Hash::hash` wants an
+// `assume_specification` per primitive type hashed (u16, u64, the `Ptr`
+// types) and the `*_HASH` consts need to be visible inside `verus!`.
+// Estimated 8-12 further claim-free additions, all about hashing, which no
+// model function reads.
+//
+// Net once done: these 9, plus the level and name constructors -- roughly 25
+// denotation claims -- collapse to 3 storage primitives, and that many kernel
+// functions move inside `verus!`.
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_var] (ctx: &mut TcCtx<'t, 'p>, dbj_idx: u16) -> (result: ExprPtr<'t>) where 'p: 't
     ensures to_model(result) == ExprSpec::Var(dbj_idx as u32);
 
