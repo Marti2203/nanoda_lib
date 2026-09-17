@@ -225,6 +225,88 @@ pub proof fn name_model_at_computes_nesting<'a>(p0: NamePtr<'a>, s: StringPtr<'a
     assert(name_model_at(ns, 0) == NameSpec::Anon);
 }
 
+// TWO-TIER STORAGE. The single-`Seq` model above is not the whole picture:
+// the arena has two tiers (`export_file.dag` and the local `dag`), a pointer
+// is a (marker, index) pair, and a `TcCtx` node may reference `ExportFile`
+// nodes. So `ptr_index` alone does not identify a node, and deriving
+// `read_name`'s contract needs both tiers.
+//
+// What makes it well-founded is that the tiers are ordered: the export file
+// is built first and its nodes reference only each other, so an
+// `ExportFile` node is always "smaller" than any `TcCtx` node. The measure
+// below is lexicographic on (tier, index).
+
+/// Is this pointer into the local (`TcCtx`) tier rather than the export file?
+pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
+    crate::util_model::ptr_raw(p) & 0x8000_0000u32 != 0
+}
+
+/// Acyclicity across both tiers: within a tier, children sit at smaller
+/// indices; and an `ExportFile` node never references the local tier.
+pub open spec fn name_children_below2<'a>(n: Name<'a>, tc: bool, i: nat) -> bool {
+    match n {
+        Name::Anon => true,
+        Name::Str(pfx, _, _) | Name::Num(pfx, _, _) =>
+            if ptr_is_tc(pfx) { tc && ptr_index(pfx) < i } else { true },
+    }
+}
+
+pub open spec fn names_two_tier_wf<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>) -> bool {
+    &&& forall|i: int| 0 <= i < ef.len() ==> name_children_below2(#[trigger] ef[i], false, i as nat)
+    &&& forall|i: int| 0 <= i < tc.len() ==> name_children_below2(#[trigger] tc[i], true, i as nat)
+}
+
+/// The denotation of a (tier, index) node, computed across both tiers.
+/// `decreases (tier, index)`: descending into the export file from the local
+/// tier drops the first component, and staying within a tier drops the second.
+pub open spec fn name_model_at2<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc: bool, i: nat) -> NameSpec
+    decreases if is_tc { 1int } else { 0int }, i
+{
+    let store = if is_tc { tc } else { ef };
+    if i >= store.len() {
+        NameSpec::Anon
+    } else {
+        match store[i as int] {
+            Name::Anon => NameSpec::Anon,
+            Name::Str(pfx, sfx, _) =>
+                if ptr_is_tc(pfx) {
+                    if is_tc && ptr_index(pfx) < i {
+                        NameSpec::Str(Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))), string_id(sfx))
+                    } else { NameSpec::Anon }
+                } else if is_tc || ptr_index(pfx) < i {
+                    NameSpec::Str(Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))), string_id(sfx))
+                } else { NameSpec::Anon },
+            Name::Num(pfx, sfx, _) =>
+                if ptr_is_tc(pfx) {
+                    if is_tc && ptr_index(pfx) < i {
+                        NameSpec::Num(Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))), sfx)
+                    } else { NameSpec::Anon }
+                } else if is_tc || ptr_index(pfx) < i {
+                    NameSpec::Num(Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))), sfx)
+                } else { NameSpec::Anon },
+        }
+    }
+}
+
+/// MONOTONICITY across tiers: appending to the LOCAL tier never changes what
+/// an export-file pointer denotes. This is the property the two-tier arena
+/// actually needs -- the export file is immutable while the local tier grows.
+pub proof fn name_model_at2_append_tc<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, n: Name<'a>, i: nat)
+    ensures name_model_at2(ef, tc.push(n), false, i) == name_model_at2(ef, tc, false, i),
+    decreases i,
+{
+    if i < ef.len() {
+        match ef[i as int] {
+            Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => {
+                if !ptr_is_tc(pfx) && ptr_index(pfx) < i {
+                    name_model_at2_append_tc(ef, tc, n, ptr_index(pfx));
+                }
+            }
+            Name::Anon => {}
+        }
+    }
+}
+
 /// MONOTONICITY: allocating a new name never changes what an existing
 /// pointer denotes. This is what licenses `to_model_name` taking no context
 /// -- the whole crate's contracts rest on it, and it has been assumed until
