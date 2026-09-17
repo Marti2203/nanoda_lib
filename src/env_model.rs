@@ -394,6 +394,26 @@ pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
 /// character as `ctor_num_params_of_agrees`).
 pub uninterp spec fn env_global_closed<'x, 'a>(env: Env<'x, 'a>) -> bool;
 
+/// Closedness of every declaration TYPE, the sibling of `env_global_closed`
+/// just below and established by the same certificate scan. Declaration types
+/// in a Lean environment are closed terms, like values -- the scan already
+/// walked them for depth and `max_var_below`, it simply never checked
+/// `has_fvars` on them.
+///
+/// This is what the kernel's own `subst_expr_levels` needs: it PANICS on a
+/// `Local`, so verifying it in place turned that into a `!has_fv`
+/// precondition, and its callers substitute into declaration types.
+pub uninterp spec fn env_global_closed_ty<'x, 'a>(env: Env<'x, 'a>) -> bool;
+
+#[verifier::external_body]
+pub proof fn env_global_closed_ty_pin<'x, 'a>(env: Env<'x, 'a>)
+    requires
+        forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id)
+            ==> !has_fv(to_model_of_declar_ty(env)[id].1),
+    ensures env_global_closed_ty(env)
+{
+}
+
 #[verifier::external_body]
 pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
     requires

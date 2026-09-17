@@ -117,7 +117,7 @@ use crate::expr_arena_bridge::expr_as_proj;
 use crate::tc_model::{deq_leaf, deq_any_refl, deq_any_of_leaf, deq_any_app_congr, deq_any_bind_congr, deq_any_proj_congr, deq_any_symm, deq_any_trans};
 use crate::tc_model::{verified_def_eq_sort, verified_def_eq_const};
 #[cfg(verus_only)]
-use crate::env_model::{to_model_of_env, env_global_cap, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin};
+use crate::env_model::{to_model_of_env, env_global_cap, to_model_of_declar_ty, env_global_wf_ty, to_model_of_ctor_num_params, env_global_cap_le, env_global_size_cap, env_global_closed, env_global_size_cap_le, env_global_closed_pin, env_global_closed_ty, env_global_closed_ty_pin};
 use crate::expr_arena_bridge::{verified_size};
 use crate::tc_model::{verified_rec_step_free, first_rule_ctor_name};
 #[cfg(verus_only)]
@@ -322,7 +322,8 @@ pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, fuel: u32) -> (result: Option<u32>)
     ensures match result {
         Some(k) => k <= 60000 && env_global_cap(*env) <= k as nat
-            && env_global_size_cap(*env) <= k as nat && env_global_closed(*env),
+            && env_global_size_cap(*env) <= k as nat && env_global_closed(*env)
+            && env_global_closed_ty(*env),
         None => true,
     }
 {
@@ -338,6 +339,11 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
                 to_model_of_env(*env).contains_key(id)
                     ==> size(to_model_of_env(*env)[id].1) <= mx as nat
                         && !has_fv(to_model_of_env(*env)[id].1)
+            },
+            forall |j: int| 0 <= j < i ==> {
+                let id = name_id(#[trigger] names@[j]);
+                to_model_of_declar_ty(*env).contains_key(id)
+                    ==> !has_fv(to_model_of_declar_ty(*env)[id].1)
             },
             forall |j: int| 0 <= j < i ==> {
                 let id = name_id(#[trigger] names@[j]);
@@ -372,6 +378,12 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
         match get_declar_info_ty(env, &n) {
             Some((_, ty)) => {
                 let st = match verified_size(ctx, ty, fuel) { Some(v) => v, None => return None };
+                // Same check the value branch already does. The scan walked
+                // types for depth and `max_var_below` but never for free
+                // variables; `subst_expr_levels` needs exactly this.
+                if ctx.has_fvars(ty) {
+                    return None;
+                }
                 proof {
                     depth_le_size(to_model(ty));
                     nlbv_bound_implies_max_var_below(to_model(ty), 0);
@@ -390,6 +402,17 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
                 to_model_of_env(*env).contains_key(id)
                     ==> size(to_model_of_env(*env)[id].1) <= mx as nat
                         && !has_fv(to_model_of_env(*env)[id].1)
+            } by {
+                let id = name_id(names@[j]);
+                if j < i {
+                } else {
+                    assert(j == i);
+                }
+            }
+            assert forall |j: int| 0 <= j < i + 1 implies {
+                let id = name_id(#[trigger] names@[j]);
+                to_model_of_declar_ty(*env).contains_key(id)
+                    ==> !has_fv(to_model_of_declar_ty(*env)[id].1)
             } by {
                 let id = name_id(names@[j]);
                 if j < i {
@@ -450,6 +473,12 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 
         }
         env_global_size_cap_le(*env, mx as nat);
         env_global_closed_pin(*env);
+        assert forall |id: u64| #[trigger] to_model_of_declar_ty(*env).contains_key(id)
+            implies !has_fv(to_model_of_declar_ty(*env)[id].1) by {
+            let j = choose |j: int| 0 <= j < names@.len() && name_id(#[trigger] names@[j]) == id;
+            assert(0 <= j < names@.len());
+        }
+        env_global_closed_ty_pin(*env);
     }
     Some(mx)
 }
