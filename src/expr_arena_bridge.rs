@@ -1601,129 +1601,37 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
 
 
 
-/// Real-arena counterpart to `expr_model::inst_model`, mirroring
-/// `TcCtx::inst_aux`'s actual logic (including its short-circuit) but
-/// without the memoization cache -- caching is a pure performance concern,
-/// orthogonal to whether the algorithm computes the right answer, and
-/// (like `TcCtx::combining`/`simplify`/`leq_core` in
-/// `level_arena_bridge.rs`) isn't itself re-verified here.
+/// Adapter over the kernel's own `TcCtx::inst`, which is verified in place now
+/// (`expr.rs`). This was a 110-line reimplementation with its own fuel
+/// parameter; what is left is the `Option` shape its twenty-four call sites
+/// expect.
 ///
-/// `ExprPtr` is opaque to Verus (no structural `decreases` measure
-/// available), so this uses the same fuel technique as
-/// `level_arena_bridge::verified_subst1`: fuel exhaustion returns `None`
-/// (substitution has no safe "leave unchanged" fallback, unlike
-/// `combining`/`simplify`). The `offset + depth(to_model(e))` bound is
-/// exactly `inst_model`'s own bound, carried over unchanged; `to_model(e)`
-/// is a well-defined ghost `ExprSpec` even though `e` itself is opaque.
+/// `offset == 0` is now required rather than supported. Every call site passes
+/// a literal `0` -- the general-offset entry point was only ever exercised by
+/// the mirror's own recursion, and the kernel has no such entry point at all
+/// (`inst` fixes the offset at 0 and `inst_aux` is private to `expr.rs`).
+///
+/// The `substs` length check takes the place of a precondition the call sites
+/// could not establish, using the same `None` escape the mirror used for fuel
+/// exhaustion.
 pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16, fuel: u32) -> (result: Option<ExprPtr<'t>>)
-    requires offset as nat + depth(to_model(e)) <= 60000
+    requires
+        offset == 0,
+        offset as nat + depth(to_model(e)) <= 60000,
     ensures match result {
         Some(r) => to_model(r) == subst_full(to_model(e), Seq::new(substs@.len(), |i: int| to_model(substs@[i])), offset as nat),
         None => true,
     }
-    decreases fuel
 {
-    if fuel == 0 {
+    let _ = fuel;
+    if substs.len() >= 60000 {
         return None;
     }
-    let fuel1 = fuel - 1;
-    let nlbv_e = ctx.num_loose_bvars(e);
-    if nlbv_e <= offset {
-        proof {
-            subst_full_noop(to_model(e), Seq::new(substs@.len(), |i: int| to_model(substs@[i])), offset as nat);
-        }
-        return Some(e);
+    let r = ctx.inst(e, substs);
+    proof {
+        assert(Seq::new(substs@.len(), |i: int| to_model(substs@[i])) =~= ptr_models(substs@));
     }
-    let el = ctx.read_expr(e);
-    if let Some(dbj_idx) = expr_as_var(&el) {
-        assert(to_model(e) == ExprSpec::Var(dbj_idx as u32));
-        assert(dbj_idx >= offset);
-        let diff = (dbj_idx - offset) as usize;
-        if diff < substs.len() {
-            let idx = (substs.len() - 1) - diff;
-            let s = substs[idx];
-            assert(to_model(s) == Seq::new(substs@.len(), |i: int| to_model(substs@[i]))[idx as int]);
-            return Some(s);
-        } else {
-            return Some(e);
-        }
-    }
-    if expr_is_closed_leaf(e, &el) {
-        proof {
-            if is_const_shape(e) {
-                is_const_shape_model(e);
-                assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-            } else if is_nat_lit_shape(e) {
-                is_nat_lit_shape_model(e);
-                assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
-            } else if is_string_lit_shape(e) {
-                is_string_lit_shape_model(e);
-                assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
-            } else {
-                assert(to_model(e) == ExprSpec::Closed);
-            }
-        }
-        return Some(e);
-    }
-    if expr_is_local(e, &el) {
-        assert(to_model(e) == ExprSpec::Free(expr_id(e)));
-        return Some(e);
-    }
-    if let Some((fun, arg)) = expr_as_app(&el) {
-        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
-        assert(depth(to_model(fun)) < depth(to_model(e)));
-        assert(depth(to_model(arg)) < depth(to_model(e)));
-        return match (verified_inst(ctx, fun, substs, offset, fuel1), verified_inst(ctx, arg, substs, offset, fuel1)) {
-            (Some(sf), Some(sa)) => Some(ctx.mk_app(sf, sa)),
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_inst(ctx, binder_type, substs, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(offset1)) => match verified_inst(ctx, body, substs, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_pi(binder_name, binder_style, st, sb)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_inst(ctx, binder_type, substs, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(offset1)) => match verified_inst(ctx, body, substs, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_lambda(binder_name, binder_style, st, sb)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
-        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))));
-        assert(depth(to_model(binder_type)) < depth(to_model(e)));
-        assert(depth(to_model(val)) < depth(to_model(e)));
-        assert(depth(to_model(body)) < depth(to_model(e)));
-        return match (verified_inst(ctx, binder_type, substs, offset, fuel1), verified_inst(ctx, val, substs, offset, fuel1), offset.checked_add(1)) {
-            (Some(st), Some(sv), Some(offset1)) => match verified_inst(ctx, body, substs, offset1, fuel1) {
-                Some(sb) => Some(ctx.mk_let(binder_name, st, sv, sb, nondep)),
-                None => None,
-            },
-            _ => None,
-        };
-    }
-    if let Some((ty_name, idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
-        assert(depth(to_model(structure)) < depth(to_model(e)));
-        return match verified_inst(ctx, structure, substs, offset, fuel1) {
-            Some(ss) => Some(ctx.mk_proj(ty_name, idx, ss)),
-            None => None,
-        };
-    }
-    None
+    Some(r)
 }
 
 
