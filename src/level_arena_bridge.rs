@@ -35,6 +35,8 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
+use crate::name_arena_bridge::ptr_index;
+#[cfg(verus_only)]
 use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib, subst_level_spec, subst_levels_spec, find_level_idx_in_range};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param};
@@ -223,6 +225,118 @@ pub open spec fn to_model_of_level<'a>(l: Level<'a>) -> LevelSpec {
         Level::IMax(a, b, _) => LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b))),
         Level::Param(n, _) => LevelSpec::Param(name_id(n)),
     }
+}
+
+// ---------------------------------------------------------------------
+// ARENA STORAGE MODEL for levels -- the same four facts proven for names in
+// `name_arena_bridge.rs`, now for a node type with BRANCHING children.
+// `Param`'s child is a `NamePtr`, i.e. a different arena, but that costs
+// nothing here: `LevelSpec::Param` carries only the opaque `name_id`, so the
+// recursion stays inside the level storage.
+// ---------------------------------------------------------------------
+
+/// A stored level's children live at strictly smaller indices.
+pub open spec fn level_children_below<'a>(l: Level<'a>, i: nat) -> bool {
+    match l {
+        Level::Zero => true,
+        Level::Succ(p, _) => ptr_index(p) < i,
+        Level::Max(a, b, _) => ptr_index(a) < i && ptr_index(b) < i,
+        Level::IMax(a, b, _) => ptr_index(a) < i && ptr_index(b) < i,
+        Level::Param(_, _) => true,
+    }
+}
+
+pub open spec fn levels_arena_wf<'a>(ls: Seq<Level<'a>>) -> bool {
+    forall|i: int| 0 <= i < ls.len() ==> level_children_below(#[trigger] ls[i], i as nat)
+}
+
+/// What the level at index `i` denotes, COMPUTED from storage.
+pub open spec fn level_model_at<'a>(ls: Seq<Level<'a>>, i: nat) -> LevelSpec
+    decreases i
+{
+    if i >= ls.len() {
+        LevelSpec::Zero
+    } else {
+        match ls[i as int] {
+            Level::Zero => LevelSpec::Zero,
+            Level::Succ(p, _) =>
+                if ptr_index(p) < i {
+                    LevelSpec::Succ(Box::new(level_model_at(ls, ptr_index(p))))
+                } else { LevelSpec::Zero },
+            Level::Max(a, b, _) =>
+                if ptr_index(a) < i && ptr_index(b) < i {
+                    LevelSpec::Max(
+                        Box::new(level_model_at(ls, ptr_index(a))),
+                        Box::new(level_model_at(ls, ptr_index(b))))
+                } else { LevelSpec::Zero },
+            Level::IMax(a, b, _) =>
+                if ptr_index(a) < i && ptr_index(b) < i {
+                    LevelSpec::IMax(
+                        Box::new(level_model_at(ls, ptr_index(a))),
+                        Box::new(level_model_at(ls, ptr_index(b))))
+                } else { LevelSpec::Zero },
+            Level::Param(n, _) => LevelSpec::Param(name_id(n)),
+        }
+    }
+}
+
+/// Under acyclicity the well-foundedness guards are never taken.
+pub proof fn level_model_at_unfold<'a>(ls: Seq<Level<'a>>, i: nat)
+    requires levels_arena_wf(ls), i < ls.len(),
+    ensures
+        level_model_at(ls, i) == match ls[i as int] {
+            Level::Zero => LevelSpec::Zero,
+            Level::Succ(p, _) => LevelSpec::Succ(Box::new(level_model_at(ls, ptr_index(p)))),
+            Level::Max(a, b, _) => LevelSpec::Max(
+                Box::new(level_model_at(ls, ptr_index(a))),
+                Box::new(level_model_at(ls, ptr_index(b)))),
+            Level::IMax(a, b, _) => LevelSpec::IMax(
+                Box::new(level_model_at(ls, ptr_index(a))),
+                Box::new(level_model_at(ls, ptr_index(b)))),
+            Level::Param(n, _) => LevelSpec::Param(name_id(n)),
+        },
+{
+    assert(level_children_below(ls[i as int], i));
+}
+
+/// MONOTONICITY: allocating never changes what an existing pointer denotes.
+/// With branching children this needs the induction applied on BOTH sides.
+pub proof fn level_model_at_append<'a>(ls: Seq<Level<'a>>, l: Level<'a>, i: nat)
+    requires i < ls.len(),
+    ensures level_model_at(ls.push(l), i) == level_model_at(ls, i),
+    decreases i,
+{
+    match ls[i as int] {
+        Level::Succ(p, _) => {
+            if ptr_index(p) < i { level_model_at_append(ls, l, ptr_index(p)); }
+        }
+        Level::Max(a, b, _) | Level::IMax(a, b, _) => {
+            if ptr_index(a) < i { level_model_at_append(ls, l, ptr_index(a)); }
+            if ptr_index(b) < i { level_model_at_append(ls, l, ptr_index(b)); }
+        }
+        _ => {}
+    }
+    assert(ls.push(l)[i as int] == ls[i as int]);
+}
+
+/// Non-degeneracy: `[Zero, Succ(p0)]` must denote `Succ(Zero)`, so the
+/// definitions above cannot be collapsing everything to `Zero`.
+pub proof fn level_model_at_computes_nesting<'a>(p0: LevelPtr<'a>, h: u64)
+    requires ptr_index(p0) == 0,
+    ensures ({
+        let ls = seq![Level::Zero, Level::Succ(p0, h)];
+        &&& levels_arena_wf(ls)
+        &&& level_model_at(ls, 1) == LevelSpec::Succ(Box::new(LevelSpec::Zero))
+    }),
+{
+    let ls: Seq<Level<'a>> = seq![Level::Zero, Level::Succ(p0, h)];
+    assert(ls.len() == 2);
+    assert(ls[0] == Level::<'a>::Zero);
+    assert(ls[1] == Level::Succ(p0, h));
+    assert forall|i: int| 0 <= i < ls.len() implies level_children_below(#[trigger] ls[i], i as nat) by {
+        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    }
+    assert(level_model_at(ls, 0) == LevelSpec::Zero);
 }
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_level] (ctx: &TcCtx<'t, 'p>, ptr: LevelPtr<'t>) -> (result: Level<'t>) where 'p: 't

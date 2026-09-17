@@ -29,6 +29,8 @@
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::name_arena_bridge::ptr_index;
 #[allow(unused_imports)]
 use crate::util::TcCtx;
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
@@ -337,6 +339,160 @@ pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
         Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
         Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(e)),
     }
+}
+
+// ---------------------------------------------------------------------
+// ARENA STORAGE MODEL for expressions -- the same four facts proven for
+// names and levels. This is the largest of the three node types: eleven
+// shapes, up to three children, and leaves that reach into OTHER arenas
+// (`Sort`'s level, `Const`'s name and levels, the literals' payloads).
+// Those cost nothing here for the same reason `Level::Param` did: the model
+// records them by opaque identity, so the recursion stays inside the
+// expression storage.
+//
+// `Local` is the exception and is left as it is -- its denotation is
+// `local_fvar_id_of`, an opaque identity that is deliberately NOT structural
+// (see the module doc comment), so there is nothing to compute from storage.
+// ---------------------------------------------------------------------
+
+/// A stored expression's children live at strictly smaller indices.
+pub open spec fn expr_children_below<'a>(e: Expr<'a>, i: nat) -> bool {
+    match e {
+        Expr::App { fun, arg, .. } => ptr_index(fun) < i && ptr_index(arg) < i,
+        Expr::Pi { binder_type, body, .. } => ptr_index(binder_type) < i && ptr_index(body) < i,
+        Expr::Lambda { binder_type, body, .. } => ptr_index(binder_type) < i && ptr_index(body) < i,
+        Expr::Let { binder_type, val, body, .. } =>
+            ptr_index(binder_type) < i && ptr_index(val) < i && ptr_index(body) < i,
+        Expr::Proj { structure, .. } => ptr_index(structure) < i,
+        _ => true,
+    }
+}
+
+pub open spec fn exprs_arena_wf<'a>(es: Seq<Expr<'a>>) -> bool {
+    forall|i: int| 0 <= i < es.len() ==> expr_children_below(#[trigger] es[i], i as nat)
+}
+
+/// What the expression at index `i` denotes, COMPUTED from storage.
+pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
+    decreases i
+{
+    if i >= es.len() {
+        ExprSpec::Closed
+    } else {
+        match es[i as int] {
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
+            Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
+            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
+            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+            Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(es[i as int])),
+            Expr::App { fun, arg, .. } =>
+                if ptr_index(fun) < i && ptr_index(arg) < i {
+                    ExprSpec::App(
+                        Box::new(expr_model_at(es, ptr_index(fun))),
+                        Box::new(expr_model_at(es, ptr_index(arg))))
+                } else { ExprSpec::Closed },
+            Expr::Pi { binder_type, body, .. } =>
+                if ptr_index(binder_type) < i && ptr_index(body) < i {
+                    ExprSpec::Bind(
+                        Box::new(expr_model_at(es, ptr_index(binder_type))),
+                        Box::new(expr_model_at(es, ptr_index(body))))
+                } else { ExprSpec::Closed },
+            Expr::Lambda { binder_type, body, .. } =>
+                if ptr_index(binder_type) < i && ptr_index(body) < i {
+                    ExprSpec::Bind(
+                        Box::new(expr_model_at(es, ptr_index(binder_type))),
+                        Box::new(expr_model_at(es, ptr_index(body))))
+                } else { ExprSpec::Closed },
+            Expr::Let { binder_type, val, body, .. } =>
+                if ptr_index(binder_type) < i && ptr_index(val) < i && ptr_index(body) < i {
+                    ExprSpec::Let(
+                        Box::new(expr_model_at(es, ptr_index(binder_type))),
+                        Box::new(expr_model_at(es, ptr_index(val))),
+                        Box::new(expr_model_at(es, ptr_index(body))))
+                } else { ExprSpec::Closed },
+            Expr::Proj { idx, structure, .. } =>
+                if ptr_index(structure) < i {
+                    ExprSpec::Proj(idx, Box::new(expr_model_at(es, ptr_index(structure))))
+                } else { ExprSpec::Closed },
+        }
+    }
+}
+
+/// Under acyclicity the well-foundedness guards are never taken, so the
+/// computed denotation agrees with the structural reading of the node. Stated
+/// for the compound shapes, which are the ones carrying a guard.
+pub proof fn expr_model_at_unfold<'a>(es: Seq<Expr<'a>>, i: nat)
+    requires exprs_arena_wf(es), i < es.len(),
+    ensures
+        ({
+            let e = es[i as int];
+            &&& (e matches Expr::App { fun, arg, .. } ==> expr_model_at(es, i) == ExprSpec::App(
+                    Box::new(expr_model_at(es, ptr_index(fun))),
+                    Box::new(expr_model_at(es, ptr_index(arg)))))
+            &&& (e matches Expr::Pi { binder_type, body, .. } ==> expr_model_at(es, i) == ExprSpec::Bind(
+                    Box::new(expr_model_at(es, ptr_index(binder_type))),
+                    Box::new(expr_model_at(es, ptr_index(body)))))
+            &&& (e matches Expr::Lambda { binder_type, body, .. } ==> expr_model_at(es, i) == ExprSpec::Bind(
+                    Box::new(expr_model_at(es, ptr_index(binder_type))),
+                    Box::new(expr_model_at(es, ptr_index(body)))))
+            &&& (e matches Expr::Proj { idx, structure, .. } ==> expr_model_at(es, i) == ExprSpec::Proj(
+                    idx, Box::new(expr_model_at(es, ptr_index(structure)))))
+        }),
+{
+    assert(expr_children_below(es[i as int], i));
+}
+
+/// Non-degeneracy: `[Var 0, App(p0, p0)]` must denote `App(Var 0, Var 0)`, so
+/// the definitions above cannot be collapsing everything to `Closed`.
+pub proof fn expr_model_at_computes_nesting<'a>(p0: ExprPtr<'a>, h: u64)
+    requires ptr_index(p0) == 0,
+    ensures ({
+        let es = seq![
+            Expr::Var { hash: h, dbj_idx: 0 },
+            Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false }];
+        &&& exprs_arena_wf(es)
+        &&& expr_model_at(es, 1) == ExprSpec::App(
+                Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Var(0)))
+    }),
+{
+    let es: Seq<Expr<'a>> = seq![
+        Expr::Var { hash: h, dbj_idx: 0 },
+        Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false }];
+    assert(es.len() == 2);
+    assert(es[0] == Expr::<'a>::Var { hash: h, dbj_idx: 0 });
+    assert forall|i: int| 0 <= i < es.len() implies expr_children_below(#[trigger] es[i], i as nat) by {
+        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    }
+    assert(expr_model_at(es, 0) == ExprSpec::Var(0));
+}
+
+/// MONOTONICITY: allocating never changes what an existing pointer denotes.
+pub proof fn expr_model_at_append<'a>(es: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
+    requires i < es.len(),
+    ensures expr_model_at(es.push(e), i) == expr_model_at(es, i),
+    decreases i,
+{
+    match es[i as int] {
+        Expr::App { fun, arg, .. } => {
+            if ptr_index(fun) < i { expr_model_at_append(es, e, ptr_index(fun)); }
+            if ptr_index(arg) < i { expr_model_at_append(es, e, ptr_index(arg)); }
+        }
+        Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } => {
+            if ptr_index(binder_type) < i { expr_model_at_append(es, e, ptr_index(binder_type)); }
+            if ptr_index(body) < i { expr_model_at_append(es, e, ptr_index(body)); }
+        }
+        Expr::Let { binder_type, val, body, .. } => {
+            if ptr_index(binder_type) < i { expr_model_at_append(es, e, ptr_index(binder_type)); }
+            if ptr_index(val) < i { expr_model_at_append(es, e, ptr_index(val)); }
+            if ptr_index(body) < i { expr_model_at_append(es, e, ptr_index(body)); }
+        }
+        Expr::Proj { structure, .. } => {
+            if ptr_index(structure) < i { expr_model_at_append(es, e, ptr_index(structure)); }
+        }
+        _ => {}
+    }
+    assert(es.push(e)[i as int] == es[i as int]);
 }
 
 /// A `Local` pointer's free-variable identity, standing in for genuine
