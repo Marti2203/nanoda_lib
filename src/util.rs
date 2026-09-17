@@ -506,11 +506,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_level(Level::Param(n, hash))
     }
 
-    pub fn mk_var(&mut self, dbj_idx: u16) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::VAR_HASH, dbj_idx);
-        self.alloc_expr(Expr::Var { dbj_idx, hash })
-    }
-
     pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> ExprPtr<'t> {
         let hash = hash64!(crate::expr::SORT_HASH, level);
         self.alloc_expr(Expr::Sort { level, hash })
@@ -521,38 +516,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::Const { name, levels, hash })
     }
 
-    pub fn mk_app(&mut self, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::APP_HASH, fun, arg);
-        let num_loose_bvars = self.num_loose_bvars(fun).max(self.num_loose_bvars(arg));
-        let has_fvars = self.has_fvars(fun) || self.has_fvars(arg);
-        self.alloc_expr(Expr::App { fun, arg, num_loose_bvars, has_fvars, hash })
-    }
 
-    pub fn mk_lambda(
-        &mut self,
-        binder_name: NamePtr<'t>,
-        binder_style: BinderStyle,
-        binder_type: ExprPtr<'t>,
-        body: ExprPtr<'t>,
-    ) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::LAMBDA_HASH, binder_name, binder_style, binder_type, body);
-        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
-        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
-        self.alloc_expr(Expr::Lambda { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
-    }
 
-    pub fn mk_pi(
-        &mut self,
-        binder_name: NamePtr<'t>,
-        binder_style: BinderStyle,
-        binder_type: ExprPtr<'t>,
-        body: ExprPtr<'t>,
-    ) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::PI_HASH, binder_name, binder_style, binder_type, body);
-        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
-        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
-        self.alloc_expr(Expr::Pi { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
-    }
 
     pub fn mk_let(
         &mut self,
@@ -570,12 +535,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::Let { binder_name, binder_type, val, body, num_loose_bvars, has_fvars, hash, nondep })
     }
 
-    pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::PROJ_HASH, ty_name, idx, structure);
-        let num_loose_bvars = self.num_loose_bvars(structure);
-        let has_fvars = self.has_fvars(structure);
-        self.alloc_expr(Expr::Proj { ty_name, idx, structure, num_loose_bvars, has_fvars, hash })
-    }
 
     pub fn mk_string_lit(&mut self, string_ptr: StringPtr<'t>) -> Option<ExprPtr<'t>> {
         if !self.export_file.config.string_extension {
@@ -1033,8 +992,72 @@ struct ExitStatus {
 use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model, to_model_of_level};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::to_model as to_model_expr;
+#[cfg(verus_only)]
+use crate::expr_model::ExprSpec;
 
 verus! {
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified AS WRITTEN -- body unchanged, and its denotation contract is
+    /// now DERIVED from `alloc_expr`'s storage primitive rather than assumed.
+    pub fn mk_app(&mut self, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::App(Box::new(to_model_expr(fun)), Box::new(to_model_expr(arg))),
+    {
+        let hash = hash64!(crate::expr::APP_HASH, fun, arg);
+        let num_loose_bvars = self.num_loose_bvars(fun).max(self.num_loose_bvars(arg));
+        let has_fvars = self.has_fvars(fun) || self.has_fvars(arg);
+        self.alloc_expr(Expr::App { fun, arg, num_loose_bvars, has_fvars, hash })
+    }
+
+    pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
+    {
+        let hash = hash64!(crate::expr::PROJ_HASH, ty_name, idx, structure);
+        let num_loose_bvars = self.num_loose_bvars(structure);
+        let has_fvars = self.has_fvars(structure);
+        self.alloc_expr(Expr::Proj { ty_name, idx, structure, num_loose_bvars, has_fvars, hash })
+    }
+
+    pub fn mk_lambda(
+        &mut self,
+        binder_name: NamePtr<'t>,
+        binder_style: BinderStyle,
+        binder_type: ExprPtr<'t>,
+        body: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
+    {
+        let hash = hash64!(crate::expr::LAMBDA_HASH, binder_name, binder_style, binder_type, body);
+        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
+        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
+        self.alloc_expr(Expr::Lambda { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+    }
+
+    pub fn mk_pi(
+        &mut self,
+        binder_name: NamePtr<'t>,
+        binder_style: BinderStyle,
+        binder_type: ExprPtr<'t>,
+        body: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
+    {
+        let hash = hash64!(crate::expr::PI_HASH, binder_name, binder_style, binder_type, body);
+        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
+        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
+        self.alloc_expr(Expr::Pi { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+    }
+
+    pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
+    {
+        let hash = hash64!(crate::expr::VAR_HASH, dbj_idx);
+        self.alloc_expr(Expr::Var { dbj_idx, hash })
+    }
+}
+
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Convenience function for reading two items as a tuple.

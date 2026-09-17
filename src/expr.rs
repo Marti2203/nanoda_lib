@@ -5,6 +5,9 @@ use num_traits::identities::Zero;
 use Expr::*;
 use serde::Deserialize;
 
+// Inside `verus!` only so the `hash64!` calls in `util.rs`'s constructors are
+// expressible there; the values are unchanged and no spec reads them.
+::vstd::prelude::verus! {
 pub(crate) const VAR_HASH: u64 = 281;
 pub(crate) const SORT_HASH: u64 = 563;
 pub(crate) const CONST_HASH: u64 = 1129;
@@ -16,6 +19,7 @@ pub(crate) const APP_HASH: u64 = 233;
 pub(crate) const LOCAL_HASH: u64 = 211;
 pub(crate) const STRING_LIT_HASH: u64 = 1493;
 pub(crate) const NAT_LIT_HASH: u64 = 1583;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expr<'a> {

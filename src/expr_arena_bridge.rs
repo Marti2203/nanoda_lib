@@ -1480,6 +1480,15 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num_loose_bvars] (ctx: &TcCtx
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::has_fvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
     ensures result == has_fv(to_model(e));
 
+/// THE storage primitive for expressions: allocation returns a pointer
+/// denoting exactly the node handed in. Hash-consing may return an existing
+/// pointer rather than appending, but either way the stored node IS `e`, and
+/// children keep their denotations by `expr_model_at_append` (proven above).
+///
+/// The `mk_*` contracts are DERIVED from this rather than assumed separately.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<'t, 'p>, e: Expr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+    ensures to_model(result) == to_model_of_expr(e);
+
 // HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
 //
 // Every `mk_*` body is two lines: compute a hash, call `alloc_expr`. So ONE
@@ -1506,23 +1515,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::has_fvars] (ctx: &TcCtx<'t, '
 // denotation claims -- collapse to 3 storage primitives, and that many kernel
 // functions move inside `verus!`.
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_var] (ctx: &mut TcCtx<'t, 'p>, dbj_idx: u16) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Var(dbj_idx as u32);
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_app] (ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_pi] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_lambda] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)));
-
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_let] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_type: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, nondep: bool) -> (result: ExprPtr<'t>) where 'p: 't
     ensures to_model(result) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_proj] (ctx: &mut TcCtx<'t, 'p>, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Proj(idx, Box::new(to_model(structure)));
 
 
 /// Real-arena counterpart to `expr_model::inst_model`, mirroring

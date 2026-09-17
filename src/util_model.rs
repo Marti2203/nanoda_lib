@@ -56,6 +56,35 @@ pub assume_specification [dag_marker_is_tc] (m: &DagMarker) -> (result: bool)
 // in `level_arena_bridge.rs` -- re-registering it here would conflict, so
 // this file just adds more `assume_specification`s for its methods.
 
+// HASHING, registered so the kernel's `hash64!` macro is expressible inside
+// `verus!`. Every item here is CLAIM-FREE by design: the hash is a cache
+// field that no model function reads, so nothing about its value is needed --
+// only that the calls type-check. They exist to let the `mk_*` constructors
+// be verified in place, which retires their denotation axioms.
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExFxHasher(rustc_hash::FxHasher);
+
+pub assume_specification [rustc_hash::FxHasher::default] () -> (result: rustc_hash::FxHasher);
+
+pub assume_specification<H: core::hash::Hasher> [<u64 as core::hash::Hash>::hash::<H>] (
+    x: &u64, state: &mut H);
+
+pub assume_specification<H: core::hash::Hasher> [<u16 as core::hash::Hash>::hash::<H>] (
+    x: &u16, state: &mut H);
+
+pub assume_specification<A, H: core::hash::Hasher> [<Ptr<A> as core::hash::Hash>::hash::<H>] (
+    x: &Ptr<A>, state: &mut H);
+
+pub assume_specification<H: core::hash::Hasher> [<crate::expr::BinderStyle as core::hash::Hash>::hash::<H>] (
+    x: &crate::expr::BinderStyle, state: &mut H);
+
+pub assume_specification<H: core::hash::Hasher> [<usize as core::hash::Hash>::hash::<H>] (
+    x: &usize, state: &mut H);
+
+pub assume_specification [<rustc_hash::FxHasher as core::hash::Hasher>::finish] (
+    state: &rustc_hash::FxHasher) -> (result: u64);
+
 /// Ghost counterpart to the real (exec) `Ptr::raw` accessor -- needed
 /// because an exec function's return value can't itself be referenced
 /// inside another function's `ensures` clause (spec position); `raw`'s own
