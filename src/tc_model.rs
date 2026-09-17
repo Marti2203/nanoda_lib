@@ -393,7 +393,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     // A literal major converts to its constructor form (`Nat.zero` /
     // `Nat.succ (n-1)`) -- the model's own NatLit rule, one parallel step.
     let majw0_el = ctx.read_expr(majw0);
-    let majw = match expr_as_nat_lit(majw0, &majw0_el) {
+    let majw = match expr_as_nat_lit(ctx, majw0) {
         Some(nptr) => match verified_nat_lit_to_constructor(ctx, nptr) {
             Some(c) => {
                 proof {
@@ -417,10 +417,10 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let (cname, _clevels) = match ctx.try_const_info(chead) {
         Some(p) => p,
         None => {
-            if expr_as_local(chead, &chead_el).is_some() { rec_stat(45); }
+            if expr_as_local(ctx, chead).is_some() { rec_stat(45); }
             else if expr_as_lambda(&chead_el).is_some() { rec_stat(56); }
             else if expr_as_proj(&chead_el).is_some() { rec_stat(57); }
-            else if expr_as_nat_lit(chead, &chead_el).is_some() { rec_stat(58); }
+            else if expr_as_nat_lit(ctx, chead).is_some() { rec_stat(58); }
             else { rec_stat(59); }
             return None;
         }
@@ -908,7 +908,7 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     let ghost cm = env_model_nofv(*env);
     let w = verified_whnf_free(ctx, env, memo, v);
     let el = ctx.read_expr(w);
-    if let Some(pn) = expr_as_nat_lit(w, &el) {
+    if let Some(pn) = expr_as_nat_lit(ctx, w) {
         match read_bignum_value(ctx, pn) {
             Some(b) => {
                 proof { is_nat_lit_shape_model(w); }
@@ -1986,9 +1986,9 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
         return Some(true);
     }
     let x_el = ctx.read_expr(x);
-    if let Some((x_id, x_ty)) = expr_as_local(x, &x_el) {
+    if let Some((x_id, x_ty)) = expr_as_local(ctx, x) {
         let y_el = ctx.read_expr(y);
-        if let Some((y_id, y_ty)) = expr_as_local(y, &y_el) {
+        if let Some((y_id, y_ty)) = expr_as_local(ctx, y) {
             if fvar_id_eq(x_id, y_id) {
                 if fuel == 0 {
                     return None;
@@ -4548,7 +4548,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
     }
     let x_el = ctx.read_expr(x);
     let y_el = ctx.read_expr(y);
-    if expr_as_nat_lit(x, &x_el).is_some() && expr_as_nat_lit(y, &y_el).is_some() {
+    if expr_as_nat_lit(ctx, x).is_some() && expr_as_nat_lit(ctx, y).is_some() {
         let b = expr_ptr_eq(x, y);
         proof {
             if b {

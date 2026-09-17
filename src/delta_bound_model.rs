@@ -1344,7 +1344,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
 {
     let el = ctx.read_expr(e);
     // --- local ---
-    if let Some((_, ty)) = expr_as_local(e, &el) {
+    if let Some((_, ty)) = expr_as_local(ctx, e) {
         proof {
             local_type_wf(e);
             is_local_shape_model(e);
@@ -1387,7 +1387,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         }
     }
     // --- nat and string literals ---
-    if expr_as_nat_lit(e, &el).is_some() {
+    if expr_as_nat_lit(ctx, e).is_some() {
         match ctx.nat_type() {
             Some(r) => {
                 proof {
@@ -1401,7 +1401,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
             None => return None,
         }
     }
-    if expr_as_string_lit(e, &el) {
+    if expr_as_string_lit(ctx, e) {
         match ctx.string_type() {
             Some(r) => {
                 proof {

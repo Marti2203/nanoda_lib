@@ -72,15 +72,6 @@ pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
 }
 
 
-/// `Local`'s payload (the real `def_eq_local` compares `id`/`binder_type`,
-/// not the pointer itself) -- takes the pointer too, same reason
-/// `expr_as_const` does (so the contract can talk about `is_local_shape`
-/// keyed by the pointer, distinct from `expr_id`'s coarser pointer-identity
-/// notion -- see the module doc comment on why the two must be separate).
-#[allow(dead_code)]
-pub(crate) fn expr_as_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(FVarId, ExprPtr<'t>)> {
-    match e { Expr::Local { id, binder_type, .. } => Some((*id, *binder_type)), _ => None }
-}
 
 /// `Local`'s `binder_name`/`binder_style`/`binder_type` fields, needed only
 /// to re-supply `mk_pi`'s exec-level parameter list when popping a
@@ -104,20 +95,7 @@ pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> bool {
     a == b
 }
 
-#[allow(dead_code)]
-pub(crate) fn expr_as_nat_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<crate::util::BigUintPtr<'t>> {
-    match e { Expr::NatLit { ptr, .. } => Some(*ptr), _ => None }
-}
 
-/// `StringLit`'s shape only -- unlike `NatLit`'s `bignum_ptr_value`, a
-/// `StringLit`'s actual string content is irrelevant to anything this arc
-/// models (`infer`'s type-computation purposes just need "is this shape a
-/// `StringLit`," not what string it denotes), so there is no payload
-/// accessor, only the shape flag.
-#[allow(dead_code)]
-pub(crate) fn expr_as_string_lit<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
-    matches!(e, Expr::StringLit { .. })
-}
 
 /// `StringLit`'s `ptr: StringPtr` payload -- needed only by `try_string_
 /// lit_expansion_aux` (`tc.rs:335-346`), which reads `StringLit { ptr,
@@ -555,15 +533,23 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
         // no pair to get wrong. This is what lets the kernel's own
         // `unfold_const_apps` match on `Const { .. }` directly.
         result matches Expr::Const { name, levels, .. } ==>
-            const_name_of(ptr) == name && const_levels_of(ptr) == levels;
+            const_name_of(ptr) == name && const_levels_of(ptr) == levels,
+        result matches Expr::Local { id, binder_type, .. } ==>
+            local_id_of(ptr) == id && local_binder_type_of(ptr) == binder_type,
+        result matches Expr::NatLit { ptr: np, .. } ==> nat_lit_ptr_of(ptr) == np,
+        result matches Expr::StringLit { ptr: sp, .. } ==> string_lit_ptr_of(ptr) == sp;
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
-// assuming exactly the two clauses above (`to_model_of_expr(e) == to_model(ptr)`
-// and the `Const` payload correspondence) and claiming `ensures false`, FAILS
-// to verify. That is the result wanted -- had it verified, the new conjunct
-// would have been inconsistent with the rest of the arena model and every
-// proof downstream of it worthless. Non-degeneracy is witnessed separately by
-// `TcCtx::unfold_const_apps` (`expr.rs`), which cannot be proven without it.
+// assuming exactly the five clauses above (`to_model_of_expr(e) ==
+// to_model(ptr)` together with the `Const`, `Local`, `NatLit` and `StringLit`
+// payload correspondences) and claiming `ensures false`, FAILS to verify.
+// That is the result wanted -- had it verified, the conjuncts would have been
+// inconsistent with the rest of the arena model and every proof downstream of
+// them worthless. Non-degeneracy is witnessed on the other side by the
+// functions that consume them: `TcCtx::try_const_info` and
+// `TcCtx::unfold_const_apps` in `expr.rs`, and `expr_as_local`/
+// `expr_as_nat_lit`/`expr_as_string_lit` below, none of which can state their
+// contract at all without the matching clause.
 
 #[allow(dead_code)]
 pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
@@ -775,11 +761,19 @@ pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
 pub assume_specification [fvar_id_eq] (a: FVarId, b: FVarId) -> (result: bool)
     ensures result == (a == b);
 
-pub assume_specification<'t> [expr_as_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<(FVarId, ExprPtr<'t>)>)
+/// Was an `assume_specification` over a `(ptr, e)` pair whose correspondence
+/// nothing checked; reads the node itself now, so the same contract is proven.
+pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<(FVarId, ExprPtr<'t>)>)
     ensures match result {
         Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(ptr) == t,
         None => !is_local_shape(ptr),
-    };
+    }
+{
+    match ctx.read_expr(ptr) {
+        Expr::Local { id, binder_type, .. } => Some((id, binder_type)),
+        _ => None,
+    }
+}
 
 /// A freshly-constructed `Const` node is `is_const_shape` with exactly the
 /// given name/levels -- the construction-side mirror of `expr_as_const`'s
@@ -1049,17 +1043,17 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
-    if expr_as_local(e, &el).is_some() {
+    if expr_as_local(ctx, e).is_some() {
         proof { is_local_shape_model(e); }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
-    if expr_as_nat_lit(e, &el).is_some() {
+    if expr_as_nat_lit(ctx, e).is_some() {
         proof { is_nat_lit_shape_model(e); }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
-    if expr_as_string_lit(e, &el) {
+    if expr_as_string_lit(ctx, e) {
         proof { is_string_lit_shape_model(e); }
         assert(size(to_model(e)) == 1);
         return Some(1);
@@ -1119,7 +1113,7 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         proof { is_const_shape_model(e); }
         return Some(true);
     }
-    if expr_as_local(e, &el).is_some() {
+    if expr_as_local(ctx, e).is_some() {
         proof { is_local_shape_model(e); }
         if expr_ptr_eq(e, local) {
             return None;
@@ -1127,11 +1121,11 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         proof { expr_id_injective(e, local); }
         return Some(true);
     }
-    if expr_as_nat_lit(e, &el).is_some() {
+    if expr_as_nat_lit(ctx, e).is_some() {
         proof { is_nat_lit_shape_model(e); }
         return Some(true);
     }
-    if expr_as_string_lit(e, &el) {
+    if expr_as_string_lit(ctx, e) {
         proof { is_string_lit_shape_model(e); }
         return Some(true);
     }
@@ -1377,11 +1371,18 @@ pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     ensures to_model(ptr) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(ptr))))
 {}
 
-pub assume_specification<'t> [expr_as_nat_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: Option<crate::util::BigUintPtr<'t>>)
+/// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
+pub fn expr_as_nat_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<crate::util::BigUintPtr<'t>>)
     ensures match result {
         Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
         None => !is_nat_lit_shape(ptr),
-    };
+    }
+{
+    match ctx.read_expr(ptr) {
+        Expr::NatLit { ptr: np, .. } => Some(np),
+        _ => None,
+    }
+}
 
 /// `StringLit`'s shape flag, now WITH a value accessor (`string_lit_ptr_
 /// of`, mirroring `NatLit`'s `nat_lit_ptr_of` exactly): `is_string_lit_
@@ -1397,8 +1398,12 @@ pub open spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
 }
 pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
 
-pub assume_specification<'t> [expr_as_string_lit] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
-    ensures result == is_string_lit_shape(ptr);
+/// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
+pub fn expr_as_string_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
+    ensures result == is_string_lit_shape(ptr)
+{
+    matches!(ctx.read_expr(ptr), Expr::StringLit { .. })
+}
 
 #[verifier::external_body]
 pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
@@ -1886,13 +1891,13 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             None => None,
         };
     }
-    if let Some(_p) = expr_as_nat_lit(e, &el) {
+    if let Some(_p) = expr_as_nat_lit(ctx, e) {
         assert(is_nat_lit_shape(e));
         proof { is_nat_lit_shape_model(e); }
         assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
         return Some(e);
     }
-    if expr_as_string_lit(e, &el) {
+    if expr_as_string_lit(ctx, e) {
         assert(is_string_lit_shape(e));
         proof { is_string_lit_shape_model(e); }
         assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
