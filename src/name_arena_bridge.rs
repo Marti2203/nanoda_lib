@@ -117,6 +117,29 @@ pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 // second is the one that licenses the context-free `to_model_name`.
 // ---------------------------------------------------------------------
 
+// WHY `to_model_name` KEEPS ITS CONTEXT-FREE SIGNATURE (measured 2026-09-17).
+//
+// The obvious way to discharge these axioms is to define the denotation from
+// arena state, i.e. `to_model(ctx, p)`. Measured blast radius: 2921 sites for
+// the expression `to_model` alone, 239 for `to_model_of_levels`, 79 for
+// `level_to_model`.
+//
+// But the count is not the real objection. With a context parameter the
+// denotation CHANGES EXPRESSION at every allocation, so every exec proof in
+// the crate would have to thread monotonicity applications through it -- the
+// refactor would make every existing proof harder, not just longer. The
+// context-free signature is what keeps proofs about reduction and conversion
+// free of arena bookkeeping, and `name_model_at_append` below is exactly the
+// theorem that licenses it.
+//
+// So the route to retiring these axioms is NOT to add a context parameter.
+// It is to state one storage-link axiom per arena, and derive the
+// per-accessor denotation contracts from it plus the facts proven here. The
+// leverage is in the constructors: `expr_arena_bridge` has 47
+// `assume_specification`s, many of them `mk_*` contracts that would follow
+// from a single "allocation appends the node you asked for" primitive once
+// the constructor bodies are verified in place.
+
 /// A pointer's index into its arena (`Ptr::idx`'s formula, in spec).
 pub open spec fn ptr_index<A>(p: crate::util::Ptr<A>) -> nat {
     (crate::util_model::ptr_raw(p) & 0x7FFF_FFFFu32) as nat
