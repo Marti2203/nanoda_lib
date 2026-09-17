@@ -1515,8 +1515,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
 // denotation claims -- collapse to 3 storage primitives, and that many kernel
 // functions move inside `verus!`.
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_let] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_type: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, nondep: bool) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body)));
 
 
 /// Real-arena counterpart to `expr_model::inst_model`, mirroring

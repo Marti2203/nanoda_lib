@@ -495,21 +495,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 
 
-    pub fn mk_let(
-        &mut self,
-        binder_name: NamePtr<'t>,
-        binder_type: ExprPtr<'t>,
-        val: ExprPtr<'t>,
-        body: ExprPtr<'t>,
-        nondep: bool
-    ) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::LET_HASH, binder_name, binder_type, val, body, nondep);
-        let num_loose_bvars = self
-            .num_loose_bvars(binder_type)
-            .max(self.num_loose_bvars(val).max(self.num_loose_bvars(body).saturating_sub(1)));
-        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(val) || self.has_fvars(body);
-        self.alloc_expr(Expr::Let { binder_name, binder_type, val, body, num_loose_bvars, has_fvars, hash, nondep })
-    }
 
 
     pub fn mk_string_lit(&mut self, string_ptr: StringPtr<'t>) -> Option<ExprPtr<'t>> {
@@ -1074,6 +1059,27 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let hash = hash64!(crate::name::NUM_HASH, pfx, sfx);
         self.alloc_name(Name::Num(pfx, sfx, hash))
+    }
+
+    pub fn mk_let(
+        &mut self,
+        binder_name: NamePtr<'t>,
+        binder_type: ExprPtr<'t>,
+        val: ExprPtr<'t>,
+        body: ExprPtr<'t>,
+        nondep: bool
+    ) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Let(
+            Box::new(to_model_expr(binder_type)),
+            Box::new(to_model_expr(val)),
+            Box::new(to_model_expr(body))),
+    {
+        let hash = hash64!(crate::expr::LET_HASH, binder_name, binder_type, val, body, nondep);
+        let num_loose_bvars = self
+            .num_loose_bvars(binder_type)
+            .max(self.num_loose_bvars(val).max(self.num_loose_bvars(body).saturating_sub(1)));
+        let has_fvars = self.has_fvars(binder_type) || self.has_fvars(val) || self.has_fvars(body);
+        self.alloc_expr(Expr::Let { binder_name, binder_type, val, body, num_loose_bvars, has_fvars, hash, nondep })
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)

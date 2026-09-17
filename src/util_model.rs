@@ -79,6 +79,9 @@ pub assume_specification<A, H: core::hash::Hasher> [<Ptr<A> as core::hash::Hash>
 pub assume_specification<H: core::hash::Hasher> [<crate::expr::BinderStyle as core::hash::Hash>::hash::<H>] (
     x: &crate::expr::BinderStyle, state: &mut H);
 
+pub assume_specification<H: core::hash::Hasher> [<bool as core::hash::Hash>::hash::<H>] (
+    x: &bool, state: &mut H);
+
 pub assume_specification<H: core::hash::Hasher> [<usize as core::hash::Hash>::hash::<H>] (
     x: &usize, state: &mut H);
 
