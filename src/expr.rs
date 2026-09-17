@@ -792,7 +792,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::expr_arena_bridge::ptr_models(args@) + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse()
                     =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
             ensures
-                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
                 crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
                 crate::expr_arena_bridge::ptr_models(args@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
         {
@@ -836,10 +835,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut e = e0;
         loop
             invariant crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-            // A fact proven just before `break` does NOT survive the loop --
-            // only the invariant does. The exit fact has to be stated here.
-            ensures crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-                    crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
+            // `invariant` survives the `break` on its own; `ensures` is for the
+            // fact that holds only AT exit -- that the head is not an `App`.
+            ensures crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
         {
             match self.read_expr(e) {
                 App { fun, .. } => { e = fun; }

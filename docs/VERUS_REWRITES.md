@@ -162,6 +162,10 @@ the loop about *why* it stopped, so the exit cannot conclude the head is not an
 
 **Lowest risk in this file, with entry 2.** It is a desugaring, not a
 reformulation. Two things were needed on top, and neither is a body change: a
-loop `ensures` clause (a fact proven just before `break` does *not* survive the
-loop — only the invariant does), and `num_args` gaining a ceiling on the spine
-length, since nothing else in it bounds the `usize` counter.
+loop `ensures` clause for the exit-only fact, and `num_args` gaining a ceiling
+on the spine length, since nothing else in it bounds the `usize` counter.
+
+On the loop clauses: a Verus loop has `invariant` (survives a `break`),
+`invariant_except_break` (does not), and `ensures` (proven at each exit). The
+invariant needs no repeating in the `ensures` — only a fact that holds *solely*
+at exit belongs there.
