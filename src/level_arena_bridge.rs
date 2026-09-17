@@ -135,11 +135,28 @@ pub assume_specification<'t> [level_ptr_eq] (a: LevelPtr<'t>, b: LevelPtr<'t>) -
 /// (`level_model.rs`) matches by NAME. The forward direction (same pointer
 /// implies same name) is free from `to_model` being a pure function of the
 /// pointer; this axiom supplies the missing reverse direction.
+/// Hash-consing, stated over MODELS rather than over `NamePtr` witnesses.
+/// This is the usable form: a caller that only knows `to_model(x) is Param`
+/// -- which is all a scan over a `LevelsPtr` can know without reading the
+/// arena again -- can apply it, whereas the witness form below needs a
+/// `NamePtr` for each side and so forces an exec `read_level` at the use
+/// site. That matters for verifying the kernel's own `subst_level` in place:
+/// an extra read there would change the executable.
+///
+/// Same assumption as before, not a new one -- and the witness form is now
+/// DERIVED from it rather than separately assumed.
 #[verifier::external_body]
+pub proof fn level_ptr_eq_iff_same_model_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>)
+    requires to_model(a) is Param, to_model(b) is Param
+    ensures (a == b) <==> (to_model(a) == to_model(b))
+{
+}
+
 pub proof fn level_ptr_eq_iff_same_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>, na: NamePtr<'a>, nb: NamePtr<'a>)
     requires to_model(a) == LevelSpec::Param(name_id(na)), to_model(b) == LevelSpec::Param(name_id(nb))
     ensures (a == b) <==> (name_id(na) == name_id(nb))
 {
+    level_ptr_eq_iff_same_model_param(a, b);
 }
 
 /// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
