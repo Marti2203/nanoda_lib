@@ -62,12 +62,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         true
     }
 
-    /// Return `uparams [ks |-> vs]` for a list of uparams
-    pub fn subst_levels(&mut self, uparams: LevelsPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelsPtr<'t> {
-        let out =
-            self.read_levels(uparams).clone().iter().copied().map(|l| self.subst_level(l, ks, vs)).collect::<Vec<_>>();
-        self.alloc_levels(std::sync::Arc::from(out))
-    }
 
     /// Return `uparam [ks |-> vs]`
 
@@ -238,7 +232,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, level_spec_param_name, find_level_idx, find_level_idx_first_match, find_level_idx_no_match};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
@@ -360,6 +354,59 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
     }
+    /// Return `uparams [ks |-> vs]` for a list of uparams
+    ///
+    /// VERUS-REWRITE(closure-captures-mut-self, alloc-variant): the original body is
+    ///
+    /// ```ignore
+    /// let out = self.read_levels(uparams).clone().iter().copied()
+    ///     .map(|l| self.subst_level(l, ks, vs)).collect::<Vec<_>>();
+    /// self.alloc_levels(std::sync::Arc::from(out))
+    /// ```
+    ///
+    /// Verus rejects the closure outright ("does not currently support closures
+    /// capturing a mutable reference"), so the `map` is an explicit loop over the
+    /// same `iter().copied()`. `alloc_levels_slice` replaces `alloc_levels` because
+    /// only the former is specified; the two return the same pointer (`alloc_levels`
+    /// relies on `insert_full`'s dedup where `alloc_levels_slice` checks the local
+    /// dag first to avoid an `Arc` allocation). See `docs/VERUS_REWRITES.md` --
+    /// this should go back to the original once Verus can take it.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn subst_levels(&mut self, uparams: LevelsPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: LevelsPtr<'t>)
+        requires
+            to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < to_model_of_levels(ks).len()
+                ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        ensures to_model_of_levels(result) =~= subst_levels_spec(
+            to_model_of_levels(uparams),
+            level_names(to_model_of_levels(ks)),
+            to_model_of_levels(vs)),
+    {
+        let ghost names = level_names(to_model_of_levels(ks));
+        let ghost vals = to_model_of_levels(vs);
+        let ls = self.read_levels(uparams).clone();
+        let mut out: Vec<LevelPtr<'t>> = Vec::new();
+        for l in it: ls.iter().copied()
+            invariant
+                it.seq() == ls@,
+                ls@.len() == to_model_of_levels(uparams).len(),
+                forall |j: int| 0 <= j < ls@.len()
+                    ==> #[trigger] to_model(ls@[j]) == to_model_of_levels(uparams)[j],
+                to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+                forall |j: int| 0 <= j < to_model_of_levels(ks).len()
+                    ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+                names == level_names(to_model_of_levels(ks)),
+                vals == to_model_of_levels(vs),
+                out@.len() == it.index(),
+                forall |j: int| 0 <= j < out@.len()
+                    ==> #[trigger] to_model(out@[j])
+                        == subst_level_spec(to_model_of_levels(uparams)[j], names, vals),
+        {
+            out.push(self.subst_level(l, ks, vs));
+        }
+        self.alloc_levels_slice(out.as_slice())
+    }
+
     /// Verified in place. The body is the kernel's; the only changes are proof
     /// annotations and renaming the `Param` arm's two locals, which shadowed
     /// the `ks`/`vs` parameters the `ensures` clause names.
