@@ -2056,6 +2056,16 @@ pub open spec fn ptr_models<'a>(s: Seq<ExprPtr<'a>>) -> Seq<ExprSpec> {
     Seq::new(s.len(), |i: int| to_model(s[i]))
 }
 
+/// Taking models commutes with pushing.
+pub proof fn ptr_models_push<'a>(s: Seq<ExprPtr<'a>>, x: ExprPtr<'a>)
+    ensures ptr_models(s.push(x)) =~= ptr_models(s).push(to_model(x)),
+{
+    assert forall|i: int| 0 <= i < s.len() + 1 implies
+        #[trigger] ptr_models(s.push(x))[i] == ptr_models(s).push(to_model(x))[i] by {
+        if i < s.len() { assert(s.push(x)[i] == s[i]); }
+    }
+}
+
 /// Taking models distributes over concatenation.
 pub proof fn ptr_models_add<'a>(a: Seq<ExprPtr<'a>>, b: Seq<ExprPtr<'a>>)
     ensures ptr_models(a + b) =~= ptr_models(a) + ptr_models(b),

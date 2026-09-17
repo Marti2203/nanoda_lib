@@ -465,12 +465,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (e, args)
     }
 
-    pub fn foldl_apps(&mut self, mut fun: ExprPtr<'t>, args: impl Iterator<Item = ExprPtr<'t>>) -> ExprPtr<'t> {
-        for arg in args {
-            fun = self.mk_app(fun, arg);
-        }
-        fun
-    }
 
     pub(crate) fn abstr_pis<I>(&mut self, mut binders: I, mut body: ExprPtr<'t>) -> ExprPtr<'t>
     where
@@ -922,6 +916,55 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         proof { crate::expr_arena_bridge::ptr_models_reverse(args@); }
         args.reverse();
         (e, args)
+    }
+}
+}
+
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified AS WRITTEN, body unchanged. The dual of `unfold_apps`: this
+    /// BUILDS a spine where that one decomposes it, so the invariant carries
+    /// the consumed PREFIX rather than a reversal.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn foldl_apps<I: Iterator<Item = ExprPtr<'t>> + crate::util::IterSpec>(
+        &mut self,
+        fun0: ExprPtr<'t>,
+        args: I,
+    ) -> (result: ExprPtr<'t>)
+        requires args.obeys_prophetic_iter_laws(),
+        ensures crate::expr_arena_bridge::to_model(result)
+            == crate::beta_model::spine_app(
+                crate::expr_arena_bridge::to_model(fun0),
+                crate::expr_arena_bridge::ptr_models(args.remaining())),
+    {
+        let mut fun = fun0;
+        for arg in it: args
+            invariant
+                // The for-loop desugaring havocs the ghost wrapper, so the
+                // link back to the ORIGINAL iterator has to be carried
+                // explicitly; without it the postcondition cannot be stated
+                // at loop exit.
+                it.seq() == args.remaining(),
+                crate::expr_arena_bridge::to_model(fun)
+                    == crate::beta_model::spine_app(
+                        crate::expr_arena_bridge::to_model(fun0),
+                        crate::expr_arena_bridge::ptr_models(it.seq().take(it.index()))),
+        {
+            proof {
+                let consumed = it.seq().take(it.index());
+                crate::beta_model::spine_app_compose_last(
+                    crate::expr_arena_bridge::to_model(fun0),
+                    crate::expr_arena_bridge::ptr_models(consumed),
+                    crate::expr_arena_bridge::to_model(arg));
+                assert(it.seq().take(it.index() + 1) =~= consumed.push(arg));
+                crate::expr_arena_bridge::ptr_models_push(consumed, arg);
+            }
+            fun = self.mk_app(fun, arg);
+        }
+        proof {
+            assert(args.remaining().take(args.remaining().len() as int) =~= args.remaining());
+        }
+        fun
     }
 }
 }

@@ -97,6 +97,16 @@ pub type LevelsPtr<'a> = Ptr<&'a Arc<[LevelPtr<'a>]>>;
 pub type NamePtr<'a> = Ptr<&'a Name<'a>>;
 pub type LevelPtr<'a> = Ptr<&'a Level<'a>>;
 pub type ExprPtr<'a> = Ptr<&'a Expr<'a>>;
+
+/// The `IteratorSpec` bound `TcCtx::foldl_apps` is verified against.
+/// `vstd::std_specs` only exists under Verus, so outside it the bound has to
+/// degrade to something vacuous rather than disappear from the signature.
+#[cfg(verus_only)]
+pub use vstd::std_specs::iter::IteratorSpec as IterSpec;
+#[cfg(not(verus_only))]
+pub trait IterSpec {}
+#[cfg(not(verus_only))]
+impl<T: ?Sized> IterSpec for T {}
 pub type BigUintPtr<'a> = Ptr<&'a BigUint>;
 
 pub(crate) fn new_fx_index_map<K, V>() -> FxIndexMap<K, V> { FxIndexMap::with_hasher(Default::default()) }
