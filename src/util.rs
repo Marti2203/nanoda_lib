@@ -482,10 +482,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 
 
-    pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::SORT_HASH, level);
-        self.alloc_expr(Expr::Sort { level, hash })
-    }
 
     pub fn mk_const(&mut self, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> ExprPtr<'t> {
         let hash = hash64!(crate::expr::CONST_HASH, name, levels);
@@ -1080,6 +1076,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             .max(self.num_loose_bvars(val).max(self.num_loose_bvars(body).saturating_sub(1)));
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(val) || self.has_fvars(body);
         self.alloc_expr(Expr::Let { binder_name, binder_type, val, body, num_loose_bvars, has_fvars, hash, nondep })
+    }
+
+    pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result) == ExprSpec::Sort(to_model(level)),
+    {
+        let hash = hash64!(crate::expr::SORT_HASH, level);
+        self.alloc_expr(Expr::Sort { level, hash })
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
