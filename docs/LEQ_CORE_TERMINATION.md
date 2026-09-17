@@ -75,7 +75,7 @@ Both **duplicate a subterm** (`y` in the first, `a` in the second), so any
 measure that counts `Succ` nodes can grow there — which rules out the direct
 "bound `diff` by the number of remaining `Succ`s" argument.
 
-## 4. The untried lead: prove termination with a lexicographic measure
+## 4. The lexicographic measure — tried on paper, REFUTED
 
 `lw` was built in an earlier session specifically for the rewrite arms and has
 the lemmas `lw_decreases_imax_imax` and `lw_decreases_imax_max`. Checking the
