@@ -60,16 +60,6 @@ use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
 
-// These accessors' only "caller" is the `assume_specification` attributes
-// below, erased under plain compilation -- hence `allow(dead_code)`.
-/// Takes the pointer itself (not just the shallow value) purely so its
-/// Verus contract below can talk about `expr_id(ptr)` -- see the module doc
-/// comment on why `Local`'s identity is modeled via the pointer, not the
-/// `FVarId` field.
-#[allow(dead_code)]
-pub(crate) fn expr_is_local<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> bool {
-    matches!(e, Expr::Local { .. })
-}
 
 
 
@@ -525,6 +515,22 @@ pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPt
                 == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
 }
 
+/// The abstraction cache. Keyed `(expr, offset)` like the instantiation one and
+/// for the same reason: `abstr` clears it per call, so the `locals` list need
+/// not be part of the key and soundness is relative to the list in flight.
+pub open spec fn abstr_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, locals: Seq<ExprPtr<'t>>) -> bool {
+    forall |k: (ExprPtr<'t>, u16)|
+        #[trigger] ctx.expr_cache.abstr_cache@.contains_key(k) ==>
+            to_model(ctx.expr_cache.abstr_cache@[k])
+                == abstr_full(to_model(k.0), local_ids(locals), k.1 as nat)
+}
+
+/// The `expr_id`s of a list of locals -- `abstr_full`'s own `Seq<u32>` argument.
+/// Named rather than written inline so it can be a quantifier trigger.
+pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<u32> {
+    Seq::new(locals.len(), |i: int| expr_id(locals[i]))
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
@@ -541,7 +547,12 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
         result matches Expr::Local { id, binder_type, .. } ==>
             local_id_of(ptr) == id && local_binder_type_of(ptr) == binder_type,
         result matches Expr::NatLit { ptr: np, .. } ==> nat_lit_ptr_of(ptr) == np,
-        result matches Expr::StringLit { ptr: sp, .. } ==> string_lit_ptr_of(ptr) == sp;
+        result matches Expr::StringLit { ptr: sp, .. } ==> string_lit_ptr_of(ptr) == sp,
+        // The last of `expr_is_local`'s claims, re-keyed here for the same
+        // reason as the others: keyed on `read_expr` there is no `(ptr, e)`
+        // pair to get wrong. This is what lets the kernel's `abstr_aux` learn
+        // anything at its `Local` arm.
+        result matches Expr::Local { .. } ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr));
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
 // assuming exactly the five clauses above (`to_model_of_expr(e) ==
@@ -565,10 +576,15 @@ pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
     match e { Expr::Var { dbj_idx, .. } => Some(*dbj_idx), _ => None }
 }
 
-pub assume_specification<'t> [expr_is_local] (ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
+/// Was an `assume_specification` over a `(ptr, e)` pair -- the last one of that
+/// shape. Reads the node itself now, so both halves are proven.
+pub fn expr_is_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
     ensures
         result ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
-        !result ==> !matches!(to_model_of_expr(*e), ExprSpec::Free(_));
+        !result ==> !matches!(to_model(ptr), ExprSpec::Free(_)),
+{
+    matches!(ctx.read_expr(ptr), Expr::Local { .. })
+}
 
 #[allow(dead_code)]
 pub fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> (result: bool)
@@ -1776,7 +1792,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
         assert(to_model(e) == ExprSpec::Var(dbj_idx as u32));
         return Some(e);
     }
-    if expr_is_local(e, &el) {
+    if expr_is_local(ctx, e) {
         assert(to_model(e) == ExprSpec::Free(expr_id(e)));
         return Some(e);
     }

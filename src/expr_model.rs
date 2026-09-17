@@ -359,6 +359,81 @@ pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
     }
 }
 
+/// Abstraction is a no-op on a term with no free variables -- the dual of
+/// `subst_full_noop`, and what discharges `abstr_aux`'s `!has_fvars(e)`
+/// short-circuit.
+pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
+    requires !has_fv(e)
+    ensures abstr_full(e, locals, offset) == e
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            abstr_full_noop(*f, locals, offset);
+            abstr_full_noop(*a, locals, offset);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_full_noop(*t, locals, offset);
+            abstr_full_noop(*b, locals, offset + 1);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_full_noop(*t, locals, offset);
+            abstr_full_noop(*v, locals, offset);
+            abstr_full_noop(*b, locals, offset + 1);
+        }
+        ExprSpec::Proj(_, st) => { abstr_full_noop(*st, locals, offset); }
+        _ => {}
+    }
+}
+
+/// `find_from_end`'s converse, the direct analogue of
+/// `find_level_idx_first_match`: a match at position `p` counted FROM THE END,
+/// with nothing matching nearer the end, is what the search reports. The index
+/// direction is the whole difference between the two -- `find_from_end` peels
+/// `locals[len-1]` first, so position `p` is element `len-1-p`.
+pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
+    requires
+        p < locals.len(),
+        locals[(locals.len() - 1 - p) as int] == id,
+        forall |j: int| 0 <= j < p ==> #[trigger] locals[(locals.len() - 1 - j) as int] != id,
+    ensures find_from_end(locals, id) == Some(p)
+    decreases locals.len()
+{
+    if p == 0 {
+    } else {
+        assert(locals[locals.len() - 1] != id) by {
+            assert(locals[(locals.len() - 1 - 0) as int] != id);
+        }
+        let rest = locals.subrange(0, locals.len() - 1);
+        assert(rest.len() == locals.len() - 1);
+        assert forall |j: int| 0 <= j < p - 1 implies
+            #[trigger] rest[(rest.len() - 1 - j) as int] != id by {
+            assert(rest[(rest.len() - 1 - j) as int] == locals[(locals.len() - 1 - (j + 1)) as int]);
+        }
+        assert(rest[(rest.len() - 1 - (p - 1)) as int] == locals[(locals.len() - 1 - p) as int]);
+        find_from_end_first_match(rest, id, (p - 1) as nat);
+    }
+}
+
+/// The other converse: nothing in `locals` matches, so the search reports
+/// `None`. Stated over plain indices -- which direction they are counted in
+/// does not matter when the quantifier covers the whole sequence.
+pub proof fn find_from_end_no_match(locals: Seq<u32>, id: u32)
+    requires forall |j: int| 0 <= j < locals.len() ==> locals[j] != id
+    ensures find_from_end(locals, id) is None
+    decreases locals.len()
+{
+    if locals.len() == 0 {
+    } else {
+        assert(locals[locals.len() - 1] != id);
+        let rest = locals.subrange(0, locals.len() - 1);
+        assert forall |j: int| 0 <= j < rest.len() implies rest[j] != id by {
+            assert(rest[j] == locals[j]);
+        }
+        find_from_end_no_match(rest, id);
+    }
+}
+
 /// The intended meaning of abstraction, defined directly (no
 /// short-circuiting, no caching): replace each `Free(id)` where `id` is in
 /// `locals` with `Var(offset + <id's distance from the end of locals>)`,

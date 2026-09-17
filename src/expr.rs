@@ -236,64 +236,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.abstr_aux_levels(e, start_pos, self.dbj_level_counter)
     }
 
-    fn abstr_aux(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16) -> ExprPtr<'t> {
-        if !self.has_fvars(e) {
-            e
-        } else if let Some(cached) = self.expr_cache.abstr_cache.get(&(e, offset)) {
-            *cached
-        } else {
-            let calcd = match self.read_expr(e) {
-                Local { .. } => 
-                    locals
-                    .iter()
-                    .rev()
-                    .position(|x| *x == e)
-                    .map(|pos| self.mk_var(u16::try_from(pos).unwrap() + offset))
-                    .unwrap_or(e),
-                App { fun, arg, .. } => {
-                    let fun = self.abstr_aux(fun, locals, offset);
-                    let arg = self.abstr_aux(arg, locals, offset);
-                    self.mk_app(fun, arg)
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.abstr_aux(binder_type, locals, offset);
-                    let body = self.abstr_aux(body, locals, offset + 1);
-                    self.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.abstr_aux(binder_type, locals, offset);
-                    let body = self.abstr_aux(body, locals, offset + 1);
-                    self.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.abstr_aux(binder_type, locals, offset);
-                    let val = self.abstr_aux(val, locals, offset);
-                    let body = self.abstr_aux(body, locals, offset + 1);
-                    self.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                StringLit { .. } | NatLit { .. } => panic!(),
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.abstr_aux(structure, locals, offset);
-                    self.mk_proj(ty_name, idx, structure)
-                }
-                Var { .. } | Sort { .. } | Const { .. } => panic!("should flag as no locals"),
-            };
-
-            self.expr_cache.abstr_cache.insert((e, offset), calcd);
-            calcd
-        }
-    }
 
     /// Abstraction of unique identifiers; replaces free variables with the appropriate
     /// bound variable, if the free variable is in `locals`.
-    pub fn abstr(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>]) -> ExprPtr<'t> {
-        if self.expr_cache.abstr_cache.capacity() > 1024 { 
-            self.expr_cache.abstr_cache = crate::util::new_fx_hash_map(); 
-        } else { 
-            self.expr_cache.abstr_cache.clear(); 
-        } 
-        self.abstr_aux(e, locals, 0u16)
-    }
 
 
 
@@ -822,6 +767,197 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None,
         }
     }
+    /// Abstraction of unique identifiers; replaces free variables with the appropriate
+    /// bound variable, if the free variable is in `locals`.
+    ///
+    /// Verified in place. Like `inst`, it RESETS its cache before descending, so
+    /// it establishes `abstr_cache_sound` itself and pushes no invariant onto
+    /// callers.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn abstr(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
+        requires locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
+                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::local_ids(locals@), 0),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+    {
+        if self.expr_cache.abstr_cache.capacity() > 1024 {
+            self.expr_cache.abstr_cache = crate::util::new_fx_hash_map();
+        } else {
+            self.expr_cache.abstr_cache.clear();
+        }
+        proof {
+            assert(self.expr_cache.abstr_cache@ =~= vstd::map::Map::empty());
+            assert(crate::expr_arena_bridge::abstr_cache_sound(*self, locals@));
+        }
+        self.abstr_aux(e, locals, 0u16)
+    }
+
+    /// Verified in place. Body unchanged apart from proof annotations, binding
+    /// each arm's result, and the `Local` arm's search (registered).
+    ///
+    /// Both `panic!()` arms are DISCHARGED: the guard above is `has_fvars(e)`,
+    /// and every shape those arms cover has `has_fv == false`, so reaching them
+    /// contradicts the guard. The kernel says as much in the second one's
+    /// message ("should flag as no locals"); it is a proof now.
+    ///
+    /// VERUS-REWRITE(closure-in-position-and-map): the `Local` arm's original
+    /// body is
+    /// `locals.iter().rev().position(|x| *x == e).map(|pos| self.mk_var(...)).unwrap_or(e)`
+    /// -- a predicate closure inside `position` and a `&mut self`-capturing
+    /// closure inside `map`, neither of which Verus can take. It is an explicit
+    /// backwards scan now. See `docs/VERUS_REWRITES.md`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn abstr_aux(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
+        requires
+            crate::expr_arena_bridge::abstr_cache_sound(*old(self), locals@),
+            locals@.len() + offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
+                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::local_ids(locals@), offset as nat),
+            crate::expr_arena_bridge::abstr_cache_sound(*final(self), locals@),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+    {
+        let ghost ids = crate::expr_arena_bridge::local_ids(locals@);
+        proof {
+            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+        }
+        if !self.has_fvars(e) {
+            proof {
+                crate::expr_model::abstr_full_noop(crate::expr_arena_bridge::to_model(e), ids, offset as nat);
+            }
+            e
+        } else if let Some(cached) = self.expr_cache.abstr_cache.get(&(e, offset)) {
+            proof {
+                let k = (e, offset);
+                assert(self.expr_cache.abstr_cache@.contains_key(k));
+                assert(self.expr_cache.abstr_cache@[k] == *cached);
+            }
+            *cached
+        } else {
+            let calcd = match self.read_expr(e) {
+                Local { .. } => {
+                    proof { assert(crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(e))); }
+                    let n = locals.len();
+                    let mut pos: usize = 0;
+                    while pos < n && locals[n - 1 - pos] != e
+                        invariant
+                            pos <= n,
+                            n == locals@.len(),
+                            ids == crate::expr_arena_bridge::local_ids(locals@),
+                            forall |j: int| 0 <= j < pos
+                                ==> #[trigger] ids[(ids.len() - 1 - j) as int] != crate::expr_arena_bridge::expr_id(e),
+                        decreases n - pos
+                    {
+                        proof {
+                            crate::expr_arena_bridge::expr_id_injective(locals@[(n - 1 - pos) as int], e);
+                            assert(ids[(ids.len() - 1 - pos) as int] != crate::expr_arena_bridge::expr_id(e));
+                        }
+                        pos = pos + 1;
+                    }
+                    if pos < n {
+                        proof { assert(ids[(ids.len() - 1 - pos) as int] == crate::expr_arena_bridge::expr_id(e)); }
+                        proof {
+                            crate::expr_model::find_from_end_first_match(ids, crate::expr_arena_bridge::expr_id(e), pos as nat);
+                        }
+                        let res = self.mk_var((pos as u16) + offset);
+                        proof {
+                            assert(crate::expr_arena_bridge::to_model(res)
+                                == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat));
+                        }
+                        res
+                    } else {
+                        proof {
+                            assert forall |j: int| 0 <= j < ids.len() implies
+                                ids[j] != crate::expr_arena_bridge::expr_id(e) by {
+                                assert(ids[(ids.len() - 1 - (ids.len() - 1 - j)) as int] != crate::expr_arena_bridge::expr_id(e));
+                            }
+                            crate::expr_model::find_from_end_no_match(ids, crate::expr_arena_bridge::expr_id(e));
+                        }
+                        e
+                    }
+                }
+                App { fun, arg, .. } => {
+                    proof {
+                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(fun), ids, offset as nat)),
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(arg), ids, offset as nat))));
+                    }
+                    let fun2 = self.abstr_aux(fun, locals, offset);
+                    let arg2 = self.abstr_aux(arg, locals, offset);
+                    let res = self.mk_app(fun2, arg2);
+                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    res
+                }
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.abstr_aux(binder_type, locals, offset);
+                    let body2 = self.abstr_aux(body, locals, offset + 1);
+                    let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
+                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    res
+                }
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.abstr_aux(binder_type, locals, offset);
+                    let body2 = self.abstr_aux(body, locals, offset + 1);
+                    let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
+                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    res
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    proof {
+                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Let(
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(val), ids, offset as nat)),
+                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                    }
+                    let binder_type2 = self.abstr_aux(binder_type, locals, offset);
+                    let val2 = self.abstr_aux(val, locals, offset);
+                    let body2 = self.abstr_aux(body, locals, offset + 1);
+                    let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
+                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    res
+                }
+                StringLit { .. } | NatLit { .. } => {
+                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    panic!()
+                }
+                Proj { ty_name, idx, structure, .. } => {
+                    proof {
+                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)
+                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(structure), ids, offset as nat))));
+                    }
+                    let structure2 = self.abstr_aux(structure, locals, offset);
+                    let res = self.mk_proj(ty_name, idx, structure2);
+                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    res
+                }
+                Var { .. } | Sort { .. } | Const { .. } => {
+                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    panic!("should flag as no locals")
+                }
+            };
+            let ghost before = self.expr_cache.abstr_cache@;
+            self.expr_cache.abstr_cache.insert((e, offset), calcd);
+            proof { assert(self.expr_cache.abstr_cache@ =~= before.insert((e, offset), calcd)); }
+            calcd
+        }
+    }
+
     /// Verified in place, body unchanged apart from proof annotations.
     ///
     /// Note what the contract does NOT require: any cache invariant. `inst`

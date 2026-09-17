@@ -106,8 +106,39 @@ suspected — it reads the same way the model's own `subst_full` does
 (`substs[(substs.len() - 1 - (i - offset))]`), which is some independent
 confirmation. Restore when `nth` gets a spec.
 
+### 4. `TcCtx::abstr_aux` — `src/expr.rs`, `Local` arm only
+
+```ignore
+// original
+locals.iter().rev().position(|x| *x == e)
+      .map(|pos| self.mk_var(u16::try_from(pos).unwrap() + offset))
+      .unwrap_or(e)
+
+// now
+let n = locals.len();
+let mut pos: usize = 0;
+while pos < n && locals[n - 1 - pos] != e { pos = pos + 1; }
+if pos < n { self.mk_var((pos as u16) + offset) } else { e }
+```
+
+Two closures Verus cannot take: a predicate inside `position`, and a
+`&mut self`-capturing one inside `map`.
+
+**Highest risk in this file after entry 1**, on two counts, both worth
+re-checking if anything here is ever suspected:
+
+- The `u16::try_from(pos).unwrap()` panic path is gone. The rewrite relies on
+  the function's `locals@.len() + offset <= 60000` precondition instead, which
+  makes `pos as u16` lossless — but that is a proof obligation moved to callers
+  where the original had a runtime check.
+- The search direction. `iter().rev().position(p)` counts from the END, so
+  position `pos` is element `n - 1 - pos`. The model's `find_from_end` peels
+  from the same end, and `find_from_end_first_match` (added with this) is what
+  ties the loop to it.
+
 | # | Function | File | Construct | Reason |
 |---|---|---|---|---|
 | 1 | `subst_levels` | `src/level.rs` | closure capturing `&mut self`; unspecified `alloc` variant | see above |
 | 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
+| 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
