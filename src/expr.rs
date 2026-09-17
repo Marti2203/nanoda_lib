@@ -813,7 +813,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Is this expression `Sort(Level::Zero)`?
-    pub(crate) fn prop(&mut self) -> ExprPtr<'t> { self.mk_sort(self.zero()) }
 
     pub fn get_nth_pi_binder(&self, mut e: ExprPtr<'t>, n: usize) -> Option<ExprPtr<'t>> {
         for _ in 0.. n {
@@ -872,3 +871,16 @@ impl<'t> Expr<'t> {
     }
 }
 
+
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified AS WRITTEN. Contract derived from `mk_sort` (itself now
+    /// verified in place) composed with `zero`'s storage axiom -- the first
+    /// case of a COMPOSITE kernel function proven from other kernel
+    /// functions rather than assumed outright.
+    pub(crate) fn prop(&mut self) -> (result: ExprPtr<'t>)
+        ensures crate::expr_arena_bridge::to_model(result)
+            == crate::expr_model::ExprSpec::Sort(crate::level_model::LevelSpec::Zero),
+    { self.mk_sort(self.zero()) }
+}
+}

@@ -62,9 +62,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_type(result) == to_model(binder_type);
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::prop] (ctx: &mut TcCtx<'t, 'p>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == ExprSpec::Sort(LevelSpec::Zero);
-
 /// `TcCtx::abstr_pi`'s real body (`expr.rs`) is `self.mk_pi(binder_name,
 /// binder_style, binder_type, self.abstr(body, &[binder]))` after reading
 /// `binder`'s fields off `binder` itself (panicking if `binder` isn't a
