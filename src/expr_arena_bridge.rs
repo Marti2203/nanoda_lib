@@ -2028,6 +2028,37 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
 /// args in the SAME `[a_0, .. a_N]` order the real loop produces only
 /// after its own explicit `args.reverse()`. `ExprPtr` is opaque (no
 /// structural `decreases`), so this needs fuel, like `verified_inst`.
+/// `Vec::reverse`, which vstd does not specify. The kernel's `unfold_apps`
+/// pushes spine arguments in reverse order and reverses once at the end.
+pub assume_specification<T> [<[T]>::reverse] (v: &mut [T])
+    ensures final(v)@ =~= old(v)@.reverse();
+
+/// The models of a sequence of expression pointers.
+pub open spec fn ptr_models<'a>(s: Seq<ExprPtr<'a>>) -> Seq<ExprSpec> {
+    Seq::new(s.len(), |i: int| to_model(s[i]))
+}
+
+/// Taking models distributes over concatenation.
+pub proof fn ptr_models_add<'a>(a: Seq<ExprPtr<'a>>, b: Seq<ExprPtr<'a>>)
+    ensures ptr_models(a + b) =~= ptr_models(a) + ptr_models(b),
+{
+    assert forall|i: int| 0 <= i < (a + b).len() implies
+        #[trigger] ptr_models(a + b)[i] == (ptr_models(a) + ptr_models(b))[i] by {
+        if i < a.len() { assert((a + b)[i] == a[i]); }
+        else { assert((a + b)[i] == b[i - a.len()]); }
+    }
+}
+
+/// Taking models commutes with reversing.
+pub proof fn ptr_models_reverse<'a>(s: Seq<ExprPtr<'a>>)
+    ensures ptr_models(s.reverse()) =~= ptr_models(s).reverse(),
+{
+    assert forall|i: int| 0 <= i < s.len() implies
+        #[trigger] ptr_models(s.reverse())[i] == ptr_models(s).reverse()[i] by {
+        assert(s.reverse()[i] == s[s.len() - 1 - i]);
+    }
+}
+
 pub fn verified_unfold_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(ExprPtr<'t>, Vec<ExprPtr<'t>>)>)
     ensures match result {
         Some((f, args)) => to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i]))),

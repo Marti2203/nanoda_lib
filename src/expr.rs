@@ -436,20 +436,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// From `f a_0 .. a_N`, return `(f, [a_0, ..a_N])`
-    pub fn unfold_apps(&self, mut e: ExprPtr<'t>) -> (ExprPtr<'t>, Vec<ExprPtr<'t>>) {
-        let mut args = Vec::new();
-        loop {
-            match self.read_expr(e) {
-                App { fun, arg, .. } => {
-                    e = fun;
-                    args.push(arg);
-                },
-                _ => break
-            }
-        }
-        args.reverse();
-        (e, args)
-    }
     
     /// If this is a const application, return (Const {..}, name, levels, args)
     pub fn unfold_const_apps(
@@ -882,5 +868,60 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures crate::expr_arena_bridge::to_model(result)
             == crate::expr_model::ExprSpec::Sort(crate::level_model::LevelSpec::Zero),
     { self.mk_sort(self.zero()) }
+}
+}
+
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified AS WRITTEN: the kernel's own spine decomposition, body
+    /// unchanged. The loop walks `App(fun, arg)` down the spine pushing
+    /// arguments in REVERSE order and reverses once at the end, so the
+    /// invariant carries `args@.reverse()` and leans on
+    /// `spine_app_peel_front`.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn unfold_apps(&self, e0: ExprPtr<'t>) -> (result: (ExprPtr<'t>, Vec<ExprPtr<'t>>))
+        ensures crate::expr_arena_bridge::to_model(e0)
+            == crate::beta_model::spine_app(
+                crate::expr_arena_bridge::to_model(result.0),
+                crate::expr_arena_bridge::ptr_models(result.1@)),
+    {
+        let mut e = e0;
+        let mut args = Vec::new();
+        loop
+            invariant
+                crate::expr_arena_bridge::to_model(e0)
+                    == crate::beta_model::spine_app(
+                        crate::expr_arena_bridge::to_model(e),
+                        crate::expr_arena_bridge::ptr_models(args@.reverse())),
+        {
+            match self.read_expr(e) {
+                App { fun, arg, .. } => {
+                    proof {
+                        let tail = crate::expr_arena_bridge::ptr_models(args@.reverse());
+                        crate::beta_model::spine_app_peel_front(
+                            crate::expr_arena_bridge::to_model(fun),
+                            crate::expr_arena_bridge::to_model(arg),
+                            tail);
+                        // pushing then reversing puts the new argument in front
+                        assert(args@.push(arg).reverse()
+                            =~= ::vstd::seq![arg] + args@.reverse());
+                        crate::expr_arena_bridge::ptr_models_add(
+                            ::vstd::seq![arg], args@.reverse());
+                        assert(crate::expr_arena_bridge::ptr_models(::vstd::seq![arg])
+                            =~= ::vstd::seq![crate::expr_arena_bridge::to_model(arg)]);
+                    }
+                    e = fun;
+                    args.push(arg);
+                },
+                _ => break
+            }
+        }
+        proof { crate::expr_arena_bridge::ptr_models_reverse(args@); }
+        args.reverse();
+        (e, args)
+    }
 }
 }
