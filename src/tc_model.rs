@@ -1545,6 +1545,58 @@ pub open spec fn nat_xor_spec(a: nat, b: nat) -> nat
     else { (if (a % 2 == 1) != (b % 2 == 1) { 1nat } else { 0nat }) + 2 * nat_xor_spec((a / 2) as nat, (b / 2) as nat) }
 }
 
+// ---------------------------------------------------------------------
+// A hidden consistency obligation, now discharged.
+//
+// `crate::util::nat_gcd`/`nat_land`/`nat_lor`/`nat_xor` each carry an
+// `assume_specification` HERE stating them against `*_spec`, while the
+// `biguint_*` wrappers in `nat_lit_model.rs` -- which are one-line delegations
+// to those same functions -- carry a SECOND `assume_specification` stating them
+// against `beta_model`'s own `nat_gcd`/`nat_land`/`nat_lor`/`nat_xor`. Two
+// axioms over one value force the two spec functions to agree, and the pairs
+// were written independently and are NOT syntactically equal:
+//
+//   nat_land_spec: (if a%2==1 && b%2==1 {1} else {0}) + 2*rec(a/2, b/2)
+//   nat_land     : 2*rec(a/2, b/2) + (a%2)*(b%2)
+//
+// They do agree, and these four lemmas prove it rather than leaving it as an
+// assumption nobody stated. Had any pair disagreed, the axiom set would have
+// been INCONSISTENT -- `false` derivable -- with nothing pointing at it.
+pub proof fn nat_pow_agrees(a: nat, b: nat)
+    ensures nat_pow(a, b) == crate::beta_model::nat_pow(a, b)
+    decreases b
+{
+    if b != 0 { nat_pow_agrees(a, (b - 1) as nat); }
+}
+
+pub proof fn nat_gcd_spec_agrees(a: nat, b: nat)
+    ensures nat_gcd_spec(a, b) == crate::beta_model::nat_gcd(a, b)
+    decreases b
+{
+    if b != 0 { nat_gcd_spec_agrees(b, (a % b) as nat); }
+}
+
+pub proof fn nat_land_spec_agrees(a: nat, b: nat)
+    ensures nat_land_spec(a, b) == crate::beta_model::nat_land(a, b)
+    decreases a
+{
+    if a != 0 && b != 0 { nat_land_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+}
+
+pub proof fn nat_lor_spec_agrees(a: nat, b: nat)
+    ensures nat_lor_spec(a, b) == crate::beta_model::nat_lor(a, b)
+    decreases a
+{
+    if a != 0 && b != 0 { nat_lor_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+}
+
+pub proof fn nat_xor_spec_agrees(a: nat, b: nat)
+    ensures nat_xor_spec(a, b) == crate::beta_model::nat_xor(a, b)
+    decreases a
+{
+    if a != 0 && b != 0 { nat_xor_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+}
+
 /// `util.rs::nat_land`/`nat_lor`/`nat_xor` are one-line delegations to
 /// `BigUint`'s native `&`/`|`/`^` operators -- trusted directly, same
 /// "trust the delegation" convention `nat_gcd` above uses.

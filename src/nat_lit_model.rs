@@ -32,17 +32,9 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use num_bigint::BigUint;
-use num_traits::identities::Zero;
+use num_traits::identities::{Zero, One};
 
-#[allow(dead_code)]
-pub(crate) fn biguint_is_zero(x: &BigUint) -> bool {
-    x.is_zero()
-}
 
-#[allow(dead_code)]
-pub(crate) fn biguint_gt(x: &BigUint, y: &BigUint) -> bool {
-    x > y
-}
 
 /// `tc.rs::do_nat_bin`'s `Beq` case (`arg1 == arg2`).
 #[allow(dead_code)]
@@ -71,52 +63,14 @@ pub(crate) fn biguint_rem(x: BigUint, y: BigUint) -> BigUint {
     x % y
 }
 
-/// `expr.rs::get_bignum_succ_from_expr`'s own arithmetic (`n + 1usize`) --
-/// a plain delegation to `BigUint`'s `Add<usize>` impl, no custom
-/// branching, same spirit as `nat_gcd`/`nat_xor` etc. per this file's own
-/// doc comment.
-#[allow(dead_code)]
-pub(crate) fn biguint_succ(x: BigUint) -> BigUint {
-    x + 1usize
-}
 
-/// `expr.rs::pred_of_nat_succ`'s `NatLit` arm (`n - 1u8`, only reached
-/// when `n` is already known nonzero) -- same plain-delegation spirit.
-#[allow(dead_code)]
-pub(crate) fn biguint_pred(x: BigUint) -> BigUint {
-    x - 1u8
-}
 
-/// `tc.rs::do_nat_bin`'s `Add` case (`arg1 + arg2`) -- also a plain
-/// delegation, no custom branching.
-#[allow(dead_code)]
-pub(crate) fn biguint_pow(x: BigUint, y: BigUint) -> BigUint {
-    num_traits::Pow::pow(x, y)
-}
 
-pub(crate) fn biguint_gcd(x: &BigUint, y: &BigUint) -> BigUint {
-    crate::util::nat_gcd(x, y)
-}
 
-pub(crate) fn biguint_land(x: BigUint, y: BigUint) -> BigUint {
-    crate::util::nat_land(x, y)
-}
 
-pub(crate) fn biguint_lor(x: BigUint, y: BigUint) -> BigUint {
-    crate::util::nat_lor(x, y)
-}
 
-pub(crate) fn biguint_xor(x: &BigUint, y: &BigUint) -> BigUint {
-    crate::util::nat_xor(x, y)
-}
 
-pub(crate) fn biguint_shl(x: BigUint, y: BigUint) -> BigUint {
-    crate::util::nat_shl(x, y)
-}
 
-pub(crate) fn biguint_shr(x: BigUint, y: BigUint) -> BigUint {
-    crate::util::nat_shr(x, y)
-}
 
 pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
     x + y
@@ -145,11 +99,119 @@ pub uninterp spec fn to_nat(x: BigUint) -> nat;
 pub assume_specification [<BigUint as num_traits::Zero>::zero] () -> (result: BigUint)
     ensures to_nat(result) == 0;
 
-pub assume_specification [biguint_is_zero] (x: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) == 0);
+/// These seven were `assume_specification`s, each a SECOND axiom over a value
+/// that already had one: the bodies are one-line delegations to
+/// `crate::util::nat_*` (or `num_traits::Pow`), which are themselves
+/// axiomatized in `tc_model.rs`. Two axioms over one value force their two
+/// spec functions to agree -- see `nat_gcd_spec_agrees` and friends there,
+/// which prove that rather than leaving it assumed.
+#[allow(dead_code)]
+pub(crate) fn biguint_pow(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_pow(to_nat(x), to_nat(y))
+{
+    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let r = num_traits::Pow::pow(x, y);
+    proof { crate::tc_model::nat_pow_agrees(a, b); }
+    r
+}
 
-pub assume_specification [biguint_gt] (x: &BigUint, y: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) > to_nat(*y));
+#[allow(dead_code)]
+pub(crate) fn biguint_gcd(x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y))
+{
+    let r = crate::util::nat_gcd(x, y);
+    proof { crate::tc_model::nat_gcd_spec_agrees(to_nat(*x), to_nat(*y)); }
+    r
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_land(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_land(to_nat(x), to_nat(y))
+{
+    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let r = crate::util::nat_land(x, y);
+    proof { crate::tc_model::nat_land_spec_agrees(a, b); }
+    r
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_lor(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_lor(to_nat(x), to_nat(y))
+{
+    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let r = crate::util::nat_lor(x, y);
+    proof { crate::tc_model::nat_lor_spec_agrees(a, b); }
+    r
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_xor(x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures to_nat(result) == crate::beta_model::nat_xor(to_nat(*x), to_nat(*y))
+{
+    let r = crate::util::nat_xor(x, y);
+    proof { crate::tc_model::nat_xor_spec_agrees(to_nat(*x), to_nat(*y)); }
+    r
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_shl(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) * crate::beta_model::nat_pow(2, to_nat(y))
+{
+    let ghost b = to_nat(y);
+    let r = crate::util::nat_shl(x, y);
+    proof { crate::tc_model::nat_pow_agrees(2, b); }
+    r
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_shr(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) / crate::beta_model::nat_pow(2, to_nat(y))
+{
+    let ghost b = to_nat(y);
+    let r = crate::util::nat_shr(x, y);
+    proof { crate::tc_model::nat_pow_agrees(2, b); }
+    r
+}
+
+/// These four were `assume_specification`s. They are OUR wrappers, and every
+/// caller is in a `*_model`/`*_bridge` file rather than the kernel, so building
+/// them out of the primitives below costs nothing on the verdict path -- and
+/// four bridges to `num_bigint` become one constant.
+#[allow(dead_code)]
+pub(crate) fn biguint_is_zero(x: &BigUint) -> (result: bool)
+    ensures result == (to_nat(*x) == 0)
+{
+    let z = <BigUint as Zero>::zero();
+    biguint_eq(x, &z)
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_gt(x: &BigUint, y: &BigUint) -> (result: bool)
+    ensures result == (to_nat(*x) > to_nat(*y))
+{
+    !biguint_le(x, y)
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_succ(x: BigUint) -> (result: BigUint)
+    ensures to_nat(result) == to_nat(x) + 1
+{
+    biguint_add(x, <BigUint as One>::one())
+}
+
+#[allow(dead_code)]
+pub(crate) fn biguint_pred(x: BigUint) -> (result: BigUint)
+    requires to_nat(x) > 0
+    ensures to_nat(result) == (to_nat(x) - 1) as nat
+{
+    biguint_sub(x, <BigUint as One>::one())
+}
+
+/// The other numeric constant. Added so that `succ` and `pred` can be BUILT
+/// from `add`/`sub` rather than each needing its own bridge: one constant
+/// replaces two operations.
+pub assume_specification [<BigUint as num_traits::One>::one] () -> (result: BigUint)
+    ensures to_nat(result) == 1;
 
 pub assume_specification [biguint_eq] (x: &BigUint, y: &BigUint) -> (result: bool)
     ensures result == (to_nat(*x) == to_nat(*y));
@@ -169,39 +231,20 @@ pub assume_specification [biguint_rem] (x: BigUint, y: BigUint) -> (result: BigU
     requires to_nat(y) > 0
     ensures to_nat(result) == to_nat(x) % to_nat(y);
 
-pub assume_specification [biguint_succ] (x: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) + 1;
 
-pub assume_specification [biguint_pred] (x: BigUint) -> (result: BigUint)
-    requires to_nat(x) > 0
-    ensures to_nat(result) == (to_nat(x) - 1) as nat;
 
 /// `pow`/`gcd` bridges (rec-iota P3): the kernel's `arg1.pow(arg2)` and
 /// `util::nat_gcd`, axiomatized against the model's `nat_pow`/`nat_gcd`.
-pub assume_specification [biguint_pow] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_pow(to_nat(x), to_nat(y));
 
-pub assume_specification [biguint_gcd] (x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y));
 
 /// Bitwise/shift bridges (2026-09-08): `num_bigint`'s `&`/`|`/`^` and the
 /// kernel's own `nat_shl`/`nat_shr` (`x * 2^y`, `x / 2^y`) against the
 /// model's binary-recursion specs -- the same disclosed trust as the
 /// arithmetic bridges above.
-pub assume_specification [biguint_land] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_land(to_nat(x), to_nat(y));
 
-pub assume_specification [biguint_lor] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_lor(to_nat(x), to_nat(y));
 
-pub assume_specification [biguint_xor] (x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_xor(to_nat(*x), to_nat(*y));
 
-pub assume_specification [biguint_shl] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) * crate::beta_model::nat_pow(2, to_nat(y));
 
-pub assume_specification [biguint_shr] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) / crate::beta_model::nat_pow(2, to_nat(y));
 
 pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
     ensures to_nat(result) == to_nat(x) + to_nat(y);
