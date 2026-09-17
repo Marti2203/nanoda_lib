@@ -2033,6 +2033,24 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
 pub assume_specification<T> [<[T]>::reverse] (v: &mut [T])
     ensures final(v)@ =~= old(v)@.reverse();
 
+// `foldl_apps` -- the dual of `unfold_apps` -- was attempted and backed out
+// (2026-09-17). Its contract and invariant are straightforward:
+//
+//     ensures to_model(result) == spine_app(to_model(fun0), ptr_models(args.remaining()))
+//     invariant to_model(fun) == spine_app(to_model(fun0),
+//                                          ptr_models(it.seq().take(it.index())))
+//
+// and the step needs only `spine_app_compose_last` plus a push-commutes
+// lemma. What did not come through is the `for`-loop wrapper's own facts:
+// neither the entry invariant (`take(0)` empty) nor the tie between
+// `it.seq()` and `args.remaining()` discharged, and `it` is out of scope
+// after the loop so the exit cannot be bridged by hand.
+//
+// This is the same wall as the `copied()` loop upstream: writing the
+// invariant is easy, getting the wrapper to hand over its relationship to
+// the original iterator is not. `unfold_apps` avoided it by using a bare
+// `loop` rather than a `for`.
+
 /// The models of a sequence of expression pointers.
 pub open spec fn ptr_models<'a>(s: Seq<ExprPtr<'a>>) -> Seq<ExprSpec> {
     Seq::new(s.len(), |i: int| to_model(s[i]))
