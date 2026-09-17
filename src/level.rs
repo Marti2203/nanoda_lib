@@ -1,11 +1,15 @@
 //! Implementation of the `Level` type representing universes
 use crate::util::{LevelPtr, LevelsPtr, NamePtr, TcCtx};
 
+// Inside `verus!` only so the `hash64!` calls in util.rs's constructors are
+// expressible there; values unchanged and no spec reads them.
+::vstd::prelude::verus! {
 pub(crate) const ZERO_HASH: u64 = 283;
 pub(crate) const SUCC_HASH: u64 = 541;
 pub(crate) const MAX_HASH: u64 = 1091;
 pub(crate) const IMAX_HASH: u64 = 1747;
 pub(crate) const PARAM_HASH: u64 = 947;
+}
 use Level::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

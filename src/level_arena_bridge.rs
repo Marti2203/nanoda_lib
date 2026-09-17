@@ -185,6 +185,12 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mu
         to_model_of_levels(result).len() == ls@.len(),
         forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]);
 
+/// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
+/// justified the same way by `level_model_at_append` above. The constructor
+/// contracts below are derived from it rather than assumed.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx<'t, 'p>, l: Level<'t>) -> (result: LevelPtr<'t>) where 'p: 't
+    ensures to_model(result) == to_model_of_level(l);
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
 
@@ -196,18 +202,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -
 /// simplify`'s `Param` case a few lines above for the same convention).
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::contains_param] (ctx: &TcCtx<'t, 'p>, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result: bool) where 'p: 't
     ensures result == (exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(candidate)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::succ] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == LevelSpec::Succ(Box::new(to_model(l)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::max] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::imax] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r)));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::param] (ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == LevelSpec::Param(name_id(n));
 
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.

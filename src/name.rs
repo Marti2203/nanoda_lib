@@ -2,9 +2,13 @@
 use crate::util::{CowStr, NamePtr, StringPtr, TcCtx};
 use Name::*;
 
+// Inside `verus!` only so the `hash64!` calls in util.rs's constructors are
+// expressible there; values unchanged and no spec reads them.
+::vstd::prelude::verus! {
 pub(crate) const ANON_HASH: u64 = 43;
 pub(crate) const STR_HASH: u64 = 911;
 pub(crate) const NUM_HASH: u64 = 103;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Name<'a> {

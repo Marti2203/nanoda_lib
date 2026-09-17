@@ -456,10 +456,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// A constructor for the anonymous name.
     pub fn anonymous(&self) -> NamePtr<'t> { self.export_file.dag.anonymous() }
 
-    pub fn str(&mut self, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> NamePtr<'t> {
-        let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
-        self.alloc_name(Name::Str(pfx, sfx, hash))
-    }
 
     pub fn str1_owned(&mut self, s: String) -> NamePtr<'t> {
         let anon = self.alloc_name(Name::Anon);
@@ -483,28 +479,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn zero(&self) -> LevelPtr<'t> { self.export_file.dag.zero() }
 
-    pub fn num(&mut self, pfx: NamePtr<'t>, sfx: u64) -> NamePtr<'t> {
-        let hash = hash64!(crate::name::NUM_HASH, pfx, sfx);
-        self.alloc_name(Name::Num(pfx, sfx, hash))
-    }
 
-    pub fn succ(&mut self, l: LevelPtr<'t>) -> LevelPtr<'t> {
-        let hash = hash64!(crate::level::SUCC_HASH, l);
-        self.alloc_level(Level::Succ(l, hash))
-    }
 
-    pub fn max(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> LevelPtr<'t> {
-        let hash = hash64!(crate::level::MAX_HASH, l, r);
-        self.alloc_level(Level::Max(l, r, hash))
-    }
-    pub fn imax(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> LevelPtr<'t> {
-        let hash = hash64!(crate::level::IMAX_HASH, l, r);
-        self.alloc_level(Level::IMax(l, r, hash))
-    }
-    pub fn param(&mut self, n: NamePtr<'t>) -> LevelPtr<'t> {
-        let hash = hash64!(crate::level::PARAM_HASH, n);
-        self.alloc_level(Level::Param(n, hash))
-    }
 
     pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> ExprPtr<'t> {
         let hash = hash64!(crate::expr::SORT_HASH, level);
@@ -996,6 +972,14 @@ use crate::level_arena_bridge::{to_model, to_model_of_level};
 use crate::expr_arena_bridge::to_model as to_model_expr;
 #[cfg(verus_only)]
 use crate::expr_model::ExprSpec;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use crate::name_model::NameSpec;
+#[cfg(verus_only)]
+use crate::name_arena_bridge::{to_model_name, to_model_of_name, string_id};
+#[cfg(verus_only)]
+use crate::level_arena_bridge::name_id;
 
 verus! {
 
@@ -1048,6 +1032,48 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
         self.alloc_expr(Expr::Pi { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+    }
+
+    pub fn succ(&mut self, l: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        ensures to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
+    {
+        let hash = hash64!(crate::level::SUCC_HASH, l);
+        self.alloc_level(Level::Succ(l, hash))
+    }
+
+    pub fn max(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        ensures to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
+    {
+        let hash = hash64!(crate::level::MAX_HASH, l, r);
+        self.alloc_level(Level::Max(l, r, hash))
+    }
+
+    pub fn imax(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        ensures to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
+    {
+        let hash = hash64!(crate::level::IMAX_HASH, l, r);
+        self.alloc_level(Level::IMax(l, r, hash))
+    }
+
+    pub fn param(&mut self, n: NamePtr<'t>) -> (result: LevelPtr<'t>)
+        ensures to_model(result) == LevelSpec::Param(name_id(n)),
+    {
+        let hash = hash64!(crate::level::PARAM_HASH, n);
+        self.alloc_level(Level::Param(n, hash))
+    }
+
+    pub fn str(&mut self, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>)
+        ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
+    {
+        let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
+        self.alloc_name(Name::Str(pfx, sfx, hash))
+    }
+
+    pub fn num(&mut self, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>)
+        ensures to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
+    {
+        let hash = hash64!(crate::name::NUM_HASH, pfx, sfx);
+        self.alloc_name(Name::Num(pfx, sfx, hash))
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)

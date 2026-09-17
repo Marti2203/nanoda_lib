@@ -252,6 +252,11 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
     assert(ns.push(n)[i as int] == ns[i as int]);
 }
 
+/// THE storage primitive for names -- the analogue of `alloc_expr`'s and
+/// `alloc_level`'s, justified the same way by `name_model_at_append` above.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_name] (ctx: &mut TcCtx<'t, 'p>, n: Name<'t>) -> (result: NamePtr<'t>) where 'p: 't
+    ensures to_model_name(result) == to_model_of_name(n);
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);
 
@@ -266,12 +271,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, '
 /// gen_elim_level` above) don't need anything about ITS specific model
 /// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't;
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>) where 'p: 't
-    ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num] (ctx: &mut TcCtx<'t, 'p>, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>) where 'p: 't
-    ensures to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx);
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
