@@ -48,7 +48,6 @@ verus! {
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExTcCtx<'t, 'p>(TcCtx<'t, 'p>);
 
 /// `accept_recursive_types(A)` rather than `reject`: `Ptr<A>` is `{ raw: u32,

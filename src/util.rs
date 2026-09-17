@@ -308,21 +308,21 @@ pub struct TcCtx<'t, 'p> {
     //anchor: PhantomData<&'t AnchorZst>,
     /// Each type checker's context shares an immutable reference to the structured contents of
     /// the export file, and some additional information taken from the export file.
-    pub(crate) export_file: &'t ExportFile<'p>,
+    pub export_file: &'t ExportFile<'p>,
     /// The underlying storage for temporary `Name`, `Level`, and `Expr`` items created while
     /// type checking a declaration. These are dropped once the declaration is verified, since
     /// they are no longer needed.
-    pub(crate) dag: &'t mut LeanDag<'t>,
+    pub dag: &'t mut LeanDag<'t>,
     /// Non-monotonic counter showing the current deBruijn level (which is also the number
     /// of binders that are open above us). When a binder is opened and traversed under, this
     /// counter is incremented. When the binder is closed again, this counter is decremented.
-    pub(crate) dbj_level_counter: u16,
+    pub dbj_level_counter: u16,
     /// Monotonically increasing counter for unique free variables. Any two free variables created
     /// with the `mk_unique` constructor are unique within their `(ExportFile, TcCtx)` pair.
-    pub(crate) unique_counter: u32,
+    pub unique_counter: u32,
     /// A cache for instantiation, free variable abstraction, and level substitution
-    pub(crate) expr_cache: ExprCache<'t>,
-    pub(crate) eager_mode: bool
+    pub expr_cache: ExprCache<'t>,
+    pub eager_mode: bool
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {

@@ -122,16 +122,6 @@ pub(crate) fn get_eager_mode<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
     ctx.eager_mode
 }
 
-/// `TcCtx`'s `dbj_level_counter` field, read directly -- same "plain
-/// wrapper around an `external_body`-registered struct's field" reason as
-/// `get_eager_mode`. Needed by `infer_lambda`/`infer_pi`'s own telescoping
-/// (`tc.rs:625-674`), which captures the counter's value BEFORE opening
-/// any binders (`start_pos`) to know which locals `abstr_levels` should
-/// later abstract back out.
-#[allow(dead_code)]
-pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> u16 {
-    ctx.dbj_level_counter
-}
 
 /// `export_file.name_cache.string_of_list`, read directly -- same
 /// "plain field-read wrapper, `TcCtx` is `external_body`" convention as
@@ -797,7 +787,15 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCt
         local_binder_type_of(result) == binder_type,
         to_model(result) == ExprSpec::Free(expr_id(result));
 
-pub assume_specification<'t, 'p> [get_dbj_level_counter] (ctx: &TcCtx<'t, 'p>) -> (result: u16) where 'p: 't;
+/// Was a claim-free `assume_specification` -- `TcCtx` was `external_body`, so
+/// a wrapper round a field read could not even say which field. Transparent, it
+/// says so and proves it.
+#[allow(dead_code)]
+pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result: u16)
+    ensures result == ctx.dbj_level_counter
+{
+    ctx.dbj_level_counter
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't;
 

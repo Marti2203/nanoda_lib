@@ -40,6 +40,25 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+// TcCtx's three composite field types, registered so `TcCtx` itself can be a
+// TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay
+// opaque -- nothing needs their internals yet; registering them is only what
+// lets `TcCtx` be looked inside at all.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExLeanDag<'t>(crate::util::LeanDag<'t>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
+
 /// `Ptr`'s derived `PartialEq` compares its one real field (`raw: u32`; the
 /// `PhantomData` is always equal), which is exactly spec-level equality on the
 /// struct. Stating it once here replaces the per-arena `expr_ptr_eq` /
