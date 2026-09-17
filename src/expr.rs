@@ -237,11 +237,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
 
-    /// Abstraction of unique identifiers; replaces free variables with the appropriate
-    /// bound variable, if the free variable is in `locals`.
-
-
-
     pub(crate) fn subst_declar_info_levels(
         &mut self,
         info: crate::env::DeclarInfo<'t>,

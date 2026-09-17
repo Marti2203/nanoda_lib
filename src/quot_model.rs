@@ -43,7 +43,7 @@ use crate::expr_model::ExprSpec;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{to_model, expr_id};
+use crate::expr_arena_bridge::{to_model, expr_id, local_binder_type_of};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]
@@ -53,14 +53,21 @@ verus! {
 
 /// The type a `Local` (free variable) was created with -- a side-channel
 /// fact, since `to_model` alone erases it (`to_model(local) ==
-/// ExprSpec::Free(expr_id(local))`, with no room for the type). Populated
-/// by `mk_unique`'s axiom below.
-pub uninterp spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec;
+/// ExprSpec::Free(expr_id(local))`, with no room for the type).
+///
+/// DEFINED, not uninterpreted. It and `local_binder_type_of` were two unrelated
+/// uninterpreted views of the SAME field -- one as a model, one as a pointer --
+/// with nothing tying them together. Defining one as the other costs no
+/// assumption and unifies them, and `mk_unique`'s axiom gets to state the
+/// sharper pointer-level fact instead of the model-level one.
+pub open spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec {
+    to_model(local_binder_type_of(ptr))
+}
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         to_model(result) == ExprSpec::Free(expr_id(result)),
-        local_type(result) == to_model(binder_type);
+        local_binder_type_of(result) == binder_type;
 
 /// `TcCtx::abstr_pi`'s real body (`expr.rs`) is `self.mk_pi(binder_name,
 /// binder_style, binder_type, self.abstr(body, &[binder]))` after reading
