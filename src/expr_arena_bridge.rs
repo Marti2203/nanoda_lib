@@ -2059,45 +2059,6 @@ pub proof fn ptr_models_reverse<'a>(s: Seq<ExprPtr<'a>>)
     }
 }
 
-pub fn verified_unfold_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(ExprPtr<'t>, Vec<ExprPtr<'t>>)>)
-    ensures match result {
-        Some((f, args)) => to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
-        None => true,
-    }
-    decreases fuel
-{
-    if fuel == 0 {
-        return None;
-    }
-    let fuel1 = fuel - 1;
-    let el = ctx.read_expr(e);
-    if let Some((fun, arg)) = expr_as_app(&el) {
-        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
-        match verified_unfold_apps(ctx, fun, fuel1) {
-            Some((f, mut args)) => {
-                let ghost args_model_before = Seq::new(args@.len(), |i: int| to_model(args@[i]));
-                args.push(arg);
-                assert(Seq::new(args@.len(), |i: int| to_model(args@[i])) =~= args_model_before.push(to_model(arg)));
-                let ghost pushed = args_model_before.push(to_model(arg));
-                assert(pushed.len() != 0);
-                assert(pushed.subrange(0, pushed.len() - 1) =~= args_model_before);
-                assert(pushed[pushed.len() - 1] == to_model(arg));
-                assert(spine_app(to_model(f), pushed)
-                    == ExprSpec::App(Box::new(spine_app(to_model(f), pushed.subrange(0, pushed.len() - 1))), Box::new(pushed[pushed.len() - 1])));
-                assert(spine_app(to_model(f), pushed)
-                    == ExprSpec::App(Box::new(spine_app(to_model(f), args_model_before)), Box::new(to_model(arg))));
-                Some((f, args))
-            }
-            None => None,
-        }
-    } else {
-        assert(!matches!(to_model_of_expr(el), ExprSpec::App(_, _)));
-        let empty: Vec<ExprPtr<'t>> = Vec::new();
-        assert(Seq::new(empty@.len(), |i: int| to_model(empty@[i])) =~= Seq::<ExprSpec>::empty());
-        Some((e, empty))
-    }
-}
-
 /// Real-arena counterpart to `expr.rs::TcCtx::unfold_const_apps`
 /// (`expr.rs:435-444`): `verified_unfold_apps` then require the peeled
 /// head be `Const`-shaped, exposing its name/levels directly -- needed by
@@ -2112,16 +2073,13 @@ pub fn verified_unfold_const_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t
         None => true,
     }
 {
-    match verified_unfold_apps(ctx, e, fuel) {
-        Some((f, args)) => {
+    { let (f, args) = ctx.unfold_apps(e); {
             let f_el = ctx.read_expr(f);
             match expr_as_const(f, &f_el) {
                 Some((c_name, c_levels)) => Some((f, c_name, c_levels, args)),
                 None => None,
             }
-        }
-        None => None,
-    }
+        } }
 }
 
 /// Real-arena counterpart to `spine_bind`: mirrors
@@ -2385,8 +2343,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
         None => true,
     }
 {
-    match verified_unfold_apps(ctx, e, fuel) {
-        Some((e_fun, args)) => {
+    { let (e_fun, args) = ctx.unfold_apps(e); {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             proof {
                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
@@ -2543,9 +2500,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                 max_var_below_mono(to_model(e), bound, bound + d * d * d + d * d);
             }
             Some(e)
-        }
-        None => None,
-    }
+        } }
 }
 
 /// PLAIN (gate-free) beta/zeta step (2026-09-08): the same two primitives
@@ -2568,8 +2523,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
         nlbv_bound_implies_max_var_below(to_model(e), 0);
         max_var_below_mono(to_model(e), (depth(to_model(e)) + 0) as nat, bound);
     }
-    match verified_unfold_apps(ctx, e, fuel) {
-        Some((e_fun, args)) => {
+    { let (e_fun, args) = ctx.unfold_apps(e); {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             proof {
                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
@@ -2653,9 +2607,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
                 pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
             }
             Some(e)
-        }
-        None => None,
-    }
+        } }
 }
 
 

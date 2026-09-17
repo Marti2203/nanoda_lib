@@ -57,7 +57,7 @@ use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, c
 use crate::util_model::find_index;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
 use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
@@ -254,10 +254,7 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         None => true,
     }
 {
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (fun, args) = ctx.unfold_apps(e);
     assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
     proof {
         // the arguments inherit `e`'s own closedness
@@ -375,7 +372,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     }
 {
     let ghost cm = env_model_nofv(*env);
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => { rec_stat(40); return None; } };
+    let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
     let (rname, rlevels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => { rec_stat(41); return None; } };
     let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => { rec_stat(42); return None; } };
@@ -415,7 +412,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         },
         None => majw0,
     };
-    let (chead, cargs) = match verified_unfold_apps(ctx, majw, 100000) { Some(p) => p, None => { rec_stat(44); return None; } };
+    let (chead, cargs) = ctx.unfold_apps(majw);
     let chead_el = ctx.read_expr(chead);
     let (cname, _clevels) = match expr_as_const(chead, &chead_el) {
         Some(p) => p,
@@ -570,7 +567,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
     }
 {
     let ghost cm = env_model_nofv(*env);
-    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let (head, args) = ctx.unfold_apps(e);
     let head_el = ctx.read_expr(head);
     let (_, idx, structure) = match expr_as_proj(&head_el) { Some(p) => p, None => return None };
     if idx > 0xFFFF_0000 {
@@ -584,7 +581,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         assert(nlbv(to_model(structure)) <= 0);
     }
     let s2 = verified_whnf_free(ctx, env, memo, structure);
-    let (fun, cargs) = match verified_unfold_apps(ctx, s2, 100000) { Some(p) => p, None => return None };
+    let (fun, cargs) = ctx.unfold_apps(s2);
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
     let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
@@ -788,7 +785,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     }
 {
     let ghost cm = env_model_nofv(*env);
-    let (fun, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
     let (name, levels) = match expr_as_const(fun, &fun_el) { Some(p) => p, None => return None };
     let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
@@ -2064,17 +2061,11 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         _ => true,
     }
 {
-    let (f1, args1) = match verified_unfold_apps(ctx, x, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (f1, args1) = ctx.unfold_apps(x);
     if args1.len() == 0 {
         return Some(false);
     }
-    let (f2, args2) = match verified_unfold_apps(ctx, y, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (f2, args2) = ctx.unfold_apps(y);
     if args2.len() == 0 {
         return Some(false);
     }
@@ -4634,10 +4625,7 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'
         None => true,
     }
 {
-    let (fun, _args) = match verified_unfold_apps(ctx, e, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (fun, _args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match expr_as_const(fun, &fun_el) {
         Some(p) => p,
@@ -4695,14 +4683,8 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     if xn != yn {
         return None;
     }
-    let (l_fun, l_args) = match verified_unfold_apps(ctx, x, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
-    let (r_fun, r_args) = match verified_unfold_apps(ctx, y, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (l_fun, l_args) = ctx.unfold_apps(x);
+    let (r_fun, r_args) = ctx.unfold_apps(y);
     let l_fun_el = ctx.read_expr(l_fun);
     let (l_name, l_levels) = match expr_as_const(l_fun, &l_fun_el) {
         Some(p) => p,
@@ -4813,10 +4795,7 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
         None => true,
     }
 {
-    let (fun, _args) = match verified_unfold_apps(ctx, e, fuel) {
-        Some(p) => p,
-        None => return None,
-    };
+    let (fun, _args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
     if expr_as_proj(&fun_el).is_none() {
         return None;

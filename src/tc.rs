@@ -1553,10 +1553,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // which ARGUMENT of the two propositions fails to convert,
                 // and what does each side reduce to on its own
                 if let (Some(a), Some(b)) = (wxt, wyt) {
-                    if let (Some((h1, a1)), Some((h2, a2))) = (
-                        crate::expr_arena_bridge::verified_unfold_apps(self.ctx, a, 100000),
-                        crate::expr_arena_bridge::verified_unfold_apps(self.ctx, b, 100000),
-                    ) {
+                    {
+                        let (h1, a1) = self.ctx.unfold_apps(a);
+                        let (h2, a2) = self.ctx.unfold_apps(b);
                         let hc = matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, h1, h2, 100, route_stats::conv_budget()), Some(true));
                         eprintln!("  IRREL head_conv={} nargs={}/{}", hc, a1.len(), a2.len());
                         if a1.len() == a2.len() {
@@ -1608,9 +1607,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let b = route_stats::conv_budget();
                 let xn = self.whnf_no_unfolding(x);
                 let yn = self.whnf_no_unfolding(y);
-                match (crate::expr_arena_bridge::verified_unfold_apps(self.ctx, xn, 100000),
-                       crate::expr_arena_bridge::verified_unfold_apps(self.ctx, yn, 100000)) {
-                    (Some((hx, ax)), Some((hy, ay))) => {
+                {
+                    {
+                        let (hx, ax) = self.ctx.unfold_apps(xn);
+                        let (hy, ay) = self.ctx.unfold_apps(yn);
                         let head_eq = hx == hy;
                         let head_conv = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, hx, hy, 100, b), Some(true));
                         let mut args_ok = String::new();
@@ -1624,7 +1624,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         eprintln!("  ROOTINFO: head_eq={} head_conv={} nargs={}/{} args=[{}] spine_step={}",
                             head_eq, head_conv, ax.len(), ay.len(), args_ok, spine);
                     }
-                    _ => eprintln!("  ROOTINFO: not-both-spines"),
                 }
             }
             eprintln!("UNCERTIFIED root={} kernel-branch={} last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",

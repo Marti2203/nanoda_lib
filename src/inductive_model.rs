@@ -24,7 +24,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_apps, verified_unfold_const_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_const_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]
@@ -677,10 +677,7 @@ pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
         let next_params = if rem_params > 0 { rem_params - 1 } else { 0 };
         verified_large_elim_walk(ctx, env, memo, instd, next_params, non_prop_elems, (fuel - 1) as u32)
     } else {
-        match verified_unfold_apps(ctx, cursor, 100000) {
-            Some((_base, args)) => Some(verified_all_in_slice(args.as_slice(), non_prop_elems)),
-            None => None,
-        }
+        { let (_base, args) = ctx.unfold_apps(cursor); Some(verified_all_in_slice(args.as_slice(), non_prop_elems)) }
     }
 }
 

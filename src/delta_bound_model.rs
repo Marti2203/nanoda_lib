@@ -47,7 +47,7 @@ use crate::beta_model::{
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
-use crate::expr_arena_bridge::{verified_unfold_apps, verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id, is_nat_lit_shape_model, nat_lit_value, bignum_ptr_value};
 #[cfg(verus_only)]
@@ -904,8 +904,8 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     if budget == 0 {
         return None;
     }
-    let (h1, args1) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
-    let (h2, args2) = match verified_unfold_apps(ctx, y, 100000) { Some(p) => p, None => return None };
+    let (h1, args1) = ctx.unfold_apps(x);
+    let (h2, args2) = ctx.unfold_apps(y);
     if args1.len() == 0 || args1.len() != args2.len() {
         return None;
     }
@@ -1279,8 +1279,8 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
         }
         return true;
     }
-    let (hx, ax) = match verified_unfold_apps(ctx, wx, 100000) { Some(p) => p, None => return false };
-    let (hy, ay) = match verified_unfold_apps(ctx, wy, 100000) { Some(p) => p, None => return false };
+    let (hx, ax) = ctx.unfold_apps(wx);
+    let (hy, ay) = ctx.unfold_apps(wy);
     if !expr_ptr_eq(hx, hy) || ax.len() != ay.len() || ax.len() == 0 {
         // Measured 2026-09-14 (4000 samples, Init.Data.Fin.Lemmas): in 99%
         // of these neither head has a VALUE in the environment -- only 35 of
@@ -1563,7 +1563,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     // The application rule keeps the derivation height fixed, so nothing needs
     // lifting across the spine.
     if expr_as_app(&el).is_some() {
-        let (hd, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+        let (hd, args) = ctx.unfold_apps(e);
         let ghost args_all = Seq::new(args@.len(), |i: int| to_model(args@[i]));
         proof {
             assert(to_model(e) == spine_app(to_model(hd), args_all));
@@ -2952,8 +2952,8 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     if budget == 0 {
         return None;
     }
-    let (h1, args1) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
-    let (h2, args2) = match verified_unfold_apps(ctx, y, 100000) { Some(p) => p, None => return None };
+    let (h1, args1) = ctx.unfold_apps(x);
+    let (h2, args2) = ctx.unfold_apps(y);
     if args1.len() == 0 || args1.len() != args2.len() {
         return None;
     }
@@ -3053,7 +3053,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let ghost em = to_model_of_env(*env);
     let ghost lcm = arena_lctx();
     let ghost cm = env_model_nofv(*env);
-    let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let (head, args) = ctx.unfold_apps(x);
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
         assert(to_model(x) == spine_app(to_model(head), args_model));
@@ -3231,7 +3231,7 @@ fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, i
 {
     let ghost ids = Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i]));
     let ghost ars = Seq::new(arities@.len(), |i: int| arities@[i] as nat);
-    let (head, args) = match verified_unfold_apps(ctx, e, 100000) { Some(p) => p, None => return None };
+    let (head, args) = ctx.unfold_apps(e);
     let hl = ctx.read_expr(head);
     let (hname, _hlv) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
@@ -3427,7 +3427,7 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
         if nparams != 0 {
             return None;
         }
-        let (head, args) = match verified_unfold_apps(ctx, ty, 100000) { Some(p) => p, None => return None };
+        let (head, args) = ctx.unfold_apps(ty);
         let hl = ctx.read_expr(head);
         let (hname, _) = match expr_as_const(head, &hl) { Some(p) => p, None => return None };
         if !name_ptr_eq(hname, parent) || args.len() != parent_arity {
@@ -4236,7 +4236,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 {
     let ghost em = to_model_of_env(*env);
     let ghost cm = env_model_nofv(*env);
-    let (head, args) = match verified_unfold_apps(ctx, x, 100000) { Some(p) => p, None => return None };
+    let (head, args) = ctx.unfold_apps(x);
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
     proof {
         assert(to_model(x) == spine_app(to_model(head), args_model));
@@ -4270,7 +4270,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
         deq_any_of_defeq(em, to_model(x), spine_app(to_model(head), args2_model));
     }
     // the reduced major must be `Quot.mk A r a`
-    let (mkhead, mkargs) = match verified_unfold_apps(ctx, mw, 100000) { Some(p) => p, None => return None };
+    let (mkhead, mkargs) = ctx.unfold_apps(mw);
     let mkl = ctx.read_expr(mkhead);
     let (mkname, _mklv) = match expr_as_const(mkhead, &mkl) { Some(p) => p, None => return None };
     match ctx.quot_kind_code(mkname) {
