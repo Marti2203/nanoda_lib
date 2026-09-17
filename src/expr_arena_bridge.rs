@@ -583,7 +583,26 @@ pub assume_specification<'t> [expr_ptr_eq] (a: ExprPtr<'t>, b: ExprPtr<'t>) -> (
     ensures result == (a == b);
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
-    ensures to_model_of_expr(result) == to_model(ptr);
+    ensures
+        to_model_of_expr(result) == to_model(ptr),
+        // `const_name_of`/`const_levels_of` are uninterpreted, so until now the
+        // ONLY way to learn what they are was `expr_as_const`'s own axiom --
+        // which is keyed on a caller-supplied `(ptr, e)` pair and silently
+        // assumes the caller passed a pair that actually corresponds. Keying
+        // the same fact on `read_expr` instead removes that unchecked side
+        // condition: `read_expr` reads the node the pointer names, so there is
+        // no pair to get wrong. This is what lets the kernel's own
+        // `unfold_const_apps` match on `Const { .. }` directly.
+        result matches Expr::Const { name, levels, .. } ==>
+            const_name_of(ptr) == name && const_levels_of(ptr) == levels;
+
+// Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
+// assuming exactly the two clauses above (`to_model_of_expr(e) == to_model(ptr)`
+// and the `Const` payload correspondence) and claiming `ensures false`, FAILS
+// to verify. That is the result wanted -- had it verified, the new conjunct
+// would have been inconsistent with the rest of the arena model and every
+// proof downstream of it worthless. Non-degeneracy is witnessed separately by
+// `TcCtx::unfold_const_apps` (`expr.rs`), which cannot be proven without it.
 
 #[allow(dead_code)]
 pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
@@ -2073,28 +2092,6 @@ pub proof fn ptr_models_reverse<'a>(s: Seq<ExprPtr<'a>>)
     }
 }
 
-/// Real-arena counterpart to `expr.rs::TcCtx::unfold_const_apps`
-/// (`expr.rs:435-444`): `verified_unfold_apps` then require the peeled
-/// head be `Const`-shaped, exposing its name/levels directly -- needed by
-/// `try_eta_struct_aux`/`def_eq_unit`/`get_rec_rule`-adjacent callers that
-/// all want "is this an applied constant, and if so which one," not just
-/// the raw peeled spine.
-pub fn verified_unfold_const_apps<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>)>)
-    ensures match result {
-        Some((f, c_name, c_levels, args)) =>
-            to_model(e) == spine_app(to_model(f), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && is_const_shape(f) && const_name_of(f) == c_name && const_levels_of(f) == c_levels,
-        None => true,
-    }
-{
-    { let (f, args) = ctx.unfold_apps(e); {
-            let f_el = ctx.read_expr(f);
-            match expr_as_const(f, &f_el) {
-                Some((c_name, c_levels)) => Some((f, c_name, c_levels, args)),
-                None => None,
-            }
-        } }
-}
 
 /// Real-arena counterpart to `spine_bind`: mirrors
 /// `whnf_no_unfolding_aux`'s peeling `while let (Lambda { body, .. },

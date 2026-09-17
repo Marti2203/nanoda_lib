@@ -438,16 +438,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// From `f a_0 .. a_N`, return `(f, [a_0, ..a_N])`
     
     /// If this is a const application, return (Const {..}, name, levels, args)
-    pub fn unfold_const_apps(
-        &self,
-        e: ExprPtr<'t>,
-    ) -> Option<(ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>)> {
-        let (f, args) = self.unfold_apps(e);
-        match self.read_expr(f) {
-            Const { name, levels, .. } => Some((f, name, levels, args)),
-            _ => None,
-        }
-    }
     /// If this is an application of `Const(name, levels)`, return `(name, levels)`
     pub fn try_const_info(&self, e: ExprPtr<'t>) -> Option<(NamePtr<'t>, LevelsPtr<'t>)> {
         match self.read_expr(e) {
@@ -925,6 +915,39 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN, body unchanged. The dual of `unfold_apps`: this
     /// BUILDS a spine where that one decomposes it, so the invariant carries
     /// the consumed PREFIX rather than a reversal.
+
+    /// Verified AS WRITTEN. Non-degeneracy witness for the `Const` clause on
+    /// `read_expr`'s specification: `const_name_of`/`const_levels_of` are
+    /// uninterpreted, so without that clause nothing in the `Const { .. }` arm
+    /// could say what this function returns, and the contract would be
+    /// unprovable rather than merely unproven.
+    ///
+    /// The `None` arm stays trivial on purpose -- callers branch on it, none
+    /// of them need to know WHY the head was not a `Const`, and claiming
+    /// `!is_const_shape(f)` here would buy nothing while forcing a converse
+    /// direction the shape flags do not have.
+    pub fn unfold_const_apps(
+        &self,
+        e: ExprPtr<'t>,
+    ) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>)>)
+        ensures match result {
+            Some((f, c_name, c_levels, args)) =>
+                crate::expr_arena_bridge::to_model(e)
+                    == crate::beta_model::spine_app(
+                        crate::expr_arena_bridge::to_model(f),
+                        crate::expr_arena_bridge::ptr_models(args@))
+                && crate::expr_arena_bridge::is_const_shape(f)
+                && crate::expr_arena_bridge::const_name_of(f) == c_name
+                && crate::expr_arena_bridge::const_levels_of(f) == c_levels,
+            None => true,
+        }
+    {
+        let (f, args) = self.unfold_apps(e);
+        match self.read_expr(f) {
+            Const { name, levels, .. } => Some((f, name, levels, args)),
+            _ => None,
+        }
+    }
     #[verifier::exec_allows_no_decreases_clause]
     pub fn foldl_apps<I: Iterator<Item = ExprPtr<'t>> + crate::util::IterSpec>(
         &mut self,

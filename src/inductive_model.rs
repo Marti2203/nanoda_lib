@@ -24,7 +24,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 use crate::util::{ExprPtr, NamePtr, LevelPtr, LevelsPtr, TcCtx};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_unfold_const_apps, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_foldl_apps, verified_abstr_pi_telescope, verified_abstr_lambda_telescope, binder_style_default, binder_style_implicit};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]

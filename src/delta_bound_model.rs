@@ -47,7 +47,7 @@ use crate::beta_model::{
     spine_app_depth_decompose, spine_app_nlbv_decompose, nlbv_bound_implies_max_var_below,
     spine_bind,
 };
-use crate::expr_arena_bridge::{verified_unfold_const_apps, verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
+use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_foldl_apps, expr_as_const, expr_as_app, expr_as_local, expr_as_sort, expr_as_let, expr_as_nat_lit, expr_as_string_lit, verified_whnf_no_unfolding_step, verified_inst, verified_nat_lit_to_constructor};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_of, const_levels_of, is_nat_lit_shape, is_string_lit_shape, nat_type_id, string_type_id, bool_true_id, is_nat_lit_shape_model, nat_lit_value, bignum_ptr_value};
 #[cfg(verus_only)]
@@ -1795,7 +1795,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(env_model_nofv(*env), denv, to_model(sty), to_model(w));
     }
-    let (f, ind_name, ind_levels, args) = match verified_unfold_const_apps(ctx, w, 100000) { Some(v) => v, None => return None };
+    let (f, ind_name, ind_levels, args) = match ctx.unfold_const_apps(w) { Some(v) => v, None => return None };
     let args_s: &[ExprPtr<'t>] = args.as_slice();
     let ghost args_model = Seq::new(args_s@.len(), |i: int| to_model(args_s@[i]));
     let ghost ind_id = name_id(ind_name);
@@ -2071,7 +2071,7 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 /// application" condition. No claim: a wrong answer only decides whether the
 /// expansion is attempted.
 pub fn is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>) -> bool {
-    match verified_unfold_const_apps(ctx, e, 100000) {
+    match ctx.unfold_const_apps(e) {
         Some((_f, name, _levels, _args)) => get_constructor_num_fields(env, &name).is_some(),
         None => false,
     }
@@ -2136,7 +2136,7 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
     }
-    let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+    let (hd, ind_name, levels, args) = match ctx.unfold_const_apps(xtw) {
         Some(p) => p,
         None => return None,
     };
@@ -2263,7 +2263,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(yt), to_model(xtw));
     }
-    let (hd, ind_name, levels, args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+    let (hd, ind_name, levels, args) = match ctx.unfold_const_apps(xtw) {
         Some(p) => p,
         None => return None,
     };
@@ -2405,7 +2405,7 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(xt), to_model(xtw));
     }
-    let (hd, name, _levels, _args) = match verified_unfold_const_apps(ctx, xtw, 100000) {
+    let (hd, name, _levels, _args) = match ctx.unfold_const_apps(xtw) {
         Some(p) => p,
         None => return None,
     };
@@ -3084,7 +3084,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         return None;
     }
     let w = verified_whnf_free(ctx, env, memo, mty);
-    let (_f, _iname, ilv, iargs) = match verified_unfold_const_apps(ctx, w, 100000) { Some(p) => p, None => return None };
+    let (_f, _iname, ilv, iargs) = match ctx.unfold_const_apps(w) { Some(p) => p, None => return None };
     if (cnp as usize) > iargs.len() {
         return None;
     }
@@ -3586,7 +3586,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost lcm = arena_lctx();
-    let (hd, name, _levels, args) = match verified_unfold_const_apps(ctx, x, 100000) {
+    let (hd, name, _levels, args) = match ctx.unfold_const_apps(x) {
         Some(p) => p,
         None => return None,
     };
@@ -3675,7 +3675,7 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     // quotient rule may apply). Without this the step ran its inferences on
     // every projection the route ever compares, which cost Init.Omega two
     // orders of magnitude for no extra coverage.
-    let (is_rec, is_quot) = match verified_unfold_const_apps(ctx, s2, 100000) {
+    let (is_rec, is_quot) = match ctx.unfold_const_apps(s2) {
         Some((_f, sname, _l, _a)) => (
             get_recursor_data(env, &sname).is_some(),
             ctx.quot_kind_code(sname).is_some(),

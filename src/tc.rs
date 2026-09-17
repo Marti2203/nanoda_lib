@@ -1478,7 +1478,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // `verified_major_eta_spine`, the rule that would have to fire
             for (tag, t) in [("X", wx), ("Y", wy)] {
                 if let Some((_hd, name, _lv, args)) =
-                    crate::expr_arena_bridge::verified_unfold_const_apps(self.ctx, t, 100000)
+                    self.ctx.unfold_const_apps(t)
                 {
                     if let Some((_np, _nm, _nmin, mi, _up, _rules)) =
                         crate::env_model::get_recursor_data(self.env, &name)
@@ -1499,7 +1499,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             // what does the rewrite put in the major slot,
                             // and does it look like a constructor application?
                             let rewritten_major = sp.and_then(|r| {
-                                crate::expr_arena_bridge::verified_unfold_const_apps(self.ctx, r, 100000)
+                                self.ctx.unfold_const_apps(r)
                                     .and_then(|(_h, _n, _l, a)| a.get(mi as usize).copied())
                             });
                             let rm_txt = rewritten_major.map(|m| format!("{:?}", self.ctx.debug_print(m)));
