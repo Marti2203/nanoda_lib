@@ -40,6 +40,16 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+/// `Ptr`'s derived `PartialEq` compares its one real field (`raw: u32`; the
+/// `PhantomData` is always equal), which is exactly spec-level equality on the
+/// struct. Stating it once here replaces the per-arena `expr_ptr_eq` /
+/// `level_ptr_eq` / `name_ptr_eq` wrappers, each of which existed only because
+/// the real `==` said nothing -- and the kernel's own code uses `==`, not the
+/// wrappers, so without this no kernel function that compares two pointers can
+/// be verified in place.
+pub assume_specification<A: PartialEq> [<crate::util::Ptr<A> as PartialEq>::eq] (a: &crate::util::Ptr<A>, b: &crate::util::Ptr<A>) -> (result: bool)
+    ensures result == (*a == *b);
+
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]

@@ -238,7 +238,9 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, level_spec_param_name, find_level_idx, find_level_idx_first_match, find_level_idx_no_match};
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
 verus! {
 
@@ -358,12 +360,30 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
     }
-    /// Verified AS WRITTEN: the body below is the kernel's, unchanged apart
-    /// from the loop's proof annotations. The `Param` arm matches by POINTER
-    /// where the spec matches by NAME; the two agree because the arena is
-    /// hash-consed (`level_ptr_eq_iff_same_param`).
+    /// Verified in place. The body is the kernel's; the only changes are proof
+    /// annotations and renaming the `Param` arm's two locals, which shadowed
+    /// the `ks`/`vs` parameters the `ensures` clause names.
+    ///
+    /// The `Param` arm matches by POINTER where the spec matches by NAME; the
+    /// two agree because the arena is hash-consed
+    /// (`level_ptr_eq_iff_same_model_param`, stated over models precisely so
+    /// this arm needs no extra `read_level` and the executable is unchanged).
+    ///
+    /// The scan is a `for` over `zip(copied, copied)`. Both adapters needed
+    /// upstream Verus work to be usable at all; `scanned` mirrors `it.index()`
+    /// because the ghost wrapper is out of scope after the loop, and the
+    /// exhaustion fact is exactly what `find_level_idx_no_match` consumes.
     #[verifier::exec_allows_no_decreases_clause]
-    pub fn subst_level(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
+    pub fn subst_level(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < to_model_of_levels(ks).len()
+                ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        ensures to_model(result) == subst_level_spec(
+            to_model(level),
+            level_names(to_model_of_levels(ks)),
+            to_model_of_levels(vs)),
+    {
         match self.read_level(level) {
             Zero => self.zero(),
             Succ(val, ..) => {
@@ -381,12 +401,55 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.imax(l_prime, r_prime)
             }
             Param(..) => {
-                let (ks, vs) = (self.read_levels(ks), self.read_levels(vs));
-                for (k, v) in ks.iter().copied().zip(vs.iter().copied())
+                let ghost names = level_names(to_model_of_levels(ks));
+                let ghost q = level_spec_param_name(to_model(level));
+                // Mirrors `it.index()` so the exhaustion fact survives the
+                // loop: the ghost wrapper itself is out of scope afterwards.
+                let ghost mut scanned: int = 0;
+                assert(to_model(level) == LevelSpec::Param(q));
+                let (ks_read, vs_read) = (self.read_levels(ks), self.read_levels(vs));
+                for (k, v) in it: ks_read.iter().copied().zip(vs_read.iter().copied())
+                    invariant
+                        ks_read@.len() == to_model_of_levels(ks).len(),
+                        vs_read@.len() == to_model_of_levels(vs).len(),
+                        to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+                        forall |j: int| 0 <= j < ks_read@.len()
+                            ==> #[trigger] to_model(ks_read@[j]) == to_model_of_levels(ks)[j],
+                        forall |j: int| 0 <= j < vs_read@.len()
+                            ==> #[trigger] to_model(vs_read@[j]) == to_model_of_levels(vs)[j],
+                        forall |j: int| 0 <= j < to_model_of_levels(ks).len()
+                            ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+                        it.index() <= it.seq().len(),
+                        it.seq().len() == ks_read@.len(),
+                        forall |j: int| 0 <= j < it.seq().len()
+                            ==> #[trigger] it.seq()[j] == (ks_read@[j], vs_read@[j]),
+                        names == level_names(to_model_of_levels(ks)),
+                        to_model(level) == LevelSpec::Param(q),
+                        scanned == it.index(),
+                        forall |j: int| 0 <= j < scanned ==> #[trigger] names[j] != q,
                 {
                     if level == k {
+                        proof {
+                            let i = it.index();
+                            level_ptr_eq_iff_same_model_param(level, k);
+                            assert(to_model_of_levels(ks)[i] == LevelSpec::Param(q));
+                            assert(names[i] == q);
+                            find_level_idx_first_match(names, q, i as nat);
+                            assert(to_model(v) == to_model_of_levels(vs)[i]);
+                        }
                         return v
                     }
+                    proof {
+                        let i = it.index();
+                        level_ptr_eq_iff_same_model_param(level, k);
+                        assert(names[i] != q);
+                        scanned = scanned + 1;
+                    }
+                }
+                proof {
+                    assert(names.len() == to_model_of_levels(ks).len());
+                    assert(scanned == names.len());
+                    find_level_idx_no_match(names, q);
                 }
                 level
             }
