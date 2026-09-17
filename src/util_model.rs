@@ -52,15 +52,14 @@ pub assume_specification<A: PartialEq> [<crate::util::Ptr<A> as PartialEq>::eq] 
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
+/// TRANSPARENT: it is a two-variant enum, so `dm_is_tc` can be DEFINED rather
+/// than left uninterpreted with an axiom tying it to the real test.
 pub struct ExDagMarker(DagMarker);
 
-/// Whether a (necessarily opaque, since `DagMarker` is `external_body`)
-/// `DagMarker` value denotes `TcCtx` (`true`) or `ExportFile` (`false`).
-pub uninterp spec fn dm_is_tc(m: DagMarker) -> bool;
-
-pub assume_specification [dag_marker_is_tc] (m: &DagMarker) -> (result: bool)
-    ensures result == dm_is_tc(*m);
+/// Whether a `DagMarker` denotes `TcCtx` (`true`) or `ExportFile` (`false`).
+pub open spec fn dm_is_tc(m: DagMarker) -> bool {
+    matches!(m, DagMarker::TcCtx)
+}
 
 // `Ptr<A>` is already registered `external_type_specification` (as `ExPtr<A>`)
 // in `level_arena_bridge.rs` -- re-registering it here would conflict, so
@@ -102,27 +101,15 @@ pub assume_specification [<rustc_hash::FxHasher as core::hash::Hasher>::finish] 
 /// because an exec function's return value can't itself be referenced
 /// inside another function's `ensures` clause (spec position); `raw`'s own
 /// `assume_specification` below ties its runtime result to this.
-pub uninterp spec fn ptr_raw<A>(p: Ptr<A>) -> u32;
-
-/// Trusted 1:1 with `Ptr::raw`'s real body (`self.raw`) -- an accessor with
-/// no computational content to get wrong, unlike `from`/`idx`/`dag_marker`
-/// below, which each encode a real formula this file's proof checks.
-pub assume_specification<A> [Ptr::<A>::raw] (p: &Ptr<A>) -> (result: u32)
-    ensures result == ptr_raw(*p);
-
-/// Mirrors `Ptr::from`'s real body exactly: `tag | idx_u32` where `tag` is
-/// `TC_BIT` (`1 << 31`) for `TcCtx`, `0` for `ExportFile`.
-pub assume_specification<A> [Ptr::<A>::from] (dag_marker: DagMarker, idx: usize) -> (result: Ptr<A>)
-    requires idx < 0x8000_0000
-    ensures ptr_raw(result) == (if dm_is_tc(dag_marker) { 0x8000_0000u32 } else { 0u32 }) | (idx as u32);
-
-/// Mirrors `Ptr::idx`'s real body exactly: `(self.raw & IDX_MASK) as usize`.
-pub assume_specification<A> [Ptr::<A>::idx] (p: &Ptr<A>) -> (result: usize)
-    ensures result == (ptr_raw(*p) & 0x7FFF_FFFFu32) as usize;
-
-/// Mirrors `Ptr::dag_marker`'s real body exactly: tests bit 31.
-pub assume_specification<A> [Ptr::<A>::dag_marker] (p: &Ptr<A>) -> (result: DagMarker)
-    ensures dm_is_tc(result) == (ptr_raw(*p) & 0x8000_0000u32 != 0);
+/// DEFINED as the field itself. It was uninterpreted, with four
+/// `assume_specification`s each documented as "mirrors the real body exactly"
+/// -- a by-hand correspondence with nothing checking it, and exactly the kind
+/// that rots when the encoding changes. `Ptr::raw` is `pub(crate)` now, so the
+/// four accessors are verified against the same body they used to be compared
+/// against by eye.
+pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
+    p.raw
+}
 
 
 // ---------------------------------------------------------------------

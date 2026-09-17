@@ -40,8 +40,12 @@ pub(crate) type UniqueHashMap<K, V> = HashMap<K, V, BuildHasherDefault<UniqueHas
 /// Bits 0-30 hold the index into the appropriate dag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ptr<A> {
-    raw: u32,
-    ph: PhantomData<A>,
+    /// `pub` so that `ExPtr` can be a TRANSPARENT `external_type_specification`
+    /// (Verus rejects private fields on those), which is what lets
+    /// `util_model.rs` DEFINE `ptr_raw` as this field rather than assume a
+    /// relationship to it. Nothing outside this crate reads it.
+    pub raw: u32,
+    pub ph: PhantomData<A>,
 }
 
 impl<A> Ptr<A> {
@@ -50,10 +54,43 @@ impl<A> Ptr<A> {
     pub(crate) fn raw_bits(self) -> u32 { self.raw }
 }
 
+// The three pointer accessors, verified in place. `ptr_raw` is DEFINED as the
+// `raw` field (`util_model.rs`), so these prove the bit-packing contract they
+// used to only assert.
+::vstd::prelude::verus! {
+impl<A> Ptr<A> {
+    /// Exposes the packed representation for `util_model.rs`'s Verus proof
+    /// that `from`/`idx`/`dag_marker`'s bit-packing round-trips correctly.
+    /// Purely additive -- no behavior change.
+    #[allow(dead_code)]
+    pub(crate) fn raw(&self) -> (result: u32)
+        ensures result == crate::util_model::ptr_raw(*self)
+    { self.raw }
+
+    pub(crate) fn idx(&self) -> (result: usize)
+        ensures result == (crate::util_model::ptr_raw(*self) & 0x7FFF_FFFFu32) as usize
+    {
+        assert(IDX_MASK == 0x7FFF_FFFFu32) by (bit_vector);
+        (self.raw & IDX_MASK) as usize
+    }
+
+    pub(crate) fn dag_marker(&self) -> (result: DagMarker)
+        ensures crate::util_model::dm_is_tc(result)
+            == (crate::util_model::ptr_raw(*self) & 0x8000_0000u32 != 0)
+    {
+        assert(TC_BIT == 0x8000_0000u32) by (bit_vector);
+        if self.raw & TC_BIT == 0 { DagMarker::ExportFile } else { DagMarker::TcCtx }
+    }
+}
+}
+
+::vstd::prelude::verus! {
 /// Bit 31 set indicates TcCtx; cleared indicates ExportFile.
-const TC_BIT: u32 = 1 << 31;
+/// Inside `verus!` only so the accessors below can name them; values unchanged.
+pub(crate) const TC_BIT: u32 = 1 << 31;
 /// Mask for the 31-bit index stored in bits 0-30.
-const IDX_MASK: u32 = !TC_BIT;
+pub(crate) const IDX_MASK: u32 = !TC_BIT;
+}
 
 impl<A> Ptr<A> {
     pub(crate) fn from(dag_marker: DagMarker, idx: usize) -> Self {
@@ -66,19 +103,10 @@ impl<A> Ptr<A> {
         Self { raw: tag | idx_u32, ph: PhantomData }
     }
 
-    pub(crate) fn idx(&self) -> usize { (self.raw & IDX_MASK) as usize }
-
-    pub(crate) fn dag_marker(&self) -> DagMarker {
-        if self.raw & TC_BIT == 0 { DagMarker::ExportFile } else { DagMarker::TcCtx }
-    }
 
     pub(crate) fn get_hash(&self) -> u64 { self.raw as u64 }
 
-    /// Exposes the packed representation for `util_model.rs`'s Verus proof
-    /// that `from`/`idx`/`dag_marker`'s bit-packing round-trips correctly.
-    /// Purely additive -- no behavior change.
-    #[allow(dead_code)]
-    pub(crate) fn raw(&self) -> u32 { self.raw }
+
 }
 
 impl<A> std::hash::Hash for Ptr<A> {

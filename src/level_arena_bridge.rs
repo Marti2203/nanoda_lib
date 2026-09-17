@@ -56,10 +56,14 @@ pub struct ExTcCtx<'t, 'p>(TcCtx<'t, 'p>);
 /// no `A` at all and recursion through it is vacuous. Rejecting it is what
 /// stopped `Level` from being made transparent (`ExLevel`), since
 /// `LevelPtr = Ptr<Level>` then counts as a non-positive recursive use.
+/// TRANSPARENT, so `Ptr`'s packed `raw` field is visible and `ptr_raw` can be
+/// DEFINED as it. Opaque, the encoding needed four `assume_specification`s
+/// each documented as mirroring the real body -- a correspondence nothing
+/// checked. (Transparency is why `Ptr`'s fields are `pub`: Verus rejects
+/// private fields on a transparent `external_type_specification`.)
 #[allow(dead_code)]
 #[verifier::accept_recursive_types(A)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExPtr<A>(Ptr<A>);
 
 /// TRANSPARENT, not `external_body`. A single-field proxy struct without
