@@ -122,10 +122,6 @@ use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
 use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_full, fv_absent};
 
-#[allow(dead_code)]
-pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> NamePtr<'t> {
-    r.ctor_name
-}
 
 /// First rule's constructor name (exec-only gate for the K-like leaf; its
 /// correctness is certified downstream by proof irrelevance + iota).
@@ -134,30 +130,30 @@ pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) ->
     rules.get(0).map(|r| r.ctor_name)
 }
 
-#[allow(dead_code)]
-pub(crate) fn rec_rule_ctor_telescope_size_wo_params<'t>(r: &RecRule<'t>) -> u16 {
-    r.ctor_telescope_size_wo_params
-}
 
-#[allow(dead_code)]
-pub(crate) fn rec_rule_val<'t>(r: &RecRule<'t>) -> ExprPtr<'t> {
-    r.val
-}
 
 
 verus! {
 
+/// TRANSPARENT. Its three fields are already `pub`, so nothing had to change
+/// in the kernel: opaque, each accessor needed an uninterpreted `*_of` keyed by
+/// value plus an `assume_specification` tying the real getter to it.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExRecRule<'a>(RecRule<'a>);
 
-/// `RecRule::ctor_name`, keyed by value (like `Ptr::raw`'s `ptr_raw`) since
-/// `RecRule` is `external_body`.
-pub uninterp spec fn rec_rule_ctor_name_of<'a>(r: RecRule<'a>) -> NamePtr<'a>;
+/// DEFINED as the field. Kept as a named spec fn rather than inlined because
+/// `rec_rule_ctor_names` below triggers on it.
+pub open spec fn rec_rule_ctor_name_of<'a>(r: RecRule<'a>) -> NamePtr<'a> {
+    r.ctor_name
+}
 
-pub assume_specification<'t> [rec_rule_ctor_name] (r: &RecRule<'t>) -> (result: NamePtr<'t>)
-    ensures result == rec_rule_ctor_name_of(*r);
+#[allow(dead_code)]
+pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> (result: NamePtr<'t>)
+    ensures result == rec_rule_ctor_name_of(*r)
+{
+    r.ctor_name
+}
 
 pub assume_specification<'t> [first_rule_ctor_name] (rules: &std::sync::Arc<[RecRule<'t>]>) -> (result: Option<NamePtr<'t>>);
 
@@ -168,13 +164,25 @@ pub open spec fn args_model_of<'t>(xs: Seq<ExprPtr<'t>>) -> Seq<ExprSpec> {
     Seq::new(xs.len(), |i: int| to_model(xs[i]))
 }
 
-pub uninterp spec fn rec_rule_ctor_telescope_size_wo_params_of<'a>(r: RecRule<'a>) -> u16;
-pub assume_specification<'t> [rec_rule_ctor_telescope_size_wo_params] (r: &RecRule<'t>) -> (result: u16)
-    ensures result == rec_rule_ctor_telescope_size_wo_params_of(*r);
+pub open spec fn rec_rule_ctor_telescope_size_wo_params_of<'a>(r: RecRule<'a>) -> u16 {
+    r.ctor_telescope_size_wo_params
+}
+#[allow(dead_code)]
+pub(crate) fn rec_rule_ctor_telescope_size_wo_params<'t>(r: &RecRule<'t>) -> (result: u16)
+    ensures result == rec_rule_ctor_telescope_size_wo_params_of(*r)
+{
+    r.ctor_telescope_size_wo_params
+}
 
-pub uninterp spec fn rec_rule_val_of<'a>(r: RecRule<'a>) -> ExprPtr<'a>;
-pub assume_specification<'t> [rec_rule_val] (r: &RecRule<'t>) -> (result: ExprPtr<'t>)
-    ensures result == rec_rule_val_of(*r);
+pub open spec fn rec_rule_val_of<'a>(r: RecRule<'a>) -> ExprPtr<'a> {
+    r.val
+}
+#[allow(dead_code)]
+pub(crate) fn rec_rule_val<'t>(r: &RecRule<'t>) -> (result: ExprPtr<'t>)
+    ensures result == rec_rule_val_of(*r)
+{
+    r.val
+}
 
 pub open spec fn rec_rule_ctor_names<'a>(rec_rules: Seq<RecRule<'a>>) -> Seq<NamePtr<'a>> {
     Seq::new(rec_rules.len(), |i: int| rec_rule_ctor_name_of(rec_rules[i]))
