@@ -75,7 +75,7 @@ Both **duplicate a subterm** (`y` in the first, `a` in the second), so any
 measure that counts `Succ` nodes can grow there — which rules out the direct
 "bound `diff` by the number of remaining `Succ`s" argument.
 
-## 4. The measure: a viable candidate, with one open lemma
+## 4. The measure: three candidates, all refuted
 
 `lw` was built in an earlier session specifically for the rewrite arms and has
 the lemmas `lw_decreases_imax_imax` and `lw_decreases_imax_max`. Checking the
@@ -138,19 +138,48 @@ the candidate. Note the `IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))` rewrite
 *can* add a parameter to the set (if `x` is a `Param`), which is why the count
 cannot come first — `lw` has to absorb those arms, and it does.
 
-### The crux, still unproven
+### The crux — and `imax_params` is refuted too
 
-`imax_params(simplify(subst(l, p, v))) ⊆ imax_params(l) \ {p}`.
+The component has to strictly decrease at `by_cases`. It does not. Witness:
 
-The containment is not free, because `simplify` can in principle *introduce* an
-`IMax(_, Param q)` that was not there: its fall-through arm builds
-`imax(l_simp, r_simp)`, and `r_simp = simplify(r)` may be a `Param` where `r`
-was not — e.g. `simplify(Max(Param q, Zero)) == Param q`. On an **already
-simplified** argument that cannot happen, and `leq_core`'s arguments are
-simplified — but `imax_normal` is too weak to say so (it only forbids `Zero` and
-`Succ` in `IMax` second position). Closing this needs either a stronger
-"fully simplified" predicate on `simplify`'s output, or a direct argument that
-the fall-through preserves the set on `imax_normal` inputs.
+```
+lhs = Max( IMax(a, Param p),  IMax(c, Max(Param q, Param p)) )
+
+imax_params(lhs) = {p} u ip(a) u ip(c)     -- q is NOT in it, it sits under a Max
+```
+
+`by_cases` fires on `p`. In the `p := Zero` branch:
+
+```
+subst    -> Max( IMax(a, Zero),  IMax(c, Max(Param q, Zero)) )
+simplify:
+   IMax(a', Zero)            -> Zero                     (simplify's Zero sub-arm)
+   Max(Param q, Zero)        -> combining(Param q, Zero)
+                             -> Param q                  (combining's (_,Zero) => l)
+   IMax(c', Param q)         -> imax(c', Param q)        (simplify's fall-through)
+   combining(Zero, IMax(..)) -> IMax(c', Param q)        (combining's (Zero,_) => r)
+
+imax_params(result) = ip(c') u {q}
+```
+
+`p` left the set, but **`q` entered it** — `simplify` collapsed the `Max` that
+had been hiding it. The cardinality need not decrease.
+
+**The obvious repair also fails.** Counting parameters anywhere inside an
+`IMax`'s second *subtree* (rather than directly in second position) fixes the
+`Zero` branch — `q` is inside the subtree both before and after — but breaks the
+other one: in the `p := Succ(Param p)` branch, `IMax(c, Max(Param q, Param p))`
+becomes `IMax(c, Max(Param q, Succ(Param p)))`, and `p` is still inside an
+`IMax` second subtree. Neither variant decreases on both branches.
+
+So: `lw` cannot see the substitution, `depth` grows on the rewrites, and both
+parameter-counting variants are refuted by concrete witnesses. Any further
+candidate should be run against **both** of the above before any Verus work.
+
+*Retained in `level_model.rs` anyway:* `imax_params` and its four proven lemmas
+(`_finite`, `_succ`, `_max_sub`, `_imax_imax`). They are correct statements and
+the natural building blocks if a combined measure is found; they are not, on
+their own, the answer.
 
 ## 5. Termination gives the `diff` bound for free
 
@@ -169,8 +198,10 @@ This is why §4 is the whole task. There is no second problem after it.
 
 ## 6. Order of work, if resumed
 
-1. **Close §4's crux:** `imax_params` does not grow under `simplify`. This is
-   the whole problem; everything below is ordinary work.
+1. **Find a measure.** This is the whole problem, and it is harder than it
+   looks: three candidates are now refuted by explicit witnesses (§4). Do not
+   start Verus work on a fourth until it has been run against both `by_cases`
+   branches on paper.
 2. Prove termination with the three-component measure. Drop
    `exec_allows_no_decreases_clause` from `leq_core`.
 3. The `diff` bound then follows *immediately*, with no extra argument: carry

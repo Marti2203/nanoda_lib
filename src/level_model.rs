@@ -242,12 +242,15 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 
 /// The parameters appearing DIRECTLY as an `IMax`'s second argument.
 ///
-/// This is the third component of `leq_core`'s termination measure, and the
-/// only one that `leq_imax_by_cases` decreases: that arm substitutes a
-/// parameter `p` with `Zero` or `Succ(Param p)`, and `simplify` collapses both
-/// of the resulting `IMax` shapes, so `p` leaves this set. `lw` cannot see that
-/// step at all -- both replacements have weight 0, exactly like the `Param`
-/// they replace. See `docs/LEQ_CORE_TERMINATION.md`.
+/// Written as a candidate third component of `leq_core`'s termination measure
+/// and **refuted** -- it does not strictly decrease at `leq_imax_by_cases`,
+/// because `simplify` can collapse a `Max` that was hiding a parameter and so
+/// move a NEW one into second position. `docs/LEQ_CORE_TERMINATION.md` carries
+/// the witness.
+///
+/// Kept because the statements below are correct and are the natural building
+/// blocks if a combined measure is ever found. They are not, on their own, the
+/// answer, and nothing depends on them yet.
 pub open spec fn imax_params(l: LevelSpec) -> Set<u64>
     decreases l
 {
