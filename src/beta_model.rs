@@ -3386,6 +3386,31 @@ pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
     }
 }
 
+/// Peeling one more binder: if `n` binders land on a `Bind`, then `n+1` land on
+/// its body. This is what a telescope-walking loop needs to step its invariant.
+pub proof fn spine_bind_step(head: ExprSpec, n: nat, t: ExprSpec, b: ExprSpec)
+    requires spine_bind(head, n) == Some(ExprSpec::Bind(Box::new(t), Box::new(b)))
+    ensures spine_bind(head, n + 1) == Some(b)
+    decreases n
+{
+    if n == 0 {
+        assert(head == ExprSpec::Bind(Box::new(t), Box::new(b)));
+        assert(spine_bind(head, 1nat) == Some(b)) by {
+            reveal_with_fuel(spine_bind, 2);
+        }
+    } else {
+        match head {
+            ExprSpec::Bind(_, hb) => {
+                assert(spine_bind(*hb, (n - 1) as nat)
+                    == Some(ExprSpec::Bind(Box::new(t), Box::new(b))));
+                spine_bind_step(*hb, (n - 1) as nat, t, b);
+                assert(spine_bind(head, n + 1) == spine_bind(*hb, n));
+            }
+            _ => { assert(false); }
+        }
+    }
+}
+
 /// Rebuilds `base @ args[0] @ args[1] @ ... @ args[len-1]` (left-
 /// associated), the inverse operation `spine_bind` peels through.
 pub open spec fn spine_app(base: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec

@@ -571,29 +571,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Return the number of leading `Pi` binders on this expression.
-    pub(crate) fn pi_telescope_size(&self, mut e: ExprPtr<'t>) -> u16 {
-        let mut size = 0u16;
-        while let Pi { body, .. } = self.read_expr(e) {
-            size += 1;
-            e = body;
-        }
-        size
-    }
 
     /// Is this expression `Sort(Level::Zero)`?
 
-    pub fn get_nth_pi_binder(&self, mut e: ExprPtr<'t>, n: usize) -> Option<ExprPtr<'t>> {
-        for _ in 0.. n {
-            match self.read_expr(e) {
-                Pi {body, ..} => { e = body; },
-                _ => return None
-            }
-        }
-        match self.read_expr(e) {
-            Pi {binder_type, ..} => Some(binder_type),
-            _ => None
-        }
-    }
 
     /// Get the name of the inductive type which is the major premise for this recursor
     /// by finding the correct binder in the recursor's type.
@@ -815,6 +795,90 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
         (e, args)
+    }
+
+    /// Verified in place. Same one-directional shape as `pi_telescope_size`, and
+    /// for the same reason: `Pi` and `Lambda` share `ExprSpec::Bind`, so the
+    /// `None` case cannot be characterised -- only the `Some` case says
+    /// something, and it says the binder really is the domain at that depth.
+    ///
+    /// VERUS-REWRITE(range-for-with-return): the original walks the telescope
+    /// with a `for _ in 0..n` containing a `return None`. Returning out of a
+    /// `for` leaves the ghost iterator mid-flight, so it is spelled as the
+    /// `while` over an explicit index that it desugars to.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn get_nth_pi_binder(&self, e0: ExprPtr<'t>, n: usize) -> (result: Option<ExprPtr<'t>>)
+        ensures result matches Some(t) ==> {
+            &&& crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), n as nat) is Some
+            &&& crate::expr_model::bind_dom(crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), n as nat).unwrap())
+                    == crate::expr_arena_bridge::to_model(t)
+        },
+    {
+        let mut e = e0;
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                i <= n,
+                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), i as nat) == Some(crate::expr_arena_bridge::to_model(e)),
+            decreases n - i
+        {
+            match self.read_expr(e) {
+                Pi { binder_type, body, .. } => {
+                    proof {
+                        crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), i as nat,
+                            crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
+                    }
+                    e = body;
+                    i = i + 1;
+                }
+                _ => return None,
+            }
+        }
+        match self.read_expr(e) {
+            Pi { binder_type, .. } => Some(binder_type),
+            _ => None,
+        }
+    }
+
+    /// Verified in place.
+    ///
+    /// The contract is deliberately ONE-DIRECTIONAL: the result is a count of
+    /// binders that can actually be peeled, not the maximal one. The model
+    /// cannot say more -- `to_model_of_expr` sends both `Pi` and `Lambda` to
+    /// `ExprSpec::Bind`, so a telescope that stops at a `Lambda` is
+    /// indistinguishable in the model from one that ran out of binders. Claiming
+    /// maximality here would be claiming something false.
+    ///
+    /// VERUS-REWRITE(while-let-exit): `loop`/`match` for the same reason as the
+    /// spine helpers -- except here the exit needs nothing, so the rewrite is
+    /// only to keep the family uniform. The `depth` ceiling is what bounds the
+    /// `u16` counter.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
+        requires crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+        ensures crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), result as nat) is Some,
+    {
+        let mut e = e0;
+        let mut size = 0u16;
+        loop
+            invariant
+                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat) == Some(crate::expr_arena_bridge::to_model(e)),
+                size as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)),
+                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+        {
+            match self.read_expr(e) {
+                Pi { binder_type, body, .. } => {
+                    proof {
+                        crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), size as nat,
+                            crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
+                    }
+                    size += 1;
+                    e = body;
+                }
+                _ => break,
+            }
+        }
+        size
     }
 
     /// From `f a_0 .. a_N`, return `f`

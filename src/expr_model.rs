@@ -249,6 +249,12 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
 /// *exactly* 1 per `Bind` descended into — matching `offset`'s exact +1
 /// increase term-for-term, so `offset + depth(e) <= K` propagates through
 /// the recursion with zero slack, for any fixed `K < u32::MAX`.
+/// The domain of a `Bind` (`Closed` elsewhere -- never consulted). A named
+/// accessor so a contract can name the binder type without an `exists`.
+pub open spec fn bind_dom(e: ExprSpec) -> ExprSpec {
+    match e { ExprSpec::Bind(t, _) => *t, _ => ExprSpec::Closed }
+}
+
 pub open spec fn depth(e: ExprSpec) -> nat
     decreases e
 {

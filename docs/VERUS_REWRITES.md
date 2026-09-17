@@ -143,6 +143,8 @@ re-checking if anything here is ever suspected:
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
 | 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
 | 5 | `unfold_apps_fun`, `num_args`, `unfold_apps_stack` | `src/expr.rs` | `while let` carries no exit reason | see below |
+| 6 | `pi_telescope_size` | `src/expr.rs` | `while let` (uniformity with entry 5) | desugaring |
+| 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -169,3 +171,23 @@ On the loop clauses: a Verus loop has `invariant` (survives a `break`),
 `invariant_except_break` (does not), and `ensures` (proven at each exit). The
 invariant needs no repeating in the `ensures` — only a fact that holds *solely*
 at exit belongs there.
+
+
+### 6-7. The two telescope helpers — `src/expr.rs`
+
+Both are desugarings, in the same low-risk class as entries 2 and 5.
+
+`pi_telescope_size`: `while let` to `loop`/`match`, purely to keep the family
+uniform — its exit needs no extra fact, unlike entry 5.
+
+`get_nth_pi_binder`: the original walks with `for _ in 0..n` containing a
+`return None`. Returning out of a `for` leaves the ghost iterator mid-flight, so
+it is spelled as the `while` over an explicit index that it desugars to.
+
+**Worth noting about both contracts, and not a rewrite issue:** they are
+one-directional on purpose. `to_model_of_expr` sends BOTH `Pi` and `Lambda` to
+`ExprSpec::Bind`, so a telescope that stops at a `Lambda` is indistinguishable
+in the model from one that ran out of binders. `pi_telescope_size` therefore
+claims its result is *a* peelable count, not the maximal one, and
+`get_nth_pi_binder` says nothing about its `None` case. Claiming more would be
+claiming something false.
