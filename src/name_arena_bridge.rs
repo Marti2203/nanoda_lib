@@ -241,6 +241,14 @@ pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
     crate::util_model::ptr_raw(p) & 0x8000_0000u32 != 0
 }
 
+/// The condition under which descending to a child is well-founded, in the
+/// lexicographic (tier, index) order. Crossing from the local tier into the
+/// export file drops the tier, so it needs no index condition; staying within
+/// a tier needs the index to shrink.
+pub open spec fn child_ok<A>(c: crate::util::Ptr<A>, is_tc: bool, i: nat) -> bool {
+    if ptr_is_tc(c) { is_tc && ptr_index(c) < i } else { is_tc || ptr_index(c) < i }
+}
+
 /// Acyclicity across both tiers: within a tier, children sit at smaller
 /// indices; and an `ExportFile` node never references the local tier.
 pub open spec fn name_children_below2<'a>(n: Name<'a>, tc: bool, i: nat) -> bool {

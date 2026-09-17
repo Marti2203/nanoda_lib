@@ -35,7 +35,7 @@ use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::ptr_index;
+use crate::name_arena_bridge::{ptr_index, ptr_is_tc, child_ok};
 #[cfg(verus_only)]
 use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib, subst_level_spec, subst_levels_spec, find_level_idx_in_range};
 #[cfg(verus_only)]
@@ -291,6 +291,59 @@ pub proof fn level_model_at_unfold<'a>(ls: Seq<Level<'a>>, i: nat)
         },
 {
     assert(level_children_below(ls[i as int], i));
+}
+
+/// Two-tier denotation for levels -- same shape as `name_model_at2`, with
+/// `child_ok` carrying the lexicographic (tier, index) condition. `Param`'s
+/// `NamePtr` needs no recursion: the model records only `name_id`.
+pub open spec fn level_model_at2<'a>(ef: Seq<Level<'a>>, tc: Seq<Level<'a>>, is_tc: bool, i: nat) -> LevelSpec
+    decreases if is_tc { 1int } else { 0int }, i
+{
+    let store = if is_tc { tc } else { ef };
+    if i >= store.len() {
+        LevelSpec::Zero
+    } else {
+        match store[i as int] {
+            Level::Zero => LevelSpec::Zero,
+            Level::Param(n, _) => LevelSpec::Param(name_id(n)),
+            Level::Succ(p, _) =>
+                if child_ok(p, is_tc, i) {
+                    LevelSpec::Succ(Box::new(level_model_at2(ef, tc, ptr_is_tc(p), ptr_index(p))))
+                } else { LevelSpec::Zero },
+            Level::Max(a, b, _) =>
+                if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
+                    LevelSpec::Max(
+                        Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
+                        Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))))
+                } else { LevelSpec::Zero },
+            Level::IMax(a, b, _) =>
+                if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
+                    LevelSpec::IMax(
+                        Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
+                        Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))))
+                } else { LevelSpec::Zero },
+        }
+    }
+}
+
+/// Appending to the local tier never changes an export-file pointer's
+/// denotation -- the export file is immutable while the local tier grows.
+pub proof fn level_model_at2_append_tc<'a>(ef: Seq<Level<'a>>, tc: Seq<Level<'a>>, l: Level<'a>, i: nat)
+    ensures level_model_at2(ef, tc.push(l), false, i) == level_model_at2(ef, tc, false, i),
+    decreases i,
+{
+    if i < ef.len() {
+        match ef[i as int] {
+            Level::Succ(p, _) => {
+                if child_ok(p, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(p)); }
+            }
+            Level::Max(a, b, _) | Level::IMax(a, b, _) => {
+                if child_ok(a, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(a)); }
+                if child_ok(b, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(b)); }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// MONOTONICITY: allocating never changes what an existing pointer denotes.

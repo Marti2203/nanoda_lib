@@ -30,7 +30,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::ptr_index;
+use crate::name_arena_bridge::{ptr_index, ptr_is_tc, child_ok};
 #[allow(unused_imports)]
 use crate::util::TcCtx;
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
@@ -465,6 +465,78 @@ pub proof fn expr_model_at_computes_nesting<'a>(p0: ExprPtr<'a>, h: u64)
         if i == 0 { } else { assert(ptr_index(p0) == 0); }
     }
     assert(expr_model_at(es, 0) == ExprSpec::Var(0));
+}
+
+/// Two-tier denotation for expressions -- the shape the READERS need, since
+/// `read_expr` selects a tier by dag marker and indexes into it.
+pub open spec fn expr_model_at2<'a>(ef: Seq<Expr<'a>>, tc: Seq<Expr<'a>>, is_tc: bool, i: nat) -> ExprSpec
+    decreases if is_tc { 1int } else { 0int }, i
+{
+    let store = if is_tc { tc } else { ef };
+    if i >= store.len() {
+        ExprSpec::Closed
+    } else {
+        match store[i as int] {
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
+            Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
+            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
+            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+            Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(store[i as int])),
+            Expr::App { fun, arg, .. } =>
+                if child_ok(fun, is_tc, i) && child_ok(arg, is_tc, i) {
+                    ExprSpec::App(
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(fun), ptr_index(fun))),
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(arg), ptr_index(arg))))
+                } else { ExprSpec::Closed },
+            Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
+                if child_ok(binder_type, is_tc, i) && child_ok(body, is_tc, i) {
+                    ExprSpec::Bind(
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type))),
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))))
+                } else { ExprSpec::Closed },
+            Expr::Let { binder_type, val, body, .. } =>
+                if child_ok(binder_type, is_tc, i) && child_ok(val, is_tc, i) && child_ok(body, is_tc, i) {
+                    ExprSpec::Let(
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type))),
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(val), ptr_index(val))),
+                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))))
+                } else { ExprSpec::Closed },
+            Expr::Proj { idx, structure, .. } =>
+                if child_ok(structure, is_tc, i) {
+                    ExprSpec::Proj(idx, Box::new(expr_model_at2(ef, tc, ptr_is_tc(structure), ptr_index(structure))))
+                } else { ExprSpec::Closed },
+        }
+    }
+}
+
+/// Appending to the local tier never changes an export-file pointer's
+/// denotation.
+pub proof fn expr_model_at2_append_tc<'a>(ef: Seq<Expr<'a>>, tc: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
+    ensures expr_model_at2(ef, tc.push(e), false, i) == expr_model_at2(ef, tc, false, i),
+    decreases i,
+{
+    if i < ef.len() {
+        match ef[i as int] {
+            Expr::App { fun, arg, .. } => {
+                if child_ok(fun, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(fun)); }
+                if child_ok(arg, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(arg)); }
+            }
+            Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } => {
+                if child_ok(binder_type, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type)); }
+                if child_ok(body, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(body)); }
+            }
+            Expr::Let { binder_type, val, body, .. } => {
+                if child_ok(binder_type, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type)); }
+                if child_ok(val, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(val)); }
+                if child_ok(body, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(body)); }
+            }
+            Expr::Proj { structure, .. } => {
+                if child_ok(structure, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(structure)); }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// MONOTONICITY: allocating never changes what an existing pointer denotes.
