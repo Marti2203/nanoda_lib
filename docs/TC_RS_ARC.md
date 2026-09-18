@@ -298,3 +298,49 @@ None of the four were reachable with well-formed input. That is the expected
 result and not a reason to skip the rest — an unreachable panic is still a
 panic, and the audit is what turns "we believe it cannot happen" into "the
 checker cannot do it".
+
+
+## 10. There is no more low-hanging fruit
+
+Measured at the end of the 2026-09-18 session, after ranking every kernel
+function with neither a contract nor an `assume_specification` by how many call
+sites it has:
+
+```
+ 35  tc.rs    whnf                25  tc.rs    def_eq       18  tc.rs    infer
+ 33  util.rs  clear               31  util.rs  find_name    14  util.rs  alloc_string
+ 35  tc.rs    bump                17  tc.rs    conv_trace   15  tc.rs    shadow_enabled
+```
+
+Three kinds, and only one of them matters:
+
+- **`whnf`, `def_eq`, `infer`** — the 48-function cycle. The most-used
+  uncontracted functions in the kernel are exactly the ones that cannot be done
+  piecemeal.
+- **`clear`, `find_name`, `alloc_string`, `with_tc`** — arena and session
+  plumbing. Contracts here would need storage-level specs and would say little;
+  the `alloc_*` primitives that DO matter are already specified.
+- **`bump`, `conv_trace`, `shadow_enabled`, `legacy_branch`, `conv_budget`** —
+  diagnostics. Observation-only, never on a verdict path, nothing worth stating.
+
+**So the remaining kernel verification work IS the cycle.** Everything reachable
+around it has been done: `level.rs` is complete bar a vstd gap, `tc.rs`'s
+independent set is exhausted at ten functions, `inductive.rs` is open with its
+gate through.
+
+### A measurement warning, because this survey was wrong twice first
+
+Both errors came from regexing Rust, and both made the picture look better or
+worse than it was:
+
+1. Scanning for `ensures`/`requires` at the DEFINITION site marks every function
+   specified by an `assume_specification` in a bridge file as "uncontracted".
+   `read_expr`, `num_loose_bvars` and `has_fvars` all topped the first ranking
+   and all already had contracts — one of them was nearly re-added verbatim.
+2. Extracting the specified name from `assume_specification<'t, 'p> [TcCtx::<'t,
+   'p>::read_expr]` needs a character class that admits the COMMA inside
+   `<'t, 'p>`. Without it the pattern matches nothing and every function looks
+   unspecified.
+
+Cross-check any such ranking by grepping one or two of its top entries by hand
+before acting on it.
