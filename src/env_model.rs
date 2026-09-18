@@ -677,6 +677,12 @@ pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_declar] (env: &'b Env<'
 /// stated here.
 pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_inductive] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x;
 
+/// CLAIM-FREE, same terms as the two above.
+pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_structure] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x;
+
+/// CLAIM-FREE, same terms as the three above.
+pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_constructor] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::ConstructorData<'a>>) where 'a: 'x;
+
 pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool) where 'a: 'x;
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size

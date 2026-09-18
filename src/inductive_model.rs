@@ -136,7 +136,6 @@ pub struct ExInductiveData<'a>(crate::env::InductiveData<'a>);
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExConstructorData<'a>(crate::env::ConstructorData<'a>);
 
 #[allow(dead_code)]

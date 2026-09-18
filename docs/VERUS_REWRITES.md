@@ -153,6 +153,7 @@ re-checking if anything here is ever suspected:
 | 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
 | 16 | `unfold_def` | `src/tc.rs` | `?` operator; `Vec::into_iter` has no spec | `match` + slice |
 | 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
+| 18 | `expand_eta_struct_aux` | `src/tc.rs` | `?`; range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 
@@ -343,3 +344,36 @@ Same family as the three unchecked `u16` arithmetic sites recorded elsewhere
 (`abstr_aux`'s offset, `fvar_to_bvar`'s subtraction, `dbj_level_counter`'s
 increment): real, unreachable with well-formed input, and unchecked until
 something forced the question.
+
+
+### 18. `expand_eta_struct_aux` — two more unguarded panics
+
+Same shape as entry 17, twice over, in the function that expands a structure
+value into an explicit constructor application.
+
+```ignore
+// was
+let ConstructorData { num_params, num_fields, .. } =
+    self.env.get_constructor(&ctor_name0).unwrap();
+...
+for i in 0..((*num_params) as usize) { out = self.ctx.mk_app(out, args[i]) }
+
+// now
+let ConstructorData { .. } = match self.env.get_constructor(&ctor_name0) {
+    Some(p) => p, None => return None,
+};
+if args.len() < (*num_params) as usize { return None }
+```
+
+- the `.unwrap()` panics if a structure's first constructor name is not
+  registered as a constructor;
+- `args[i]` panics if the head application supplies fewer arguments than the
+  structure has parameters.
+
+Both hold for well-formed input and neither is expressed in the code. For a
+well-typed `e_type` the second is a fact about the CALLER, which is exactly the
+kind of thing a contract would carry and a bare index does not. The function
+returns `Option`, so both decline.
+
+Restoring either needs `get_constructor`/`get_structure` to promise something
+about the declaration, which is the declaration-content model still outstanding.

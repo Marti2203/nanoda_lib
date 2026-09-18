@@ -569,31 +569,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
     /// Expand `(x : Prod A B)` into `Prod.mk (Prod.fst x) (Prod.snd x)`
-    fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
-        // `c_name = Point`
-        let (_f, c_name, c_levels, args) = self.ctx.unfold_const_apps(e_type)?;
-        // `Point` declaration
-        let InductiveData { all_ctor_names, .. } = self.env.get_structure(&c_name, false)?;
-        // Name = `Point.mk`
-        let ctor_name0 = all_ctor_names.get(0).copied()?;
-        // Ctor data for `Point.mk`
-        let ConstructorData { num_params, num_fields, .. } = self.env.get_constructor(&ctor_name0).unwrap();
-        // Const { name := Point.mk, levels := .. }
-        let mut out = self.ctx.mk_const(ctor_name0, c_levels);
-        // apply the params taken from the inferred type
-        // `Point.mk (A : Type) (B : Type)`
-        for i in 0..((*num_params) as usize) {
-            out = self.ctx.mk_app(out, args[i])
-        }
-        // for (a : A) and (b : B),
-        // `Proj {idx := 0, struct := e}`
-        // `Point.mk A B (Point.0 e) (Point.1 e)`
-        for i in 0..((*num_fields) as usize) {
-            let proj = self.ctx.mk_proj(c_name, i, e);
-            out = self.ctx.mk_app(out, proj);
-        }
-        Some(out)
-    }
 
     pub(crate) fn ensure_infers_as_sort(&mut self, e: ExprPtr<'t>) -> LevelPtr<'t> {
         let infd = self.infer(e, Check);
@@ -2353,6 +2328,77 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             _ => false,
         }
+    }
+
+    /// Expand `(x : Prod A B)` into `Prod.mk (Prod.fst x) (Prod.snd x)`.
+    ///
+    /// Verified in place. Two unguarded panic sites had to be closed -- see the
+    /// markers below; both decline instead, which the `Option` return already
+    /// provides for.
+    ///
+    /// VERUS-REWRITE(question-mark, range-for): the `?`s are their `match`
+    /// desugaring and the two `for i in 0..n` loops are the `while` they
+    /// desugar to, as in `get_nth_pi_binder` (register entry 7).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+    {
+        // `c_name = Point`
+        let (_f, c_name, c_levels, args) = match self.ctx.unfold_const_apps(e_type) {
+            Some(p) => p,
+            None => return None,
+        };
+        // `Point` declaration
+        let InductiveData { all_ctor_names, .. } = match self.env.get_structure(&c_name, false) {
+            Some(p) => p,
+            None => return None,
+        };
+        // Name = `Point.mk`
+        let ctor_name0 = match all_ctor_names.get(0).copied() {
+            Some(n) => n,
+            None => return None,
+        };
+        // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. A structure whose
+        // first constructor name is not registered as a constructor would panic.
+        // Well-formed environments do not do that, and nothing in the code says
+        // so; declining is what the `Option` return is for.
+        let ConstructorData { num_params, num_fields, .. } = match self.env.get_constructor(&ctor_name0) {
+            Some(p) => p,
+            None => return None,
+        };
+        // VERUS-REWRITE(unchecked-index): `args[i]` below was unguarded. For a
+        // well-typed `e_type` the head application supplies at least as many
+        // arguments as the structure has parameters, but that is a fact about
+        // the caller, not about this function.
+        if args.len() < (*num_params) as usize {
+            return None
+        }
+        // Const { name := Point.mk, levels := .. }
+        let mut out = self.ctx.mk_const(ctor_name0, c_levels);
+        // apply the params taken from the inferred type
+        // `Point.mk (A : Type) (B : Type)`
+        let np = (*num_params) as usize;
+        let mut i: usize = 0;
+        while i < np
+            invariant i <= np, np <= args.len(),
+            decreases np - i
+        {
+            out = self.ctx.mk_app(out, args[i]);
+            i = i + 1;
+        }
+        // for (a : A) and (b : B),
+        // `Proj {idx := 0, struct := e}`
+        // `Point.mk A B (Point.0 e) (Point.1 e)`
+        let nf = (*num_fields) as usize;
+        let mut j: usize = 0;
+        while j < nf
+            invariant j <= nf,
+            decreases nf - j
+        {
+            let proj = self.ctx.mk_proj(c_name, j, e);
+            out = self.ctx.mk_app(out, proj);
+            j = j + 1;
+        }
+        Some(out)
     }
 
     /// Verified in place -- body unchanged apart from the `?` desugaring.
