@@ -91,7 +91,7 @@ verified one at a time, today:
 | ✅ | `infer_sort` | done (`9217544`) |
 | ✅ | `get_rec_rule` | done (`39f38ba`) |
 | | `def_eq_sort`, `def_eq_const` | a contract for `eq_antisymm`/`eq_antisymm_many` → the `leq` clique (§5) |
-| | `infer_const`, `unfold_def`, `get_applied_def`, `is_ctor_app`, `mk_nullary_ctor`, `expand_eta_struct_aux` | `Env` accessors (`get_declar`, `get_declar_val`, `get_inductive`) and the `Declar` enum need type specs — one shared piece of bridging unlocks all six |
+| | `infer_const`, `unfold_def`, `get_applied_def`, `is_ctor_app`, `mk_nullary_ctor`, `expand_eta_struct_aux` | `Env::get_declar` + a matchable `Declar` — one shared piece, but a NEW trust boundary, not just type specs. See §7. |
 | | `failure_cache_contains`, `failure_cache_insert` | `FxHashSet` views; no verified code in this crate uses a HashSet yet |
 | | `pair_certified`, `smallest_infer_failure` | diagnostics, low value |
 
@@ -161,3 +161,43 @@ That claim is true of real Lean declarations and `get_declar_val`'s own doc
 comment already gestures at it, but it is a new axiom and should be added
 deliberately, with a non-degeneracy witness, rather than slipped in as part of
 a retirement.
+
+
+## 7. Correction: what the `Env` bridging actually costs
+
+An earlier version of §4 said these six functions need "type specs for the `Env`
+accessors and the `Declar` enum". That was wrong about the mechanism and it
+understated the price. Corrected here rather than quietly edited, because the
+wrong version was committed and the difference changes the ranking.
+
+`ExEnv` is `#[verifier::external_body]` — **opaque on purpose**. `Env`'s
+`IndexMap`-based storage is deliberately not reverse-engineered; only its
+observable behaviour is axiomatised. So there is no "make it transparent and
+read the fields" route, by design.
+
+The established pattern is instead: a `pub(crate)` wrapper function outside
+`verus!` that extracts exactly what is needed, plus one `assume_specification`
+keyed on an uninterpreted model map. `env_model.rs` already holds NINE of them:
+
+```
+Env::get_declar_val      Env::visible_declar_names   Env::can_be_struct
+get_declar_info_ty       get_declar_hint             get_constructor_num_params
+get_recursor_data        get_structure_first_ctor    get_constructor_num_fields
+get_recursor_is_k
+```
+
+**But those wrappers do not help a kernel function verified IN PLACE**, and that
+is the whole point. They exist so the *shadow* never has to touch `Declar`. The
+kernel's `get_applied_def` does not call `get_declar_hint`; it calls
+`self.env.get_declar(&name)` and pattern-matches `Declar::Definition { .. }`
+against `Declar::Theorem { .. }`. Verifying that body as written needs
+`Env::get_declar` itself specified, returning `Option<&Declar>`, with `Declar`
+matchable — a new boundary of a different shape from the nine.
+
+So the honest price for those six functions is one new trust boundary covering
+`get_declar`/`Declar`, not a free adaptation of existing work. Against a surface
+of 105 claims that is not disqualifying, but it is a real cost and it should be
+weighed against the alternatives rather than assumed to be the cheap option.
+
+The one genuinely free item in that group is `unfold_def`, whose every
+ingredient is already specified — and §6 explains why it is not free either.
