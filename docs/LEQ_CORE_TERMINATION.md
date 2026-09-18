@@ -628,9 +628,44 @@ So every ingredient of
 > **`M = 2·|undet(l) ∪ undet(r)| + 2·(lw(l) + lw(r)) + depth(l) + depth(r)`**
 
 is proven, on the model side and across the exec functions `by_cases` actually
-calls. What is left is writing `M` into `leq_core`'s `decreases` and its
-`|diff| + M <= 1e9` precondition — and moving `leq`, `leq_core` and
-`leq_imax_by_cases` into `verus!` to hold them, which is the WIP branch's work.
+calls.
+
+### The two goals are separable — and only one of them is urgent
+
+This note has been conflating them, so: **termination** (dropping
+`exec_allows_no_decreases_clause`) and **the `diff` overflow** are different
+problems, and the second does not need the first.
+
+`|diff| + M <= 1e9` is an **invariant of the recursion**, not a consequence of
+termination:
+
+| arm | `|diff|` | `M` | sum |
+|---|---|---|---|
+| `Succ` peel (either) | ≤ +1 | −1 | non-increasing |
+| `Max` arms | +0 | ≤ −2 | decreases |
+| `IMax` rewrites | +0 | ≤ −1 | decreases |
+| `by_cases` | +0 | ≤ −1 | decreases |
+
+Carry it as a `requires` and every recursive call re-establishes it, under plain
+`exec_allows_no_decreases_clause` — the crate's stance everywhere else. **No
+`decreases` clause, and therefore no seven-function clique measure, is needed to
+discharge the overflow.** The clique measure remains the route to termination if
+that is ever wanted; it is not on the path to the contracts.
+
+### What the remaining work actually is
+
+1. Move `leq`, `leq_core`, `leq_imax_by_cases` into `verus!` with the contracts
+   from `leq-core-clique-wip` (they are sound as written), replacing that
+   branch's unpreservable `-1e9 <= diff <= 1e9` with `|diff| + M <= 1e9`.
+2. `leq_core`'s callers must establish `M(l, r) <= 1e9`. Because `leq`,
+   `is_zero` and `simplify` are mutually recursive, this cannot be a plain
+   precondition threaded upward — it has to be an **arena-wide cap axiom**, the
+   `local_type_cap()` pattern this crate already uses.
+
+**The trade that makes it worth doing:** +1 cap axiom, −1 `leq` axiom. The count
+is unchanged, but what is assumed gets much weaker — "levels in this arena have
+bounded measure" instead of "the universe-ordering decision procedure is sound"
+— and three more kernel functions become verified rather than trusted.
 
 So the answer to "ceiling or scalar measure" is **scalar measure, no ceiling** —
 which is the outcome worth having, since a ceiling on `leq_core` could not have
