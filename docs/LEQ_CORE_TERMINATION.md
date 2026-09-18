@@ -1,8 +1,26 @@
 # `leq_core`: why it isn't verified, and what it would take
 
-Status: **open**. Working code is parked on branch `leq-core-clique-wip`
-(commit `92709c3`), which is deliberately **not green**. The main line stays
-clean; nothing here is committed to it.
+Status: **open, and now load-bearing.** Working code is parked on branch
+`leq-core-clique-wip` (commit `92709c3`), which is deliberately **not green**.
+The main line stays clean; nothing here is committed to it.
+
+**What changed on 2026-09-18** (commit `2382e1f`): the main line now carries an
+`assume_specification` for `TcCtx::leq` stating exactly the contract this note
+is about —
+
+```
+result ==> forall rho. interp(to_model(l), rho) <= interp(to_model(r), rho)
+```
+
+— and SEVEN kernel functions are verified against it (`is_zero`, `is_one`,
+`is_nonzero`, `eq_antisymm`, `eq_antisymm_many` in `level.rs`; `def_eq_sort`,
+`def_eq_const` in `tc.rs`). Two of those, `is_zero` and `is_one`, were
+themselves claim-free axioms and retired, so the trust surface went 105 -> 104.
+
+That raises the value of finishing this note's §4, and lowers the risk: the
+consumers are already written against the exact contract the proof will
+establish, so finding the measure retires the axiom without touching them. The
+measure is the whole remaining job, exactly as §4 says.
 
 This is a design note, not a plan of record. It exists so the next attempt
 starts from what was actually established rather than re-deriving it.

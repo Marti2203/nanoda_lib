@@ -224,6 +224,27 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::leq] (ctx: &mut TcCtx<'t, 'p>
             #![trigger interp(to_model(r), rho)]
             interp(to_model(l), rho) <= interp(to_model(r), rho);
 
+// Contradiction detector, run and removed: a `proof fn` taking `l` and `r`,
+// assuming exactly the clause above (`forall rho. interp(l, rho) <= interp(r,
+// rho)`) and claiming `ensures false`, FAILS to verify. That is the result
+// wanted -- had it verified, the axiom would have been inconsistent with the
+// level model and every proof downstream of it worthless.
+//
+// Non-degeneracy is witnessed below, and it needs BOTH halves: that the
+// relation is satisfiable (or the axiom could never fire) and that it is not
+// universally true (or `leq` returning `true` would say nothing).
+pub proof fn leq_contract_is_not_vacuous()
+    ensures
+        // satisfiable: 0 <= 1, so a `true` answer is possible
+        interp(LevelSpec::Zero, vstd::map::Map::empty())
+            <= interp(LevelSpec::Succ(Box::new(LevelSpec::Zero)), vstd::map::Map::empty()),
+        // and NOT universally true: 1 > 0, so `true` carries information
+        interp(LevelSpec::Succ(Box::new(LevelSpec::Zero)), vstd::map::Map::empty())
+            > interp(LevelSpec::Zero, vstd::map::Map::empty()),
+{
+    reveal_with_fuel(interp, 2);
+}
+
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The two shape guards `leq_core` branches on. Verified AS WRITTEN.

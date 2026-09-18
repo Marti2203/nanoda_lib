@@ -109,15 +109,38 @@ The shortcut: give `leq` an `assume_specification` claiming
 `def_eq_sort` and `def_eq_const` in place, and since `is_zero`/`is_one` are
 currently **claim-free** axioms the trust surface would go 105 → 104.
 
-**The count would be lying.** Those two axioms assume nothing; a `leq` axiom
-assumes the universe-ordering decision procedure is sound — about 100 lines
-including `leq_core`. The number falls while what is actually assumed rises.
+**TAKEN, deliberately, on 2026-09-18** (commit `2382e1f`, 681 verified / 0
+errors, surface 105 -> 104). An earlier draft of this section argued against it
+on the grounds that the count would be lying — those two axioms assume nothing,
+while a `leq` axiom assumes the universe-ordering decision procedure is sound,
+about 100 lines including `leq_core`. That argument is still correct about the
+COUNT, and it is the wrong thing to optimise.
 
-It would also paper over the one genuinely open research problem here. The WIP
-branch shows the contract is provable *modulo* the `diff` measure, so this is a
-proof waiting on one idea, not a permanent gap.
+What the trade actually improves is **where the assumption sits**. Before, seven
+functions were either assumed outright or simply unverified, and the two
+claim-free axioms let `simplify` be verified only because it needs no property
+of `is_zero`/`is_one` at all — it calls them to pick a branch. Now the
+assumption is stated ONCE, at the single place the hard proof really lives, and
+seven kernel functions are verified against it:
 
-Not taken. Recorded here so it is a decision rather than an oversight.
+```
+level.rs  is_zero, is_one, is_nonzero, eq_antisymm, eq_antisymm_many
+tc.rs     def_eq_sort, def_eq_const
+```
+
+It is not a permanent gap. `docs/LEQ_CORE_TERMINATION.md` records that the
+contract is proven on branch `leq-core-clique-wip` modulo one thing: a measure
+that decreases on every `leq_core` arm, so the `isize` `diff` cannot overflow.
+Find that measure and the axiom retires, with its seven consumers already
+written against exactly the contract the proof will establish.
+
+**One trap worth repeating.** The axiom's first draft carried a single trigger
+keyed on its LEFT argument. `is_zero` puts its level there and verified; `is_nonzero`
+puts its level on the RIGHT and did not — and the failure appeared as an
+unprovable postcondition, with nothing pointing at triggers. A shared fact keyed
+to only half its callers is a trap for the next consumer. It now carries two
+trigger groups. Check this whenever an `assume_specification` relates two
+arguments symmetrically.
 
 
 ## 6. `unfold_def` and its mirror are not the same function
