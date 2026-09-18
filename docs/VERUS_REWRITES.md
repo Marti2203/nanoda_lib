@@ -147,6 +147,8 @@ re-checking if anything here is ever suspected:
 | 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
 | 8 | `replace_pfx`, `get_pfx` | `src/name.rs` | or-pattern with a match guard; or-pattern needing per-arm unfolding | desugaring |
 | 9 | `abstr_pi_telescope`, `abstr_lambda_telescope` | `src/expr.rs` | slice patterns are unsupported outright | index walk |
+| 10 | `is_never_zero` | `src/level.rs` | a tail `match` carries no per-arm knowledge out | bind arm results |
+| 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -228,3 +230,38 @@ the LAST element, so the walk goes `binders[n-1]` downward — a telescope is
 built from the inside out. Getting this backwards would silently reverse the
 binder order, and the model contract (`abstr_pi_telescope_model`, which peels
 `drop_last`) is what pins it.
+
+
+### 10-11. The two verified level predicates — `src/level.rs`
+
+Both are the lowest-risk class, alongside entries 2 and 5: no control flow
+changes, no reordering, no arm bodies touched.
+
+`is_never_zero`: each arm's result is bound to a local before being returned.
+A `match` in tail position carries nothing per-arm out to the postcondition, so
+the arm's own fact cannot be stated about the result without a name for it.
+This is a *proof* limitation rather than a missing feature, and it recurs — the
+memo-cache work hit the same wall. Restore by inlining the locals if Verus ever
+propagates per-arm knowledge out of a tail `match`.
+
+`all_uparams_defined`: the same binding, plus the `Param` arm's
+
+```ignore
+// original
+self.read_levels(params).iter().copied().any(|x| x == level)
+
+// now
+let ls = self.read_levels(params);
+let mut i = 0; let mut found = false;
+while i < ls.len() { if ls[i] == level { found = true; } i = i + 1; }
+found
+```
+
+`Iterator::any` has no spec in vstd — the same gap `nth` has (entry 3), and
+unlike `Option::copied`, not a one-liner to add: `any` is a short-circuiting
+consumer whose spec has to talk about the prefix it examined.
+
+Risk: low, and the one thing to re-check if ever suspected is that the loop
+does NOT short-circuit where the original does. It scans the whole list and
+records a hit. Same answer, more work — and `found` is only ever set, never
+cleared, so an early match cannot be lost. Restore when `any` gets a spec.

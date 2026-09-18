@@ -251,6 +251,22 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 /// Kept because the statements below are correct and are the natural building
 /// blocks if a combined measure is ever found. They are not, on their own, the
 /// answer, and nothing depends on them yet.
+/// Every parameter name occurring anywhere in a level. Distinct from
+/// `imax_params` below, which counts only those in an `IMax`'s SECOND
+/// position -- that one exists for a termination measure, this one for
+/// `all_uparams_defined`'s "every parameter is declared" property.
+pub open spec fn param_names(l: LevelSpec) -> Set<u64>
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => Set::empty(),
+        LevelSpec::Param(n) => Set::empty().insert(n),
+        LevelSpec::Succ(a) => param_names(*a),
+        LevelSpec::Max(a, b) => param_names(*a).union(param_names(*b)),
+        LevelSpec::IMax(a, b) => param_names(*a).union(param_names(*b)),
+    }
+}
+
 pub open spec fn imax_params(l: LevelSpec) -> Set<u64>
     decreases l
 {

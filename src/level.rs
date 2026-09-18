@@ -67,15 +67,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// for some level `l` and list of params `ps`, assert that:\
     /// `forall Param(n) e. l, n e. params`
-    pub(crate) fn all_uparams_defined(&self, level: LevelPtr<'t>, params: LevelsPtr<'t>) -> bool {
-        match self.read_level(level) {
-            Zero => true,
-            Succ(val, ..) => self.all_uparams_defined(val, params),
-            Max(l, r, ..) | IMax(l, r, ..) =>
-                self.all_uparams_defined(l, params) && self.all_uparams_defined(r, params),
-            Param(..) => self.read_levels(params).iter().copied().any(|x| x == level),
-        }
-    }
 
 
     fn subst_simp(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
@@ -220,7 +211,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
@@ -311,6 +302,97 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures !result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
     {
         !self.is_never_zero(level)
+    }
+
+    /// Verified in place. `true` means every parameter name occurring anywhere
+    /// in `level` is one of the declared `params` -- the property the kernel
+    /// checks before accepting a declaration's universe parameters.
+    ///
+    /// One-directional, like `is_never_zero` above: `false` claims nothing. The
+    /// direction stated is the one the kernel consumes, and it is the direction
+    /// whose failure would matter -- accepting a level that mentions an
+    /// undeclared parameter.
+    ///
+    /// VERUS-REWRITE(any-closure): the `Param` arm's
+    /// `read_levels(params).iter().copied().any(|x| x == level)` is spelled as
+    /// the index loop it desugars to; `Iterator::any` has no spec in vstd. Same
+    /// elements, same order, same short-circuit.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn all_uparams_defined(&self, level: LevelPtr<'t>, params: LevelsPtr<'t>) -> (result: bool)
+        ensures result ==> forall |n: u64| #[trigger] param_names(to_model(level)).contains(n)
+            ==> level_names(to_model_of_levels(params)).contains(n),
+    {
+        match self.read_level(level) {
+            Zero => {
+                proof { assert(param_names(to_model(level)) =~= Set::<u64>::empty()); }
+                true
+            }
+            Succ(val, ..) => {
+                let res = self.all_uparams_defined(val, params);
+                proof {
+                    assert(to_model(level) == LevelSpec::Succ(Box::new(to_model(val))));
+                    assert(param_names(to_model(level)) =~= param_names(to_model(val)));
+                    assert(res ==> forall |n: u64| #[trigger] param_names(to_model(level)).contains(n)
+                        ==> level_names(to_model_of_levels(params)).contains(n));
+                }
+                res
+            }
+            Max(l, r, ..) => {
+                let res = self.all_uparams_defined(l, params) && self.all_uparams_defined(r, params);
+                proof {
+                    assert(to_model(level) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))));
+                    assert(param_names(to_model(level)) =~= param_names(to_model(l)).union(param_names(to_model(r))));
+                    assert(res ==> forall |n: u64| #[trigger] param_names(to_model(level)).contains(n)
+                        ==> level_names(to_model_of_levels(params)).contains(n));
+                }
+                res
+            }
+            IMax(l, r, ..) => {
+                let res = self.all_uparams_defined(l, params) && self.all_uparams_defined(r, params);
+                proof {
+                    assert(to_model(level) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))));
+                    assert(param_names(to_model(level)) =~= param_names(to_model(l)).union(param_names(to_model(r))));
+                    assert(res ==> forall |n: u64| #[trigger] param_names(to_model(level)).contains(n)
+                        ==> level_names(to_model_of_levels(params)).contains(n));
+                }
+                res
+            }
+            Param(..) => {
+                let ls = self.read_levels(params);
+                let mut i: usize = 0;
+                let mut found = false;
+                while i < ls.len()
+                    invariant
+                        ls@.len() == to_model_of_levels(params).len(),
+                        forall |j: int| 0 <= j < ls@.len()
+                            ==> #[trigger] to_model(ls@[j]) == to_model_of_levels(params)[j],
+                        found ==> exists |j: int| 0 <= j < ls@.len() && #[trigger] ls@[j] == level,
+                        i <= ls@.len(),
+                    decreases ls@.len() - i
+                {
+                    if ls[i] == level {
+                        found = true;
+                        assert(ls@[i as int] == level);
+                    }
+                    i = i + 1;
+                }
+                proof {
+                    if found {
+                        let j = choose |j: int| 0 <= j < ls@.len() && #[trigger] ls@[j] == level;
+                        assert(to_model(ls@[j]) == to_model(level));
+                        assert(to_model_of_levels(params)[j] == to_model(level));
+                        let n = level_spec_param_name(to_model(level));
+                        assert(to_model(level) == LevelSpec::Param(n));
+                        assert(level_names(to_model_of_levels(params))[j] == n);
+                        assert(level_names(to_model_of_levels(params)).contains(n));
+                        assert(param_names(to_model(level)) =~= Set::empty().insert(n));
+                    }
+                    assert(found ==> forall |n2: u64| #[trigger] param_names(to_model(level)).contains(n2)
+                        ==> level_names(to_model_of_levels(params)).contains(n2));
+                }
+                found
+            }
+        }
     }
 
     /// `max` that folds through matching `Succ`s instead of building a `Max`
