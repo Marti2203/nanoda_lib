@@ -314,6 +314,41 @@ pub proof fn undet_len_decreases_at_by_cases(a: LevelSpec, p: u64, v: LevelSpec)
         p);
 }
 
+// PROBE, run and removed: two mutually recursive EXEC functions, one keeping
+// its argument and dropping a phase constant, the other raising the phase and
+// dropping the argument -- exactly the clique measure's shape. It VERIFIES, so
+// the phase component is sound machinery and not wishful thinking. Recorded
+// here rather than left in the tree, like the contradiction detectors.
+
+/// The PAIR form of the `by_cases` capstone, which is what `leq_core` actually
+/// needs: its measure is over BOTH level arguments, and `by_cases` substitutes
+/// into both. `p` lives in whichever side carried the `IMax(_, Param p)`, so
+/// the caller supplies that side and this covers the union.
+pub proof fn undet_len_decreases_at_by_cases_pair(l: LevelSpec, r: LevelSpec, p: u64, v: LevelSpec)
+    requires
+        params_outside_succ(v) == Set::<u64>::empty(),
+        undet_imax_params(v) == Set::<u64>::empty(),
+        undet_imax_params(l).union(undet_imax_params(r)).contains(p),
+    ensures
+        undet_imax_params(subst_level_spec(l, seq![p], seq![v]))
+            .union(undet_imax_params(subst_level_spec(r, seq![p], seq![v]))).len()
+        < undet_imax_params(l).union(undet_imax_params(r)).len()
+{
+    let sl = subst_level_spec(l, seq![p], seq![v]);
+    let sr = subst_level_spec(r, seq![p], seq![v]);
+    undet_imax_params_subst_single(l, p, v);
+    undet_imax_params_subst_single(r, p, v);
+    undet_imax_params_subst_no_growth(l, p, v);
+    undet_imax_params_subst_no_growth(r, p, v);
+    assert(undet_imax_params(sl).union(undet_imax_params(sr))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
+    assert(!undet_imax_params(sl).union(undet_imax_params(sr)).contains(p));
+    undet_len_strict(
+        undet_imax_params(sl).union(undet_imax_params(sr)),
+        undet_imax_params(l).union(undet_imax_params(r)),
+        p);
+}
+
 /// Structural height of a level. The THIRD component of the clique measure in
 /// docs/LEQ_CORE_TERMINATION.md -- it is what covers the two edges where both
 /// `undet_imax_params` and `lw` are flat: `leq_core`'s `Succ` peels and

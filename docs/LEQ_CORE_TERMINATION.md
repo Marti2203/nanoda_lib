@@ -424,10 +424,33 @@ actually uses is its cardinality — and that lemma composes the three proven
 facts (the parameter is in the set before, not after, and nothing else arrived)
 into the strict `<` the clause consumes. It is stated in exactly that form.
 
+### Both mechanical unknowns are cleared
+
+Two things could have sunk this approach independently of the mathematics. Both
+were probed before committing to the plumbing, and both came back clean:
+
+1. **`Set::len()` in a `decreases`.** The first component is a set; a
+   `decreases` clause needs a well-founded value. `len()` is available here and
+   monotone under subset via `vstd::set_lib::lemma_len_subset`. Probe run,
+   turned into `undet_len_mono`/`undet_len_strict`.
+2. **A phase constant across mutually recursive EXEC functions.** Two exec
+   functions, one keeping its argument and dropping a phase, the other raising
+   the phase and dropping the argument — the clique measure's exact shape — and
+   it verifies. Probe run and removed; recorded at the site like a contradiction
+   detector.
+
+Probe before writing seven interlocking contracts, not after. Neither result was
+obvious, and either failure would have meant a different measure entirely.
+
 **What is left is plumbing**: write the four-component `decreases` on all seven
 functions and discharge each edge against the table above. Still a real chunk —
 a mutual clique cannot go green piecewise, so seven contracts land together or
-not at all — but every mathematical ingredient is now on the shelf.
+not at all — but every mathematical ingredient is on the shelf and both
+mechanisms are known to work.
+
+The one shape to expect: `leq_core`'s measure is over BOTH arguments, so the
+pair form `undet_len_decreases_at_by_cases_pair` is the one its `by_cases` arms
+consume, not the single-level capstone.
 
 Do not describe any of this as a termination proof until those clauses verify.
 
