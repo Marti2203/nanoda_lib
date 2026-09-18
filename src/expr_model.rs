@@ -305,6 +305,97 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
     }
 }
 
+/// The BRIDGE between the two abstractions: walking by de Bruijn LEVEL agrees
+/// with walking an explicit list of locals, when the list is exactly the
+/// serials `start_pos .. nob` in order.
+///
+/// This is what `abstr_levels_with_locals`' axiom asserts. Proving it needs one
+/// hypothesis that is NOT bookkeeping: `serial_determines_id`. Serials are not
+/// unique over a `TcCtx`'s lifetime -- `replace_dbj_level` DECREMENTS the
+/// counter, so two locals can share a serial when their lifetimes do not
+/// overlap. The caller has to know that the ones in range here are the ones in
+/// `ids`, and that is a real condition on the caller.
+///
+/// The `nob + offset` parameterisation is what makes the two sides step
+/// together at a `Bind`: the level walk increments its binder count, the list
+/// walk increments its offset.
+pub open spec fn serial_determines_id(ids: Seq<u32>, start_pos: u16) -> bool {
+    forall |id: u32, k: int| #![trigger crate::expr_arena_bridge::dbj_serial(id), ids[k]]
+        0 <= k < ids.len()
+        && crate::expr_arena_bridge::dbj_serial(id) == Some((start_pos + k) as u16)
+        ==> id == ids[k]
+}
+
+pub proof fn abstr_levels_full_eq_abstr_full(
+    e: ExprSpec, ids: Seq<u32>, start_pos: u16, nob: u16, offset: nat,
+)
+    requires
+        start_pos <= nob,
+        ids.len() == nob - start_pos,
+        forall |k: int| 0 <= k < ids.len()
+            ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some((start_pos + k) as u16),
+        serial_determines_id(ids, start_pos),
+        dbj_serials_below(e, nob),
+        // Paired with depth: `offset` grows by one per binder descended, so
+        // the sum is what stays bounded -- the same shape the exec side needs.
+        nob as nat + offset + depth(e) < 65536,
+    ensures
+        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16)
+            == abstr_full(e, ids, offset)
+    decreases e
+{
+    match e {
+        ExprSpec::Free(id) => {
+            match crate::expr_arena_bridge::dbj_serial(id) {
+                Some(s) => {
+                    if s < start_pos {
+                        assert forall |j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some((start_pos + j) as u16));
+                        }
+                        find_from_end_no_match(ids, id);
+                    } else {
+                        assert(s < nob);
+                        let k = (s - start_pos) as int;
+                        assert(0 <= k < ids.len());
+                        assert(id == ids[k]);
+                        let pos = (ids.len() - 1 - k) as nat;
+                        assert(ids[(ids.len() - 1 - pos) as int] == id);
+                        assert forall |j: int| 0 <= j < pos implies
+                            #[trigger] ids[(ids.len() - 1 - j) as int] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(ids[(ids.len() - 1 - j) as int])
+                                == Some((start_pos + (ids.len() - 1 - j)) as u16));
+                        }
+                        find_from_end_first_match(ids, id, pos);
+                    }
+                }
+                None => {
+                    assert forall |j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                        assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some((start_pos + j) as u16));
+                    }
+                    find_from_end_no_match(ids, id);
+                }
+            }
+        }
+        ExprSpec::App(f, a) => {
+            abstr_levels_full_eq_abstr_full(*f, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(*a, ids, start_pos, nob, offset);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(*v, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
+        }
+        ExprSpec::Proj(_, st) => {
+            abstr_levels_full_eq_abstr_full(*st, ids, start_pos, nob, offset);
+        }
+        _ => {}
+    }
+}
+
 /// Every `DbjLevel` free variable in `e` has a serial below `bound`.
 ///
 /// This is what stops `abstr_levels_full`'s saturating branch from ever being
