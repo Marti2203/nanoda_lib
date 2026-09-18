@@ -259,3 +259,42 @@ constructor list is. Those want the keyed model maps `env_model.rs` already has
 for other accessors (`get_declar_info_ty`, `get_declar_val`, ...), and a kernel
 body that calls the wrapper rather than matching inline. That is the larger
 boundary §7 was actually describing; it just is not what the kind tests needed.
+
+
+## 9. The totality cost, measured
+
+Verifying a kernel function makes Verus ask about every place it can panic. Four
+such sites turned up in the first nine `tc.rs` functions, so it is worth knowing
+the size of the whole population before planning the rest.
+
+| file | `.unwrap()` | `.expect(` | `panic!` | indexing |
+|---|---|---|---|---|
+| `tc.rs` | 32 | 1 | 25 | 20 |
+| `inductive.rs` | 44 | 2 | 26 | 32 |
+| `util.rs` | 16 | 0 | 3 | 0 |
+| `expr.rs` | 6 | 0 | 8 | 6 |
+| `level.rs` | 0 | 0 | 3 | 7 |
+| `quot.rs` | 2 | 0 | 6 | 0 |
+| **total** | **100** | **3** | **71** | **65** |
+
+**The three kinds are not the same job.**
+
+- **`panic!` on a rejection path** — "this declaration is malformed". Reachable
+  by design, discharged by `util::kernel_check`, which states nothing. Cheap and
+  mechanical; see rewrite entry 12.
+- **`.unwrap()` and indexing** — the kernel assuming something its CALLER
+  established. These are the interesting ones. Each needs either a proof (which
+  means the caller's fact becomes a precondition, and propagates) or a decline
+  (cheap when the function already returns `Option`, impossible when it does
+  not). Entries 17 and 18 are both of this kind.
+- **`.expect(`** — three sites, same as `.unwrap()`.
+
+Four have been closed so far, all by declining, all in functions that already
+returned `Option`. That is the cheap case and it will not always be available:
+`infer_const` returns `ExprPtr` and its `panic!` on a missing declaration has
+nowhere to decline to, which is why it is still unverified.
+
+None of the four were reachable with well-formed input. That is the expected
+result and not a reason to skip the rest — an unreachable panic is still a
+panic, and the audit is what turns "we believe it cannot happen" into "the
+checker cannot do it".
