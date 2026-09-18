@@ -179,7 +179,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mu
     ensures
         to_model_of_levels(result).len() == ls@.len(),
         forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
 /// justified the same way by `level_model_at_append` above. The constructor
@@ -187,7 +188,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mu
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx<'t, 'p>, l: Level<'t>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures
         to_model(result) == to_model_of_level(l),
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
@@ -473,7 +475,9 @@ pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
 /// one returns an unreduced `IMax` node instead. Still a valid answer (both
 /// denote the same value), just a different pointer.
 pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, fuel: u32) -> (result: LevelPtr<'t>)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(l), rho)
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho) == interp(to_model(l), rho)
     decreases fuel
 {
     if fuel == 0 {
@@ -583,7 +587,9 @@ pub fn verified_simplify<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, f
 /// matching `Param` is just returning `v` itself — no `dup`-style manual
 /// copy needed, unlike the `Box`-recursive `LevelSpec`.
 pub fn verified_subst1<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, p: NamePtr<'t>, v: LevelPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
             == interp(to_model(l), rho.insert(name_id(p) as nat, interp(to_model(v), rho))),
         None => true,
@@ -686,7 +692,9 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => (forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
             == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))))
             && to_model(r) == subst_level_spec(to_model(level), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
@@ -715,7 +723,9 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) =>
             to_model_of_levels(r).len() == to_model_of_levels(uparams).len()
             && (forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
@@ -747,7 +757,9 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
 /// of fuel (`verified_subst1` returns `None`), this gives up and returns
 /// `false` — always sound, since `false` never needs justification.
 pub fn verified_leq_imax_by_cases<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l_in: LevelPtr<'t>, r_in: LevelPtr<'t>, p: NamePtr<'t>, diff: i64, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho) as int <= interp(to_model(r_in), rho) as int + diff as int
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho) as int <= interp(to_model(r_in), rho) as int + diff as int
     decreases fuel
 {
     if fuel == 0 {
@@ -813,7 +825,9 @@ pub fn verified_leq_imax_by_cases<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l_in: Lev
 /// from the axiomatized primitives, calling `verified_leq_imax_by_cases`
 /// for the case-split arms instead of falling back to `false` there.
 pub fn verified_leq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
     decreases fuel
 {
     if fuel == 0 {
@@ -954,7 +968,9 @@ pub fn verified_leq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r
 #[allow(unused_variables)]
 fn verified_leq_core_imax_rewrite_left<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, a: LevelPtr<'t>, b: LevelPtr<'t>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
     requires to_model(l) == LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b)))
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
     decreases fuel
 {
     if fuel == 0 {
@@ -1010,7 +1026,9 @@ fn verified_leq_core_imax_rewrite_left<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, a: L
 #[allow(unused_variables)]
 fn verified_leq_core_imax_rewrite_right<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: LevelPtr<'t>, y: LevelPtr<'t>, l: LevelPtr<'t>, r: LevelPtr<'t>, diff: i64, fuel: u32) -> (result: bool)
     requires to_model(r) == LevelSpec::IMax(Box::new(to_model(x)), Box::new(to_model(y)))
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) as int <= interp(to_model(r), rho) as int + diff as int
     decreases fuel
 {
     if fuel == 0 {
@@ -1069,7 +1087,9 @@ fn verified_leq_core_imax_rewrite_right<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: 
 /// leq_core`'s own `is_any_max` gaps): `result == true` only when the
 /// semantic inequality genuinely holds, for every parameter assignment.
 pub fn verified_leq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho)
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho)
 {
     let l_prime = verified_simplify(ctx, l, fuel);
     let r_prime = verified_simplify(ctx, r, fuel);
@@ -1156,7 +1176,9 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
 /// levels genuinely denote the same value under every parameter
 /// assignment.
 pub fn verified_eq_antisymm<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho)
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho)
 {
     let a = verified_leq(ctx, l, r, fuel);
     let b = verified_leq(ctx, r, l, fuel);
@@ -1170,7 +1192,9 @@ pub fn verified_eq_antisymm<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>
 /// pointwise `eq_antisymm` over two equal-length level lists, `false`
 /// immediately on a length mismatch (matching the real function exactly).
 pub fn verified_eq_antisymm_many<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>, fuel: u32) -> (result: bool)
-    ensures result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len()
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len()
         && forall |i: int| #![trigger to_model_of_levels(xs)[i]] 0 <= i < to_model_of_levels(xs).len() ==>
             forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(xs)[i], rho) == interp(to_model_of_levels(ys)[i], rho)
 {
@@ -1182,6 +1206,7 @@ pub fn verified_eq_antisymm_many<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, xs: Levels
     let mut i: usize = 0;
     while i < xs_vec.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             xs_vec@.len() == ys_vec@.len(),
             i <= xs_vec@.len(),
             forall |j: int| #![trigger xs_vec@[j]] 0 <= j < i ==>

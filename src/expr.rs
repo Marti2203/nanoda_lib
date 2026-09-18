@@ -543,7 +543,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// case of a COMPOSITE kernel function proven from other kernel
     /// functions rather than assumed outright.
     pub(crate) fn prop(&mut self) -> (result: ExprPtr<'t>)
-        ensures crate::expr_arena_bridge::to_model(result)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::expr_arena_bridge::to_model(result)
             == crate::expr_model::ExprSpec::Sort(crate::level_model::LevelSpec::Zero),
     { self.mk_sort(self.zero()) }
 }
@@ -855,7 +857,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
-        ensures crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
             Box::new(crate::quot_model::local_type(binder)),
             Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
         ),
@@ -891,7 +895,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
-        ensures crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
             Box::new(crate::quot_model::local_type(binder)),
             Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
         ),
@@ -937,6 +943,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                       matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
             binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+           
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
                 <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
@@ -944,6 +952,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut n = binders.len();
         while n > 0
             invariant
+                self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
                 (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
                     ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
@@ -986,6 +995,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                       matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
             binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+           
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
                 <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
@@ -993,6 +1004,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut n = binders.len();
         while n > 0
             invariant
+                self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
                 (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
                     ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
@@ -1040,6 +1052,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         if self.expr_cache.abstr_cache_levels.capacity() > 1024 {
             self.expr_cache.abstr_cache_levels = crate::util::new_fx_hash_map();
@@ -1080,6 +1093,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
             crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
@@ -1210,6 +1224,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         if self.expr_cache.abstr_cache.capacity() > 1024 {
             self.expr_cache.abstr_cache = crate::util::new_fx_hash_map();
@@ -1249,6 +1264,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let ghost ids = crate::expr_arena_bridge::local_ids(locals@);
         proof {
@@ -1403,6 +1419,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         if self.expr_cache.inst_cache.capacity() > 1024 {
             self.expr_cache.inst_cache = crate::util::new_fx_hash_map();
@@ -1447,6 +1464,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let ghost sm = crate::expr_arena_bridge::ptr_models(substs@);
         proof {
@@ -1589,6 +1607,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self)),
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
         ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+           
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(e),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
@@ -1662,6 +1682,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let ghost names = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks));
         let ghost vals = crate::level_arena_bridge::to_model_of_levels(vs);
@@ -1853,7 +1874,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         args: I,
     ) -> (result: ExprPtr<'t>)
         requires args.obeys_prophetic_iter_laws(),
-        ensures crate::expr_arena_bridge::to_model(result)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::expr_arena_bridge::to_model(result)
             == crate::beta_model::spine_app(
                 crate::expr_arena_bridge::to_model(fun0),
                 crate::expr_arena_bridge::ptr_models(args.remaining())),
@@ -1861,6 +1884,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut fun = fun0;
         for arg in it: args
             invariant
+                self.dbj_level_counter == old(self).dbj_level_counter,
                 // The for-loop desugaring havocs the ghost wrapper, so the
                 // link back to the ORIGINAL iterator has to be carried
                 // explicitly; without it the postcondition cannot be stated

@@ -227,7 +227,9 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(cur)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some((w, bt, body)) =>
             pstep_star(to_model_of_env(*env), to_model(cur), to_model(w))
@@ -268,7 +270,9 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(l) => exists |r: ExprPtr<'t>|
             pstep_star(to_model_of_env(*env), to_model(ty), to_model(r))
@@ -543,7 +547,9 @@ impl<'e, 'x, 't> EnvCapCert<'e, 'x, 't> {
 /// cap, no longer a global property of the environment.
 pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => exists |xi: ExprPtr<'t>, yi: ExprPtr<'t>|
             pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
@@ -657,7 +663,9 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// verified route at all.
 pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => defeq(to_model_of_env(*env), to_model(x), to_model(y)),
         _ => true,
@@ -798,7 +806,9 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     requires
         memo.wf(), memo.spec_env() == *env,
         deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
         _ => true,
@@ -812,6 +822,9 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         depth_le_size(to_model(b1));
         depth_le_size(to_model(b2));
     }
+    // The counter is a `u16`; at 65535 open binders the shadow declines to
+    // certify rather than wrap. The kernel still decides.
+    if get_dbj_level_counter(ctx) == u16::MAX { return None; }
     let local = ctx.mk_dbj_level(name, style, t1);
     let substs: [ExprPtr<'t>; 1] = [local];
     let mut ok = false;
@@ -847,7 +860,9 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     requires
         memo.wf(), memo.spec_env() == *env,
         deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(t1), to_model(t2)),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
         _ => true,
@@ -866,6 +881,9 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
         depth_le_size(to_model(b1));
         depth_le_size(to_model(b2));
     }
+    // The counter is a `u16`; at 65535 open binders the shadow declines to
+    // certify rather than wrap. The kernel still decides.
+    if get_dbj_level_counter(ctx) == u16::MAX { return None; }
     let local = ctx.mk_dbj_level(name, style, t1);
     let substs: [ExprPtr<'t>; 1] = [local];
     let mut ok = false;
@@ -895,7 +913,9 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 /// revisits the same sub-pairs from many contexts).
 pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
         _ => true,
@@ -922,7 +942,9 @@ pub fn verified_conv<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>,
 /// assembled by repeated `deq_any_app_congr` along the spine prefixes.
 pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
         _ => true,
@@ -954,6 +976,7 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     }
     while i < n
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             n == args1.len(), n == args2.len(), i <= n,
             am1 == Seq::new(args1@.len(), |j: int| to_model(args1@[j])),
@@ -1000,7 +1023,9 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         ({
         let (cx, cy) = r;
         &&& (cx == x || pstep_star(env_model_nofv(*env), to_model(x), to_model(cx)))
@@ -1015,6 +1040,7 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
     let mut j: u32 = 0;
     while j < max_rounds
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
                 cm == env_model_nofv(*env),
             cx == x || pstep_star(cm, to_model(x), to_model(cx)),
@@ -1164,7 +1190,9 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     requires
         memo.wf(), memo.spec_env() == *env,
         deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         result ==> deq_any(to_model_of_env(*env), ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))), ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2)))),
 {
     let ghost em = to_model_of_env(*env);
@@ -1176,6 +1204,9 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
         depth_le_size(to_model(b1));
         depth_le_size(to_model(b2));
     }
+    // The counter is a `u16`; at 65535 open binders the shadow declines to
+    // certify rather than wrap. The kernel still decides.
+    if get_dbj_level_counter(ctx) == u16::MAX { return false; }
     let local = ctx.mk_dbj_level(name, style, t1);
     let substs: [ExprPtr<'t>; 1] = [local];
     let mut ok = false;
@@ -1203,7 +1234,9 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 #[verifier::exec_allows_no_decreases_clause]
 pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, opens: u32) -> (result: bool)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         result ==> deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
 {
     let ghost em = to_model_of_env(*env);
@@ -1327,6 +1360,7 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let mut i: usize = 0;
     while i < ax.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             em == to_model_of_env(*env),
             ax@.len() == ay@.len(),
@@ -1365,7 +1399,9 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => infer_shadow_claim(*env, e, r) && nlbv(to_model(r)) <= 0,
         None => true,
@@ -1457,6 +1493,9 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         }
         proof { depth_le_size(to_model(body)); }
         let start_pos = get_dbj_level_counter(ctx);
+        // The counter is a `u16`; at 65535 open binders the shadow declines to
+        // certify rather than wrap. The kernel still decides.
+        if get_dbj_level_counter(ctx) == u16::MAX { return None; }
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
@@ -1511,6 +1550,9 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         let bt_ty = match verified_infer_free(ctx, env, memo, binder_type) { Some(v) => v, None => return None };
         let dom_univ = match verified_sort_of_capped(ctx, env, memo, bt_ty, 64) { Some(v) => v, None => return None };
         let start_pos = get_dbj_level_counter(ctx);
+        // The counter is a `u16`; at 65535 open binders the shadow declines to
+        // certify rather than wrap. The kernel still decides.
+        if get_dbj_level_counter(ctx) == u16::MAX { return None; }
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
@@ -1608,6 +1650,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
         let mut i: usize = 0;
         while i < args.len()
             invariant
+                ctx.dbj_level_counter == old(ctx).dbj_level_counter,
                 memo.wf(), memo.spec_env() == *env,
                 i <= args@.len(),
                 args_all == Seq::new(args@.len(), |q: int| to_model(args@[q])),
@@ -1800,7 +1843,9 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => infer_shadow_claim(*env, e, r) && nlbv(to_model(r)) <= 0,
         None => true,
@@ -1873,6 +1918,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     }
     while i < np as usize
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             0 <= i <= np as usize,
             np as usize <= args_s@.len(),
@@ -1925,6 +1971,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let mut j: usize = 0;
     while j < idx
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             0 <= j <= idx,
             np as usize <= args_s@.len(),
@@ -1981,7 +2028,9 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 #[verifier::exec_allows_no_decreases_clause]
 pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => infer_shadow_claim(*env, e, r),
         None => true,
@@ -2005,7 +2054,8 @@ pub fn verified_infer_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 #[verifier::exec_allows_no_decreases_clause]
 fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => infer_shadow_claim(*env, e, r),
         None => true,
@@ -2065,7 +2115,9 @@ pub open spec fn is_prop_type_claim<'t, 'x>(env: Env<'x, 't>, ty: ExprPtr<'t>) -
 pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => is_prop_type_claim(*env, ty),
         _ => true,
@@ -2139,9 +2191,12 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
 
 /// The producer: infer `x`'s type, reduce it, read the structure and its sole
 /// constructor off the head, and build `Ctor params* x.0 .. x.(n-1)`.
+#[verifier::spinoff_prover]
 pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => eta_struct_claim(*env, x, r),
         None => true,
@@ -2188,6 +2243,7 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let mut i: usize = 0;
     while i < (nump as usize)
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= nump as usize,
             nump as usize <= args@.len(),
             new_args@.len() == i,
@@ -2200,6 +2256,7 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     let mut j: usize = 0;
     while j < (nf as usize)
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             j <= nf as usize,
             nump as usize <= args@.len(),
             new_args@.len() == (nump as usize) + j,
@@ -2252,9 +2309,12 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     Some(r)
 }
 
+#[verifier::spinoff_prover]
 pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => eta_struct_claim(*env, x, r),
         None => true,
@@ -2315,6 +2375,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     let mut i: usize = 0;
     while i < (nump as usize)
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= nump as usize,
             nump as usize <= args@.len(),
             new_args@.len() == i,
@@ -2327,6 +2388,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, e
     let mut j: usize = 0;
     while j < (nf as usize)
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             j <= nf as usize,
             nump as usize <= args@.len(),
             new_args@.len() == (nump as usize) + j,
@@ -2414,7 +2476,9 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
 /// convertible over the reduction-only route.
 pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => unit_shadow_claim(*env, x, y),
         _ => true,
@@ -2475,7 +2539,9 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
 /// `None`.
 pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => proof_irrel_shadow_claim(*env, x, y),
         _ => true,
@@ -2537,7 +2603,9 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
         _ => true,
@@ -2928,7 +2996,9 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprP
 /// revisits the same sub-pairs from many contexts).
 pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -2968,7 +3038,9 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't
 /// assembled by repeated `deq_any_app_congr` along the spine prefixes.
 pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -3011,6 +3083,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
     }
     while i < n
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             n == args1.len(), n == args2.len(), i <= n,
             am1 == Seq::new(args1@.len(), |j: int| to_model(args1@[j])),
@@ -3071,7 +3144,9 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
@@ -3136,6 +3211,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let mut i: usize = 0;
     while i < args.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= args.len(),
             major_idx < args.len(),
             args2@.len() == i,
@@ -3253,7 +3329,9 @@ fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, i
     requires
         ind_consts@.len() == arities@.len(),
         forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => block_ind_app(to_model(e), Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat)),
         _ => true,
     }
@@ -3272,7 +3350,9 @@ fn verified_block_ind_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, i
     }
     let mut i: usize = 0;
     while i < ind_consts.len()
-        invariant i <= ind_consts@.len(), ind_consts@.len() == arities@.len(),
+        invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+            i <= ind_consts@.len(), ind_consts@.len() == arities@.len(),
             forall |j: int| 0 <= j < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[j]),
             is_const_shape(head), const_name_of(head) == hname,
             ids == Seq::new(ind_consts@.len(), |j: int| const_id(ind_consts@[j])),
@@ -3315,7 +3395,9 @@ pub fn verified_positive_arg<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
         nlbv(to_model(ty)) <= 0,
         ind_consts@.len() == arities@.len(),
         forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => positive_arg_claim(*env, Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat), ty, fuel as nat),
         _ => true,
@@ -3352,6 +3434,9 @@ pub fn verified_positive_arg<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
             depth_le_size(to_model(w));
             assert(depth(to_model(body)) < depth(to_model(w)));
         }
+        // The counter is a `u16`; at 65535 open binders the shadow declines to
+        // certify rather than wrap. The kernel still decides.
+        if get_dbj_level_counter(ctx) == u16::MAX { return None; }
         let local = ctx.mk_dbj_level(bn, bs, bt);
         let ls: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, ls, 0, 100000) {
@@ -3388,7 +3473,9 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
         nlbv(to_model(ty)) <= 0,
         ind_consts@.len() == arities@.len(),
         forall |i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => ctor_ok_claim(*env, Seq::new(ind_consts@.len(), |i: int| const_id(ind_consts@[i])), Seq::new(arities@.len(), |i: int| arities@[i] as nat), nparams as nat, name_id(parent), parent_arity as nat, is_prop, codom, ty, fuel as nat),
         _ => true,
@@ -3431,6 +3518,9 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
             depth_le_size(to_model(ty));
             assert(depth(to_model(body)) < depth(to_model(ty)));
         }
+        // The counter is a `u16`; at 65535 open binders the shadow declines to
+        // certify rather than wrap. The kernel still decides.
+        if get_dbj_level_counter(ctx) == u16::MAX { return None; }
         let local = ctx.mk_dbj_level(bn, bs, bt);
         let ls: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, ls, 0, 100000) {
@@ -3507,7 +3597,9 @@ pub open spec fn ind_ty_ok_claim<'t, 'x>(env: Env<'x, 't>, nbinders: nat, codom:
 pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, nbinders: usize, codom: LevelPtr<'t>, ty: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => ind_ty_ok_claim(*env, nbinders as nat, codom, ty, fuel as nat),
         _ => true,
@@ -3548,6 +3640,9 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
                 depth_le_size(to_model(w));
                 assert(depth(to_model(body)) < depth(to_model(w)));
             }
+            // The counter is a `u16`; at 65535 open binders the shadow declines to
+            // certify rather than wrap. The kernel still decides.
+            if get_dbj_level_counter(ctx) == u16::MAX { return None; }
             let local = ctx.mk_dbj_level(bn, bs, bt);
             let ls: &[ExprPtr<'t>] = &[local];
             let instd = match verified_inst(ctx, body, ls, 0, 100000) {
@@ -3606,7 +3701,9 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 #[verifier::spinoff_prover]
 pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
         None => true,
@@ -3638,6 +3735,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
     let mut i: usize = 0;
     while i < args.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= args@.len(),
             new_args@.len() == i,
             forall |j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
@@ -3670,7 +3768,9 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &E
 #[verifier::spinoff_prover]
 pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r)),
         None => true,
@@ -3763,7 +3863,9 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
 pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, rounds: u32) -> (result: Option<ExprPtr<'t>>)
     requires memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(r))
             && nlbv(to_model(r)) <= 0,
@@ -3780,6 +3882,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     proof { deq_p_any_refl(dtym, em, lcm, to_model(x)); }
     while i < rounds
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
                 cmk == env_model_nofv(*env),
             em == to_model_of_env(*env),
@@ -3838,7 +3941,9 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
 
 pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -3962,7 +4067,9 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &
 #[verifier::spinoff_prover]
 pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -4067,7 +4174,9 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
     requires memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -4123,7 +4232,9 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: 
 #[verifier::spinoff_prover]
 pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -4257,7 +4368,9 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     requires
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => deq_any(to_model_of_env(*env), to_model(x), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
@@ -4356,7 +4469,9 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(true) => deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
         _ => true,
@@ -4715,7 +4830,9 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<
 pub fn verified_delta_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => {
             &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
             &&& nlbv(to_model(r)) <= 0
@@ -4764,7 +4881,9 @@ pub fn verified_delta_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x
 pub fn verified_try_unfold_proj_app_measured<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => {
             &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
             &&& r != e
@@ -4796,7 +4915,9 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(DeltaRoundResult::Continue(x2, y2)) => {
             &&& (x2 == x || pstep_star(env_model_nofv(*env), to_model(x), to_model(x2)))

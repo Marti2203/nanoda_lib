@@ -863,16 +863,16 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
         is_const_shape(result),
         const_name_of(result) == name,
         const_levels_of(result) == levels,
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// Construction-side mirror for `Local`, same pattern as `mk_const` above:
 /// `mk_dbj_level` (`util.rs:612-623`, "open a binder with a fresh free
 /// variable") always produces an `is_local_shape` node carrying exactly
-/// the given `binder_type` -- freshness/distinctness of the allocated
-/// `FVarId` itself is NOT captured here (no ghost tracking of
-/// `dbj_level_counter`), a deliberate scoping choice for the first,
-/// single-binder bridge that needs this (`verified_def_eq_binder_step`);
-/// a future multi-binder telescoping bridge would need to extend this.
+/// the given `binder_type`, and -- since the counter frame landed -- the
+/// SERIAL it allocates and what it does to the counter. Those last two are
+/// what let a caller line a list of locals up with
+/// `abstr_levels_full_eq_abstr_full`, and what makes `mk`/`replace` cancel.
 /// Also states the link to the OLDER, pre-existing `expr_is_local`/
 /// `expr_id` free-variable bridge (`to_model(result) ==
 /// ExprSpec::Free(expr_id(result))`) -- `is_local_shape`/`expr_is_local`
@@ -883,33 +883,44 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
 /// enough for what `verified_def_eq_binder_step`'s depth bookkeeping
 /// needs (`depth(ExprSpec::Free(_)) == 0`) without a separate linking
 /// lemma between the two notions in general.
-// ATTEMPTED AND BACKED OUT: verifying `mk_dbj_level` in place. The proof works
-// -- it needs `alloc_expr` to carry the allocation-side `Local` payload clauses
-// (a constructor cannot read back what it just built) and a claim-free hashing
-// spec for `FVarId`. What stops it is the counter:
+// STILL ASSUMED, but no longer claim-poor. The body is
 //
 //     let level = self.dbj_level_counter;
 //     self.dbj_level_counter += 1;
 //
-// `dbj_level_counter` is a `u16`, so that increment needs
-// `dbj_level_counter < u16::MAX`, and that obligation is unavoidable once the
-// BODY is verified -- it does not depend on what the contract claims. Ten call
-// sites cannot discharge it, and it would propagate past them, so the honest
-// cost is a ceiling cascade rather than a local proof.
+// and `dbj_level_counter` is a `u16`, so the increment needs
+// `dbj_level_counter < u16::MAX`. That obligation is unavoidable -- it does not
+// depend on what the contract claims -- so it appears below as a `requires`.
 //
-// The overflow is real, like `abstr_aux`'s offset and `fvar_to_bvar`'s
-// subtraction: 65536 nested open binders wraps it silently. Not reachable with
-// real Lean terms; not checked either.
+// An earlier attempt backed out here, on the grounds that the `requires` would
+// cascade a ceiling through every caller. It does not, and the reason is worth
+// recording: every call site sits in a SHADOW-route function that already has a
+// decline path (`None`, or `false` under a `result ==>` postcondition). So each
+// one discharges the precondition locally with a runtime check --
 //
-// Worth noting what the axiom below does NOT say: anything about the SERIAL.
-// That is precisely the fact a caller needs to line a list of locals up with
-// `abstr_levels_full_eq_abstr_full`, which is why retiring
-// `abstr_levels_with_locals` is blocked behind this.
+//     if get_dbj_level_counter(ctx) == u16::MAX { return None; }
+//
+// -- and nothing propagates. At 65536 nested open binders the shadow declines
+// to certify instead of wrapping; the kernel still decides. Reach for a local
+// decline before a ceiling cascade.
+//
+// The overflow itself is real and unchecked in the KERNEL's own call sites
+// (`tc.rs`), like `abstr_aux`'s offset and `fvar_to_bvar`'s subtraction. Not
+// reachable with real Lean terms; not checked there either.
+//
+// What the axiom now says that it did not before: the SERIAL (`dbj_serial(
+// expr_id(result)) == Some(old counter)`) and the counter's increment. Those
+// are the two facts `abstr_levels_with_locals` was bundling, so retiring it
+// onto `abstr_levels_full_eq_abstr_full` is no longer blocked here.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+    requires old(ctx).dbj_level_counter < u16::MAX
     ensures
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,
-        to_model(result) == ExprSpec::Free(expr_id(result));
+        to_model(result) == ExprSpec::Free(expr_id(result)),
+        dbj_serial(expr_id(result)) == Some(old(ctx).dbj_level_counter),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter + 1,
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 /// Was a claim-free `assume_specification` -- `TcCtx` was `external_body`, so
 /// a wrapper round a field read could not even say which field. Transparent, it
@@ -921,7 +932,19 @@ pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result:
     ctx.dbj_level_counter
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't;
+/// Was claim-free. It now says what it does to the counter, which is the other
+/// half of the de Bruijn frame: `mk_dbj_level` raises it, this lowers it, and
+/// without both facts nothing can show a shadow route leaves it where it found
+/// it.
+///
+/// Still assumed rather than verified. Its body is three lines, but they are
+/// awkward ones: a `debug_assert_eq!` (same `AssertKind` wall as `assert_eq!`),
+/// a `panic!` arm that formats via `debug_print`, and the decrement itself.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't
+    requires old(ctx).dbj_level_counter > 0
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter - 1,
+        final(ctx).expr_cache == old(ctx).expr_cache;
 
 // ATTEMPTED AND BACKED OUT: retiring this onto
 // `abstr_levels_full_eq_abstr_full`. The algorithmic half is DONE -- that lemma
@@ -948,7 +971,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut
 // route currently promises what it does to the de Bruijn counter.
 
 pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, locals_hint: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0);
+    ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
@@ -969,7 +993,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCt
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == if b { bool_true_id() } else { bool_false_id() },
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
 /// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
@@ -980,7 +1005,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_bool_true] (ctx: &mut TcCtx
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == bool_true_id(),
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
 /// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`
@@ -1322,7 +1348,8 @@ pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
 }
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
-    ensures result == nat_repr_is_zero(e);
+    ensures result == nat_repr_is_zero(e),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::quot_kind_code] (ctx: &TcCtx<'t, 'p>, name: NamePtr<'t>) -> (result: Option<u8>) where 'p: 't
     ensures match result {
@@ -1344,7 +1371,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
     ensures match result {
         Some(r) => nat_repr_pred(e, r),
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `expr.rs::TcCtx::c_nat_zero`/`c_nat_succ`'s result identity, same
 /// "`Const(name_cache.nat_zero/nat_succ, [])`" shape as `c_bool_true`
@@ -1356,13 +1384,15 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_zero] (ctx: &mut TcCtx<
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id() && const_levels_vec(e).len() == 0,
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id() && const_levels_vec(e).len() == 0,
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// Real-arena counterpart to `expr.rs::TcCtx::nat_lit_to_constructor`
 /// (`expr.rs:523-533`): turn a bignum into the constructor it denotes --
@@ -1388,7 +1418,9 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<
 /// stand-in (see its own doc comment) to the REAL `Const` this function
 /// actually builds via `const_expr_no_levels_canonical`.
 pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r)) <= 1
             && pstep(
                 Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
@@ -1472,13 +1504,15 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_type] (ctx: &mut TcCtx<'t
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == nat_type_id(),
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::string_type] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
         Some(e) => is_const_shape(e) && const_id(e) == string_type_id(),
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
@@ -1580,7 +1614,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx:
             &&& to_model(r) == string_lit_expand_model(string_len(s))
         },
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
     ensures match result {
@@ -1595,7 +1630,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_nat_lit_quick] (ctx: &mut 
     ensures match result {
         Some(e) => is_nat_lit_shape(e) && nat_lit_value(e) == crate::nat_lit_model::to_nat(n),
         None => true,
-    };
+    },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `Sort`'s level, read directly off the shallow value -- simpler than
 /// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s
@@ -1679,7 +1715,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
         // FRAME. Allocation touches the dag, never the memo caches. Without
         // this, every constructor call inside a cache-wrapped function havocs
         // the cache and its soundness invariant cannot survive the body.
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 // HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
 //
@@ -1726,10 +1763,15 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
     requires
         offset == 0,
         offset as nat + depth(to_model(e)) <= 60000,
-    ensures match result {
-        Some(r) => to_model(r) == subst_full(to_model(e), Seq::new(substs@.len(), |i: int| to_model(substs@[i])), offset as nat),
-        None => true,
-    }
+    ensures
+        (match result {
+            Some(r) => to_model(r) == subst_full(to_model(e), Seq::new(substs@.len(), |i: int| to_model(substs@[i])), offset as nat),
+            None => true,
+        }),
+        // Frame on the de Bruijn counter. Nothing in the shadow route said what
+        // it does to this, which is what blocked both halves of the dbj-level
+        // arc; `inst` resets a cache and touches no locals, so it says so.
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
 {
     let _ = fuel;
     if substs.len() >= 60000 {
@@ -1784,6 +1826,7 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders:
         // that cap is documented with.
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
         depth(to_model(result))
@@ -1850,6 +1893,7 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, bind
         // that cap is documented with.
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
         depth(to_model(result))
@@ -1911,7 +1955,9 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => subst_expr_levels_rel(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs), to_model(r))
             // SYNTACTIC pin (delta-lift L2): the real result IS the spec function's output.
             && to_model(r) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
@@ -2062,7 +2108,9 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
 /// steps that bridge them -- `iter().copied()`'s `remaining()` to the slice
 /// view, and `ptr_models` to the `Seq::new` spelling the callers use.
 pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>, args: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
-    ensures to_model(result) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        to_model(result) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
 {
     let it = args.iter().copied();
     proof {
@@ -2208,7 +2256,9 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
         depth(to_model(e_fun)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => exists|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
             && spine_bind(to_model(e_fun), n) is Some
             && to_model(r) == spine_app(
@@ -2313,7 +2363,9 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
         forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
         depth(to_model(body)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
             && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
         None => true,
@@ -2396,7 +2448,9 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
         depth(to_model(e)) <= d,
         d <= 60000,
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
             && nlbv(to_model(r)) <= 0
             && max_var_below(to_model(r), bound + d * d * d + d * d)
@@ -2574,7 +2628,9 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
     requires
         nlbv(to_model(e)) <= 0,
         depth(to_model(e)) <= 60000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
         None => true,
     }

@@ -243,9 +243,11 @@ verus! {
 // (`is_zero` -> `leq` -> `leq_core` -> `simplify`) stays outside `verus!`.
 // `simplify` calls them only to pick a branch, and the simplified-form
 // invariant holds on both branches, so no property of them is needed.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_zero] (ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>) -> (result: bool) where 'p: 't;
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_zero] (ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>) -> (result: bool) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
-assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_one] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: bool) where 'p: 't;
+assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_one] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: bool) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
@@ -268,7 +270,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// unchanged; only the contract is new.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+        ensures final(self).dbj_level_counter == old(self).dbj_level_counter,
+            forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
             == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)),
             // preserves the simplified form: every arm returns an input, a
             // `Succ` over a combined pair, or a `Max` -- none builds an `IMax`
@@ -383,10 +386,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 level_names(to_model_of_levels(ks)),
                 to_model_of_levels(vs)),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let ghost names = level_names(to_model_of_levels(ks));
         let ghost vals = to_model_of_levels(vs);
         let ghost cache0 = self.expr_cache;
+        let ghost counter0 = self.dbj_level_counter;
         let ls = self.read_levels(uparams).clone();
         let mut out: Vec<LevelPtr<'t>> = Vec::new();
         for l in it: ls.iter().copied()
@@ -401,6 +406,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 names == level_names(to_model_of_levels(ks)),
                 vals == to_model_of_levels(vs),
                 self.expr_cache == cache0,
+                self.dbj_level_counter == counter0,
                 out@.len() == it.index(),
                 forall |j: int| 0 <= j < out@.len()
                     ==> #[trigger] to_model(out@[j])
@@ -436,6 +442,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 level_names(to_model_of_levels(ks)),
                 to_model_of_levels(vs)),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         match self.read_level(level) {
             Zero => self.zero(),

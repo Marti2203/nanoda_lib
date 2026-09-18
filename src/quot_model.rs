@@ -67,7 +67,8 @@ pub open spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec {
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         to_model(result) == ExprSpec::Free(expr_id(result)),
-        local_binder_type_of(result) == binder_type;
+        local_binder_type_of(result) == binder_type,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 // `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
 // (`expr.rs`); they used to be assumed here. Their old doc comments argued the
@@ -93,7 +94,9 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, alpha_name: NamePtr<'t>, anon: NamePtr<'t>,
     alpha_style: BinderStyle, arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
-    ensures to_model(expected) == ExprSpec::Bind(
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        to_model(expected) == ExprSpec::Bind(
         Box::new(ExprSpec::Sort(level_to_model(u))),
         Box::new(ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
@@ -167,7 +170,9 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, a_name: NamePtr<'t>, r_name: NamePtr<'t>, anon: NamePtr<'t>,
     a_style: BinderStyle, r_style: BinderStyle, arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
-    ensures to_model(expected) == ExprSpec::Bind(
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        to_model(expected) == ExprSpec::Bind(
         Box::new(ExprSpec::Sort(level_to_model(u))),
         Box::new(ExprSpec::Bind(
             Box::new(ExprSpec::Bind(

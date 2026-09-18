@@ -1006,6 +1006,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn mk_app(&mut self, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::App(Box::new(to_model_expr(fun)), Box::new(to_model_expr(arg))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::APP_HASH, fun, arg);
         let num_loose_bvars = self.num_loose_bvars(fun).max(self.num_loose_bvars(arg));
@@ -1016,6 +1017,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::PROJ_HASH, ty_name, idx, structure);
         let num_loose_bvars = self.num_loose_bvars(structure);
@@ -1032,6 +1034,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::LAMBDA_HASH, binder_name, binder_style, binder_type, body);
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
@@ -1048,6 +1051,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::PI_HASH, binder_name, binder_style, binder_type, body);
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
@@ -1058,6 +1062,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn succ(&mut self, l: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::level::SUCC_HASH, l);
         self.alloc_level(Level::Succ(l, hash))
@@ -1066,6 +1071,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn max(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::level::MAX_HASH, l, r);
         self.alloc_level(Level::Max(l, r, hash))
@@ -1074,6 +1080,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn imax(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::level::IMAX_HASH, l, r);
         self.alloc_level(Level::IMax(l, r, hash))
@@ -1082,6 +1089,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn param(&mut self, n: NamePtr<'t>) -> (result: LevelPtr<'t>)
         ensures to_model(result) == LevelSpec::Param(name_id(n)),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::level::PARAM_HASH, n);
         self.alloc_level(Level::Param(n, hash))
@@ -1090,6 +1098,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn str(&mut self, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>)
         ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
         self.alloc_name(Name::Str(pfx, sfx, hash))
@@ -1098,6 +1107,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn num(&mut self, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>)
         ensures to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::name::NUM_HASH, pfx, sfx);
         self.alloc_name(Name::Num(pfx, sfx, hash))
@@ -1116,6 +1126,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Box::new(to_model_expr(val)),
             Box::new(to_model_expr(body))),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::LET_HASH, binder_name, binder_type, val, body, nondep);
         let num_loose_bvars = self
@@ -1128,6 +1139,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::Sort(to_model(level)),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::SORT_HASH, level);
         self.alloc_expr(Expr::Sort { level, hash })
@@ -1146,6 +1158,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         self.mk_var((num_open_binders - dbj_level) - 1)
     }
@@ -1153,6 +1166,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
         ensures to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
             final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::VAR_HASH, dbj_idx);
         self.alloc_expr(Expr::Var { dbj_idx, hash })

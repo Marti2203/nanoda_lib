@@ -376,7 +376,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_name] (ctx: &mut TcCtx<
         to_model_name(result) == to_model_of_name(n),
         // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
         // dag, never the memo caches.
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
     ensures to_model_of_name(result) == to_model_name(ptr);
@@ -416,7 +417,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, '
 /// name -- callers needing `gen_elim_level`'s search loop (`verified_
 /// gen_elim_level` above) don't need anything about ITS specific model
 /// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't;
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
@@ -426,7 +428,7 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p
 /// this from -- confirmed directly: vstd's own `alloc::fmt::format`
 /// bridge (`vstd::std_specs::fmt`) has `ensures true`, nothing about the
 /// resulting `String`'s content -- so there is no way to PROVE two
-/// different `idx` values produce different names from first principles;
+/// different `idx` values produce different names from first principles,
 /// it has to be trusted, same as `name_id_injective`/`to_model_name_injective`
 /// above trust hash-consing's own uniqueness rather than
 /// deriving it. Scoped as narrowly as possible: only claims injectivity
@@ -434,7 +436,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p
 pub uninterp spec fn append_index_after_id<'a>(n: NamePtr<'a>, idx: u64) -> u64;
 
 pub assume_specification<'x, 't: 'x, 'p: 't> [TcCtx::<'t, 'p>::append_index_after] (ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>, idx: u64) -> (result: NamePtr<'t>)
-    ensures name_id(result) == append_index_after_id(n, idx);
+    ensures name_id(result) == append_index_after_id(n, idx),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 #[verifier::external_body]
 pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2: u64)

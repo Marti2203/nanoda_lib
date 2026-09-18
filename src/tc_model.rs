@@ -46,6 +46,7 @@ use crate::level_model::interp;
 use crate::expr_arena_bridge::{expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_whnf_no_unfolding_step_plain};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
+use crate::expr_arena_bridge::get_dbj_level_counter;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 use crate::expr_model::NatLitPayload;
@@ -254,7 +255,9 @@ pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: Na
 pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => {
             &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
             &&& nlbv(to_model(r)) <= 0
@@ -373,6 +376,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
@@ -568,6 +572,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
@@ -629,6 +634,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
@@ -645,6 +651,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     // depth of a reduction no longer has to fit on the stack.
     loop
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             cm == env_model_nofv(*env),
             mt == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
@@ -708,6 +715,7 @@ pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
@@ -729,6 +737,7 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
@@ -742,6 +751,7 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     // and with no fuel each of those is a stack frame per reduction step.
     loop
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             memo.wf(), memo.spec_env() == *env,
             cm == env_model_nofv(*env),
             nlbv(to_model(cur)) <= 0,
@@ -786,6 +796,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0 && depth(to_model(r)) == 0,
@@ -904,6 +915,7 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
         memo.wf(), memo.spec_env() == *env,
         nlbv(to_model(v)) <= 0,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         final(memo).wf(), final(memo).spec_env() == *env,
         match result {
         Some((r, b)) =>
@@ -1617,7 +1629,9 @@ pub assume_specification [crate::util::nat_xor] (x: &BigUint, y: &BigUint) -> (r
 /// `verified_eq_antisymm` (previous commit) existed, since `eq_antisymm`
 /// is exactly what this bottoms out in.
 pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
             to_model(x) == ExprSpec::Sort(level_to_model(lx))
             && to_model(y) == ExprSpec::Sort(level_to_model(ly))
@@ -1647,7 +1661,9 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
 /// Name equality is real `NamePtr` pointer equality (`name_ptr_eq`), which
 /// by `name_id_injective` gives `const_id(x) == const_id(y)` for free.
 pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: bool)
-    ensures result ==> is_const_shape(x) && is_const_shape(y)
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        result ==> is_const_shape(x) && is_const_shape(y)
         && const_id(x) == const_id(y)
         && to_model_of_levels(const_levels_of(x)).len() == to_model_of_levels(const_levels_of(y)).len()
         && forall |i: int| #![trigger to_model_of_levels(const_levels_of(x))[i]] 0 <= i < to_model_of_levels(const_levels_of(x)).len() ==>
@@ -1997,7 +2013,9 @@ pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> b
 /// same reason. `fuel` doubles as the `deq` height: each Proj recursion
 /// level costs one congruence layer.
 pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) =>
             ((exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
                 to_model(x) == ExprSpec::Sort(level_to_model(lx))
@@ -2111,7 +2129,9 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
 /// everywhere else in this arc (`None` = ran out of fuel before a
 /// verdict, not "definitely unequal").
 pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
             to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
             && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
@@ -2135,6 +2155,7 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
     let mut i: usize = 0;
     while i < args1.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= args1.len(),
             args1.len() == args2.len(),
             forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] args1@[j], args2@[j], fuel as nat),
@@ -4274,7 +4295,9 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, Exp
 /// (the direction that both carries a claim and is the dangerous one to
 /// get wrong), never denies, so routing costs no completeness.
 pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
         _ => true,
     }
@@ -4303,7 +4326,9 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
         _ => true,
     }
@@ -4416,11 +4441,47 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
 /// def_eq`'s own `decreases fuel` clause is satisfied at every one of
 /// these mutually-recursive call sites, not just once.
 #[allow(while_true)]
+/// Close every de Bruijn binder `verified_def_eq_binder_step` opened,
+/// innermost first.
+///
+/// The kernel's `def_eq_binder_multi` (`tc.rs:1227,1235`) closes its telescope
+/// with a bulk `self.ctx.dbj_level_counter -= locals.len()` at EVERY exit. This
+/// mirror had no cleanup at all -- it opened one local per peeled layer and
+/// left them all open. Nothing caught it until the counter frame condition made
+/// "leaves the counter where it found it" a checkable claim, and it is a real
+/// defect, not a modelling artifact: the shadow shares its `TcCtx` with the
+/// kernel, so a leak here inflates the counter the kernel then decrements
+/// against, and `replace_dbj_level`'s own `debug_assert_eq!(level + 1, counter)`
+/// is what would eventually fire.
+///
+/// Walks backwards because `replace_dbj_level` pops the counter's top.
+fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t>>)
+    requires old(ctx).dbj_level_counter as int >= locals@.len() as int
+    ensures
+        final(ctx).dbj_level_counter as int == old(ctx).dbj_level_counter as int - locals@.len() as int,
+        final(ctx).expr_cache == old(ctx).expr_cache,
+{
+    let mut k: usize = locals.len();
+    while k > 0
+        invariant
+            k <= locals@.len(),
+            old(ctx).dbj_level_counter as int >= locals@.len() as int,
+            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int - (locals@.len() as int - k as int),
+            ctx.expr_cache == old(ctx).expr_cache,
+        decreases k
+    {
+        ctx.replace_dbj_level(locals[k - 1]);
+        k = k - 1;
+    }
+}
+
 pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
             to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
             && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))),
@@ -4473,6 +4534,9 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     if verified_def_eq(ctx, t1i, t2i, fuel_left) != Some(true) {
         return Some(false);
     }
+    // `mk_dbj_level` needs headroom in the `u16` counter; no locals are open
+    // yet, so declining here needs no cleanup.
+    if get_dbj_level_counter(ctx) == u16::MAX { return None; }
     let local = ctx.mk_dbj_level(name, style, t1i);
     assert(depth(to_model(local)) == 0);
     assert(depth(to_model(body1)) <= 60000);
@@ -4487,6 +4551,7 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     // one fresh local per layer, until neither side matches anymore.
     while true
         invariant
+            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int + locals@.len() as int,
             depth(to_model(cur_x)) <= 60000,
             depth(to_model(cur_y)) <= 60000,
             forall |i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
@@ -4517,11 +4582,11 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
         assert(depth(to_model(nt2)) <= 60000);
         let nt1i = match verified_inst(ctx, nt1, locals.as_slice(), 0, fuel) {
             Some(v) => v,
-            None => return None,
+            None => { close_dbj_locals(ctx, &locals); return None; },
         };
         let nt2i = match verified_inst(ctx, nt2, locals.as_slice(), 0, fuel) {
             Some(v) => v,
-            None => return None,
+            None => { close_dbj_locals(ctx, &locals); return None; },
         };
         proof {
             let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
@@ -4529,11 +4594,17 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
             subst_full_depth_bound_n(to_model(nt2), substs_model, 0, 0);
         }
         if fuel_left == 0 {
+            close_dbj_locals(ctx, &locals);
             return None;
         }
         fuel_left = fuel_left - 1;
         if verified_def_eq(ctx, nt1i, nt2i, fuel_left) != Some(true) {
+            close_dbj_locals(ctx, &locals);
             return Some(false);
+        }
+        if get_dbj_level_counter(ctx) == u16::MAX {
+            close_dbj_locals(ctx, &locals);
+            return None;
         }
         let nlocal = ctx.mk_dbj_level(n, s, nt1i);
         assert(depth(to_model(nlocal)) == 0);
@@ -4546,11 +4617,11 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
 
     let cxi = match verified_inst(ctx, cur_x, locals.as_slice(), 0, fuel) {
         Some(v) => v,
-        None => return None,
+        None => { close_dbj_locals(ctx, &locals); return None; },
     };
     let cyi = match verified_inst(ctx, cur_y, locals.as_slice(), 0, fuel) {
         Some(v) => v,
-        None => return None,
+        None => { close_dbj_locals(ctx, &locals); return None; },
     };
     proof {
         let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
@@ -4558,10 +4629,13 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
         subst_full_depth_bound_n(to_model(cur_y), substs_model, 0, 0);
     }
     if fuel_left == 0 {
+        close_dbj_locals(ctx, &locals);
         return None;
     }
     fuel_left = fuel_left - 1;
-    verified_def_eq(ctx, cxi, cyi, fuel_left)
+    let res = verified_def_eq(ctx, cxi, cyi, fuel_left);
+    close_dbj_locals(ctx, &locals);
+    res
 }
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_nat`
@@ -4584,7 +4658,9 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => nat_found_claim(x, y),
         _ => true,
     }
@@ -4724,7 +4800,9 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     y: ExprPtr<'t>, y_defname: NamePtr<'t>, y_hint: ReducibilityHint,
     fuel: u32,
 ) -> (result: Option<bool>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(true) => const_app_found_claim(x, y, fuel as nat),
         _ => true,
     }
@@ -4764,6 +4842,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     let mut i: usize = 0;
     while i < l_args.len()
         invariant
+            ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= l_args.len(),
             l_args.len() == r_args.len(),
             forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat),
@@ -4844,7 +4923,9 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
         depth(to_model(e)) <= d,
         d <= 60000,
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => {
             &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
             &&& r != e
@@ -4879,7 +4960,9 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
 /// bridge.rs`/`quot_model.rs`), so this composes directly with no new
 /// trust boundary.
 pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: ExprPtr<'t>)
-    ensures to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l))))
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l))))
 {
     let out = ctx.succ(l);
     ctx.mk_sort(out)
@@ -4898,7 +4981,9 @@ pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>)
 /// a well-formed export file never actually hits it, but nothing in this
 /// bridge's trust boundary rules it out structurally.
 pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
-    ensures match result {
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        match result {
         Some(r) => {
             &&& exists |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
                 to_model_of_declar_ty(*env).contains_key(name_id(c_name))

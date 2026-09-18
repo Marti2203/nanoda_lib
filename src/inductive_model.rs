@@ -633,7 +633,9 @@ pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env, nlbv(to_model(cursor)) <= 0,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
     decreases fuel
 {
     if fuel == 0 {
@@ -698,7 +700,9 @@ pub fn verified_large_elim_ok<'t, 'p: 't, 'x>(
 ) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
         match only_ctor_ty { Some(ty) => nlbv(to_model(ty)) <= 0, None => true },
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
 {
     if is_nonzero {
         return Some(true);
@@ -744,6 +748,7 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, p: Na
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
         forall |i2: int| #![trigger append_index_after_id(p, i2 as u64)] 1 <= i2 < i ==> exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j] == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // FRESHNESS: what the search exists to guarantee -- the name it
         // returns is not already a universe parameter of the inductive.
         forall |j: int| !(0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(result))),
@@ -769,6 +774,7 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, p: Na
 pub fn verified_gen_elim_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: LevelsPtr<'t>) -> (result: NamePtr<'t>)
     requires to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // FRESHNESS, carried up from the search: the elimination universe
         // this mints collides with none of the inductive's own parameters,
         // which is the entire reason `gen_elim_level` exists.
@@ -805,7 +811,9 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
         memo.wf(), memo.spec_env() == *env,
         match only_ctor_ty { Some(ty) => nlbv(to_model(ty)) <= 0, None => true },
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
-    ensures final(memo).wf(), final(memo).spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(), final(memo).spec_env() == *env,
         match result {
             // large-eliminating: the minted universe is FRESH -- it is none
             // of the inductive's own universe parameters
@@ -826,7 +834,9 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
             base.push(elim_level);
             let mut i: usize = 0;
             while i < uparams_vec.len()
-                invariant i <= uparams_vec.len(),
+                invariant
+                    ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+                    i <= uparams_vec.len(),
                 decreases uparams_vec.len() - i
             {
                 base.push(uparams_vec[i]);
@@ -904,6 +914,7 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
         all_ctor_args@.len() + handled_rec_args@.len() + flat_mapped_minors@.len()
             + motives@.len() + local_params@.len() <= 50,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         pi_telescope_size_spec(to_model(result))
             == local_params@.len() + motives@.len() + flat_mapped_minors@.len() + all_ctor_args@.len(),
 {
@@ -1025,6 +1036,7 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
         local_indices@.len() + flat_mapped_minors@.len() + motives@.len()
             + local_params@.len() <= 50,
     ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         pi_telescope_size_spec(to_model(result))
             == local_params@.len() + motives@.len() + flat_mapped_minors@.len() + local_indices@.len() + 1,
 {
