@@ -960,15 +960,38 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut
 //                            the counter, so serials are reused
 //   dbj_serials_below     -- every free variable reached is in scope
 //
-// The first one is what actually blocks it, and not for a deep reason:
-// `verified_inst` and `verified_infer_free` run between the caller reading
-// `start_pos` and this call, and neither says anything about
-// `dbj_level_counter`, so Verus havocs it. Fixing that means a counter-frame
-// condition through the shadow route -- the same 39-function closure that
-// blocks verifying `mk_dbj_level`, reached from the other end.
+// UPDATE. The counter frame landed, and the first two conditions are now
+// discharged: `mk_dbj_level` states the serial it allocates, and every
+// function between the caller reading `start_pos` and this call preserves
+// `dbj_level_counter`. An earlier note called that "the thing that blocks
+// it" -- it was the blocker that had been IDENTIFIED, not the only one.
+// Writing the contract out makes two more appear, and neither is small:
 //
-// So both halves of this arc are gated on one thing: nothing in the shadow
-// route currently promises what it does to the de Bruijn counter.
+//   1. `dbj_serials_below(to_model(infd), counter)` -- the inferred type's
+//      free variables are all in scope. `dbj_serials_below` appears in this
+//      crate ONLY as a precondition; nothing anywhere establishes it as a
+//      postcondition. `verified_infer_free` promises `nlbv(..) <= 0` (no
+//      loose BOUND variables), which is a different property. Getting this
+//      means threading a scope invariant through the whole inference route
+//      -- a property of expressions, not a scalar field, so bigger than the
+//      counter frame was.
+//
+//   2. `serial_determines_id(ids, start_pos)` -- a live serial picks out
+//      exactly one local. Established nowhere at all. It is not derivable
+//      from `mk_dbj_level`'s new serial clause, which says what serial a
+//      local gets, not that no OTHER live local shares it; `replace_dbj_
+//      level` decrements, so serials are genuinely reused over time.
+//
+// Worth recording what this exposes about the axiom as it stands. At the
+// second call site (`delta_bound_model.rs`, on `binder_type`) the axiom is
+// invoked AFTER `replace_dbj_level`, so the counter is back at `start_pos`
+// and `abstr_levels` abstracts an EMPTY serial range -- a no-op -- while the
+// axiom claims the result equals `abstr_full(.., [expr_id(local)], 0)`, which
+// abstracts the local. Those agree only because `binder_type` cannot contain
+// the local that was built from it. True here, unstated by the axiom, and
+// exactly the "axiom with an unchecked pair" shape. A retirement should
+// reorder that call BEFORE the `replace_dbj_level` (behaviour-preserving:
+// the abstraction is a no-op either way) rather than preserve the accident.
 
 pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, locals_hint: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>) where 'p: 't
     ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0),
