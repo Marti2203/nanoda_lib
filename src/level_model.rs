@@ -278,6 +278,132 @@ pub proof fn undet_len_strict(a: Set<u64>, b: Set<u64>, x: u64)
     assert(b.remove(x).len() == b.len() - 1);
 }
 
+/// THE SCALAR MEASURE for `leq_core` (docs/LEQ_CORE_TERMINATION.md). A single
+/// `nat`, so it can be summed with `|diff|` -- which is what the lexicographic
+/// form could not do, and what the overflow bound actually needs.
+///
+/// The weights are FORCED, not chosen:
+///
+/// - `lw` gets **2**: the `IMax` rewrites drop `lw` by at least one while
+///   `level_depth` grows by at most one, on the one side being rewritten.
+/// - `undet` gets **3**: `by_cases` substitutes into BOTH sides, so
+///   `level_depth` can grow by one *each*, +2 in total, against a drop of at
+///   least one in `undet`.
+///
+/// That +2 is the easy thing to get wrong -- a first draft used weight 2 here
+/// and the `by_cases` arm came out non-strict.
+///
+/// Nothing grows by more than one per side, which is `level_depth` being a
+/// `max` rather than a sum.
+pub open spec fn leq_measure(l: LevelSpec, r: LevelSpec) -> nat {
+    3 * undet_imax_params(l).union(undet_imax_params(r)).len()
+        + 2 * (lw(l) + lw(r))
+        + level_depth(l) + level_depth(r)
+}
+
+/// Peeling a `Succ` off the left drops the measure by EXACTLY one -- `undet`
+/// and `lw` are both blind to `Succ`, and `level_depth` counts it. This is the
+/// arm where `diff` moves, so the exact figure is what makes `|diff| + M`
+/// non-increasing rather than merely bounded.
+pub proof fn leq_measure_succ_left(sub: LevelSpec, r: LevelSpec)
+    ensures leq_measure(LevelSpec::Succ(Box::new(sub)), r) == leq_measure(sub, r) + 1
+{
+    undet_imax_params_succ(sub);
+    assert(undet_imax_params(LevelSpec::Succ(Box::new(sub))).union(undet_imax_params(r))
+        =~= undet_imax_params(sub).union(undet_imax_params(r)));
+}
+
+/// The mirror image, for the arm that moves `diff` the other way.
+pub proof fn leq_measure_succ_right(l: LevelSpec, sub: LevelSpec)
+    ensures leq_measure(l, LevelSpec::Succ(Box::new(sub))) == leq_measure(l, sub) + 1
+{
+    undet_imax_params_succ(sub);
+    assert(undet_imax_params(l).union(undet_imax_params(LevelSpec::Succ(Box::new(sub))))
+        =~= undet_imax_params(l).union(undet_imax_params(sub)));
+}
+
+/// THE `by_cases` ARM, at the scalar measure. Substituting the parameter into
+/// BOTH sides strictly drops `M`.
+///
+/// The arithmetic is tight and worth seeing: `undet` drops by at least one, so
+/// `3*undet` drops by at least 3; `lw` is exactly preserved; and `level_depth`
+/// grows by at most one PER SIDE, so at most +2. Net at most -1.
+///
+/// Stated before `simplify` runs. The exec path is `subst_simp`, which
+/// simplifies afterwards, and `simplify` is non-growing on all three
+/// components -- so the real decrease is at least this good.
+pub proof fn leq_measure_by_cases(l: LevelSpec, r: LevelSpec, p: u64, v: LevelSpec)
+    requires
+        params_outside_succ(v) == Set::<u64>::empty(),
+        undet_imax_params(v) == Set::<u64>::empty(),
+        lw(v) == 0,
+        level_depth(v) <= 1,
+        undet_imax_params(l).union(undet_imax_params(r)).contains(p),
+    ensures
+        leq_measure(subst_level_spec(l, seq![p], seq![v]),
+                    subst_level_spec(r, seq![p], seq![v]))
+            < leq_measure(l, r)
+{
+    undet_len_decreases_at_by_cases_pair(l, r, p, v);
+    lw_subst_preserved(l, p, v);
+    lw_subst_preserved(r, p, v);
+    level_depth_subst_le(l, p, v);
+    level_depth_subst_le(r, p, v);
+}
+
+/// The `Max` arms: `leq_core` recurses into one side at a time, and `lw` alone
+/// pays for it (`lw(Max(a,b)) = 1 + max(..)` is strictly above either branch).
+pub proof fn leq_measure_max_left(a: LevelSpec, b: LevelSpec, r: LevelSpec)
+    ensures leq_measure(a, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r)
+{
+    let mx = LevelSpec::Max(Box::new(a), Box::new(b));
+    undet_imax_params_max_sub(a, b);
+    undet_len_mono(undet_imax_params(a).union(undet_imax_params(r)),
+                   undet_imax_params(mx).union(undet_imax_params(r)));
+    assert(undet_imax_params(a).union(undet_imax_params(r))
+        .subset_of(undet_imax_params(mx).union(undet_imax_params(r))));
+    lw_max_gt(a, b);
+}
+
+/// The first `IMax` rewrite: `lw` drops by at least one (weight 2) against a
+/// `level_depth` growth of at most one. Net at most -1.
+pub proof fn leq_measure_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: LevelSpec)
+    ensures
+        leq_measure(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), r)
+        < leq_measure(LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), r)
+{
+    let lhs = LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+    let rhs = LevelSpec::IMax(
+        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+    undet_imax_params_imax_imax(a, x, y);
+    undet_len_mono(undet_imax_params(lhs).union(undet_imax_params(r)),
+                   undet_imax_params(rhs).union(undet_imax_params(r)));
+    assert(undet_imax_params(lhs).union(undet_imax_params(r))
+        .subset_of(undet_imax_params(rhs).union(undet_imax_params(r))));
+    lw_decreases_imax_imax(a, x, y);
+    level_depth_imax_imax_le(a, x, y);
+}
+
+/// The second `IMax` rewrite, same shape -- and here `undet` is exactly equal
+/// rather than merely non-increasing.
+pub proof fn leq_measure_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: LevelSpec)
+    ensures
+        leq_measure(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))), r)
+        < leq_measure(LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), r)
+{
+    undet_imax_params_imax_max(a, x, y);
+    lw_decreases_imax_max(a, x, y);
+    level_depth_imax_max_le(a, x, y);
+}
+
 /// `by_cases` fires exactly when an `IMax`'s second argument is a bare `Param`,
 /// and that parameter IS in the set. Without this the departure proven above
 /// would be a no-op rather than a decrease.

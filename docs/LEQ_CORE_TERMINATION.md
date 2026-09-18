@@ -652,6 +652,32 @@ Carry it as a `requires` and every recursive call re-establishes it, under plain
 discharge the overflow.** The clique measure remains the route to termination if
 that is ever wanted; it is not on the path to the contracts.
 
+### `leq_measure` is defined and every arm is proven
+
+```
+M(l, r) = 3·|undet(l) ∪ undet(r)| + 2·(lw(l) + lw(r)) + depth(l) + depth(r)
+```
+
+The weights are **forced**, and a first draft got one wrong:
+
+- `lw` gets **2** — the `IMax` rewrites drop `lw` by ≥1 while `depth` grows by
+  ≤1 on the rewritten side.
+- `undet` gets **3**, not 2 — `by_cases` substitutes into **both** sides, so
+  `depth` can grow by one *each*, +2 total, against a drop of ≥1 in `undet`.
+  With weight 2 that arm comes out non-strict.
+
+| lemma | arm | `dM` |
+|---|---|---|
+| `leq_measure_succ_left` / `_right` | `Succ` peel | **exactly −1** |
+| `leq_measure_max_left` | `Max` arms | ≤ −2 |
+| `leq_measure_imax_imax` | `IMax`/`IMax` rewrite | ≤ −1 |
+| `leq_measure_imax_max` | `IMax`/`Max` rewrite | ≤ −1 |
+| `leq_measure_by_cases` | `by_cases`, both sides substituted | ≤ −1 |
+
+The `Succ` figure being **exact** is what matters for the overflow: that is the
+only arm where `diff` moves, and `|diff|` rises by at most one there, so
+`|diff| + M` never rises.
+
 ### What the remaining work actually is
 
 1. Move `leq`, `leq_core`, `leq_imax_by_cases` into `verus!` with the contracts
