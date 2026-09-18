@@ -455,6 +455,26 @@ actually uses is its cardinality — and that lemma composes the three proven
 facts (the parameter is in the set before, not after, and nothing else arrived)
 into the strict `<` the clause consumes. It is stated in exactly that form.
 
+### A loose end the plumbing must pick up
+
+`subst_simp` now carries `requires` — that `ks`/`vs` are equal-length and
+`Param`-shaped, and, for the measure clause, that `vs` is a single weightless
+value with empty `undet`/`params_outside_succ`. Its **only** caller is
+`leq_imax_by_cases`, which is NOT in `verus!`, so **nothing currently checks
+those preconditions**.
+
+That is not unsound — `subst_simp`'s body was verified under them, and no
+verified code consumes its ensures yet — but it is an unenforced contract, and
+the kind that quietly becomes a problem. Checked by hand against the real call
+site, they hold: `param_slice` is `[param]` with `param` a `Param` level,
+`zero_slice` is `[zero]`, `succ_param_slice` is `[succ(param)]`, all length 1,
+and both substituted values are weightless (`lw(Zero) == 0`,
+`lw(Succ(Param p)) == 0`).
+
+**When `leq_imax_by_cases` moves into `verus!`, it has to discharge them.** They
+are satisfiable — that is the point of checking now rather than discovering a
+vacuous contract later.
+
 ### Both mechanical unknowns are cleared
 
 Two things could have sunk this approach independently of the mathematics. Both
