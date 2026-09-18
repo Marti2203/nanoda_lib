@@ -883,6 +883,28 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t
 /// enough for what `verified_def_eq_binder_step`'s depth bookkeeping
 /// needs (`depth(ExprSpec::Free(_)) == 0`) without a separate linking
 /// lemma between the two notions in general.
+// ATTEMPTED AND BACKED OUT: verifying `mk_dbj_level` in place. The proof works
+// -- it needs `alloc_expr` to carry the allocation-side `Local` payload clauses
+// (a constructor cannot read back what it just built) and a claim-free hashing
+// spec for `FVarId`. What stops it is the counter:
+//
+//     let level = self.dbj_level_counter;
+//     self.dbj_level_counter += 1;
+//
+// `dbj_level_counter` is a `u16`, so that increment needs
+// `dbj_level_counter < u16::MAX`, and that obligation is unavoidable once the
+// BODY is verified -- it does not depend on what the contract claims. Ten call
+// sites cannot discharge it, and it would propagate past them, so the honest
+// cost is a ceiling cascade rather than a local proof.
+//
+// The overflow is real, like `abstr_aux`'s offset and `fvar_to_bvar`'s
+// subtraction: 65536 nested open binders wraps it silently. Not reachable with
+// real Lean terms; not checked either.
+//
+// Worth noting what the axiom below does NOT say: anything about the SERIAL.
+// That is precisely the fact a caller needs to line a list of locals up with
+// `abstr_levels_full_eq_abstr_full`, which is why retiring
+// `abstr_levels_with_locals` is blocked behind this.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         is_local_shape(result),
