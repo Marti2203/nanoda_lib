@@ -199,6 +199,85 @@ candidate should be run against **both** of the above before any Verus work.
 the natural building blocks if a combined measure is found; they are not, on
 their own, the answer.
 
+### A fourth candidate that survives both witnesses
+
+**Status: checked on paper against both refutations above, NOT proven and NOT
+implemented.** Recorded because it threads exactly the gap between the two
+refuted variants, which is the first candidate to do so.
+
+> `undet_imax_params(l)` = the set of `p` such that some `IMax(_, X)` occurs in
+> `l` and `Param p` occurs somewhere in `X` at a position **not underneath any
+> `Succ`**.
+
+The two refuted variants are its neighbours, and each fails on the side the
+other survives:
+
+| variant | `Zero` branch | `Succ` branch |
+|---|---|---|
+| `imax_params` (direct position only) | **fails** — `q` enters when `simplify` collapses the `Max` hiding it | ok |
+| whole subtree | ok — `q` is inside both before and after | **fails** — `p` is still inside the subtree |
+| **`undet_imax_params`** (subtree, minus what sits under a `Succ`) | ok — `q` is counted *before* as well as after, so it never "enters" | ok — `p := Succ(Param p)` puts **every** occurrence of `p` under a `Succ`, so `p` leaves |
+
+The idea it encodes: `by_cases` does not remove the parameter, it makes the
+parameter's zero-ness **syntactically decided**. `p := Zero` erases it; `p :=
+Succ(Param p)` keeps it but wraps every occurrence in a `Succ`, which is exactly
+the syntactic marker for "known nonzero". Counting only the still-undecided
+occurrences is what makes both branches strictly decrease. Neither neighbour
+sees this, because one ignores the wrapping and the other ignores the nesting.
+
+**Why the count can come FIRST this time.** §4 noted that a direct-position
+count cannot be the leading component, because
+`IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))` promotes `x`'s parameters into
+direct position and so grows it. Under this definition they were already counted
+(inside `X = Max(x,y)`, not under a `Succ`), so that rewrite leaves the set
+unchanged. Which gives:
+
+> **`(|undet(l) u undet(r)|, lw(l)+lw(r), depth(l)+depth(r))`, lexicographic**
+
+| arm | count | `lw` | `depth` |
+|---|---|---|---|
+| `Succ` peel (both) | non-increasing | flat | **decreases** |
+| `Max` arms | non-increasing | **decreases** | — |
+| `IMax(a, IMax(x,y))` rewrite | non-increasing (`x` leaves second position) | **decreases** | — |
+| `IMax(a, Max(x,y))` rewrite | flat | **decreases** | — |
+| `leq_imax_by_cases` | **decreases** | — | — |
+
+### What is proven, and what is left
+
+`undet_imax_params` and `params_outside_succ` are DEFINED in `level_model.rs`,
+and the four structural arm facts are **proven**:
+
+| lemma | says |
+|---|---|
+| `undet_imax_params_succ` | peeling an outer `Succ` changes nothing — it hides no `IMax` |
+| `undet_imax_params_max_sub` | each `Max` branch contributes a subset |
+| `undet_imax_params_imax_imax` | `IMax(a,IMax(x,y)) -> Max(IMax(a,y),IMax(x,y))` is non-increasing; `x`'s params leave as `x` moves out of second position |
+| `undet_imax_params_imax_max` | `IMax(a,Max(x,y)) -> Max(IMax(a,x),IMax(a,y))` is **exactly equal** — which is what lets the count lead the order |
+
+So every arm of `leq_core` EXCEPT `by_cases` is settled for the first component.
+Two things remain, and they are not the same size:
+
+1. **The `by_cases` decrease — the heart of it.** Needs a substitution lemma:
+   after replacing `Param p` by `Zero` or by `Succ(Param p)` throughout,
+   `p` is not in `undet_imax_params` of the result. The `Zero` case erases every
+   occurrence; the `Succ` case puts every occurrence under a `Succ`, and
+   `params_outside_succ` is blind underneath one by construction. This should
+   follow from the definitions plus `subst_level_spec`, and it is where the
+   candidate earns its keep.
+2. **`simplify` cannot grow the set.** The argument: it creates no new `IMax`
+   nodes (its only producer is `imax(l_simp, r_simp)` from an existing one), no
+   new `Param`s, and never deletes a `Succ` in a way that exposes a parameter --
+   `combining`'s `Succ`/`Succ` fold moves a `Succ` OUTWARD, which keeps
+   everything beneath it covered. Each clause is a lemma, not an observation.
+
+Do (1) first: it is the step both earlier candidates died on, in opposite
+directions, and where this one would die too if it is wrong. (2) is the larger
+job but the more mechanical one, and `simplify` is already verified in place, so
+it is an extra `ensures` rather than a new proof from nothing.
+
+Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
+is finite, which is why `imax_params_finite` now raises a warning.
+
 ## 5. Termination gives the `diff` bound for free
 
 Once a strictly-decreasing measure `M` exists, the overflow problem dissolves.

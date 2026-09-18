@@ -251,6 +251,138 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 /// Kept because the statements below are correct and are the natural building
 /// blocks if a combined measure is ever found. They are not, on their own, the
 /// answer, and nothing depends on them yet.
+/// Parameters occurring at a position NOT underneath any `Succ`. A `Succ`
+/// wrapper is the syntactic marker for "known nonzero", so everything beneath
+/// one is decided and does not count.
+pub open spec fn params_outside_succ(l: LevelSpec) -> Set<u64>
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => Set::empty(),
+        LevelSpec::Param(n) => Set::empty().insert(n),
+        LevelSpec::Succ(_) => Set::empty(),
+        LevelSpec::Max(a, b) => params_outside_succ(*a).union(params_outside_succ(*b)),
+        LevelSpec::IMax(a, b) => params_outside_succ(*a).union(params_outside_succ(*b)),
+    }
+}
+
+/// The FOURTH measure candidate for `leq_core` (docs/LEQ_CORE_TERMINATION.md
+/// §4): parameters whose zero-ness is still undecided AND that sit in an
+/// `IMax`'s second subtree, where that undecidedness is what blocks reduction.
+///
+/// It threads between the two refuted variants. `imax_params` counts only
+/// DIRECT second-position occurrences and fails `by_cases`' `Zero` branch (a
+/// parameter can enter when `simplify` collapses a `Max` that was hiding it);
+/// counting the whole second subtree fails the `Succ` branch (the parameter is
+/// still in the subtree afterwards). Counting the subtree MINUS what sits under
+/// a `Succ` survives both: `p := Succ(Param p)` puts every occurrence of `p`
+/// under a `Succ`, so `p` leaves; and a parameter hidden under a `Max` was
+/// already counted before the collapse, so it never "enters".
+///
+/// NOT yet proven to be a measure -- see the note for what remains, of which
+/// the `simplify` non-growth lemma is the real work.
+pub open spec fn undet_imax_params(l: LevelSpec) -> Set<u64>
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => Set::empty(),
+        LevelSpec::Param(_) => Set::empty(),
+        LevelSpec::Succ(a) => undet_imax_params(*a),
+        LevelSpec::Max(a, b) => undet_imax_params(*a).union(undet_imax_params(*b)),
+        LevelSpec::IMax(a, b) =>
+            undet_imax_params(*a)
+                .union(undet_imax_params(*b))
+                .union(params_outside_succ(*b)),
+    }
+}
+
+/// Peeling an outer `Succ` changes nothing: it hides no `IMax`.
+pub proof fn undet_imax_params_succ(a: LevelSpec)
+    ensures undet_imax_params(LevelSpec::Succ(Box::new(a))) == undet_imax_params(a)
+{
+}
+
+/// Each `Max` branch contributes a subset -- the `Max` arms of `leq_core`
+/// recurse into one side at a time.
+pub proof fn undet_imax_params_max_sub(a: LevelSpec, b: LevelSpec)
+    ensures
+        undet_imax_params(a).subset_of(undet_imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
+        undet_imax_params(b).subset_of(undet_imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
+{
+}
+
+/// First `IMax` rewrite: `IMax(a, IMax(x,y)) -> Max(IMax(a,y), IMax(x,y))`.
+/// NON-INCREASING -- `x`'s undecided parameters leave, because `x` moves out of
+/// second position into first.
+pub proof fn undet_imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        undet_imax_params(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        )).subset_of(
+            undet_imax_params(LevelSpec::IMax(
+                Box::new(a),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ))
+        )
+{
+    reveal_with_fuel(undet_imax_params, 3);
+    // Both sides unfold to unions of the same five pieces; the right has one
+    // more (`params_outside_succ(x)`), which is exactly what `x` leaving second
+    // position gives up.
+    let ua = undet_imax_params(a);
+    let ux = undet_imax_params(x);
+    let uy = undet_imax_params(y);
+    let px = params_outside_succ(x);
+    let py = params_outside_succ(y);
+    let lhs = undet_imax_params(LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+    ));
+    let rhs = undet_imax_params(LevelSpec::IMax(
+        Box::new(a),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+    ));
+    assert(lhs =~= ua.union(uy).union(py).union(ux.union(uy).union(py)));
+    assert(rhs =~= ua.union(ux.union(uy).union(py)).union(px.union(py)));
+    assert forall |n: u64| lhs.contains(n) implies rhs.contains(n) by {
+        assert(ua.contains(n) || ux.contains(n) || uy.contains(n) || py.contains(n));
+    }
+}
+
+/// Second `IMax` rewrite: `IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))`.
+/// FLAT -- exactly equal, which is why the count may lead the lexicographic
+/// order here where `imax_params` could not.
+pub proof fn undet_imax_params_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        undet_imax_params(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        )) =~= undet_imax_params(LevelSpec::IMax(
+            Box::new(a),
+            Box::new(LevelSpec::Max(Box::new(x), Box::new(y))),
+        ))
+{
+    reveal_with_fuel(undet_imax_params, 3);
+    let ua = undet_imax_params(a);
+    let ux = undet_imax_params(x);
+    let uy = undet_imax_params(y);
+    let px = params_outside_succ(x);
+    let py = params_outside_succ(y);
+    let lhs = undet_imax_params(LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+    ));
+    let rhs = undet_imax_params(LevelSpec::IMax(
+        Box::new(a),
+        Box::new(LevelSpec::Max(Box::new(x), Box::new(y))),
+    ));
+    assert(lhs =~= ua.union(ux).union(px).union(ua.union(uy).union(py)));
+    assert(rhs =~= ua.union(ux.union(uy)).union(px.union(py)));
+    assert forall |n: u64| lhs.contains(n) == rhs.contains(n) by { }
+    assert(lhs =~= rhs);
+}
+
 /// Every parameter name occurring anywhere in a level. Distinct from
 /// `imax_params` below, which counts only those in an `IMax`'s SECOND
 /// position -- that one exists for a termination measure, this one for
