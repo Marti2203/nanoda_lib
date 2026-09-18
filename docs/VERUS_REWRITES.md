@@ -155,6 +155,7 @@ re-checking if anything here is ever suspected:
 | 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
 | 18 | `expand_eta_struct_aux` | `src/tc.rs` | `?`; range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
 | 19 | `infer_const` | `src/tc.rs` | closure; `assert!`; a `panic!` with nothing to decline to; a precondition that had to be re-established | accessor swap + `kernel_check` + `kernel_fail` + hoisted check |
+| 20 | `mk_majors` | `src/inductive.rs` | `Iterator::enumerate` has no spec; an unguarded index | index walk + a length check |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 

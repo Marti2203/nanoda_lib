@@ -1,8 +1,8 @@
 # `inductive.rs`: surveyed, not started
 
-Status: **zero of 65 functions verified.** This note records the structure so
-the next attempt does not have to rediscover it, in the same spirit as
-`docs/TC_RS_ARC.md`.
+Status: **the gate is open; one of 65 functions verified.** This note records
+the structure so the next attempt does not have to rediscover it, in the same
+spirit as `docs/TC_RS_ARC.md`.
 
 ## The good news: no cycle
 
@@ -34,6 +34,22 @@ unlock the largest single group. Whether it can be transparent is the first
 question to answer: `Declar`'s payload types went transparent cheaply once their
 `pub(crate)` fields were widened to `pub`, and its `Arc<[T]>` fields turned out
 to be no obstacle, so the precedent is encouraging.
+
+**Done.** `InductiveCheckState` is now TRANSPARENT, and it cost no new axioms —
+type registrations are not claims:
+
+- its 18 fields widened `private` → `pub`, as `Ptr`/`TcCtx`/`TcCache` were;
+- `IndTyHeader` and `CtorHeader` widened to `pub` and registered OPAQUELY;
+- `IndexMap` registered opaquely, which needs
+  `#[verifier::reject_recursive_types]` on each of its three type parameters —
+  Verus requires a variance marker on every parameter of an `external_body`
+  datatype;
+- `InductiveCheckState` itself transparent.
+
+Same trick as `Declar`'s payloads: Verus needs the field types KNOWN, not
+readable. `inductive.rs` also gained its first `verus!` block, and `mk_majors`
+is verified in it — which incidentally turned up another unguarded index
+(`st.local_indices[idx]`), register entry 20.
 
 The three with nothing obvious in the way — `header_of_ty` (17L), `is_nested`
 (39L), `new` (27L) — are data-shuffling rather than checking, so they are a poor

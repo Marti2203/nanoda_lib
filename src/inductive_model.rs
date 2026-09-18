@@ -125,6 +125,30 @@ pub(crate) fn mk_recursor_declar<'t>(
 
 verus! {
 
+/// `InductiveCheckState`'s two remaining field types, registered OPAQUELY so the
+/// struct itself can be TRANSPARENT. Same trick as `Declar`'s payloads: Verus
+/// needs the field types KNOWN, not readable, and nothing reads inside these.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExIndexMap<
+    #[verifier::reject_recursive_types] K,
+    #[verifier::reject_recursive_types] V,
+    #[verifier::reject_recursive_types] S,
+>(indexmap::map::IndexMap<K, V, S>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExIndTyHeader<'a>(crate::inductive::IndTyHeader<'a>);
+
+/// TRANSPARENT: `inductive.rs`'s check functions read its fields, and fourteen
+/// of the file's twenty-three tc-cycle-free leaves take it.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExInductiveCheckState<'a>(crate::inductive::InductiveCheckState<'a>);
+
+
 /// The three `Declar` payload types, registered OPAQUELY. Making `Declar`
 /// itself matchable needs its variants' payload types known to Verus, but not
 /// their contents -- `tc.rs`'s `is_ctor_app` and `get_applied_def` discriminate
