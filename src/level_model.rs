@@ -251,6 +251,55 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 /// Kept because the statements below are correct and are the natural building
 /// blocks if a combined measure is ever found. They are not, on their own, the
 /// answer, and nothing depends on them yet.
+/// Structural height of a level. The THIRD component of the clique measure in
+/// docs/LEQ_CORE_TERMINATION.md -- it is what covers the two edges where both
+/// `undet_imax_params` and `lw` are flat: `leq_core`'s `Succ` peels and
+/// `simplify`'s own `Succ` arm. (`lw` deliberately ignores `Succ`, which is
+/// exactly why those edges need something else.)
+pub open spec fn level_depth(l: LevelSpec) -> nat
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => 0,
+        LevelSpec::Param(_) => 0,
+        LevelSpec::Succ(a) => 1 + level_depth(*a),
+        LevelSpec::Max(a, b) => 1 + max_nat(level_depth(*a), level_depth(*b)),
+        LevelSpec::IMax(a, b) => 1 + max_nat(level_depth(*a), level_depth(*b)),
+    }
+}
+
+/// The `Succ`-peel edges: `lw` is flat there, `level_depth` is not.
+pub proof fn level_depth_succ(a: LevelSpec)
+    ensures level_depth(LevelSpec::Succ(Box::new(a))) > level_depth(a)
+{
+}
+
+/// `lw` strictly drops into either `Max` branch -- `leq_core`'s `Max` arms and
+/// `simplify`'s `Max` arm.
+pub proof fn lw_max_gt(a: LevelSpec, b: LevelSpec)
+    ensures
+        lw(LevelSpec::Max(Box::new(a), Box::new(b))) > lw(a),
+        lw(LevelSpec::Max(Box::new(a), Box::new(b))) > lw(b),
+{
+}
+
+/// `lw` strictly drops into an `IMax`'s FIRST argument. This is the edge that
+/// closes the `simplify -> is_zero` cycle: `simplify`'s `IMax` arm tests
+/// `is_zero(l_simp)`, and `lw(IMax(l,r)) = lw(l) + 2*lw(r) + 1 > lw(l)`, while
+/// `simplify` is already proven `lw`-non-increasing, so `lw(l_simp) <= lw(l)`.
+pub proof fn lw_imax_gt_left(a: LevelSpec, b: LevelSpec)
+    ensures lw(LevelSpec::IMax(Box::new(a), Box::new(b))) > lw(a)
+{
+}
+
+/// `undet_imax_params` never grows going into a sub-level of a `Max` or the
+/// FIRST argument of an `IMax` -- the non-strict half of the same edges.
+pub proof fn undet_imax_params_imax_left_sub(a: LevelSpec, b: LevelSpec)
+    ensures undet_imax_params(a)
+        .subset_of(undet_imax_params(LevelSpec::IMax(Box::new(a), Box::new(b))))
+{
+}
+
 /// Parameters occurring at a position NOT underneath any `Succ`. A `Succ`
 /// wrapper is the syntactic marker for "known nonzero", so everything beneath
 /// one is decided and does not count.

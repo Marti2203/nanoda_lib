@@ -365,11 +365,53 @@ which exists here today.
 
 **This does not devalue §4.** Three candidates were refuted and a fourth is
 proven on every `leq_core` arm; that was real and it was the blocker everyone
-kept hitting. It does mean the remaining work is a second measure problem over a
-larger clique, not the mechanical assembly this note implied. Anyone picking
-this up should scope for that.
+kept hitting. It does mean there is a second measure problem over a larger
+clique — which the next section proposes an answer to.
 
-Do not describe any of this as a termination proof.
+### A candidate measure for the whole clique
+
+**Status: every edge checked on paper, the supporting lemmas proven, the
+`decreases` clauses NOT yet written.**
+
+> **`(|undet(args)|, lw(args), level_depth(args), phase)`, lexicographic**
+>
+> where `args` means the sum/union over the function's level arguments, and
+>
+> | fn | `simplify` | `subst_simp` | `leq_imax_by_cases` | `leq_core` | `leq` | `is_zero` | `is_one` |
+> |---|---|---|---|---|---|---|---|
+> | phase | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+
+The phase component is the trick, and the ordering is not arbitrary. Two edges
+go *up* in phase, and each is paid for by an earlier component dropping
+strictly:
+
+- `leq_imax_by_cases -> leq_core` climbs 2 → 3, and `undet` strictly decreases
+  (proven, `051d44e`).
+- `simplify -> is_zero` climbs 0 → 5, and `lw` strictly decreases:
+  `lw(IMax(l,r)) = lw(l) + 2·lw(r) + 1 > lw(l) >= lw(simplify(l))`, the last
+  step by `simplify`'s existing `lw`-non-increasing contract.
+
+Everything else goes *down* in phase, or drops `lw`, or drops `level_depth`.
+All seventeen edges of the clique:
+
+| decreases via | edges |
+|---|---|
+| `undet` | `by_cases -> leq_core` |
+| `lw` | both `Max` arms, both `IMax` rewrites, `leq_core -> simplify`, `simplify -> is_zero`/`is_one`, `simplify -> simplify` at `Max`/`IMax` |
+| `level_depth` | `leq_core`'s `Succ` peels, `simplify`'s `Succ` arm — the two places `lw` is deliberately blind, since `lw(Succ a) == lw(a)` |
+| phase | the seven remaining edges, all same-or-smaller arguments |
+
+`level_depth` is new (`level_model.rs`) and exists precisely for that third row.
+Its supporting facts are proven: `level_depth_succ`, `lw_max_gt`,
+`lw_imax_gt_left`, `undet_imax_params_imax_left_sub`.
+
+**What is left is now genuinely mechanical**: write the four-component
+`decreases` on all seven functions and discharge each edge against the lemmas
+above. That is a real chunk of Verus work — seven contracts that must all land
+together, since a mutual clique cannot go green piecewise — but it is no longer
+a search for an idea.
+
+Do not describe any of this as a termination proof until those clauses verify.
 
 Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
 is finite, which is why `imax_params_finite` now raises a warning.
