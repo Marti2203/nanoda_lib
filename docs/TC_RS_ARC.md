@@ -344,3 +344,32 @@ worse than it was:
 
 Cross-check any such ranking by grepping one or two of its top entries by hand
 before acting on it.
+
+
+## 11. What the cycle actually costs
+
+The mirrors do not carry the cycle. Matching each of the 48 members against a
+`verified_*` function of the SAME name:
+
+> **5 of 48** have one — `def_eq`, `def_eq_app`, `def_eq_nat`,
+> `try_eq_const_app`, `try_unfold_proj_app`, all in `tc_model.rs`.
+
+The other **43 need contracts designed from scratch**. That is the real figure,
+and it is worth stating because the opposite impression is easy to form: there
+are 96 `verified_*` mirrors in the crate, `infer_shadow_claim` and `pstep_star`
+give the contract SHAPES, and §3 records that the cycle is not a proof cycle. All
+true, and none of it means the contracts exist.
+
+(A first pass at this reported 12 by matching `verified_<name>_*` as well as
+`verified_<name>`. That counts `verified_def_eq_sort` as a mirror of `def_eq`
+and `verified_infer_sort` as a mirror of `infer` — different functions, both
+already verified in place. Exact names only.)
+
+So the cycle is: **48 functions, 1229 lines, 43 contracts to design, landing
+together or not at all.** It is a multi-session arc and should be planned as
+one, not approached function by function in the hope that it decomposes — §3
+establishes that it does not.
+
+The five with mirrors are the right place to start: their contracts are known to
+be the right shape, having been proven once already against a parallel
+implementation.
