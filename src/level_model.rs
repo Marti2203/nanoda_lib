@@ -251,6 +251,69 @@ pub proof fn lw_succ_eq(a: LevelSpec)
 /// Kept because the statements below are correct and are the natural building
 /// blocks if a combined measure is ever found. They are not, on their own, the
 /// answer, and nothing depends on them yet.
+/// The clique measure's first component is a SET, but `decreases` needs a
+/// well-founded value, so what it actually uses is the cardinality. These two
+/// turn the subset facts proven above into the `len` facts the `decreases`
+/// clauses will need, once, instead of at all seventeen edges.
+pub proof fn undet_len_mono(a: Set<u64>, b: Set<u64>)
+    requires a.subset_of(b)
+    ensures a.len() <= b.len()
+{
+    vstd::set_lib::lemma_len_subset(a, b);
+}
+
+/// The `by_cases` edge: "the parameter left, and nothing else arrived" becomes
+/// a STRICT drop in cardinality. This is the step that makes the measure's
+/// first component actually decrease rather than merely not grow.
+pub proof fn undet_len_strict(a: Set<u64>, b: Set<u64>, x: u64)
+    requires a.subset_of(b), b.contains(x), !a.contains(x)
+    ensures a.len() < b.len()
+{
+    assert(a.subset_of(b.remove(x))) by {
+        assert forall |n: u64| a.contains(n) implies b.remove(x).contains(n) by {
+            assert(n != x);
+        }
+    }
+    vstd::set_lib::lemma_len_subset(a, b.remove(x));
+    assert(b.remove(x).len() == b.len() - 1);
+}
+
+/// `by_cases` fires exactly when an `IMax`'s second argument is a bare `Param`,
+/// and that parameter IS in the set. Without this the departure proven above
+/// would be a no-op rather than a decrease.
+pub proof fn undet_imax_params_contains_imax_param(a: LevelSpec, p: u64)
+    ensures undet_imax_params(
+        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)))).contains(p)
+{
+}
+
+/// THE CAPSTONE for the measure's first component: at the `by_cases` edge, the
+/// cardinality strictly drops.
+///
+/// Three proven facts compose into it -- the parameter is in the set before
+/// (`_contains_imax_param`), it is not in it after (`_subst_single`), and
+/// nothing else arrived (`_subst_no_growth`) -- which `undet_len_strict` turns
+/// into `<`. This is the form a `decreases` clause on `leq_core` consumes.
+pub proof fn undet_len_decreases_at_by_cases(a: LevelSpec, p: u64, v: LevelSpec)
+    requires
+        params_outside_succ(v) == Set::<u64>::empty(),
+        undet_imax_params(v) == Set::<u64>::empty(),
+    ensures ({
+        let l = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)));
+        undet_imax_params(subst_level_spec(l, seq![p], seq![v])).len()
+            < undet_imax_params(l).len()
+    })
+{
+    let l = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)));
+    undet_imax_params_contains_imax_param(a, p);
+    undet_imax_params_subst_single(l, p, v);
+    undet_imax_params_subst_no_growth(l, p, v);
+    undet_len_strict(
+        undet_imax_params(subst_level_spec(l, seq![p], seq![v])),
+        undet_imax_params(l),
+        p);
+}
+
 /// Structural height of a level. The THIRD component of the clique measure in
 /// docs/LEQ_CORE_TERMINATION.md -- it is what covers the two edges where both
 /// `undet_imax_params` and `lw` are flat: `leq_core`'s `Succ` peels and

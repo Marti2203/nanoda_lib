@@ -405,11 +405,29 @@ All seventeen edges of the clique:
 Its supporting facts are proven: `level_depth_succ`, `lw_max_gt`,
 `lw_imax_gt_left`, `undet_imax_params_imax_left_sub`.
 
-**What is left is now genuinely mechanical**: write the four-component
-`decreases` on all seven functions and discharge each edge against the lemmas
-above. That is a real chunk of Verus work — seven contracts that must all land
-together, since a mutual clique cannot go green piecewise — but it is no longer
-a search for an idea.
+### The model-side toolkit is complete
+
+Everything the `decreases` clauses will consume is defined and proven:
+
+| | |
+|---|---|
+| definitions | `undet_imax_params`, `params_outside_succ`, `level_depth` |
+| arm facts | `_succ`, `_max_sub`, `_imax_imax`, `_imax_max`, `_imax_left_sub` |
+| `by_cases` | `_subst_single`, `_by_cases_drops`, `_subst_no_growth`, `_contains_imax_param` |
+| cardinality | `undet_len_mono`, `undet_len_strict`, **`undet_len_decreases_at_by_cases`** |
+| `lw` / depth | `lw_max_gt`, `lw_imax_gt_left`, `level_depth_succ`, plus the pre-existing `lw_decreases_imax_*` |
+| exec side | `subst_simp`'s bridge; `simplify`/`combining` non-growth |
+
+`undet_len_decreases_at_by_cases` is the capstone. The measure's first component
+is a SET, but `decreases` needs a well-founded value, so what the clause
+actually uses is its cardinality — and that lemma composes the three proven
+facts (the parameter is in the set before, not after, and nothing else arrived)
+into the strict `<` the clause consumes. It is stated in exactly that form.
+
+**What is left is plumbing**: write the four-component `decreases` on all seven
+functions and discharge each edge against the table above. Still a real chunk —
+a mutual clique cannot go green piecewise, so seven contracts land together or
+not at all — but every mathematical ingredient is now on the shelf.
 
 Do not describe any of this as a termination proof until those clauses verify.
 
