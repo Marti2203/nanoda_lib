@@ -194,14 +194,11 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
 
-/// Real-arena mirror of `TcCtx::contains_param` (`level.rs:249-254`): does
-/// `uparams` contain a `Param` level naming `candidate`? States the real
-/// function's `n == candidate` real-pointer check at the `name_id` level
-/// (matching `LevelSpec::Param`'s own stored payload, `name_id` of
-/// whichever `NamePtr` a `Param` level was built from -- see `verified_
-/// simplify`'s `Param` case a few lines above for the same convention).
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::contains_param] (ctx: &TcCtx<'t, 'p>, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result: bool) where 'p: 't
-    ensures result == (exists |j: int| 0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(uparams)[j] == LevelSpec::Param(name_id(candidate)));
+// RETIRED: `contains_param`'s `assume_specification` is gone -- the kernel's own
+// function is verified in place in `level.rs`, with the SAME bidirectional
+// contract this axiom stated. The `false` direction needed `name_id`
+// injectivity, which is where the exec pointer comparison meets the model's
+// name ids.
 
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.

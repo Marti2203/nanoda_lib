@@ -63,31 +63,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
 
-    /// Return `uparam [ks |-> vs]`
-
-    /// for some level `l` and list of params `ps`, assert that:\
-    /// `forall Param(n) e. l, n e. params`
-
-
-
-    /// Test whether `lhs <= rhs` by checking whether it holds regardless of whether
-    /// a parameter `p` is zero or non-zero.
-
-    // The more positive it is, the more have been applied to the right side compared to the left side.
-
-
-
-    /// Does this list of universe parameters already contain `Param(n)` for some `n : Name`
-    ///
-    /// Used for generating a unique elim universe in the inductive module
-    pub(crate) fn contains_param(&self, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> bool {
-        self.read_levels(uparams).iter().copied().any(|lptr| match self.read_level(lptr) {
-            Param(n, ..) => n == candidate,
-            _ => false,
-        })
-    }
-    
-    
 }
 
 
@@ -799,6 +774,82 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures !result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
     {
         !self.is_never_zero(level)
+    }
+
+    /// Does this list of universe parameters already contain `Param(n)` for
+    /// some `n : Name`. Used for generating a unique elim universe in the
+    /// inductive module.
+    ///
+    /// Verified in place. One-directional as everywhere else here: `true` means
+    /// the candidate's name really does occur in the list. `false` claims
+    /// nothing, which is how `gen_elim_level` uses it -- it keeps trying fresh
+    /// candidates until one is NOT present, and a spurious `true` only costs it
+    /// another attempt.
+    ///
+    /// VERUS-REWRITE(any-closure): the `.iter().copied().any(|lptr| ..)` is the
+    /// index walk it desugars to, for the same reason as
+    /// `all_uparams_defined` -- `Iterator::any` has no spec in vstd (register
+    /// entry 11). Same elements, same order; the loop does not short-circuit,
+    /// but `found` is only ever set, so no match can be lost.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn contains_param(&self, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result: bool)
+        ensures result == (exists |i: int| 0 <= i < to_model_of_levels(uparams).len()
+            && #[trigger] to_model_of_levels(uparams)[i]
+                == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate))),
+    {
+        let ls = self.read_levels(uparams);
+        let n = ls.len();
+        let mut i: usize = 0;
+        let mut found = false;
+        while i < n
+            invariant
+                n == ls@.len(),
+                ls@.len() == to_model_of_levels(uparams).len(),
+                forall |j: int| 0 <= j < ls@.len()
+                    ==> #[trigger] to_model(ls@[j]) == to_model_of_levels(uparams)[j],
+                i <= n,
+                found ==> exists |j: int| 0 <= j < to_model_of_levels(uparams).len()
+                    && #[trigger] to_model_of_levels(uparams)[j]
+                        == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)),
+                // the other direction, which the axiom this retires also had:
+                // nothing scanned so far matched
+                !found ==> forall |j: int| 0 <= j < i ==>
+                    #[trigger] to_model_of_levels(uparams)[j]
+                        != LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)),
+            decreases n - i
+        {
+            let lptr = ls[i];
+            match self.read_level(lptr) {
+                Param(nm, ..) => {
+                    proof {
+                        // the `false` direction needs `name_id` injectivity: a
+                        // model-level name match forces the POINTERS equal, which
+                        // is what the exec comparison tests
+                        if crate::level_arena_bridge::name_id(nm) == crate::level_arena_bridge::name_id(candidate) {
+                            crate::level_arena_bridge::name_id_injective(nm, candidate);
+                        }
+                        assert(to_model(lptr) == LevelSpec::Param(crate::level_arena_bridge::name_id(nm)));
+                    }
+                    if nm == candidate {
+                        proof {
+                            assert(to_model(lptr)
+                                == LevelSpec::Param(crate::level_arena_bridge::name_id(nm)));
+                            assert(to_model_of_levels(uparams)[i as int]
+                                == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)));
+                        }
+                        found = true;
+                    }
+                }
+                other => {
+                    proof {
+                        assert(to_model(lptr) == crate::level_arena_bridge::to_model_of_level(other));
+                        assert(!(to_model(lptr) is Param));
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        found
     }
 
     /// Verified in place. `true` means every parameter name occurring anywhere
