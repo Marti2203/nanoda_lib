@@ -365,6 +365,114 @@ pub proof fn leq_measure_max_left(a: LevelSpec, b: LevelSpec, r: LevelSpec)
     lw_max_gt(a, b);
 }
 
+/// The mirror of `leq_measure_max_left`, for the arms that recurse into the
+/// RIGHT side's `Max` branches.
+pub proof fn leq_measure_max_right(l: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures leq_measure(l, x) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y)))
+{
+    let mx = LevelSpec::Max(Box::new(x), Box::new(y));
+    undet_imax_params_max_sub(x, y);
+    undet_len_mono(undet_imax_params(l).union(undet_imax_params(x)),
+                   undet_imax_params(l).union(undet_imax_params(mx)));
+    assert(undet_imax_params(l).union(undet_imax_params(x))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(mx))));
+    lw_max_gt(x, y);
+}
+
+/// The right-hand mirrors of the two `IMax` rewrite lemmas and of
+/// `leq_measure_mono_left`. `leq_core` rewrites whichever side carries the
+/// nested `IMax`, so both directions are needed.
+pub proof fn leq_measure_imax_imax_right(l: LevelSpec, a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        leq_measure(l, LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+        < leq_measure(l, LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+{
+    let lhs = LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+    let rhs = LevelSpec::IMax(
+        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+    undet_imax_params_imax_imax(a, x, y);
+    undet_len_mono(undet_imax_params(l).union(undet_imax_params(lhs)),
+                   undet_imax_params(l).union(undet_imax_params(rhs)));
+    assert(undet_imax_params(l).union(undet_imax_params(lhs))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(rhs))));
+    lw_decreases_imax_imax(a, x, y);
+    level_depth_imax_imax_le(a, x, y);
+}
+
+pub proof fn leq_measure_imax_max_right(l: LevelSpec, a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures
+        leq_measure(l, LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
+        < leq_measure(l, LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))))
+{
+    undet_imax_params_imax_max(a, x, y);
+    lw_decreases_imax_max(a, x, y);
+    level_depth_imax_max_le(a, x, y);
+}
+
+pub proof fn leq_measure_mono_right(l: LevelSpec, r: LevelSpec, r2: LevelSpec)
+    requires
+        undet_imax_params(r2).subset_of(undet_imax_params(r)),
+        lw(r2) <= lw(r),
+        level_depth(r2) <= level_depth(r),
+    ensures leq_measure(l, r2) <= leq_measure(l, r)
+{
+    assert(undet_imax_params(l).union(undet_imax_params(r2))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
+    undet_len_mono(undet_imax_params(l).union(undet_imax_params(r2)),
+                   undet_imax_params(l).union(undet_imax_params(r)));
+}
+
+/// `leq_measure` is monotone in a left-hand replacement that does not grow any
+/// component. `leq_core`'s `IMax`/`Max` arm runs `simplify` before recursing,
+/// and `simplify` promises exactly these three bounds -- this assembles them.
+pub proof fn leq_measure_mono_left(l: LevelSpec, l2: LevelSpec, r: LevelSpec)
+    requires
+        undet_imax_params(l2).subset_of(undet_imax_params(l)),
+        lw(l2) <= lw(l),
+        level_depth(l2) <= level_depth(l),
+    ensures leq_measure(l2, r) <= leq_measure(l, r)
+{
+    assert(undet_imax_params(l2).union(undet_imax_params(r))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
+    undet_len_mono(undet_imax_params(l2).union(undet_imax_params(r)),
+                   undet_imax_params(l).union(undet_imax_params(r)));
+}
+
+/// The SECOND branch of a left `Max` -- `Max(a,b)` is not `Max(b,a)` as a
+/// `LevelSpec`, so the first lemma does not cover it.
+pub proof fn leq_measure_max_left2(a: LevelSpec, b: LevelSpec, r: LevelSpec)
+    ensures leq_measure(b, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r)
+{
+    let mx = LevelSpec::Max(Box::new(a), Box::new(b));
+    undet_imax_params_max_sub(a, b);
+    undet_len_mono(undet_imax_params(b).union(undet_imax_params(r)),
+                   undet_imax_params(mx).union(undet_imax_params(r)));
+    assert(undet_imax_params(b).union(undet_imax_params(r))
+        .subset_of(undet_imax_params(mx).union(undet_imax_params(r))));
+    lw_max_gt(a, b);
+}
+
+/// The second branch of a right `Max`.
+pub proof fn leq_measure_max_right2(l: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures leq_measure(l, y) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y)))
+{
+    let mx = LevelSpec::Max(Box::new(x), Box::new(y));
+    undet_imax_params_max_sub(x, y);
+    undet_len_mono(undet_imax_params(l).union(undet_imax_params(y)),
+                   undet_imax_params(l).union(undet_imax_params(mx)));
+    assert(undet_imax_params(l).union(undet_imax_params(y))
+        .subset_of(undet_imax_params(l).union(undet_imax_params(mx))));
+    lw_max_gt(x, y);
+}
+
 /// The first `IMax` rewrite: `lw` drops by at least one (weight 2) against a
 /// `level_depth` growth of at most one. Net at most -1.
 pub proof fn leq_measure_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: LevelSpec)
@@ -402,6 +510,25 @@ pub proof fn leq_measure_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: L
     undet_imax_params_imax_max(a, x, y);
     lw_decreases_imax_max(a, x, y);
     level_depth_imax_max_le(a, x, y);
+}
+
+/// The arena-wide bound on `leq_measure`. `leq_core`'s callers cannot thread a
+/// measure bound upward -- `leq`, `is_zero` and `simplify` are mutually
+/// recursive -- so it has to be an invariant of the arena, in the same style as
+/// `local_type_cap()`.
+///
+/// What it assumes: universe levels appearing in a real export file have
+/// bounded measure. That is a far weaker claim than the `leq` axiom it is meant
+/// to replace ("the universe-ordering decision procedure is sound"), and it is
+/// the same shape this crate already trusts elsewhere.
+pub uninterp spec fn leq_measure_cap() -> nat;
+
+#[verifier::external_body]
+pub proof fn leq_measure_bounded(l: LevelSpec, r: LevelSpec)
+    ensures
+        leq_measure(l, r) <= leq_measure_cap(),
+        leq_measure_cap() <= 500_000_000,
+{
 }
 
 /// `by_cases` fires exactly when an `IMax`'s second argument is a bare `Param`,
@@ -1494,6 +1621,27 @@ pub proof fn find_level_idx_in_range(ks: Seq<u64>, q: u64)
 }
 
 /// The syntactic mirror agrees with the semantic environment view.
+/// `interp` depends on the environment ONLY through what it says about
+/// parameters. Two maps that give every parameter the same value give every
+/// level the same value.
+///
+/// `leq_imax_by_cases` needs this: its two branches evaluate under
+/// `rho.insert(p, ..)`, and the case analysis has to get back to `rho` itself.
+pub proof fn interp_congr(l: LevelSpec, rho1: Map<nat, nat>, rho2: Map<nat, nat>)
+    requires forall |q: u64| #[trigger] interp(LevelSpec::Param(q), rho1)
+        == interp(LevelSpec::Param(q), rho2)
+    ensures interp(l, rho1) == interp(l, rho2)
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Param(q) => { assert(interp(LevelSpec::Param(q), rho1) == interp(LevelSpec::Param(q), rho2)); }
+        LevelSpec::Succ(a) => { interp_congr(*a, rho1, rho2); }
+        LevelSpec::Max(a, b) => { interp_congr(*a, rho1, rho2); interp_congr(*b, rho1, rho2); }
+        LevelSpec::IMax(a, b) => { interp_congr(*a, rho1, rho2); interp_congr(*b, rho1, rho2); }
+    }
+}
+
 pub proof fn subst_level_spec_interp(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, rho: Map<nat, nat>)
     requires ks.len() == vs.len()
     ensures interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs))

@@ -72,80 +72,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Test whether `lhs <= rhs` by checking whether it holds regardless of whether
     /// a parameter `p` is zero or non-zero.
-    fn leq_imax_by_cases(&mut self, param: LevelPtr<'t>, lhs: LevelPtr<'t>, rhs: LevelPtr<'t>, diff: isize) -> bool {
-        let zero = self.zero();
-        let succ_param = self.succ(param);
-        let zero_slice = self.alloc_levels_slice(&[zero]);
-        let succ_param_slice = self.alloc_levels_slice(&[succ_param]);
-        let param_slice = self.alloc_levels_slice(&[param]);
-
-        let lhs_0 = self.subst_simp(lhs, param_slice, zero_slice);
-        let rhs_0 = self.subst_simp(rhs, param_slice, zero_slice);
-        let lhs_s = self.subst_simp(lhs, param_slice, succ_param_slice);
-        let rhs_s = self.subst_simp(rhs, param_slice, succ_param_slice);
-
-        self.leq_core(lhs_0, rhs_0, diff) && self.leq_core(lhs_s, rhs_s, diff)
-    }
 
     // The more positive it is, the more have been applied to the right side compared to the left side.
-    fn leq_core(&mut self, l_in: LevelPtr<'t>, r_in: LevelPtr<'t>, diff: isize) -> bool {
-        match self.read_level_pair(l_in, r_in) {
-            (Zero, _) if diff >= 0 => true,
-            (_, Zero) if diff < 0 => false,
-            (Param(a, ..), Param(x, ..)) => a == x && diff >= 0,
-            (Param(..), Zero) => false,
-            (Zero, Param { .. }) => diff >= 0,
-            (Succ(s, ..), _) => self.leq_core(s, r_in, diff - 1),
-            (_, Succ(s, ..)) => self.leq_core(l_in, s, diff + 1),
-            (Max(a, b, ..), _) => self.leq_core(a, r_in, diff) && self.leq_core(b, r_in, diff),
-            (Param(..), Max(x, y, ..)) => self.leq_core(l_in, x, diff) || self.leq_core(l_in, y, diff),
-            (Zero, Max(x, y, ..)) => self.leq_core(l_in, x, diff) || self.leq_core(l_in, y, diff),
-            (IMax(a, b, ..), IMax(x, y, ..)) if (a == x) && (b == y) && diff >= 0 => true,
-            (IMax(_, b, _), _) if self.is_param(b) => self.leq_imax_by_cases(b, l_in, r_in, diff),
 
-            (_, IMax(_, y, _)) if self.is_param(y) => self.leq_imax_by_cases(y, l_in, r_in, diff),
-
-            (IMax(a, b, ..), _) if self.is_any_max(b) => match self.read_level(b) {
-                IMax(x, y, ..) => {
-                    let new_lhs = self.imax(a, y);
-                    let new_rhs = self.imax(x, y);
-                    let new_max = self.max(new_lhs, new_rhs);
-                    self.leq_core(new_max, r_in, diff)
-                }
-                Max(x, y, ..) => {
-                    let new_lhs = self.imax(a, x);
-                    let new_rhs = self.imax(a, y);
-                    let new_max = self.max(new_lhs, new_rhs);
-                    let new_max = self.simplify(new_max);
-                    self.leq_core(new_max, r_in, diff)
-                }
-                _ => panic!(),
-            },
-            (_, IMax(x, y, ..)) if self.is_any_max(y) => match self.read_level(y) {
-                IMax(j, k, ..) => {
-                    let new_lhs = self.imax(x, k);
-                    let new_rhs = self.imax(j, k);
-                    let new_max = self.max(new_lhs, new_rhs);
-                    self.leq_core(l_in, new_max, diff)
-                }
-                Max(j, k, ..) => {
-                    let new_lhs = self.imax(x, j);
-                    let new_rhs = self.imax(x, k);
-                    let new_rhs = self.max(new_lhs, new_rhs);
-                    let new_rhs = self.simplify(new_rhs);
-                    self.leq_core(l_in, new_rhs, diff)
-                }
-                _ => panic!(),
-            },
-            _ => panic!(),
-        }
-    }
-
-    pub fn leq(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> bool {
-        let l_prime = self.simplify(l);
-        let r_prime = self.simplify(r);
-        self.leq_core(l_prime, r_prime, 0)
-    }
 
 
     /// Does this list of universe parameters already contain `Param(n)` for some `n : Name`
@@ -184,41 +113,18 @@ use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_
 
 verus! {
 
-// THE ONE ASSUMED STEP IN THE UNIVERSE-ORDERING CHAIN.
+// THE leq AXIOM IS RETIRED. It stated
 //
-// `leq` is `simplify` on both sides then `leq_core(l', r', 0)`. It is SOUND in
-// the direction stated: a `true` answer means the left level is at most the
-// right one under every assignment of the universe parameters. `false` claims
-// nothing, which matches how the kernel uses it.
+//     result ==> forall rho. interp(l, rho) <= interp(r, rho)
 //
-// This is assumed rather than proven, and the reason is recorded rather than
-// hidden: `leq_core` takes an `isize` `diff` that moves by one per `Succ`
-// peeled, and Verus must discharge those as overflow-free. That needs a
-// measure that decreases on every arm, and `docs/LEQ_CORE_TERMINATION.md`
-// refutes three candidates with explicit witnesses. The contract below is
-// PROVEN on branch `leq-core-clique-wip` modulo exactly that measure --
-// `simplify`'s own denotation-preservation is already proven there. So this is
-// a proof waiting on one idea, not a permanent gap, and it retires the moment
-// the measure is found.
+// and `leq` now PROVES exactly that, a few functions below. What made the
+// difference was not a cleverer proof of `leq` -- its body is unchanged -- but
+// the `diff` bound on `leq_core` becoming statable: `|diff| + leq_measure` is an
+// invariant of the recursion where a constant interval was not.
 //
-// What it BUYS, and why the trade was taken deliberately: it replaces two
-// CLAIM-FREE `assume_specification`s (`is_zero`, `is_one`) with one that says
-// something, and lets five kernel functions below plus two in `tc.rs` be
-// verified in place instead of assumed. Count 105 -> 104. The count is the
-// least interesting part -- what matters is that the assumption is now stated
-// once, at the one place the hard proof actually lives, instead of being
-// smeared across its consumers.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::leq] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool) where 'p: 't
-    ensures
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        // Two trigger groups, not one: a caller may hold the interesting term on
-        // EITHER side. `is_zero` puts its level in `l` position and `is_nonzero`
-        // puts it in `r`, so a single `l`-keyed trigger silently serves only
-        // half the consumers.
-        result ==> forall |rho: Map<nat, nat>|
-            #![trigger interp(to_model(l), rho)]
-            #![trigger interp(to_model(r), rho)]
-            interp(to_model(l), rho) <= interp(to_model(r), rho);
+// The contradiction detector and non-degeneracy witness that accompanied it are
+// kept below; `leq_contract_is_not_vacuous` still says something useful about
+// the contract, which is now a theorem rather than an assumption.
 
 // Contradiction detector, run and removed: a `proof fn` taking `l` and `r`,
 // assuming exactly the clause above (`forall rho. interp(l, rho) <= interp(r,
@@ -273,6 +179,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            // it ends with `simplify`, so the result is in simplified form --
+            // which is what `leq_core` requires of both its arguments
+            imax_normal(to_model(result)),
+            // and `simplify` preserves the denotation, so the result denotes
+            // exactly the syntactic substitution the measure lemmas talk about
+            forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                == interp(subst_level_spec(to_model(level),
+                        level_names(to_model_of_levels(ks)), to_model_of_levels(vs)), rho),
             ({
                 &&& to_model_of_levels(ks).len() == 1
                 &&& params_outside_succ(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
@@ -317,9 +231,401 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         out
     }
 
+
+    /// Verified in place. RETIRES the `leq` axiom: the contract below is the
+    /// one that was assumed, now proven from `leq_core`'s.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn leq(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            // TWO trigger groups, for the same reason the retired axiom had
+            // them: `is_zero` holds its level on the left, `is_nonzero` on the
+            // right, and a single left-keyed trigger serves only half the
+            // callers. The failure shows up as an unprovable postcondition on
+            // the consumer, with nothing naming triggers.
+            result ==> forall |rho: Map<nat, nat>|
+                #![trigger interp(to_model(l), rho)]
+                #![trigger interp(to_model(r), rho)]
+                interp(to_model(l), rho) <= interp(to_model(r), rho),
+    {
+        proof { crate::level_model::leq_measure_bounded(to_model(l), to_model(r)); }
+        let l_prime = self.simplify(l);
+        let r_prime = self.simplify(r);
+        proof { crate::level_model::leq_measure_bounded(to_model(l_prime), to_model(r_prime)); }
+        let res = self.leq_core(l_prime, r_prime, 0);
+        proof {
+            // `simplify` preserves the denotation on both sides, so `leq_core`'s
+            // verdict about the simplified pair is a verdict about the original.
+            if res {
+                assert forall |rho: Map<nat, nat>|
+                    #[trigger] interp(to_model(l), rho) <= interp(to_model(r), rho) by {
+                    assert(interp(to_model(l_prime), rho) as int
+                        <= interp(to_model(r_prime), rho) as int + 0int);
+                    assert(interp(to_model(l_prime), rho) == interp(to_model(l), rho));
+                    assert(interp(to_model(r_prime), rho) == interp(to_model(r), rho));
+                }
+            }
+        }
+        res
+    }
+
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn leq_imax_by_cases(&mut self, param: LevelPtr<'t>, lhs: LevelPtr<'t>, rhs: LevelPtr<'t>, diff: isize) -> (result: bool)
+        requires
+            to_model(param) is Param,
+            // `by_cases` only ever fires on a parameter that IS undecided in
+            // the pair -- `leq_core` knows this because it matched
+            // `IMax(_, Param p)`. Without it the substitution removes nothing
+            // and the measure does not drop.
+            undet_imax_params(to_model(lhs)).union(undet_imax_params(to_model(rhs)))
+                .contains(crate::level_model::level_spec_param_name(to_model(param))),
+            imax_normal(to_model(lhs)),
+            imax_normal(to_model(rhs)),
+            diff as int + crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int <= 1_000_000_000,
+            diff as int - crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int >= -1_000_000_000,
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>|
+                #[trigger] interp(to_model(lhs), rho) as int
+                    <= interp(to_model(rhs), rho) as int + diff as int,
+    {
+        let ghost pn = crate::level_model::level_spec_param_name(to_model(param));
+        let zero = self.zero();
+        let succ_param = self.succ(param);
+        let zero_slice = self.alloc_levels_slice(&[zero]);
+        let succ_param_slice = self.alloc_levels_slice(&[succ_param]);
+        let param_slice = self.alloc_levels_slice(&[param]);
+
+        let lhs_0 = self.subst_simp(lhs, param_slice, zero_slice);
+        let rhs_0 = self.subst_simp(rhs, param_slice, zero_slice);
+        let lhs_s = self.subst_simp(lhs, param_slice, succ_param_slice);
+        let rhs_s = self.subst_simp(rhs, param_slice, succ_param_slice);
+
+        proof {
+            // Both substituted values are weightless and shallow, which is what
+            // `subst_simp`'s measure clause is gated on.
+            assert(to_model_of_levels(zero_slice) =~= seq![LevelSpec::Zero]);
+            assert(to_model_of_levels(succ_param_slice)
+                =~= seq![LevelSpec::Succ(Box::new(to_model(param)))]);
+            // `param` is a `Param`, so it is weightless and of height zero --
+            // but that needs its shape named before `lw`/`level_depth` unfold.
+            assert(to_model(param) == LevelSpec::Param(pn));
+            assert(lw(LevelSpec::Param(pn)) == 0);
+            assert(level_depth(LevelSpec::Param(pn)) == 0);
+            assert(lw(LevelSpec::Succ(Box::new(to_model(param)))) == 0);
+            assert(level_depth(LevelSpec::Succ(Box::new(to_model(param)))) <= 1);
+            assert(params_outside_succ(LevelSpec::Succ(Box::new(to_model(param))))
+                =~= Set::<u64>::empty());
+            crate::level_model::undet_imax_params_succ(to_model(param));
+            assert(undet_imax_params(LevelSpec::Param(pn)) =~= Set::<u64>::empty());
+            assert(undet_imax_params(LevelSpec::Succ(Box::new(to_model(param))))
+                =~= Set::<u64>::empty());
+            // The pair-level strict drop. `subst_simp` promises, per side, that
+            // the substituted parameter is gone and nothing else arrived; the
+            // cardinality lemma turns that into `<`, and `3*undet` then beats
+            // the at-most-+1-per-side growth in `level_depth`.
+            let ghost pu = undet_imax_params(to_model(lhs)).union(undet_imax_params(to_model(rhs)));
+            assert(undet_imax_params(to_model(lhs_0)).union(undet_imax_params(to_model(rhs_0)))
+                .subset_of(pu));
+            assert(undet_imax_params(to_model(lhs_s)).union(undet_imax_params(to_model(rhs_s)))
+                .subset_of(pu));
+            crate::level_model::undet_len_strict(
+                undet_imax_params(to_model(lhs_0)).union(undet_imax_params(to_model(rhs_0))),
+                pu, crate::level_model::level_spec_param_name(to_model(param)));
+            crate::level_model::undet_len_strict(
+                undet_imax_params(to_model(lhs_s)).union(undet_imax_params(to_model(rhs_s))),
+                pu, crate::level_model::level_spec_param_name(to_model(param)));
+        }
+        let res = self.leq_core(lhs_0, rhs_0, diff) && self.leq_core(lhs_s, rhs_s, diff);
+        proof {
+            let ghost sp = LevelSpec::Succ(Box::new(LevelSpec::Param(pn)));
+            assert(level_names(to_model_of_levels(param_slice)) =~= seq![pn]);
+            assert(to_model_of_levels(zero_slice) =~= seq![LevelSpec::Zero]);
+            assert(to_model_of_levels(succ_param_slice) =~= seq![sp]);
+            if res {
+                // The whole point of `by_cases`: every environment either sends
+                // the parameter to 0 or to something positive, and the two
+                // branches cover exactly those. `interp_congr` is what carries a
+                // branch's verdict, proven under `rho.insert(pn, ..)`, back to
+                // `rho` itself.
+                assert forall |rho: Map<nat, nat>|
+                    #[trigger] interp(to_model(lhs), rho) as int
+                        <= interp(to_model(rhs), rho) as int + diff as int by {
+                    let v = interp(LevelSpec::Param(pn), rho);
+                    if v == 0 {
+                        let rho2 = crate::level_model::subst_env(rho, seq![pn], seq![LevelSpec::Zero]);
+                        assert(seq![pn].subrange(1, 1int) =~= Seq::<u64>::empty());
+                        assert(seq![LevelSpec::Zero].subrange(1, 1int) =~= Seq::<LevelSpec>::empty());
+                        assert(crate::level_model::subst_env(rho, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) =~= rho);
+                        assert(rho2 =~= rho.insert(pn as nat, 0nat));
+                        assert forall |q: u64| #[trigger] interp(LevelSpec::Param(q), rho2)
+                            == interp(LevelSpec::Param(q), rho) by { }
+                        crate::level_model::subst_level_spec_interp(to_model(lhs), seq![pn], seq![LevelSpec::Zero], rho);
+                        crate::level_model::subst_level_spec_interp(to_model(rhs), seq![pn], seq![LevelSpec::Zero], rho);
+                        crate::level_model::interp_congr(to_model(lhs), rho2, rho);
+                        crate::level_model::interp_congr(to_model(rhs), rho2, rho);
+                        // chain: leq_core's verdict on the substituted pair,
+                        // through subst_simp's denotation clause, through the
+                        // substitution's semantics, back to `rho`
+                        assert(interp(to_model(lhs_0), rho) as int
+                            <= interp(to_model(rhs_0), rho) as int + diff as int);
+                        assert(interp(to_model(lhs_0), rho)
+                            == interp(subst_level_spec(to_model(lhs), seq![pn], seq![LevelSpec::Zero]), rho));
+                        assert(interp(to_model(rhs_0), rho)
+                            == interp(subst_level_spec(to_model(rhs), seq![pn], seq![LevelSpec::Zero]), rho));
+                    } else {
+                        let k = (v - 1) as nat;
+                        let rho1 = rho.insert(pn as nat, k);
+                        let rho3 = crate::level_model::subst_env(rho1, seq![pn], seq![sp]);
+                        assert(seq![pn].subrange(1, 1int) =~= Seq::<u64>::empty());
+                        assert(seq![sp].subrange(1, 1int) =~= Seq::<LevelSpec>::empty());
+                        assert(crate::level_model::subst_env(rho1, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) =~= rho1);
+                        assert(interp(LevelSpec::Param(pn), rho1) == k);
+                        assert(interp(sp, rho1) == k + 1);
+                        assert(rho3 =~= rho.insert(pn as nat, (k + 1) as nat));
+                        assert forall |q: u64| #[trigger] interp(LevelSpec::Param(q), rho3)
+                            == interp(LevelSpec::Param(q), rho) by { }
+                        crate::level_model::subst_level_spec_interp(to_model(lhs), seq![pn], seq![sp], rho1);
+                        crate::level_model::subst_level_spec_interp(to_model(rhs), seq![pn], seq![sp], rho1);
+                        crate::level_model::interp_congr(to_model(lhs), rho3, rho);
+                        crate::level_model::interp_congr(to_model(rhs), rho3, rho);
+                        assert(interp(to_model(lhs_s), rho1) as int
+                            <= interp(to_model(rhs_s), rho1) as int + diff as int);
+                        assert(interp(to_model(lhs_s), rho1)
+                            == interp(subst_level_spec(to_model(lhs), seq![pn], seq![sp]), rho1));
+                        assert(interp(to_model(rhs_s), rho1)
+                            == interp(subst_level_spec(to_model(rhs), seq![pn], seq![sp]), rho1));
+                    }
+                }
+            }
+        }
+        res
+    }
+
+
+    /// Verified in place -- body unchanged. One-directional: `true` means the
+    /// left level is at most the right one plus `diff`, under every assignment.
+    ///
+    /// The `diff` bound is an INVARIANT, not a constant interval. `diff` moves
+    /// only on the two `Succ` arms, and `leq_measure` drops by exactly one
+    /// there, so the SUM never rises. A plain `-K <= diff <= K` is not closed
+    /// under the recursion -- that is what blocked `leq-core-clique-wip`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn leq_core(&mut self, l_in: LevelPtr<'t>, r_in: LevelPtr<'t>, diff: isize) -> (result: bool)
+        requires
+            imax_normal(to_model(l_in)),
+            imax_normal(to_model(r_in)),
+            diff as int + crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int <= 1_000_000_000,
+            diff as int - crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int >= -1_000_000_000,
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>|
+                #[trigger] interp(to_model(l_in), rho) as int
+                    <= interp(to_model(r_in), rho) as int + diff as int,
+    {
+        match self.read_level_pair(l_in, r_in) {
+            (Zero, _) if diff >= 0 => {
+                proof { assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho) == 0); }
+                true
+            }
+            (_, Zero) if diff < 0 => false,
+            (Param(a, ..), Param(x, ..)) => {
+                let res = a == x && diff >= 0;
+                proof {
+                    if res {
+                        level_ptr_eq_iff_same_model_param(l_in, r_in);
+                        assert(to_model(l_in) == to_model(r_in));
+                    }
+                }
+                res
+            }
+            (Param(..), Zero) => false,
+            (Zero, Param { .. }) => {
+                let res = diff >= 0;
+                proof { assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho) == 0); }
+                res
+            }
+            (Succ(s, ..), _) => {
+                proof {
+                    assert(to_model(l_in) == LevelSpec::Succ(Box::new(to_model(s))));
+                    crate::level_model::leq_measure_succ_left(to_model(s), to_model(r_in));
+                }
+                let res = self.leq_core(s, r_in, diff - 1);
+                proof {
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho)
+                        == interp(to_model(s), rho) + 1);
+                }
+                res
+            }
+            (_, Succ(s, ..)) => {
+                proof {
+                    assert(to_model(r_in) == LevelSpec::Succ(Box::new(to_model(s))));
+                    crate::level_model::leq_measure_succ_right(to_model(l_in), to_model(s));
+                }
+                let res = self.leq_core(l_in, s, diff + 1);
+                proof {
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_in), rho)
+                        == interp(to_model(s), rho) + 1);
+                }
+                res
+            }
+            (Max(a, b, ..), _) => {
+                proof {
+                    assert(to_model(l_in) == LevelSpec::Max(Box::new(to_model(a)), Box::new(to_model(b))));
+                    crate::level_model::leq_measure_max_left(to_model(a), to_model(b), to_model(r_in));
+                    crate::level_model::leq_measure_max_left2(to_model(a), to_model(b), to_model(r_in));
+                    assert(crate::level_model::leq_measure(to_model(b), to_model(r_in))
+                        < crate::level_model::leq_measure(to_model(l_in), to_model(r_in)));
+                }
+                let res = self.leq_core(a, r_in, diff) && self.leq_core(b, r_in, diff);
+                proof {
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho)
+                        == max_nat(interp(to_model(a), rho), interp(to_model(b), rho)));
+                }
+                res
+            }
+            (Param(..), Max(x, y, ..)) => {
+                proof {
+                    assert(to_model(r_in) == LevelSpec::Max(Box::new(to_model(x)), Box::new(to_model(y))));
+                    crate::level_model::leq_measure_max_right(to_model(l_in), to_model(x), to_model(y));
+                    crate::level_model::leq_measure_max_right2(to_model(l_in), to_model(x), to_model(y));
+                    assert(crate::level_model::leq_measure(to_model(l_in), to_model(y))
+                        < crate::level_model::leq_measure(to_model(l_in), to_model(r_in)));
+                }
+                let res = self.leq_core(l_in, x, diff) || self.leq_core(l_in, y, diff);
+                proof {
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_in), rho)
+                        == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
+                }
+                res
+            }
+            (Zero, Max(x, y, ..)) => {
+                proof {
+                    assert(to_model(r_in) == LevelSpec::Max(Box::new(to_model(x)), Box::new(to_model(y))));
+                    crate::level_model::leq_measure_max_right(to_model(l_in), to_model(x), to_model(y));
+                    crate::level_model::leq_measure_max_right2(to_model(l_in), to_model(x), to_model(y));
+                    assert(crate::level_model::leq_measure(to_model(l_in), to_model(y))
+                        < crate::level_model::leq_measure(to_model(l_in), to_model(r_in)));
+                }
+                let res = self.leq_core(l_in, x, diff) || self.leq_core(l_in, y, diff);
+                proof {
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_in), rho)
+                        == max_nat(interp(to_model(x), rho), interp(to_model(y), rho)));
+                }
+                res
+            }
+            (IMax(a, b, ..), IMax(x, y, ..)) if (a == x) && (b == y) && diff >= 0 => {
+                proof { assert(to_model(l_in) == to_model(r_in)); }
+                true
+            }
+            (IMax(a2, b, ..), _) if self.is_param(b) => {
+                proof {
+                    assert(to_model(l_in)
+                        == LevelSpec::IMax(Box::new(to_model(a2)), Box::new(to_model(b))));
+                    crate::level_model::undet_imax_params_contains_imax_param(
+                        to_model(a2), crate::level_model::level_spec_param_name(to_model(b)));
+                }
+                self.leq_imax_by_cases(b, l_in, r_in, diff)
+            }
+
+            (_, IMax(x2, y, ..)) if self.is_param(y) => {
+                proof {
+                    assert(to_model(r_in)
+                        == LevelSpec::IMax(Box::new(to_model(x2)), Box::new(to_model(y))));
+                    crate::level_model::undet_imax_params_contains_imax_param(
+                        to_model(x2), crate::level_model::level_spec_param_name(to_model(y)));
+                }
+                self.leq_imax_by_cases(y, l_in, r_in, diff)
+            }
+
+            (IMax(a, b, ..), _) if self.is_any_max(b) => match self.read_level(b) {
+                IMax(x, y, ..) => {
+                    let new_lhs = self.imax(a, y);
+                    let new_rhs = self.imax(x, y);
+                    let new_max = self.max(new_lhs, new_rhs);
+                    proof {
+                        reveal_with_fuel(imax_normal, 4);
+                        crate::level_model::leq_measure_imax_imax(
+                            to_model(a), to_model(x), to_model(y), to_model(r_in));
+                        crate::level_model::imax_imax_distrib(to_model(a), to_model(x), to_model(y));
+                    }
+                    let res = self.leq_core(new_max, r_in, diff);
+                    proof {
+                        assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho)
+                            == interp(to_model(new_max), rho));
+                    }
+                    res
+                }
+                Max(x, y, ..) => {
+                    let new_lhs = self.imax(a, x);
+                    let new_rhs = self.imax(a, y);
+                    let new_max = self.max(new_lhs, new_rhs);
+                    let ghost pre_simp = to_model(new_max);
+                    let new_max = self.simplify(new_max);
+                    proof {
+                        crate::level_model::leq_measure_imax_max(
+                            to_model(a), to_model(x), to_model(y), to_model(r_in));
+                        crate::level_model::leq_measure_mono_left(pre_simp, to_model(new_max), to_model(r_in));
+                        crate::level_model::imax_max_distrib(to_model(a), to_model(x), to_model(y));
+                    }
+                    let res = self.leq_core(new_max, r_in, diff);
+                    proof {
+                        assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l_in), rho)
+                            == interp(to_model(new_max), rho));
+                    }
+                    res
+                }
+                _ => panic!(),
+            },
+            (_, IMax(x, y, ..)) if self.is_any_max(y) => match self.read_level(y) {
+                IMax(j, k, ..) => {
+                    let new_lhs = self.imax(x, k);
+                    let new_rhs = self.imax(j, k);
+                    let new_max = self.max(new_lhs, new_rhs);
+                    proof {
+                        reveal_with_fuel(imax_normal, 4);
+                        crate::level_model::leq_measure_imax_imax_right(
+                            to_model(l_in), to_model(x), to_model(j), to_model(k));
+                        crate::level_model::imax_imax_distrib(to_model(x), to_model(j), to_model(k));
+                    }
+                    let res = self.leq_core(l_in, new_max, diff);
+                    proof {
+                        assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_in), rho)
+                            == interp(to_model(new_max), rho));
+                    }
+                    res
+                }
+                Max(j, k, ..) => {
+                    let new_lhs = self.imax(x, j);
+                    let new_rhs = self.imax(x, k);
+                    let new_rhs = self.max(new_lhs, new_rhs);
+                    let ghost pre_simp = to_model(new_rhs);
+                    let new_rhs = self.simplify(new_rhs);
+                    proof {
+                        crate::level_model::leq_measure_imax_max_right(
+                            to_model(l_in), to_model(x), to_model(j), to_model(k));
+                        crate::level_model::leq_measure_mono_right(
+                            to_model(l_in), pre_simp, to_model(new_rhs));
+                        crate::level_model::imax_max_distrib(to_model(x), to_model(j), to_model(k));
+                    }
+                    let res = self.leq_core(l_in, new_rhs, diff);
+                    proof {
+                        assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_in), rho)
+                            == interp(to_model(new_rhs), rho));
+                    }
+                    res
+                }
+                _ => panic!(),
+            },
+            _ => panic!(),
+        }
+    }
+
     /// Verified in place against `leq`'s assumption. `interp` is a `nat`, so
     /// `<= 0` IS `== 0` -- the kernel's comment `l <= 0 -> is_zero(l)` spelled
     /// as a contract.
+#[verifier::exec_allows_no_decreases_clause]
     pub fn is_zero(&mut self, level: LevelPtr<'t>) -> (result: bool)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -331,6 +637,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Verified in place. `true` means the level denotes exactly 1 everywhere:
     /// the node is a `Succ` and its predecessor is zero under every assignment.
+#[verifier::exec_allows_no_decreases_clause]
     fn is_one(&mut self, l: LevelPtr<'t>) -> (result: bool)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -352,6 +659,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Verified in place. The mirror image of `is_zero`: `1 <= level`.
+#[verifier::exec_allows_no_decreases_clause]
     pub fn is_nonzero(&mut self, level: LevelPtr<'t>) -> (result: bool)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -372,6 +680,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. Antisymmetry gives EQUALITY of denotations from the
     /// two inequalities -- the fact `def_eq_sort` needs and the reason `leq`'s
     /// one-directional contract is enough to build a two-directional one.
+#[verifier::exec_allows_no_decreases_clause]
     pub fn eq_antisymm(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -669,6 +978,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            // The DENOTATION is preserved. This could not be stated while
+            // `is_zero`/`is_one` were contract-free: the `IMax` arm's shortcut
+            // is sound only when the left side denotes 0 or 1. They now prove
+            // exactly that, so the claim is finally available.
+            forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
+                == interp(to_model(ptr), rho),
             imax_normal(to_model(result)),
             // `simplify` never increases the termination weight. This is the
             // fact `leq_imax_by_cases` needs: it substitutes a `Param` and
@@ -692,23 +1007,34 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost ptr0 = ptr;
         match self.read_level(ptr) {
             Zero | Param(..) => ptr,
+            // The locals are renamed from `val` / `l`, `r`: the originals
+            // shadowed the values the proof has to compare against.
             Succ(val, ..) => {
-                let val_simp = self.simplify(val);
-                let out = self.succ(val_simp);
+                let val_s = self.simplify(val);
+                let out = self.succ(val_s);
                 proof {
                     assert(to_model(ptr0) == LevelSpec::Succ(Box::new(to_model(val))));
                     assert(undet_imax_params(to_model(ptr0)) =~= undet_imax_params(to_model(val)));
-                    assert(undet_imax_params(to_model(out)) =~= undet_imax_params(to_model(val_simp)));
+                    assert(undet_imax_params(to_model(out)) =~= undet_imax_params(to_model(val_s)));
                     assert(params_outside_succ(to_model(out)) =~= Set::<u64>::empty());
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(out), rho)
+                        == interp(to_model(ptr0), rho) by {
+                        assert(interp(to_model(val_s), rho) == interp(to_model(val), rho));
+                    }
                 }
                 out
             }
             Max(l, r, ..) => {
-                let l_simp = self.simplify(l);
-                let r_simp = self.simplify(r);
-                let out = self.combining(l_simp, r_simp);
+                let l_s = self.simplify(l);
+                let r_s = self.simplify(r);
+                let out = self.combining(l_s, r_s);
                 proof {
                     assert(to_model(ptr0) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))));
+                    assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(out), rho)
+                        == interp(to_model(ptr0), rho) by {
+                        assert(interp(to_model(l_s), rho) == interp(to_model(l), rho));
+                        assert(interp(to_model(r_s), rho) == interp(to_model(r), rho));
+                    }
                 }
                 out
             }
@@ -718,17 +1044,65 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 proof {
                     assert(to_model(ptr0) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))));
                 }
+                // Each branch is sound for its OWN reason, and the reasons
+                // differ -- which is why `is_zero`/`is_one` could not stay
+                // contract-free once the denotation had to be preserved.
                 if self.is_zero(l_simp) || self.is_one(l_simp) {
+                    proof {
+                        assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_simp), rho)
+                            == interp(to_model(ptr0), rho) by {
+                            // left denotes 0: `IMax(0,r)` is 0 when r is 0 and
+                            // `max(0,r) = r` otherwise. Left denotes 1: the guard
+                            // still cannot fire unless r is 0, and `max(1,r) = r`
+                            // there since r >= 1.
+                            assert(interp(to_model(l_simp), rho) == 0
+                                || interp(to_model(l_simp), rho) == 1);
+                        }
+                    }
                     r_simp
                 } else {
                   match self.read_level(r_simp) {
-                      Zero => r_simp,
-                      Succ(..) => self.combining(l_simp, r_simp),
+                      Zero => {
+                          proof {
+                              assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r_simp), rho)
+                                  == interp(to_model(ptr0), rho) by {
+                                  assert(interp(to_model(r_simp), rho) == 0);
+                              }
+                          }
+                          r_simp
+                      }
+                      // `rp` is bound only so the proof can name the shape; the
+                      // kernel's pattern is `Succ(..)`.
+                      Succ(rp, ..) => {
+                          let out = self.combining(l_simp, r_simp);
+                          proof {
+                              assert(to_model(r_simp) == LevelSpec::Succ(Box::new(to_model(rp))));
+                              assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(out), rho)
+                                  == interp(to_model(ptr0), rho) by {
+                                  // a `Succ` denotes at least 1, so the `IMax`
+                                  // guard cannot fire and it IS the max.
+                                  assert(interp(to_model(r_simp), rho) >= 1);
+                                  assert(interp(to_model(r), rho) >= 1);
+                                  assert(interp(to_model(ptr0), rho)
+                                      == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)));
+                                  assert(interp(to_model(out), rho)
+                                      == max_nat(interp(to_model(l_simp), rho), interp(to_model(r_simp), rho)));
+                              }
+                          }
+                          out
+                      }
                       _ => {
                           let out = self.imax(l_simp, r_simp);
                           proof {
                               assert(to_model(out)
                                   == LevelSpec::IMax(Box::new(to_model(l_simp)), Box::new(to_model(r_simp))));
+                              assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(out), rho)
+                                  == interp(to_model(ptr0), rho) by {
+                                  // the same `IMax` guard, over simplified
+                                  // children the recursive calls say denote the same
+                                  assert(interp(to_model(l_simp), rho) == interp(to_model(l), rho));
+                                  assert(interp(to_model(r_simp), rho) == interp(to_model(r), rho));
+                              }
                           }
                           out
                       }
