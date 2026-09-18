@@ -548,7 +548,45 @@ decreases `M`, so the sum decreases. No interval needs to be closed under ±1 �
 that was the thing that looked impossible, and it is only impossible *without*
 a measure.
 
-This is why §4 is the whole task. There is no second problem after it.
+### Correction: the `diff` bound does NOT follow for free
+
+The paragraph above says "carry `|diff| + M <= 1e9`" and treats it as immediate.
+It is not, and the gap is specific: **that inequality needs `M` to be a SCALAR**
+that strictly decreases on every arm moving `diff` and is non-increasing
+elsewhere. The measure §4 produces is **lexicographic**, and a sum needs one
+number.
+
+`diff` moves only on the two `Succ` arms. Arm by arm:
+
+| arm | `diff` | `undet` | `lw` | `level_depth` |
+|---|---|---|---|---|
+| `Succ` peel (either side) | ±1 | flat | flat | **decreases** |
+| `Max` arms | — | flat | **decreases** | decreases |
+| `IMax` rewrites | — | flat | **decreases** | **grows** (~+1) |
+| `by_cases` | — | **decreases** | flat | **grows**, by one `Succ` per occurrence of `p` |
+
+So no single component works, and the obvious collapse
+`M = undet*A + lw*B + depth` needs
+
+- `B >= 2`, to cover `depth` growing by about one at the `IMax` rewrites while
+  `lw` drops by at least one;
+- `A` greater than how much `lw*B + depth` can grow at `by_cases` — and there
+  `depth` grows by one `Succ` per OCCURRENCE of `p`, bounded only by the term
+  size.
+
+**So `A` needs a term-size ceiling hypothesis**, which propagates to `leq`,
+`is_zero` and `simplify` as a precondition. That is the cascade shape this
+project has learned to be wary of — and note the contrast with the `u16` counter
+earlier in `expr_arena_bridge.rs`, where the cascade was avoidable because every
+caller had a decline path. `leq_core` has none: it returns `bool` on the
+verdict path, so there is nothing to decline to.
+
+Another structural count does not rescue it: counting `Succ` nodes instead of
+depth fails the same two arms, since the `IMax` rewrite duplicates a subterm and
+`by_cases` adds a `Succ` per occurrence.
+
+**Concretely, the next design decision is**: accept a term-size ceiling on the
+clique, or find a scalar measure that needs none. Neither is started.
 
 ## 6. Order of work, if resumed
 
