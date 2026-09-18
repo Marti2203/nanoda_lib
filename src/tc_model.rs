@@ -37,7 +37,6 @@ use crate::env::{RecRule, Env};
 use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
 use crate::expr::{Expr, BinderStyle};
 use crate::level_arena_bridge::name_ptr_eq;
-use crate::level_arena_bridge::{verified_eq_antisymm, verified_eq_antisymm_many};
 use crate::util::LevelPtr;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
@@ -1649,7 +1648,7 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
         Some(l) => l,
         None => return None,
     };
-    let r = verified_eq_antisymm(ctx, lx, ly, fuel);
+    let r = ctx.eq_antisymm(lx, ly);
     Some(r)
 }
 
@@ -1682,7 +1681,7 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
     if !name_ptr_eq(x_name, y_name) {
         return false;
     }
-    verified_eq_antisymm_many(ctx, x_levels, y_levels, fuel)
+    ctx.eq_antisymm_many(x_levels, y_levels)
 }
 
 /// Real-arena counterpart to the START of `tc.rs::TypeChecker::def_eq`'s
@@ -4854,7 +4853,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
         }
         i += 1;
     }
-    if !verified_eq_antisymm_many(ctx, l_levels, r_levels, fuel) {
+    if !ctx.eq_antisymm_many(l_levels, r_levels) {
         return None;
     }
     proof {

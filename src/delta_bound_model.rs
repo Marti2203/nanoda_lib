@@ -85,7 +85,6 @@ use crate::expr_arena_bridge::expr_ptr_eq;
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
-use crate::level_arena_bridge::verified_leq;
 #[cfg(verus_only)]
 use crate::level_model::interp;
 #[cfg(verus_only)]
@@ -2127,7 +2126,7 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &En
     let rel = ctx.read_expr(r);
     if let Some(level) = expr_as_sort(&rel) {
         let zero = ctx.zero();
-        if verified_leq(ctx, level, zero, fuel) {
+        if ctx.leq(level, zero) {
             proof {
                 env_model_nofv_sub(*env);
                 pstep_star_env_weaken(env_model_nofv(*env), to_model_of_env(*env), to_model(ty), to_model(r));
@@ -3500,7 +3499,7 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, '
             }
             let lvl = match verified_sort_of_capped(ctx, env, memo, s, 32) { Some(v) => v, None => return None };
             if !is_prop {
-                if !verified_leq(ctx, lvl, codom, 100000) {
+                if !ctx.leq(lvl, codom) {
                     return None;
                 }
             }
@@ -3618,8 +3617,8 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     if nbinders == 0 {
         match expr_as_sort(&wl) {
             Some(lvl) => {
-                let le1 = verified_leq(ctx, lvl, codom, 100000);
-                let le2 = verified_leq(ctx, codom, lvl, 100000);
+                let le1 = ctx.leq(lvl, codom);
+                let le2 = ctx.leq(codom, lvl);
                 if le1 && le2 {
                     proof { assert(sort_marker(w, lvl, 0)); }
                     Some(true)

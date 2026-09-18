@@ -30,7 +30,6 @@ use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
 use crate::expr::BinderStyle;
-use crate::level_arena_bridge::verified_eq_antisymm_many;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 use crate::level_arena_bridge::name_ptr_eq;
@@ -59,7 +58,6 @@ use crate::expr_arena_bridge::expr_id;
 use crate::expr_arena_bridge::local_type_cap;
 #[cfg(verus_only)]
 use crate::beta_model::{max_var_below, subst_full_nlbv_bound_n, subst_full_depth_bound_n, nlbv_bound_implies_max_var_below, max_var_below_mono};
-use crate::level_arena_bridge::verified_leq;
 use crate::delta_bound_model::{verified_infer_shadow, verified_sort_of_capped};
 #[cfg(verus_only)]
 use crate::beta_model::subst_full_nlbv_bound;
@@ -676,7 +674,7 @@ pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
             }
             let lvl = match verified_sort_of_capped(ctx, env, memo, s, 32) { Some(v) => v, None => return None };
             let z = ctx.zero();
-            record = !verified_leq(ctx, lvl, z, 100000);
+            record = !ctx.leq(lvl, z);
         }
         // depth ceiling for `verified_inst`, taken the way `verified_ctor_ok`
         // takes it: the term's own size bounds its depth.
