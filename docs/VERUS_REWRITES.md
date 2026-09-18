@@ -146,6 +146,7 @@ re-checking if anything here is ever suspected:
 | 6 | `pi_telescope_size` | `src/expr.rs` | `while let` (uniformity with entry 5) | desugaring |
 | 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
 | 8 | `replace_pfx`, `get_pfx` | `src/name.rs` | or-pattern with a match guard; or-pattern needing per-arm unfolding | desugaring |
+| 9 | `abstr_pi_telescope`, `abstr_lambda_telescope` | `src/expr.rs` | slice patterns are unsupported outright | index walk |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -205,3 +206,25 @@ guarded arms. Order is preserved, so the two are equivalent.
 node's shape. Bodies are identical between the two arms.
 
 Both are the lowest-risk kind: no control flow changes, no reordering.
+
+
+### 9. The two kernel telescopes — `src/expr.rs`
+
+```ignore
+// original
+while let [tl @ .., binder] = binders { e = self.abstr_pi(*binder, e); binders = tl; }
+
+// now
+let mut n = binders.len();
+while n > 0 { e = self.abstr_pi(binders[n - 1], e); n = n - 1; }
+```
+
+Verus rejects slice patterns outright — `PatKind::Slice` is a flat
+`unsupported_err!` in `rust_to_vir_expr.rs`, not a proof difficulty. The index
+walk takes the same element in the same order.
+
+Risk: low, but check the direction if ever suspected. `[tl @ .., binder]` binds
+the LAST element, so the walk goes `binders[n-1]` downward — a telescope is
+built from the inside out. Getting this backwards would silently reverse the
+binder order, and the model contract (`abstr_pi_telescope_model`, which peels
+`drop_last`) is what pins it.

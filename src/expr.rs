@@ -462,25 +462,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// telescope while backing out.
     ///
     /// `[a, b, c], e` ~> `(fun (a b c) => e)`
-    pub(crate) fn abstr_lambda_telescope(&mut self, mut binders: &[ExprPtr<'t>], mut e: ExprPtr<'t>) -> ExprPtr<'t> {
-        while let [tl @ .., binder] = binders {
-            e = self.apply_lambda(*binder, e);
-            binders = tl;
-        }
-        e
-    }
 
     /// Abstract `e` with the binders in `binders`, creating a lambda
     /// telescope while backing out.
     ///
     /// `[a, b, c], e` ~> `(Pi (a b c) => e)`
-    pub(crate) fn abstr_pi_telescope(&mut self, mut binders: &[ExprPtr<'t>], mut e: ExprPtr<'t>) -> ExprPtr<'t> {
-        while let [tl @ .., binder] = binders {
-            e = self.abstr_pi(*binder, e);
-            binders = tl;
-        }
-        e
-    }
 
     pub(crate) fn has_nested_pfx(&self, e: ExprPtr<'t>, nested_pfx: NamePtr<'t>) -> bool {
         debug_assert_eq!("_nested", format!("{:?}", self.debug_print(nested_pfx)));
@@ -984,6 +970,110 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 unreachable!("Cannot apply lambda with non-local domain type")
             }
         }
+    }
+
+
+    /// Verified in place.
+    ///
+    /// VERUS-REWRITE(slice-pattern): the original peels with
+    /// `while let [tl @ .., binder] = binders`. Verus rejects slice patterns
+    /// outright (`PatKind::Slice` is a flat `unsupported_err!`), so the peel is
+    /// an index walk over the same slice, taking the same element each time.
+    ///
+    /// The ceiling is the one `abstr_pi` carries, summed over the telescope --
+    /// each step adds a `Bind` whose domain is that binder's TYPE.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn abstr_pi_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
+                ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+        ensures
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
+                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
+    {
+        let mut e = e0;
+        let mut n = binders.len();
+        while n > 0
+            invariant
+                n <= binders@.len(),
+                (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
+                    ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0))
+                        + (binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
+                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            decreases n
+        {
+            let ghost e_old = e;
+            let b = binders[n - 1];
+            proof { crate::expr_model::mul_ge_one(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat); }
+            e = self.abstr_pi(b, e);
+            proof {
+                // `abstr_pi` gives the SHAPE; the depth has to be read off it,
+                // and the domain is the binder's type, hence `local_type_wf`.
+                crate::expr_arena_bridge::local_type_wf(b);
+                crate::expr_model::abstr_full_depth(crate::expr_arena_bridge::to_model(e_old), seq![crate::expr_arena_bridge::expr_id(b)], 0);
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                    <= 1 + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e_old)));
+                crate::expr_model::mul_pred_step(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+                crate::expr_model::mul_add_distrib((binders@.len() - n) as nat, 1,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+            }
+            n = n - 1;
+        }
+        e
+    }
+
+    /// Verified in place. Identical to `abstr_pi_telescope` but building
+    /// lambdas; the model does not distinguish them.
+    ///
+    /// VERUS-REWRITE(slice-pattern): same as above.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn abstr_lambda_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
+                ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+        ensures
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
+                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
+    {
+        let mut e = e0;
+        let mut n = binders.len();
+        while n > 0
+            invariant
+                n <= binders@.len(),
+                (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
+                    ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0))
+                        + (binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
+                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            decreases n
+        {
+            let ghost e_old = e;
+            let b = binders[n - 1];
+            proof { crate::expr_model::mul_ge_one(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat); }
+            e = self.apply_lambda(b, e);
+            proof {
+                // `abstr_pi` gives the SHAPE; the depth has to be read off it,
+                // and the domain is the binder's type, hence `local_type_wf`.
+                crate::expr_arena_bridge::local_type_wf(b);
+                crate::expr_model::abstr_full_depth(crate::expr_arena_bridge::to_model(e_old), seq![crate::expr_arena_bridge::expr_id(b)], 0);
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                    <= 1 + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e_old)));
+                crate::expr_model::mul_pred_step(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+                crate::expr_model::mul_add_distrib((binders@.len() - n) as nat, 1,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+            }
+            n = n - 1;
+        }
+        e
     }
 
     /// Verified in place. Like `inst`, it RESETS its cache before descending, so
