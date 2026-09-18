@@ -201,18 +201,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.leq(one, level)
     }
     
-    pub fn may_be_prop(&self, level: LevelPtr<'t>) -> bool {
-        !self.is_never_zero(level)
-    }
-
-    pub fn is_never_zero(&self, level: LevelPtr<'t>) -> bool {
-        match self.read_level(level) {
-            Zero | Param(..) => false,
-            Succ(..) => true,
-            Max(l, r, ..) => self.is_never_zero(l) || self.is_never_zero(r),
-            IMax(_, r, ..) => self.is_never_zero(r),
-        }
-    }
 }
 
 
@@ -264,6 +252,66 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn is_param(&self, level: LevelPtr<'t>) -> (result: bool)
         ensures result == matches!(to_model(level), LevelSpec::Param(_))
     { matches!(self.read_level(level), Param(..)) }
+
+    /// Verified in place -- the body below is the kernel's, unchanged; only the
+    /// contract is new. One-directional on purpose: `true` means the level
+    /// denotes a nonzero universe under EVERY assignment, and `false` claims
+    /// nothing. That asymmetry is the function's actual job, and the kernel
+    /// relies on exactly that direction -- `may_be_prop` is its negation, and a
+    /// wrong `true` would let `proof_irrel_eq` treat a non-Prop as a Prop.
+    ///
+    /// The `IMax` arm is the one worth reading: `interp(IMax(a, b))` is `0` when
+    /// `interp(b)` is `0` and `max(a, b)` otherwise, so knowing only the RIGHT
+    /// side is nonzero is enough -- it both rules out the zero branch and gives
+    /// `max(a, b) >= b > 0`. Checking the left side would be unsound here, which
+    /// is why the kernel does not.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn is_never_zero(&self, level: LevelPtr<'t>) -> (result: bool)
+        ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
+    {
+        // VERUS-REWRITE(match-as-tail): the arms are the kernel's, unchanged.
+        // Each result is bound to a local so the arm's own fact can be stated
+        // about it -- a `match` in tail position carries no per-arm knowledge
+        // out to the postcondition.
+        match self.read_level(level) {
+            Zero | Param(..) => false,
+            Succ(..) => {
+                assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0);
+                true
+            }
+            Max(l, r, ..) => {
+                let res = self.is_never_zero(l) || self.is_never_zero(r);
+                proof {
+                    assert(to_model(level) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))));
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho)
+                        == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)));
+                }
+                assert(res ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0);
+                res
+            }
+            IMax(lhs, r, ..) => {
+                let res = self.is_never_zero(r);
+                proof {
+                    assert(to_model(level) == LevelSpec::IMax(Box::new(to_model(lhs)), Box::new(to_model(r))));
+                    // The whole point of the arm: a nonzero RIGHT side both rules
+                    // out `IMax`'s zero branch and dominates the `max`.
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho)
+                        == if interp(to_model(r), rho) == 0 { 0nat }
+                           else { max_nat(interp(to_model(lhs), rho), interp(to_model(r), rho)) });
+                }
+                assert(res ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0);
+                res
+            }
+        }
+    }
+
+    /// The negation, and the direction the kernel actually consumes: `false`
+    /// means "definitely not Prop". Verified in place, body unchanged.
+    pub fn may_be_prop(&self, level: LevelPtr<'t>) -> (result: bool)
+        ensures !result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
+    {
+        !self.is_never_zero(level)
+    }
 
     /// `max` that folds through matching `Succ`s instead of building a `Max`
     /// node over them. Verified AS WRITTEN -- the body below is the kernel's,
