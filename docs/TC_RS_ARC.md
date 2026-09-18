@@ -373,3 +373,33 @@ establishes that it does not.
 The five with mirrors are the right place to start: their contracts are known to
 be the right shape, having been proven once already against a parallel
 implementation.
+
+
+## 12. `quot.rs` is not a way around the cycle
+
+Worth recording because it looks like one. `quot.rs` holds just two functions
+(`check_eq`, `check_quot`), and a scan for cycle calls written as
+`self.<name>(` reports **none** — which would make an entire kernel file
+independently verifiable.
+
+Reading it says otherwise. Both functions construct a local `TypeChecker` and go
+through it:
+
+```rust
+let mut tc = TypeChecker::new(ctx, &env, Some(info));
+tc.assert_def_eq(info.ty, expected);
+```
+
+Six such calls, none of them spelled `self.`. **A cycle-membership scan keyed on
+`self.` misses every call made through a local receiver** — and this file is
+built entirely that way.
+
+It is also blocked several times over independently: 7 slice patterns
+(unsupported outright, register entry 9), 3 `assert_eq!` (uncompilable, entry
+2), 19 uses of the `arrow!`/`pi_telescope!` builder macros, and an
+`unreachable!`.
+
+So `quot.rs` waits on the cycle like everything else, and there is no fourth
+front. `level.rs` is complete bar a vstd gap, `tc.rs`'s independent set is
+exhausted, `inductive.rs` is open with its gate through, and `quot.rs` is not
+independent at all.
