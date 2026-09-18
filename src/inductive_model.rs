@@ -127,9 +127,32 @@ pub(crate) fn mk_recursor_declar<'t>(
 
 verus! {
 
+/// The three `Declar` payload types, registered OPAQUELY. Making `Declar`
+/// itself matchable needs its variants' payload types known to Verus, but not
+/// their contents -- `tc.rs`'s `is_ctor_app` and `get_applied_def` discriminate
+/// on the VARIANT and never look inside these. Keeping them `external_body`
+/// sidesteps their `Arc<[T]>` fields entirely.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
+pub struct ExInductiveData<'a>(crate::env::InductiveData<'a>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExConstructorData<'a>(crate::env::ConstructorData<'a>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExRecursorData<'a>(crate::env::RecursorData<'a>);
+
+/// TRANSPARENT as of 2026-09-18 -- was `external_body`. The variants have to be
+/// matchable for `tc.rs`'s declaration-kind tests to be verified in place; the
+/// payloads above stay opaque, so this costs three registrations and no new
+/// claims.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
 pub struct ExDeclar<'a>(Declar<'a>);
 
 

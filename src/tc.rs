@@ -1712,14 +1712,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn is_ctor_app(&self, e: ExprPtr<'t>) -> Option<NamePtr<'t>> {
-        if let Const { name, .. } = self.ctx.read_expr(self.ctx.unfold_apps_fun(e)) {
-            if let Some(Declar::Constructor { .. }) = self.env.get_declar(&name) {
-                return Some(name)
-            }
-        }
-        None
-    }
 
     fn iota_try_eta_struct(&mut self, ind_name: NamePtr<'t>, e: ExprPtr<'t>) -> ExprPtr<'t> {
         if (!self.env.can_be_struct(&ind_name)) || self.is_ctor_app(e).is_some() {
@@ -1805,16 +1797,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     // We only need the name and reducibility from this.
-    fn get_applied_def(&mut self, e: ExprPtr<'t>) -> Option<(NamePtr<'t>, ReducibilityHint)> {
-        if let Const { name, .. } = self.ctx.read_expr(self.ctx.unfold_apps_fun(e)) {
-            if let Some(Declar::Definition { info, hint, .. }) = self.env.get_declar(&name) {
-                return Some((info.name, *hint))
-            } else if let Some(Declar::Theorem { info, .. }) = self.env.get_declar(&name) {
-                return Some((info.name, ReducibilityHint::Opaque))
-            }
-        }
-        None
-    }
 
     /// For an expression already known to be an applied definition, unfold
     /// the definition and perform cheap reduction on the unfolded result.
@@ -2390,6 +2372,66 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             _ => false,
         }
+    }
+
+    /// Verified in place -- body unchanged. `Some(n)` means `e`'s SPINE HEAD is
+    /// a constant named `n`. The "and it is a constructor" half is deliberately
+    /// NOT claimed: `get_declar`'s specification is claim-free, so nothing is
+    /// known about the declaration, and saying otherwise would mean modelling
+    /// declaration kinds -- a much larger trust boundary than this needs.
+    ///
+    /// What callers actually use it for is the head name, and that is proven.
+    fn is_ctor_app(&self, e: ExprPtr<'t>) -> (result: Option<NamePtr<'t>>)
+        ensures result matches Some(n) ==>
+            crate::beta_model::spine_head(to_model_expr(e))
+                matches ExprSpec::Const(id, _) ==> id == crate::level_arena_bridge::name_id(n),
+    {
+        let head = self.ctx.unfold_apps_fun(e);
+        let head_el = self.ctx.read_expr(head);
+        if let Const { name, .. } = head_el {
+            proof {
+                // `read_expr` keys `const_name_of` on the read, and
+                // `unfold_apps_fun` says the pointer denotes the spine head.
+                assert(crate::expr_arena_bridge::is_const_shape(head));
+                assert(crate::expr_arena_bridge::const_name_of(head) == name);
+                crate::expr_arena_bridge::is_const_shape_model(head);
+                assert(to_model_expr(head)
+                    == ExprSpec::Const(crate::expr_arena_bridge::const_id(head),
+                                       crate::expr_arena_bridge::const_levels_vec(head)));
+            }
+            if let Some(Declar::Constructor { .. }) = self.env.get_declar(&name) {
+                return Some(name)
+            }
+        }
+        None
+    }
+
+    /// Verified in place -- body unchanged. `Some(..)` means `e`'s spine head is
+    /// a constant; nothing more.
+    ///
+    /// The returned NAME is the declaration's own (`info.name`), not the head
+    /// constant's, and with `get_declar` claim-free there is nothing that says
+    /// those agree. They do in practice -- a declaration is stored under its own
+    /// name -- but that is a fact about the environment, not about this
+    /// function, so it is not claimed here. One-directional as everywhere else:
+    /// `None` says nothing.
+    fn get_applied_def(&mut self, e: ExprPtr<'t>) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
+        ensures result is Some ==> crate::beta_model::spine_head(to_model_expr(e)) is Const,
+    {
+        let head = self.ctx.unfold_apps_fun(e);
+        let head_el = self.ctx.read_expr(head);
+        if let Const { name, .. } = head_el {
+            proof {
+                assert(crate::expr_arena_bridge::is_const_shape(head));
+                crate::expr_arena_bridge::is_const_shape_model(head);
+            }
+            if let Some(Declar::Definition { info, hint, .. }) = self.env.get_declar(&name) {
+                return Some((info.name, *hint))
+            } else if let Some(Declar::Theorem { info, .. }) = self.env.get_declar(&name) {
+                return Some((info.name, ReducibilityHint::Opaque))
+            }
+        }
+        None
     }
 
     /// Retrieve the recursor rule corresponding to the constructor used in the

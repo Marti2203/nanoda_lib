@@ -91,7 +91,8 @@ verified one at a time, today:
 | ✅ | `infer_sort` | done (`9217544`) |
 | ✅ | `get_rec_rule` | done (`39f38ba`) |
 | | `def_eq_sort`, `def_eq_const` | a contract for `eq_antisymm`/`eq_antisymm_many` → the `leq` clique (§5) |
-| | `infer_const`, `unfold_def`, `get_applied_def`, `is_ctor_app`, `mk_nullary_ctor`, `expand_eta_struct_aux` | `Env::get_declar` + a matchable `Declar` — one shared piece, but a NEW trust boundary, not just type specs. See §7. |
+| ✅ | `is_ctor_app`, `get_applied_def` | done — see §8 |
+| | `infer_const`, `unfold_def`, `mk_nullary_ctor`, `expand_eta_struct_aux` | each needs a claim ABOUT the declaration, not just its kind — see §8 |
 | | `failure_cache_contains`, `failure_cache_insert` | `FxHashSet` views; no verified code in this crate uses a HashSet yet |
 | | `pair_certified`, `smallest_infer_failure` | diagnostics, low value |
 
@@ -224,3 +225,37 @@ weighed against the alternatives rather than assumed to be the cheap option.
 
 The one genuinely free item in that group is `unfold_def`, whose every
 ingredient is already specified — and §6 explains why it is not free either.
+
+
+## 8. The `Env`/`Declar` boundary, done — and cheaper than §7 feared
+
+§7 said this was "a new trust boundary" and warned against assuming it was the
+cheap option. It landed for **one claim-free axiom and three opaque type
+registrations**, which is cheaper than that warning implied. Recording what the
+shape turned out to be:
+
+- `ExDeclar` went from `external_body` to **transparent**, so the kernel's
+  `Declar::Constructor { .. }` / `Declar::Definition { .. }` tests are matchable.
+- Its three payload types (`InductiveData`, `ConstructorData`, `RecursorData`)
+  are registered but stay **opaque**. Nothing reads inside them, and keeping
+  them opaque sidesteps their `Arc<[T]>` fields entirely. That is the trick:
+  a transparent enum does not need transparent payloads.
+- `Env::get_declar` gets a **claim-free** `assume_specification`. It states
+  nothing — no model map, no correspondence — and exists only so the calls can
+  be made at all.
+
+The claim-free choice is what keeps the price honest, and it bounds what these
+functions can promise. `is_ctor_app` proves its result names the expression's
+SPINE HEAD; it does NOT prove the declaration is a constructor, because nothing
+knows what a `Declar` is. `get_applied_def` proves only that the spine head is a
+constant — its returned name is the declaration's own `info.name`, and with
+`get_declar` claim-free nothing says that agrees with the head constant's name.
+It does agree in practice, but that is a fact about the environment rather than
+about the function, so it is not claimed.
+
+**The remaining four need more than the kind.** `infer_const` and `unfold_def`
+have to say what the declaration's TYPE or VALUE is, `mk_nullary_ctor` what its
+constructor list is. Those want the keyed model maps `env_model.rs` already has
+for other accessors (`get_declar_info_ty`, `get_declar_val`, ...), and a kernel
+body that calls the wrapper rather than matching inline. That is the larger
+boundary §7 was actually describing; it just is not what the kind tests needed.

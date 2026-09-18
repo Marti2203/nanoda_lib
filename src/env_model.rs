@@ -653,6 +653,18 @@ pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &Nam
 /// returns a plain `bool`, no struct field extraction required), same
 /// "plain per-call fact, no keyed map" convention as everywhere else on
 /// this page.
+/// CLAIM-FREE. It states nothing about what `get_declar` returns -- no model
+/// map, no correspondence -- and exists only so the kernel's own
+/// declaration-kind tests (`tc.rs`'s `is_ctor_app`, `get_applied_def`) can be
+/// verified in place at all. Those functions consume the VARIANT, which
+/// `ExDeclar` now makes matchable; what they promise their callers is about the
+/// expression's spine head, not about the environment.
+///
+/// Deliberately not given a contract: saying what a `Declar` IS would mean
+/// modelling declaration kinds, which is a much larger trust boundary than
+/// anything these two functions need.
+pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_declar] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b Declar<'a>>) where 'a: 'x;
+
 pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool) where 'a: 'x;
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
