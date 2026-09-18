@@ -373,7 +373,9 @@ clique — which the next section proposes an answer to.
 **Status: every edge checked on paper, the supporting lemmas proven, the
 `decreases` clauses NOT yet written.**
 
-> **`(|undet(args)|, lw(args), level_depth(args), phase)`, lexicographic**
+> **`(|undet(args)|, lw(args), phase, level_depth(args))`, lexicographic**
+>
+> — note the order: **phase comes BEFORE `level_depth`**, see the correction below
 >
 > where `args` means the sum/union over the function's level arguments, and
 >
@@ -398,8 +400,37 @@ All seventeen edges of the clique:
 |---|---|
 | `undet` | `by_cases -> leq_core` |
 | `lw` | both `Max` arms, both `IMax` rewrites, `leq_core -> simplify`, `simplify -> is_zero`/`is_one`, `simplify -> simplify` at `Max`/`IMax` |
+| phase | the seven edges with same-or-smaller arguments |
 | `level_depth` | `leq_core`'s `Succ` peels, `simplify`'s `Succ` arm — the two places `lw` is deliberately blind, since `lw(Succ a) == lw(a)` |
-| phase | the seven remaining edges, all same-or-smaller arguments |
+
+### Correction: `phase` must come before `level_depth`
+
+An earlier version of this section ordered the measure
+`(undet, lw, level_depth, phase)`. **That fails**, on exactly one edge:
+
+```
+subst_simp(level) -> simplify(subst_level(level, [p], [Succ(Param p)]))
+```
+
+Substituting `p := Succ(Param p)` adds a `Succ` node at every occurrence, so
+`level_depth` **grows** there. `undet` is non-increasing and `lw` is flat, so
+with `level_depth` third the tuple increases before any component strictly
+drops, and the edge is not discharged.
+
+With `phase` third it falls through to the phase drop (1 → 0) and is fine.
+Nothing else is affected: the two edges that genuinely need `level_depth`
+(`leq_core`'s `Succ` peels and `simplify`'s `Succ` arm) keep the same phase, so
+a later `level_depth` still decides them.
+
+`lw` being flat on that edge is itself a fact worth having: `lw_subst_preserved`
+proves that substituting a WEIGHTLESS value leaves `lw` exactly unchanged, and
+both of `by_cases`' values are weightless — `lw(Zero) == 0` and
+`lw(Succ(Param p)) == lw(Param p) == 0`, since `lw` ignores `Succ` by design.
+That is the same blindness that forces `level_depth` to exist, paying off in the
+other direction.
+
+All seventeen edges were re-checked mechanically under both orders: the
+corrected one discharges every edge, the documented one fails exactly this.
 
 `level_depth` is new (`level_model.rs`) and exists precisely for that third row.
 Its supporting facts are proven: `level_depth_succ`, `lw_max_gt`,

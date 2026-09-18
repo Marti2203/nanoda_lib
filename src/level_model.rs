@@ -349,6 +349,43 @@ pub proof fn undet_len_decreases_at_by_cases_pair(l: LevelSpec, r: LevelSpec, p:
         p);
 }
 
+/// The `subst_simp -> simplify` edge's `lw` column. Substituting a parameter by
+/// a WEIGHTLESS value leaves `lw` exactly unchanged -- and both of `by_cases`'
+/// values are weightless (`lw(Zero) == 0`, and `lw(Succ(Param p)) ==
+/// lw(Param p) == 0`, since `lw` ignores `Succ` by design).
+///
+/// This is what lets that edge fall through to the phase component. It cannot
+/// fall through to `level_depth`, which GROWS there -- see the ordering note in
+/// docs/LEQ_CORE_TERMINATION.md.
+pub proof fn lw_subst_preserved(l: LevelSpec, p: u64, v: LevelSpec)
+    requires lw(v) == 0
+    ensures lw(subst_level_spec(l, seq![p], seq![v])) == lw(l)
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Param(q) => {
+            if q == p {
+                assert(find_level_idx(seq![p], q) == Some(0nat));
+            } else {
+                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                    assert(seq![p][j] == p);
+                }
+                find_level_idx_no_match(seq![p], q);
+            }
+        }
+        LevelSpec::Succ(a) => { lw_subst_preserved(*a, p, v); }
+        LevelSpec::Max(a, b) => {
+            lw_subst_preserved(*a, p, v);
+            lw_subst_preserved(*b, p, v);
+        }
+        LevelSpec::IMax(a, b) => {
+            lw_subst_preserved(*a, p, v);
+            lw_subst_preserved(*b, p, v);
+        }
+    }
+}
+
 /// Structural height of a level. The THIRD component of the clique measure in
 /// docs/LEQ_CORE_TERMINATION.md -- it is what covers the two edges where both
 /// `undet_imax_params` and `lw` are flat: `leq_core`'s `Succ` peels and
