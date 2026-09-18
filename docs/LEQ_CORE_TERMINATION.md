@@ -574,19 +574,47 @@ So no single component works, and the obvious collapse
   `depth` grows by one `Succ` per OCCURRENCE of `p`, bounded only by the term
   size.
 
-**So `A` needs a term-size ceiling hypothesis**, which propagates to `leq`,
-`is_zero` and `simplify` as a precondition. That is the cascade shape this
-project has learned to be wary of — and note the contrast with the `u16` counter
-earlier in `expr_arena_bridge.rs`, where the cascade was avoidable because every
-caller had a decline path. `leq_core` has none: it returns `bool` on the
-verdict path, so there is nothing to decline to.
+#### …and a correction to THAT: no ceiling is needed
 
-Another structural count does not rescue it: counting `Succ` nodes instead of
-depth fails the same two arms, since the `IMax` rewrite duplicates a subterm and
-`by_cases` adds a `Succ` per occurrence.
+The paragraph above originally concluded that `A` needs a term-size ceiling,
+because `depth` "grows by one `Succ` per occurrence of `p`". **That is wrong,
+and the error is a specific confusion worth naming: it is true of SIZE and
+false of DEPTH.** `level_depth` is a `max`, not a sum. Substituting
+`p := Succ(Param p)` at a hundred occurrences still raises the height by at
+most one, because every path only gains the one `Succ` at its leaf.
 
-**Concretely, the next design decision is**: accept a term-size ceiling on the
-clique, or find a scalar measure that needs none. Neither is started.
+Proven (`level_model.rs`):
+
+| lemma | bound |
+|---|---|
+| `level_depth_subst_le` | `depth(subst(l, p, v)) <= depth(l) + 1` when `depth(v) <= 1` — and both `by_cases` values qualify (`depth(Zero) = 0`, `depth(Succ(Param p)) = 1`) |
+| `level_depth_imax_imax_le` | the `IMax`/`IMax` rewrite raises height by at most 1 — duplicating `y` costs nothing under a `max` |
+| `level_depth_imax_max_le` | same for the `IMax`/`Max` rewrite |
+
+So every growth is bounded by **one**, and the collapse needs no ceiling:
+
+> **`M = 2·|undet(l) ∪ undet(r)| + 2·(lw(l) + lw(r)) + depth(l) + depth(r)`**
+
+| arm | change in `M` |
+|---|---|
+| `Succ` peel | `undet` flat, `lw` flat, `depth` −1 → **−1** |
+| `Max` arms | `lw` −≥1 → −2, `depth` non-increasing → **≤ −2** |
+| `IMax` rewrites | `lw` −≥1 → −2, `depth` +≤1 → **≤ −1** |
+| `by_cases` | `undet` −≥1 → −2, `lw` flat, `depth` +≤1 → **≤ −1** |
+
+Every arm strictly decreases, `M` is a single `nat`, and §5's
+`|diff| + M <= 1e9` therefore works as originally written — `diff` moves only on
+the `Succ` arms, where `M` drops by one, so the sum never rises.
+
+**One gap remains**: `simplify` is proven non-growing for `undet` and `lw` but
+not yet for `level_depth`. `by_cases` re-simplifies, so that clause is needed
+before `M` is airtight. It should be the same shape as the two already on
+`simplify`, and `combining` will need it first.
+
+So the answer to "ceiling or scalar measure" is **scalar measure, no ceiling** —
+which is the outcome worth having, since a ceiling on `leq_core` could not have
+been discharged the way the `u16` counter's was: `leq_core` returns `bool` on
+the verdict path and has nothing to decline to.
 
 ## 6. Order of work, if resumed
 

@@ -403,6 +403,84 @@ pub open spec fn level_depth(l: LevelSpec) -> nat
     }
 }
 
+/// Substituting a SHALLOW value raises the HEIGHT by at most one, however many
+/// occurrences there are. `level_depth` is a `max`, not a sum -- that is the
+/// whole point, and it is what makes a SCALAR measure possible with no
+/// term-size ceiling.
+pub proof fn level_depth_subst_le(l: LevelSpec, p: u64, v: LevelSpec)
+    requires level_depth(v) <= 1
+    ensures level_depth(subst_level_spec(l, seq![p], seq![v])) <= level_depth(l) + 1
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Param(q) => {
+            if q == p {
+                assert(find_level_idx(seq![p], q) == Some(0nat));
+            } else {
+                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                    assert(seq![p][j] == p);
+                }
+                find_level_idx_no_match(seq![p], q);
+            }
+        }
+        LevelSpec::Succ(a) => { level_depth_subst_le(*a, p, v); }
+        LevelSpec::Max(a, b) => {
+            level_depth_subst_le(*a, p, v);
+            level_depth_subst_le(*b, p, v);
+        }
+        LevelSpec::IMax(a, b) => {
+            level_depth_subst_le(*a, p, v);
+            level_depth_subst_le(*b, p, v);
+        }
+    }
+}
+
+/// `IMax(a, IMax(x,y)) -> Max(IMax(a,y), IMax(x,y))` raises the height by at
+/// most one -- again because `level_depth` maxes rather than sums, so
+/// duplicating `y` costs nothing.
+pub proof fn level_depth_imax_imax_le(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures level_depth(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+        <= level_depth(LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))) + 1
+{
+    let da = level_depth(a); let dx = level_depth(x); let dy = level_depth(y);
+    reveal_with_fuel(level_depth, 3);
+    assert(level_depth(LevelSpec::IMax(Box::new(x), Box::new(y))) == 1 + max_nat(dx, dy));
+    assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(y))) == 1 + max_nat(da, dy));
+    assert(level_depth(LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+        == 1 + max_nat(1 + max_nat(da, dy), 1 + max_nat(dx, dy)));
+    assert(level_depth(LevelSpec::IMax(
+        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+        == 1 + max_nat(da, 1 + max_nat(dx, dy)));
+}
+
+/// `IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))`, same bound, same reason.
+pub proof fn level_depth_imax_max_le(a: LevelSpec, x: LevelSpec, y: LevelSpec)
+    ensures level_depth(LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
+        <= level_depth(LevelSpec::IMax(
+            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y))))) + 1
+{
+    let da = level_depth(a); let dx = level_depth(x); let dy = level_depth(y);
+    reveal_with_fuel(level_depth, 3);
+    assert(level_depth(LevelSpec::Max(Box::new(x), Box::new(y))) == 1 + max_nat(dx, dy));
+    assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(x))) == 1 + max_nat(da, dx));
+    assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(y))) == 1 + max_nat(da, dy));
+    assert(level_depth(LevelSpec::Max(
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
+        == 1 + max_nat(1 + max_nat(da, dx), 1 + max_nat(da, dy)));
+    assert(level_depth(LevelSpec::IMax(
+        Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))))
+        == 1 + max_nat(da, 1 + max_nat(dx, dy)));
+}
+
 /// The `Succ`-peel edges: `lw` is flat there, `level_depth` is not.
 pub proof fn level_depth_succ(a: LevelSpec)
     ensures level_depth(LevelSpec::Succ(Box::new(a))) > level_depth(a)
