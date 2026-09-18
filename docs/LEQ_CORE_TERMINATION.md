@@ -254,26 +254,41 @@ and the four structural arm facts are **proven**:
 | `undet_imax_params_imax_imax` | `IMax(a,IMax(x,y)) -> Max(IMax(a,y),IMax(x,y))` is non-increasing; `x`'s params leave as `x` moves out of second position |
 | `undet_imax_params_imax_max` | `IMax(a,Max(x,y)) -> Max(IMax(a,x),IMax(a,y))` is **exactly equal** — which is what lets the count lead the order |
 
-So every arm of `leq_core` EXCEPT `by_cases` is settled for the first component.
-Two things remain, and they are not the same size:
+**The `by_cases` arm is proven too** — the step all three earlier candidates
+died on. Three more lemmas, all verified:
 
-1. **The `by_cases` decrease — the heart of it.** Needs a substitution lemma:
-   after replacing `Param p` by `Zero` or by `Succ(Param p)` throughout,
-   `p` is not in `undet_imax_params` of the result. The `Zero` case erases every
-   occurrence; the `Succ` case puts every occurrence under a `Succ`, and
-   `params_outside_succ` is blind underneath one by construction. This should
-   follow from the definitions plus `subst_level_spec`, and it is where the
-   candidate earns its keep.
-2. **`simplify` cannot grow the set.** The argument: it creates no new `IMax`
-   nodes (its only producer is `imax(l_simp, r_simp)` from an existing one), no
-   new `Param`s, and never deletes a `Succ` in a way that exposes a parameter --
-   `combining`'s `Succ`/`Succ` fold moves a `Succ` OUTWARD, which keeps
-   everything beneath it covered. Each clause is a lemma, not an observation.
+| lemma | says |
+|---|---|
+| `params_outside_succ_subst_single` | substituting `p := v`, where `v` has no `p` outside a `Succ`, leaves no `p` outside a `Succ` |
+| `undet_imax_params_subst_single` | the same for the measure itself; its `IMax` case is where `params_outside_succ` does the work |
+| `undet_imax_params_by_cases_drops` | instantiated at `by_cases`' two actual values: after `p := Zero` **and** after `p := Succ(Param p)`, `p` is not in the set |
+| `undet_imax_params_subst_no_growth` | and nothing ELSE arrives — substitution is structural, so the set can only shrink |
 
-Do (1) first: it is the step both earlier candidates died on, in opposite
-directions, and where this one would die too if it is wrong. (2) is the larger
-job but the more mechanical one, and `simplify` is already verified in place, so
-it is an extra `ensures` rather than a new proof from nothing.
+The last two together are the strict decrease: `p` was in the set (that is why
+`by_cases` fired — it fires on an `IMax` whose second argument is a `Param`),
+`p` is not in it afterwards, and no other parameter entered. A strict subset of
+a finite set has smaller cardinality.
+
+Both branch values satisfy the hypotheses, for the two different reasons the
+candidate turns on: `Zero` erases every occurrence, and `Succ(Param p)` keeps
+them all but puts each under a `Succ`, where `params_outside_succ` is blind by
+construction. That second line is precisely what the refuted subtree variant
+could not see.
+
+### One thing left
+
+**`simplify` cannot grow the set.** `by_cases` re-simplifies after substituting,
+so the decrease above only survives if `simplify` does not undo it. The
+argument: `simplify` creates no new `IMax` nodes (its only producer is
+`imax(l_simp, r_simp)` from an existing one), no new `Param`s, and never deletes
+a `Succ` in a way that exposes a parameter — `combining`'s `Succ`/`Succ` fold
+moves a `Succ` OUTWARD, which keeps everything beneath it covered. Each clause
+is a lemma, not an observation.
+
+This is the larger job of the two but the more mechanical one, and `simplify` is
+already verified in place, so it is an extra `ensures` on an existing proof
+rather than a proof from nothing. It is also the last thing standing between
+this candidate and the first component of the measure being real.
 
 Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
 is finite, which is why `imax_params_finite` now raises a warning.

@@ -383,6 +383,143 @@ pub proof fn undet_imax_params_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec
     assert(lhs =~= rhs);
 }
 
+/// THE `by_cases` STEP, first half. Substituting `p := v` throughout, where `v`
+/// itself has no `p` outside a `Succ`, leaves no `p` outside a `Succ`.
+pub proof fn params_outside_succ_subst_single(l: LevelSpec, p: u64, v: LevelSpec)
+    requires !params_outside_succ(v).contains(p)
+    ensures !params_outside_succ(subst_level_spec(l, seq![p], seq![v])).contains(p)
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Succ(_) => {}
+        LevelSpec::Param(q) => {
+            if q == p {
+                assert(find_level_idx(seq![p], q) == Some(0nat));
+            } else {
+                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                    assert(seq![p][j] == p);
+                }
+                find_level_idx_no_match(seq![p], q);
+            }
+        }
+        LevelSpec::Max(a, b) => {
+            params_outside_succ_subst_single(*a, p, v);
+            params_outside_succ_subst_single(*b, p, v);
+        }
+        LevelSpec::IMax(a, b) => {
+            params_outside_succ_subst_single(*a, p, v);
+            params_outside_succ_subst_single(*b, p, v);
+        }
+    }
+}
+
+/// THE `by_cases` STEP, second half -- and the reason this candidate exists.
+///
+/// After `by_cases` substitutes its parameter, that parameter is GONE from the
+/// measure's first component. Both of the values it substitutes satisfy the
+/// hypotheses trivially, and for the same structural reason:
+///
+///   `p := Zero`            -- erases every occurrence
+///   `p := Succ(Param p)`   -- keeps them, but every one is now under a `Succ`,
+///                             and both predicates are blind underneath one
+///
+/// The corollary below instantiates exactly those two.
+pub proof fn undet_imax_params_subst_single(l: LevelSpec, p: u64, v: LevelSpec)
+    requires
+        !params_outside_succ(v).contains(p),
+        !undet_imax_params(v).contains(p),
+    ensures !undet_imax_params(subst_level_spec(l, seq![p], seq![v])).contains(p)
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Param(q) => {
+            if q == p {
+                assert(find_level_idx(seq![p], q) == Some(0nat));
+            } else {
+                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                    assert(seq![p][j] == p);
+                }
+                find_level_idx_no_match(seq![p], q);
+            }
+        }
+        LevelSpec::Succ(a) => { undet_imax_params_subst_single(*a, p, v); }
+        LevelSpec::Max(a, b) => {
+            undet_imax_params_subst_single(*a, p, v);
+            undet_imax_params_subst_single(*b, p, v);
+        }
+        LevelSpec::IMax(a, b) => {
+            undet_imax_params_subst_single(*a, p, v);
+            undet_imax_params_subst_single(*b, p, v);
+            // the third union member, which is where `params_outside_succ` --
+            // and therefore the whole candidate -- does its work
+            params_outside_succ_subst_single(*b, p, v);
+        }
+    }
+}
+
+/// The other half of a STRICT decrease: `p` leaving is only progress if nothing
+/// else arrives. Substitution is structural -- it rewrites `Param p` leaves and
+/// moves no other parameter -- so the set can only shrink.
+pub proof fn undet_imax_params_subst_no_growth(l: LevelSpec, p: u64, v: LevelSpec)
+    requires
+        params_outside_succ(v) =~= Set::<u64>::empty(),
+        undet_imax_params(v) =~= Set::<u64>::empty(),
+    ensures
+        undet_imax_params(subst_level_spec(l, seq![p], seq![v]))
+            .subset_of(undet_imax_params(l)),
+        params_outside_succ(subst_level_spec(l, seq![p], seq![v]))
+            .subset_of(params_outside_succ(l)),
+    decreases l
+{
+    match l {
+        LevelSpec::Zero => {}
+        LevelSpec::Param(q) => {
+            if q == p {
+                assert(find_level_idx(seq![p], q) == Some(0nat));
+            } else {
+                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                    assert(seq![p][j] == p);
+                }
+                find_level_idx_no_match(seq![p], q);
+            }
+        }
+        LevelSpec::Succ(a) => { undet_imax_params_subst_no_growth(*a, p, v); }
+        LevelSpec::Max(a, b) => {
+            undet_imax_params_subst_no_growth(*a, p, v);
+            undet_imax_params_subst_no_growth(*b, p, v);
+        }
+        LevelSpec::IMax(a, b) => {
+            undet_imax_params_subst_no_growth(*a, p, v);
+            undet_imax_params_subst_no_growth(*b, p, v);
+        }
+    }
+}
+
+/// `by_cases`' two branches, instantiated. This is the strict-decrease fact the
+/// first component of the measure needs, modulo `simplify` non-growth.
+pub proof fn undet_imax_params_by_cases_drops(l: LevelSpec, p: u64)
+    ensures
+        !undet_imax_params(subst_level_spec(l, seq![p], seq![LevelSpec::Zero])).contains(p),
+        !undet_imax_params(subst_level_spec(l, seq![p],
+            seq![LevelSpec::Succ(Box::new(LevelSpec::Param(p)))])).contains(p),
+{
+    // Both branch values satisfy the hypotheses, and for the two different
+    // reasons the whole candidate turns on.
+    assert(params_outside_succ(LevelSpec::Zero) =~= Set::<u64>::empty());
+    assert(undet_imax_params(LevelSpec::Zero) =~= Set::<u64>::empty());
+    undet_imax_params_subst_single(l, p, LevelSpec::Zero);
+
+    let sp = LevelSpec::Succ(Box::new(LevelSpec::Param(p)));
+    // `params_outside_succ` is empty at a `Succ` BY CONSTRUCTION -- this is the
+    // line that distinguishes this candidate from the refuted subtree variant.
+    assert(params_outside_succ(sp) =~= Set::<u64>::empty());
+    assert(undet_imax_params(sp) =~= undet_imax_params(LevelSpec::Param(p)));
+    assert(undet_imax_params(sp) =~= Set::<u64>::empty());
+    undet_imax_params_subst_single(l, p, sp);
+}
+
 /// Every parameter name occurring anywhere in a level. Distinct from
 /// `imax_params` below, which counts only those in an `IMax`'s SECOND
 /// position -- that one exists for a termination measure, this one for
