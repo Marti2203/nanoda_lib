@@ -1082,7 +1082,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
     {
         proof {
-            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_u16_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
         }
         if !self.has_fvars(e) {
@@ -1252,7 +1252,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let ghost ids = crate::expr_arena_bridge::local_ids(locals@);
         proof {
-            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
         }
         if !self.has_fvars(e) {
@@ -1450,7 +1450,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let ghost sm = crate::expr_arena_bridge::ptr_models(substs@);
         proof {
-            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
         }
         if self.num_loose_bvars(e) <= offset {
@@ -1596,7 +1596,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::expr_arena_bridge::dsubst_cache_sound(*final(self)),
     {
         proof {
-            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_triple_obeys_key_model::<
                 &'t crate::expr::Expr<'t>,
                 &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
@@ -1666,7 +1666,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost names = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks));
         let ghost vals = crate::level_arena_bridge::to_model_of_levels(vs);
         proof {
-            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_triple_obeys_key_model::<
                 &'t crate::expr::Expr<'t>,
                 &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,

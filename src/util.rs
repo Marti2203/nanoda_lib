@@ -787,18 +787,18 @@ impl<'t> SortedPair<'t> {
     }
 }
 
-pub(crate) struct TcCache<'t> {
-    pub(crate) infer_cache_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
-    pub(crate) infer_cache_no_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
-    pub(crate) whnf_cache: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
-    pub(crate) whnf_no_unfolding_cache: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
-    pub(crate) eq_cache: FxHashSet<SortedPair<'t>>,
+pub struct TcCache<'t> {
+    pub infer_cache_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
+    pub infer_cache_no_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
+    pub whnf_cache: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
+    pub whnf_no_unfolding_cache: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
+    pub eq_cache: FxHashSet<SortedPair<'t>>,
     /// A cache of congruence failures during the lazy delta step procedure.
-    pub(crate) congr_fail_cache: FxHashSet<SortedPair<'t>>,
+    pub congr_fail_cache: FxHashSet<SortedPair<'t>>,
     /// per-declaration memo of `def_eq` calls that returned `false` (keyed by the ordered pair and the eager-mode flag).
-    pub(crate) defeq_fail_cache: FxHashSet<(ExprPtr<'t>, ExprPtr<'t>, bool)>,
+    pub defeq_fail_cache: FxHashSet<(ExprPtr<'t>, ExprPtr<'t>, bool)>,
     /// Strong reduction is not used during type-checking, this is more of a library/inspection feature.
-    pub(crate) strong_cache: UniqueHashMap<(ExprPtr<'t>, bool, bool), ExprPtr<'t>>,
+    pub strong_cache: UniqueHashMap<(ExprPtr<'t>, bool, bool), ExprPtr<'t>>,
 }
 
 impl<'t> TcCache<'t> {

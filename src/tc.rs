@@ -56,7 +56,7 @@ pub(crate) enum InferFlag {
 }
 
 pub struct TypeChecker<'x, 't, 'p> {
-    pub(crate) ctx: &'x mut TcCtx<'t, 'p>,
+    pub ctx: &'x mut TcCtx<'t, 'p>,
     /// An immutable reference to an environment, which contains declarations and notation.
     /// To accommodate the temporary declarations created while checking nested inductives,
     /// the environment may have a temporary extension which also holds declarations, and
@@ -67,22 +67,22 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// outstanding references to environment declarations. Rust can tell that borrows
     /// of different struct fields are exclusive, but it can't analyze what fields of a given
     /// field's type are being exclusively borrowed.
-    pub(crate) env: &'x Env<'x, 't>,
+    pub env: &'x Env<'x, 't>,
     /// Shadow-only (`NANODA_SHADOW=1`): the certified whnf's memo, whose
     /// entries are certificates carrying their own reduction claim. Same
     /// lifetime as `tc_cache`, for the same reason -- weak head normal forms
     /// depend on the environment. Never read by the verdict path.
-    pub(crate) shadow_memo: crate::tc_model::WhnfMemo<'x, 't>,
+    pub shadow_memo: crate::tc_model::WhnfMemo<'x, 't>,
     /// diagnostics: the uncertified-event count when the current `def_eq`
     /// call was entered
-    shadow_root_entry: u64,
+    pub shadow_root_entry: u64,
     /// The caches for things like inference, reduction, and equality checking.
-    pub(crate) tc_cache: TcCache<'t>,
+    pub tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
     /// contain the universe parameters of that declaration. This is used in a couple of places
     /// to make sure that all of the universe paramters actually used in a declaration `d` are
     /// properly represented in the declaration's uparams info.
-    pub(crate) declar_info: Option<DeclarInfo<'t>>,
+    pub declar_info: Option<DeclarInfo<'t>>,
 }
 
 impl<'p> ExportFile<'p> {

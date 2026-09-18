@@ -40,6 +40,31 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+
+/// `TypeChecker`'s composite field types, registered so `TypeChecker` itself can
+/// be a TRANSPARENT `external_type_specification` -- the same first step that
+/// `TcCtx` needed, and the beachhead for anything in `tc.rs`.
+///
+/// `TcCache` is transparent, so all five of its caches have a `Map` view.
+/// Checked with a throwaway probe on `whnf_cache` and `infer_cache_check`,
+/// which verified. `UniqueHashMap` is `HashMap<K, V, BuildHasherDefault<_>>`,
+/// the same shape as `FxHashMap`, so vstd's specifications apply unchanged --
+/// the only thing it needed was `build_hasher_default_valid` covering a second
+/// hasher, which is why that axiom is now generic in `H`.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExUniqueHasher(crate::unique_hasher::UniqueHasher);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExTcCache<'t>(crate::util::TcCache<'t>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExSortedPair<'a>(crate::util::SortedPair<'a>);
+
 #[cfg(verus_only)]
 use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
 
@@ -54,13 +79,18 @@ use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
 // below.
 // ---------------------------------------------------------------------
 
-/// `FxHasher` is a deterministic, state-free hasher and `BuildHasherDefault`
-/// builds it from `Default`, so every builder produces the same hasher -- which
-/// is what `builds_valid_hashers` asserts. Unlike `RandomState` (which vstd can
-/// prove this for) there is no seed to vary.
+/// `BuildHasherDefault<H>` builds every hasher from `H::default()`, so the
+/// builder itself contributes no variation -- which is what
+/// `builds_valid_hashers` asserts. vstd can prove this only for `RandomState`.
+///
+/// Stated for ALL `H` rather than per hasher, which covers both `FxHasher` and
+/// `UniqueHasher` with one claim instead of two. What it assumes is that `H` is
+/// deterministic: same `Default`, same writes, same `finish`. True of both of
+/// this crate's hashers, and of any sane `Hasher`, but it IS an assumption
+/// about `H` and not a theorem about `BuildHasherDefault`.
 #[verifier::external_body]
-pub proof fn fx_builds_valid_hashers()
-    ensures builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>()
+pub proof fn build_hasher_default_valid<H>()
+    ensures builds_valid_hashers::<core::hash::BuildHasherDefault<H>>()
 {
 }
 
