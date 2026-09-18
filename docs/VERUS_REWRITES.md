@@ -151,6 +151,8 @@ re-checking if anything here is ever suspected:
 | 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
 | 12 | `infer_sort` | `src/tc.rs` | `assert!` on a REACHABLE rejection path | `kernel_check` wrapper |
 | 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
+| 16 | `unfold_def` | `src/tc.rs` | `?` operator; `Vec::into_iter` has no spec | `match` + slice |
+| 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 
@@ -305,3 +307,39 @@ the check passed.
 adapter for the kernel's abort-on-bad-input style, not a one-off. Restoring the
 macro needs Verus to offer a sanctioned "reachable abort" in exec code, which
 is a language question rather than a missing spec.
+
+
+### 17. `mk_nullary_ctor`'s unguarded index — `src/tc.rs`
+
+The only entry so far that changes behaviour on an input rather than just
+re-spelling one, which is why it is worth reading carefully.
+
+```ignore
+// original
+let ctor_name = all_ctor_names[0];
+
+// now
+if all_ctor_names.len() == 0 { return None }
+let ctor_name = all_ctor_names[0];
+```
+
+An inductive with NO constructors — `False`, `Empty` — would panic on that
+index. Verus rejected it, which is the point: nothing in the code establishes
+that the list is non-empty.
+
+**It is unreachable from the one call site.** `to_ctor_when_k` calls it only
+when `rec.is_k`, and a K-like recursor belongs to an inductive with exactly one
+constructor. So the guard fires on no input the checker can actually reach, and
+the two versions agree everywhere reachable.
+
+The function already returns `Option`, so `None` is the natural total answer
+rather than an invented one: the caller reads it as "K-reduction does not
+apply" and carries on. Restoring the original needs a precondition saying the
+constructor list is non-empty, which in turn needs `get_inductive` to promise
+something about the declaration — the same declaration-content model that
+`infer_const` and `expand_eta_struct_aux` are waiting on.
+
+Same family as the three unchecked `u16` arithmetic sites recorded elsewhere
+(`abstr_aux`'s offset, `fvar_to_bvar`'s subtraction, `dbj_level_counter`'s
+increment): real, unreachable with well-formed input, and unchecked until
+something forced the question.

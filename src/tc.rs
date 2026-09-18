@@ -1678,14 +1678,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn mk_nullary_ctor(&mut self, e: ExprPtr<'t>, num_params: usize) -> Option<ExprPtr<'t>> {
-        let (_fun, name, levels, args) = self.ctx.unfold_const_apps(e)?;
-        let InductiveData { all_ctor_names, .. } = self.env.get_inductive(&name)?;
-        let ctor_name = all_ctor_names[0];
-        let new_const = self.ctx.mk_const(ctor_name, levels);
-        let args = args.into_iter().take(num_params);
-        Some(self.ctx.foldl_apps(new_const, args))
-    }
 
     fn to_ctor_when_k(
         &mut self,
@@ -2361,6 +2353,36 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             _ => false,
         }
+    }
+
+    /// Verified in place -- body unchanged apart from the `?` desugaring.
+    /// `Some(r)` means `r` is the inductive type's first constructor applied to
+    /// `e`'s first `num_params` arguments, at `e`'s universe levels.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_nullary_ctor(&mut self, e: ExprPtr<'t>, num_params: usize) -> (result: Option<ExprPtr<'t>>)
+    {
+        let (_fun, name, levels, args) = match self.ctx.unfold_const_apps(e) {
+            Some(p) => p,
+            None => return None,
+        };
+        let InductiveData { all_ctor_names, .. } = match self.env.get_inductive(&name) {
+            Some(p) => p,
+            None => return None,
+        };
+        // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded.
+        // An inductive with NO constructors (`False`, `Empty`) would panic here.
+        // Unreachable from the one call site -- `to_ctor_when_k` fires only for
+        // a K-like recursor, which means exactly one constructor -- but nothing
+        // in the code says so, and Verus will not assume it. The function
+        // already returns `Option`, so declining is the natural total
+        // behaviour: both agree on every reachable input.
+        if all_ctor_names.len() == 0 {
+            return None
+        }
+        let ctor_name = all_ctor_names[0];
+        let new_const = self.ctx.mk_const(ctor_name, levels);
+        let args = args.into_iter().take(num_params);
+        Some(self.ctx.foldl_apps(new_const, args))
     }
 
     /// Delta reduction: unfold an applied definition.

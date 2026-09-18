@@ -671,6 +671,12 @@ pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &Nam
 /// anything these two functions need.
 pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_declar] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b Declar<'a>>) where 'a: 'x;
 
+/// CLAIM-FREE, same terms as `get_declar` above. `tc.rs`'s `mk_nullary_ctor`
+/// reads the inductive's constructor list; what it promises its callers is
+/// about the EXPRESSION it builds, not about the environment, so nothing is
+/// stated here.
+pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_inductive] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x;
+
 pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool) where 'a: 'x;
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
