@@ -154,6 +154,7 @@ re-checking if anything here is ever suspected:
 | 16 | `unfold_def` | `src/tc.rs` | `?` operator; `Vec::into_iter` has no spec | `match` + slice |
 | 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
 | 18 | `expand_eta_struct_aux` | `src/tc.rs` | `?`; range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
+| 19 | `infer_const` | `src/tc.rs` | closure; `assert!`; a `panic!` with nothing to decline to; a precondition that had to be re-established | accessor swap + `kernel_check` + `kernel_fail` + hoisted check |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 
@@ -377,3 +378,35 @@ returns `Option`, so both decline.
 
 Restoring either needs `get_constructor`/`get_structure` to promise something
 about the declaration, which is the declaration-content model still outstanding.
+
+
+### 19. `infer_const` — and `kernel_fail`, for a panic with nowhere to go
+
+Four changes, of which the last is the interesting one.
+
+- **accessor swap.** `get_declar(..).map(|x| x.info()).cloned()` becomes
+  `env_model::get_declar_info_ty(..)`, which is DEFINED as
+  `env.get_declar(n).map(|d| (d.info().uparams, d.info().ty))`. Same lookup,
+  same fields, and the closure was one Verus cannot take anyway. The wrapper is
+  what carries a contract.
+- **`assert!` → `kernel_check`**, as entry 12.
+- **`panic!` → `kernel_fail`.** This function returns `ExprPtr`, so unlike
+  entries 17 and 18 there is nothing to decline to. `kernel_fail` is the
+  diverging counterpart of `kernel_check`: `external_body`, claim-free, and
+  Verus treats its result as an arbitrary `T` it knows nothing about — the
+  conservative reading, since any postcondition would have to hold for that
+  arbitrary value. It cannot be used to smuggle a fact in.
+- **hoisted arity check.** `subst_expr_levels` panics on an arity mismatch, and
+  entry 2 turned that panic into a PRECONDITION — provably unreachable there,
+  but only because the caller is meant to guarantee it. `infer_const` is that
+  caller and did not. The same check now sits one frame earlier, written as
+  `if .. { return kernel_fail(..) }` so the fallthrough actually learns the
+  equality. Same condition, same abort.
+
+That last point is worth generalising: **entry 2 moved an obligation rather than
+discharging it**, and this is where it landed. Expect the same wherever a
+rewrite replaced a runtime check with a precondition.
+
+`get_declar_info_ty`'s axiom also gained `!has_fv(ty)`, exactly as
+`get_declar_val` did for values: a stored declaration TYPE cannot mention a
+local constant either, and `nlbv == 0` is only the de Bruijn half.

@@ -500,6 +500,11 @@ pub assume_specification<'x, 'a> [get_declar_info_ty] (env: &Env<'x, 'a>, n: &Na
             && to_model_of_declar_ty(*env)[name_id(*n)]
                 == (level_names(to_model_of_levels(uparams)), expr_to_model(ty))
             && nlbv(expr_to_model(ty)) == 0
+            // Closed in the free-variable sense too, for the same reason
+            // `get_declar_val` is: local constants exist only while a
+            // declaration is being checked, so a stored TYPE cannot mention one.
+            // `nlbv == 0` above is the de Bruijn half and does not imply this.
+            && !has_fv(expr_to_model(ty))
             && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => !to_model_of_declar_ty(*env).contains_key(name_id(*n)),
     };

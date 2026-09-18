@@ -1014,6 +1014,21 @@ verus! {
 /// Verus treats it as possibly returning normally, which is the conservative
 /// reading: everything after the call still has to verify without assuming the
 /// check passed.
+/// The diverging counterpart of `kernel_check`, for a rejection path in a
+/// function that does NOT return `Option` and so has nothing to decline to.
+/// `infer_const` is the first: it returns an `ExprPtr`, and a missing
+/// declaration leaves it nothing to return.
+///
+/// `external_body` and claim-free like `kernel_check`. Verus treats the result
+/// as an arbitrary `T` it knows nothing about, which is the conservative
+/// reading -- any postcondition would have to hold for that arbitrary value, so
+/// this cannot be used to smuggle a fact in. At run time it panics exactly as
+/// the original `panic!` did.
+#[verifier::external_body]
+pub fn kernel_fail<T>(msg: &str) -> T {
+    panic!("{}", msg)
+}
+
 #[verifier::external_body]
 pub fn kernel_check(cond: bool, msg: &str) {
     if !cond {

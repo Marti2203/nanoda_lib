@@ -554,18 +554,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Infer a `Const` by retrieving its type from the environment, then substituting
     /// the universe parameters for the ones in the declaration we're checking.
-    fn infer_const(&mut self, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        if let Some(declar_info) = self.env.get_declar(&c_name).map(|x| x.info()).cloned() {
-            if let (Check, Some(this_declar_info)) = (flag, self.declar_info) {
-                for c_uparam in self.ctx.read_levels(c_uparams).iter().copied() {
-                    assert!(self.ctx.all_uparams_defined(c_uparam, this_declar_info.uparams))
-                }
-            }
-            self.ctx.subst_declar_info_levels(declar_info, c_uparams)
-        } else {
-            panic!("declaration not found in infer_const, {:?}", self.ctx.debug_print(c_name))
-        }
-    }
 
 
     /// Expand `(x : Prod A B)` into `Prod.mk (Prod.fst x) (Prod.snd x)`
@@ -2327,6 +2315,57 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 res
             }
             _ => false,
+        }
+    }
+
+    /// The type of a constant: the declaration's type with the declaration's
+    /// universe parameters substituted by the constant's.
+    ///
+    /// Verified in place. Three rewrites, all registered:
+    ///
+    /// VERUS-REWRITE(accessor-swap): `get_declar(..).map(|x| x.info()).cloned()`
+    /// becomes `env_model::get_declar_info_ty(..)`, which is defined as exactly
+    /// that -- `env.get_declar(n).map(|d| (d.info().uparams, d.info().ty))`.
+    /// Same lookup, same fields. The wrapper is what carries a contract, and
+    /// the closure is one Verus cannot take anyway.
+    ///
+    /// VERUS-REWRITE(assert-macro): the `assert!` becomes `kernel_check`.
+    ///
+    /// VERUS-REWRITE(diverging-panic): the `else` branch's `panic!` becomes
+    /// `kernel_fail`, because this function returns `ExprPtr` and has nothing
+    /// to decline to. Same abort, same message channel.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_const(&mut self, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
+        requires crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
+    {
+        match crate::env_model::get_declar_info_ty(self.env, &c_name) {
+            Some((d_uparams, d_ty)) => {
+                if let (Check, Some(this_declar_info)) = (flag, self.declar_info) {
+                    let ls = self.ctx.read_levels(c_uparams);
+                    let n = ls.len();
+                    let mut i: usize = 0;
+                    while i < n
+                        invariant n == ls@.len(), i <= n,
+                        decreases n - i
+                    {
+                        crate::util::kernel_check(
+                            self.ctx.all_uparams_defined(ls[i], this_declar_info.uparams),
+                            "infer_const: constant's universe parameter is not declared");
+                        i = i + 1;
+                    }
+                }
+                // VERUS-REWRITE(hoisted-arity-check): the kernel panics on an
+                // arity mismatch INSIDE `subst_expr_levels` (register entry 2
+                // turned that panic into a precondition, provably unreachable
+                // there). Hoisting the same check here is what re-establishes
+                // it: same condition, same abort, one frame earlier.
+                if self.ctx.read_levels(d_uparams).len() != self.ctx.read_levels(c_uparams).len() {
+                    return crate::util::kernel_fail(
+                        "infer_const: constant's universe arity does not match the declaration's");
+                }
+                self.ctx.subst_expr_levels(d_ty, d_uparams, c_uparams)
+            }
+            None => crate::util::kernel_fail("declaration not found in infer_const"),
         }
     }
 
