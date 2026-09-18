@@ -1045,22 +1045,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn gen_elim_level(&mut self, st: &InductiveCheckState<'t>) -> NamePtr<'t> {
-        let p = self.ctx.str1("u");
-        if !self.ctx.contains_param(st.uparams, p) {
-            return p
-        }
-        // Lean's pretty printer starts at 1 for universes.
-        let mut i = 1u64;
-        loop {
-            let candidate = self.ctx.append_index_after(p, i);
-            if self.ctx.contains_param(st.uparams, candidate) {
-                i += 1;
-            } else {
-                return candidate
-            }
-        }
-    }
 
     /// Shadow-only (NANODA_SHADOW=1): run the certified elimination-level
     /// test (`inductive_model::verified_large_elim_ok`) on the same inductive
@@ -1963,10 +1947,67 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 // `inductive.rs` had no `verus!` block before this.
 // ===========================================================================
 use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model_of_levels;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
 
 verus! {
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+
+    /// Generate an elimination universe name that does not clash with the
+    /// block's own universe parameters.
+    ///
+    /// Verified in place. The contract is exactly what the caller needs and
+    /// exactly what `contains_param`'s FALSE direction gives -- the returned
+    /// name occurs in no `Param` of `st.uparams`. That direction is why
+    /// `contains_param` was proven bidirectionally rather than one-way.
+    ///
+    /// VERUS-REWRITE(unbounded-increment): `i += 1` in an unbounded `loop` is a
+    /// `u64` overflow Verus will not let past. Exhausting `u64` would mean the
+    /// block declares more than 2^64 universe parameters; the guard aborts
+    /// rather than wrapping, which is what the original would have done
+    /// silently in release.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn gen_elim_level(&mut self, st: &InductiveCheckState<'t>) -> (result: NamePtr<'t>)
+        ensures !(exists |i: int| 0 <= i < to_model_of_levels(st.uparams).len()
+            && #[trigger] to_model_of_levels(st.uparams)[i]
+                == LevelSpec::Param(crate::level_arena_bridge::name_id(result))),
+    {
+        let p = self.ctx.str1("u");
+        let hit_p = self.ctx.contains_param(st.uparams, p);
+        if !hit_p {
+            proof {
+                assert(!(exists |i: int| 0 <= i < to_model_of_levels(st.uparams).len()
+                    && #[trigger] to_model_of_levels(st.uparams)[i]
+                        == LevelSpec::Param(crate::level_arena_bridge::name_id(p))));
+            }
+            return p
+        }
+        // Lean's pretty printer starts at 1 for universes.
+        let mut i = 1u64;
+        loop
+            invariant true,
+        {
+            let candidate = self.ctx.append_index_after(p, i);
+            let hit = self.ctx.contains_param(st.uparams, candidate);
+            if hit {
+                if i == u64::MAX {
+                    return crate::util::kernel_fail(
+                        "gen_elim_level: u64 exhausted generating a fresh universe name");
+                }
+                i += 1;
+            } else {
+                proof {
+                    assert(!(exists |i2: int| 0 <= i2 < to_model_of_levels(st.uparams).len()
+                        && #[trigger] to_model_of_levels(st.uparams)[i2]
+                            == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate))));
+                }
+                return candidate
+            }
+        }
+    }
 
     /// VERUS-REWRITE(enumerate-for, unchecked-index): the `for (idx, _) in
     /// ..enumerate()` is the index walk it desugars to -- `Iterator::enumerate`

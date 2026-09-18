@@ -29,7 +29,7 @@ else:
     files = sorted(glob.glob('src/**/*.rs', recursive=True))
     read = lambda f: open(f).read().split('\n')
 
-spec_claim = spec_free = proof_claim = 0
+spec_claim = spec_free = proof_claim = exec_claim = exec_free = 0
 for f in files:
     if not f.endswith('.rs'): continue
     c = read(f)
@@ -45,12 +45,33 @@ for f in files:
             else:      spec_free  += 1
         if re.match(r'\s*(pub )?proof fn', L) and i > 0 and 'external_body' in c[i-1]:
             proof_claim += 1
+        # external_body EXEC fns. One with a contract is exactly as much of an
+        # assumption as the other two forms -- `kernel_fail`'s `ensures false`
+        # says it diverges, and nothing checks that. Counting only the first two
+        # forms missed these entirely.
+        if re.match(r'\s*(pub(\(crate\))? )?fn \w', L):
+            j, ext = i - 1, False
+            while j >= 0:
+                t = c[j].strip()
+                if t.startswith('#['):
+                    if t == '#[verifier::external_body]': ext = True
+                    j -= 1; continue
+                if t.startswith('//'): j -= 1; continue
+                break
+            if ext:
+                contract = False
+                for k in range(i, min(i + 40, len(c))):
+                    if re.match(r'\s*(ensures|requires)\b', c[k]): contract = True
+                    if re.match(r'\s*\{', c[k]) or c[k].rstrip().endswith('{'): break
+                if contract: exec_claim += 1
+                else:        exec_free  += 1
 
-claiming = spec_claim + proof_claim
+claiming = spec_claim + proof_claim + exec_claim
+free = spec_free + exec_free
 print(f"{rev or 'working tree'}:")
 print(f"  CLAIMING    {claiming:3}   (assume_specification with ensures={spec_claim}, "
-      f"external_body proof fn={proof_claim})")
-print(f"  claim-free  {spec_free:3}   (assume_specification with no ensures -- "
-      f"callable, promises nothing)")
-print(f"  TOTAL       {claiming + spec_free:3}")
+      f"external_body proof fn={proof_claim}, external_body exec fn with a contract={exec_claim})")
+print(f"  claim-free  {free:3}   (callable, promises nothing: "
+      f"assume_specification={spec_free}, external_body exec fn={exec_free})")
+print(f"  TOTAL       {claiming + free:3}")
 PY

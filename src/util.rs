@@ -1025,7 +1025,17 @@ verus! {
 /// this cannot be used to smuggle a fact in. At run time it panics exactly as
 /// the original `panic!` did.
 #[verifier::external_body]
-pub fn kernel_fail<T>(msg: &str) -> T {
+pub fn kernel_fail<T>(msg: &str) -> (result: T)
+    // It DOES NOT RETURN -- the body is a bare `panic!`. Saying so is what makes
+    // it usable in a function that has a contract: without it the caller must
+    // prove its own postcondition for the arbitrary `T` this appears to hand
+    // back, which is impossible and has nothing to do with the panic path.
+    //
+    // This is a claim, and a small one: it is checkable by reading the three
+    // lines below. The alternative is that every function containing a
+    // rejection path has to go contract-free.
+    ensures false
+{
     panic!("{}", msg)
 }
 
