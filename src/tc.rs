@@ -885,13 +885,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         r
     }
 
-    fn infer_sort(&mut self, l: LevelPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        if let (Check, Some(declar_info)) = (flag, self.declar_info) {
-            assert!(self.ctx.all_uparams_defined(l, declar_info.uparams))
-        }
-        let out = self.ctx.succ(l);
-        self.ctx.mk_sort(out)
-    }
 
     fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
@@ -2332,4 +2325,64 @@ mod routed_tests {
             "the whnf-join boundary must confirm the projection pair on its own"
         );
     }
+}
+
+
+// ===========================================================================
+// VERIFIED KERNEL CODE (see the same banner in `level.rs` and `util.rs`).
+// The kernel's own functions with a contract attached, not parallel copies.
+// This is the first opening of `tc.rs`, which had no `verus!` block at all.
+// ===========================================================================
+use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::to_model as to_model_expr;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as to_model_level;
+#[cfg(verus_only)]
+use crate::expr_model::ExprSpec;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
+
+verus! {
+
+/// TRANSPARENT, like `ExExpr`/`ExLevel`. `infer_sort` reads `self.ctx` and
+/// `self.declar_info`, so an opaque `TypeChecker` would not let the kernel's
+/// own body be verified as written.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExTypeChecker<'x, 't, 'p>(TypeChecker<'x, 't, 'p>);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExInferFlag(InferFlag);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExDeclarInfo<'a>(crate::env::DeclarInfo<'a>);
+
+impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Verified in place -- the body is the kernel's, unchanged.
+    ///
+    /// `Sort l : Sort (l+1)`. The `Check`-mode guard is a side condition, not
+    /// part of the result: it asserts the level mentions only declared universe
+    /// parameters (`all_uparams_defined`, verified in `level.rs`), and the type
+    /// returned is the same either way.
+    fn infer_sort(&mut self, l: LevelPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
+        ensures to_model_expr(result)
+            == ExprSpec::Sort(LevelSpec::Succ(Box::new(to_model_level(l)))),
+    {
+        if let (Check, Some(declar_info)) = (flag, self.declar_info) {
+            // VERUS-REWRITE(assert-macro): was `assert!(..)`. Same check, same
+            // abort; see `kernel_check`'s note for why the macro cannot be
+            // written inside `verus!`.
+            crate::util::kernel_check(
+                self.ctx.all_uparams_defined(l, declar_info.uparams),
+                "infer_sort: level mentions an undeclared universe parameter",
+            );
+        }
+        let out = self.ctx.succ(l);
+        self.ctx.mk_sort(out)
+    }
+}
+
 }

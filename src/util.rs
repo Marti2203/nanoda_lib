@@ -1000,6 +1000,30 @@ use crate::level_arena_bridge::name_id;
 
 verus! {
 
+/// The kernel's runtime REJECTION checks -- `assert!(..)` / `panic!(..)` on a
+/// malformed declaration -- cannot be written inside `verus!` directly: Verus
+/// specifies `panic!` with `requires false`, so a panic has to be proven
+/// UNREACHABLE. The kernel's are not unreachable and never will be; aborting on
+/// a bad declaration is the whole point of them.
+///
+/// This wrapper is `external_body` so Verus does not look inside, and it states
+/// NOTHING -- no `ensures`, so nothing about it is assumed and it adds no trust
+/// claim (the trust-surface count tracks `assume_specification` and
+/// `external_body` PROOF fns; this is an exec fn that promises nothing). The
+/// surrounding code is still verified line by line; this just performs the
+/// kernel's own check at run time, exactly as the `assert!` did.
+///
+/// Verus treats it as possibly returning normally, which is the conservative
+/// reading: everything after the call still has to verify without assuming the
+/// check passed.
+#[verifier::external_body]
+pub fn kernel_check(cond: bool, msg: &str) {
+    if !cond {
+        panic!("{}", msg)
+    }
+}
+
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN -- body unchanged, and its denotation contract is
     /// now DERIVED from `alloc_expr`'s storage primitive rather than assumed.

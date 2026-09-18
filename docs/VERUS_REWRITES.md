@@ -149,6 +149,7 @@ re-checking if anything here is ever suspected:
 | 9 | `abstr_pi_telescope`, `abstr_lambda_telescope` | `src/expr.rs` | slice patterns are unsupported outright | index walk |
 | 10 | `is_never_zero` | `src/level.rs` | a tail `match` carries no per-arm knowledge out | bind arm results |
 | 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
+| 12 | `infer_sort` | `src/tc.rs` | `assert!` on a REACHABLE rejection path | `kernel_check` wrapper |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -265,3 +266,39 @@ Risk: low, and the one thing to re-check if ever suspected is that the loop
 does NOT short-circuit where the original does. It scans the whole list and
 records a hit. Same answer, more work — and `found` is only ever set, never
 cleared, so an early match cannot be lost. Restore when `any` gets a spec.
+
+
+### 12. The kernel's rejection checks — `src/tc.rs` and beyond
+
+```ignore
+// original
+assert!(self.ctx.all_uparams_defined(l, declar_info.uparams))
+
+// now
+crate::util::kernel_check(
+    self.ctx.all_uparams_defined(l, declar_info.uparams),
+    "infer_sort: level mentions an undeclared universe parameter",
+);
+```
+
+This one is different in kind from entry 2, and the difference matters.
+
+Entry 2 replaced an `assert_eq!` that Verus cannot COMPILE, on a path the
+function's own precondition already proves unreachable. Here the macro compiles
+fine; what fails is the proof. Verus specifies `panic!` with `requires false`,
+so every panic has to be shown unreachable — and the kernel's rejection checks
+are emphatically reachable. Rejecting a malformed declaration is their job. No
+precondition will ever discharge them, because adding one would mean assuming
+the very thing the kernel is checking.
+
+`kernel_check` is `external_body` so Verus does not look inside, and it states
+NOTHING — no `ensures`. It adds no trust claim (the trust-surface count tracks
+`assume_specification`s and `external_body` PROOF fns; this is an exec fn that
+promises nothing), and Verus treats it as possibly returning normally, which is
+the conservative reading: code after the call still verifies without assuming
+the check passed.
+
+**Expect this to recur across every `tc.rs` function.** It is the generic
+adapter for the kernel's abort-on-bad-input style, not a one-off. Restoring the
+macro needs Verus to offer a sanctioned "reachable abort" in exec code, which
+is a language question rather than a missing spec.
