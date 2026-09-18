@@ -69,35 +69,16 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_binder_type_of(result) == binder_type;
 
-/// `TcCtx::abstr_pi`'s real body (`expr.rs`) is `self.mk_pi(binder_name,
-/// binder_style, binder_type, self.abstr(body, &[binder]))` after reading
-/// `binder`'s fields off `binder` itself (panicking if `binder` isn't a
-/// `Local`) -- a composition of exactly `read_expr`, `abstr`
-/// (`expr_arena_bridge::verified_abstr`'s real counterpart), and `mk_pi`,
-/// all already trusted/bridged.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::abstr_pi] (ctx: &mut TcCtx<'t, 'p>, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    requires matches!(to_model(binder), ExprSpec::Free(_))
-    ensures to_model(result) == ExprSpec::Bind(
-        Box::new(local_type(binder)),
-        Box::new(abstr_full(to_model(body), seq![expr_id(binder)], 0)),
-    );
-
-/// `TcCtx::apply_lambda`'s real body (`expr.rs:488-495`) is `self.mk_
-/// lambda(binder_name, binder_style, binder_type, self.abstr(body,
-/// &[binder]))` after reading `binder`'s fields off `binder` itself
-/// (panicking if `binder` isn't a `Local`) -- structurally IDENTICAL to
-/// `abstr_pi` just above, since a `Lambda`, like a `Pi`, models as
-/// `ExprSpec::Bind` (the model never distinguishes them -- same
-/// conflation `expr_is_bind_shape`/`pi_telescope_has_self_ref` already
-/// rely on elsewhere). Same ensures shape, same precondition, only the
-/// REAL constructor called differs (`mk_lambda` vs `mk_pi`), which is
-/// invisible to the model.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::apply_lambda] (ctx: &mut TcCtx<'t, 'p>, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    requires matches!(to_model(binder), ExprSpec::Free(_))
-    ensures to_model(result) == ExprSpec::Bind(
-        Box::new(local_type(binder)),
-        Box::new(abstr_full(to_model(body), seq![expr_id(binder)], 0)),
-    );
+// `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
+// (`expr.rs`); they used to be assumed here. Their old doc comments argued the
+// case informally -- "a composition of exactly `read_expr`, `abstr` and
+// `mk_pi`, all already trusted/bridged" -- and that is a proof now that `abstr`
+// is one of them rather than a trusted primitive.
+//
+// What unblocked it was not `abstr` alone: `local_type` and
+// `local_binder_type_of` were two unrelated uninterpreted views of the SAME
+// field, so `local_type` is defined as the other now. The depth ceiling the
+// verified versions carry is real -- see `abstr_pi`'s doc comment.
 
 /// The concrete claim: `check_eq`'s construction of `Eq`'s expected type
 /// (`quot.rs:85-87`) really does represent `Π (α : Sort u), α → α → Prop`
@@ -130,6 +111,14 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     let inner = ctx.mk_pi(anon, arrow_style, alpha, inner1);
     assert(to_model(inner) == ExprSpec::Bind(Box::new(to_model(alpha)), Box::new(to_model(inner1))));
 
+    proof {
+        // Concrete shape, so the depth ceiling is arithmetic: `alpha` and
+        // `prop` are leaves, `inner1` one `Bind` over them, `inner` one more.
+        assert(crate::expr_model::depth(to_model(alpha)) == 0);
+        assert(crate::expr_model::depth(to_model(prop)) == 0);
+        assert(crate::expr_model::depth(to_model(inner1)) == 1);
+        assert(crate::expr_model::depth(to_model(inner)) == 2);
+    }
     let expected = ctx.abstr_pi(alpha, inner);
     assert(to_model(expected) == ExprSpec::Bind(
         Box::new(local_type(alpha)),
@@ -200,6 +189,7 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     assert(to_model(a_a_prop) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(aa1))));
     let r = ctx.mk_unique(r_name, r_style, a_a_prop);
 
+    proof { assert(crate::expr_model::depth(to_model(sort_u)) == 0); }
     let inner = ctx.abstr_pi(r, sort_u);
     assert(to_model(inner) == ExprSpec::Bind(
         Box::new(local_type(r)),
@@ -208,6 +198,15 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     assert(local_type(r) == to_model(a_a_prop));
     assert(abstr_full(to_model(sort_u), seq![expr_id(r)], 0) == ExprSpec::Sort(level_to_model(u)));
 
+    proof {
+        // `a_a_prop` is `Bind(a, Bind(a, prop))` over leaves, so depth 2; the
+        // abstraction adds one and `inner` is depth 3.
+        assert(crate::expr_model::depth(to_model(a)) == 0);
+        assert(crate::expr_model::depth(to_model(prop)) == 0);
+        assert(crate::expr_model::depth(to_model(aa1)) == 1);
+        assert(crate::expr_model::depth(to_model(a_a_prop)) == 2);
+        assert(crate::expr_model::depth(to_model(inner)) == 3);
+    }
     let expected = ctx.abstr_pi(a, inner);
     assert(to_model(expected) == ExprSpec::Bind(
         Box::new(local_type(a)),

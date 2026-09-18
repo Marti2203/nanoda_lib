@@ -249,6 +249,62 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
 /// *exactly* 1 per `Bind` descended into — matching `offset`'s exact +1
 /// increase term-for-term, so `offset + depth(e) <= K` propagates through
 /// the recursion with zero slack, for any fixed `K < u32::MAX`.
+/// Two scraps of multiplication the telescope ceilings need. Standalone, because
+/// inline `nonlinear_arith` blocks in the middle of a big proof are exactly what
+/// this codebase has been bitten by before.
+pub proof fn mul_add_distrib(a: nat, b: nat, k: nat)
+    ensures a * k + b * k == (a + b) * k
+{
+    assert(a * k + b * k == (a + b) * k) by (nonlinear_arith);
+}
+
+pub proof fn mul_mono(a: nat, b: nat, c: nat, d: nat)
+    requires a <= b, c <= d
+    ensures a * c <= b * d
+{
+    assert(a * c <= b * d) by (nonlinear_arith) requires a <= b, c <= d;
+}
+
+pub proof fn mul_ge_one(n: nat, k: nat)
+    requires n >= 1
+    ensures n * k >= k
+{
+    assert(n * k >= 1 * k) by (nonlinear_arith) requires n >= 1;
+}
+
+pub proof fn mul_pred_step(n: nat, k: nat)
+    requires n >= 1
+    ensures (n - 1) as nat * k + k == n * k
+{
+    assert((n - 1) as nat * k + k == n * k) by (nonlinear_arith) requires n >= 1;
+}
+
+/// Abstraction does not change depth: it rewrites `Free` leaves into `Var`
+/// leaves, and both are depth 0. Needed by any ceiling that has to survive a
+/// telescope of `abstr_pi` steps.
+pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
+    ensures depth(abstr_full(e, locals, offset)) == depth(e)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            abstr_full_depth(*f, locals, offset);
+            abstr_full_depth(*a, locals, offset);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_full_depth(*t, locals, offset);
+            abstr_full_depth(*b, locals, offset + 1);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_full_depth(*t, locals, offset);
+            abstr_full_depth(*v, locals, offset);
+            abstr_full_depth(*b, locals, offset + 1);
+        }
+        ExprSpec::Proj(_, st) => { abstr_full_depth(*st, locals, offset); }
+        _ => {}
+    }
+}
+
 /// The domain of a `Bind` (`Closed` elsewhere -- never consulted). A named
 /// accessor so a contract can name the binder type without an `exists`.
 pub open spec fn bind_dom(e: ExprSpec) -> ExprSpec {

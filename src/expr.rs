@@ -263,25 +263,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         body
     }
 
-    pub(crate) fn abstr_pi(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> ExprPtr<'t> {
-        match self.read_expr(binder) {
-            Local { binder_name, binder_style, binder_type, .. } => {
-                let body = self.abstr(body, &[binder]);
-                self.mk_pi(binder_name, binder_style, binder_type, body)
-            }
-            _ => unreachable!("Cannot apply pi with non-local domain type"),
-        }
-    }
 
-    pub(crate) fn apply_lambda(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> ExprPtr<'t> {
-        match self.read_expr(binder) {
-            Local { binder_name, binder_style, binder_type, .. } => {
-                let body = self.abstr(body, &[binder]);
-                self.mk_lambda(binder_name, binder_style, binder_type, body)
-            }
-            _ => unreachable!("Cannot apply lambda with non-local domain type"),
-        }
-    }
+
+
     
     /// The `nat_extension` binary-op code of a constant name (the same
     /// name-cache dispatch `tc.rs::try_reduce_nat` performs), or `None`:
@@ -917,6 +901,84 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
         e
+    }
+
+
+    /// Verified in place; the only body changes are proof annotations and
+    /// renaming the local that shadowed the `ensures` parameter.
+    ///
+    /// The depth ceiling is REAL, not an artefact. `abstr_aux` tracks binder
+    /// depth in a `u16` `offset`, so a term nested deeper than `u16::MAX`
+    /// overflows it -- silently, in release. Lean terms are never remotely that
+    /// deep, but the kernel does not check, so the limit is stated here rather
+    /// than assumed away.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn abstr_pi(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
+            1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
+        ensures crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+            Box::new(crate::quot_model::local_type(binder)),
+            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
+        ),
+    {
+        match self.read_expr(binder) {
+            Local { binder_name, binder_style, binder_type, .. } => {
+                // Renamed from `body`, which shadowed the `ensures` parameter.
+                let locals = [binder];
+                let body_abstr = self.abstr(body, &locals);
+                proof {
+                    assert(locals@ =~= seq![binder]);
+                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![crate::expr_arena_bridge::expr_id(binder)]);
+                }
+                let res = self.mk_pi(binder_name, binder_style, binder_type, body_abstr);
+                proof {
+                    assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::ExprSpec::Bind(
+                        Box::new(crate::quot_model::local_type(binder)),
+                        Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0))));
+                }
+                res
+            }
+            _ => {
+                proof { assert(false); }
+                unreachable!("Cannot apply pi with non-local domain type")
+            }
+        }
+    }
+
+    /// Verified in place. crate::expr_model::ExprSpec::tructurally identical to `abstr_pi` -- the model does
+    /// not distinguish `Lambda` from `Pi`, both being `Exprcrate::expr_model::ExprSpec::pec::Bind`.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn apply_lambda(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
+            1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
+        ensures crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+            Box::new(crate::quot_model::local_type(binder)),
+            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
+        ),
+    {
+        match self.read_expr(binder) {
+            Local { binder_name, binder_style, binder_type, .. } => {
+                let locals = [binder];
+                let body_abstr = self.abstr(body, &locals);
+                proof {
+                    assert(locals@ =~= seq![binder]);
+                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![crate::expr_arena_bridge::expr_id(binder)]);
+                }
+                let res = self.mk_lambda(binder_name, binder_style, binder_type, body_abstr);
+                proof {
+                    assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::ExprSpec::Bind(
+                        Box::new(crate::quot_model::local_type(binder)),
+                        Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0))));
+                }
+                res
+            }
+            _ => {
+                proof { assert(false); }
+                unreachable!("Cannot apply lambda with non-local domain type")
+            }
+        }
     }
 
     /// Verified in place. Like `inst`, it RESETS its cache before descending, so

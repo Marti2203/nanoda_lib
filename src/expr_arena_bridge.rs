@@ -50,7 +50,7 @@ use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, find_from_end, subst_expr_levels_rel, subst_expr_levels};
+use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_depth, mul_ge_one, mul_pred_step, find_from_end, subst_expr_levels_rel, subst_expr_levels};
 #[cfg(verus_only)]
 use crate::level_model::{level_names, subst_env, interp};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
@@ -1680,11 +1680,23 @@ pub open spec fn abstr_pi_telescope_model(binder_ids: Seq<u32>, binder_tys: Seq<
 /// `abstr_pi` itself already carries) for its own `abstr_pi` step to
 /// apply.
 pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
-    requires forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
-        let m = to_model(binders@[i]);
-        matches!(m, ExprSpec::Free(_))
-    }
-    ensures to_model(result) == abstr_pi_telescope_model(
+    requires
+        (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
+            let m = to_model(binders@[i]);
+            matches!(m, ExprSpec::Free(_))
+        }),
+        // Each step consumes one binder and wraps the result in a `Bind` whose
+        // DOMAIN is that binder's type, so the depth grows by `1 + the type's
+        // depth` per step -- not by one. `local_type_cap` bounds the latter,
+        // and the caller supplies its concrete value, which is the convention
+        // that cap is documented with.
+        binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
+    ensures
+        // Exported so a CHAIN of telescopes can be bounded by its callers: each
+        // step adds one `Bind` whose domain is a binder's type.
+        depth(to_model(result))
+            <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
+to_model(result) == abstr_pi_telescope_model(
         Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
         Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
         to_model(e),
@@ -1698,7 +1710,17 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders:
     let last = binders[binders.len() - 1];
     let rest = &binders[0..binders.len() - 1];
     assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
+    proof {
+        local_type_wf(last);
+        mul_ge_one(binders@.len(), (1 + local_type_cap()) as nat);
+        assert(depth(to_model(e)) + 1 + local_type_cap() <= 60000);
+    }
     let e2 = ctx.abstr_pi(last, e);
+    proof {
+        abstr_full_depth(to_model(e), seq![expr_id(last)], 0);
+        assert(depth(to_model(e2)) <= 1 + local_type_cap() + depth(to_model(e)));
+        mul_pred_step(binders@.len(), (1 + local_type_cap()) as nat);
+    }
     let result = verified_abstr_pi_telescope(ctx, rest, e2);
     proof {
         let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
@@ -1724,11 +1746,23 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders:
 /// just reached via a different real constructor underneath (invisible
 /// to the model either way).
 pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
-    requires forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
-        let m = to_model(binders@[i]);
-        matches!(m, ExprSpec::Free(_))
-    }
-    ensures to_model(result) == abstr_pi_telescope_model(
+    requires
+        (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
+            let m = to_model(binders@[i]);
+            matches!(m, ExprSpec::Free(_))
+        }),
+        // Each step consumes one binder and wraps the result in a `Bind` whose
+        // DOMAIN is that binder's type, so the depth grows by `1 + the type's
+        // depth` per step -- not by one. `local_type_cap` bounds the latter,
+        // and the caller supplies its concrete value, which is the convention
+        // that cap is documented with.
+        binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
+    ensures
+        // Exported so a CHAIN of telescopes can be bounded by its callers: each
+        // step adds one `Bind` whose domain is a binder's type.
+        depth(to_model(result))
+            <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
+to_model(result) == abstr_pi_telescope_model(
         Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
         Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
         to_model(e),
@@ -1742,7 +1776,17 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, bind
     let last = binders[binders.len() - 1];
     let rest = &binders[0..binders.len() - 1];
     assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
+    proof {
+        local_type_wf(last);
+        mul_ge_one(binders@.len(), (1 + local_type_cap()) as nat);
+        assert(depth(to_model(e)) + 1 + local_type_cap() <= 60000);
+    }
     let e2 = ctx.apply_lambda(last, e);
+    proof {
+        abstr_full_depth(to_model(e), seq![expr_id(last)], 0);
+        assert(depth(to_model(e2)) <= 1 + local_type_cap() + depth(to_model(e)));
+        mul_pred_step(binders@.len(), (1 + local_type_cap()) as nat);
+    }
     let result = verified_abstr_lambda_telescope(ctx, rest, e2);
     proof {
         let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
