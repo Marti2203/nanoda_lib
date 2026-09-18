@@ -384,6 +384,31 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, '
 
 
 
+// Contradiction detector, run and removed: a `proof fn` assuming exactly the
+// biconditional below and claiming `ensures false` FAILS to verify, as it must.
+// Non-degeneracy is witnessed by `TcCtx::get_pfx` and `TcCtx::replace_pfx`
+// (`name.rs`): neither can be proven without it, both compare pointers where
+// the model compares structure.
+/// HASH-CONSING, at the structural level: distinct `NamePtr`s denote distinct
+/// names. The level arena already pays this
+/// (`level_ptr_eq_iff_same_model_param`); `name_id_injective` is NOT the same
+/// fact -- it is about the opaque `name_id`, not about `to_model_name`.
+///
+/// NOT PROVABLE from what is here, and the reason is specific rather than
+/// incidental. `alloc_name`'s real body dedups with
+/// `IndexSet::get_index_of`, and that method is deliberately left unspecified
+/// in `util_model.rs`: it is generic over `Q: Equivalent<T>`, so there is
+/// nothing truthful to say about it in general. Until that changes, this is
+/// where hash-consing enters, and it enters as an assumption.
+///
+/// The `==>` direction is free (`to_model_name` is a function); the content is
+/// the converse.
+#[verifier::external_body]
+pub proof fn to_model_name_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
+    ensures (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2))
+{
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, 'p>) -> (result: NamePtr<'t>) where 'p: 't
     ensures to_model_name(result) == NameSpec::Anon;
 
@@ -402,8 +427,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p
 /// bridge (`vstd::std_specs::fmt`) has `ensures true`, nothing about the
 /// resulting `String`'s content -- so there is no way to PROVE two
 /// different `idx` values produce different names from first principles;
-/// it has to be trusted, same as `name_id_injective`/`to_model_name_
-/// injective` above trust hash-consing's own uniqueness rather than
+/// it has to be trusted, same as `name_id_injective`/`to_model_name_injective`
+/// above trust hash-consing's own uniqueness rather than
 /// deriving it. Scoped as narrowly as possible: only claims injectivity
 /// in `idx` for a FIXED prefix name, nothing about `format!` in general.
 pub uninterp spec fn append_index_after_id<'a>(n: NamePtr<'a>, idx: u64) -> u64;

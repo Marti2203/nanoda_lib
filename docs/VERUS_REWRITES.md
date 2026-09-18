@@ -145,6 +145,7 @@ re-checking if anything here is ever suspected:
 | 5 | `unfold_apps_fun`, `num_args`, `unfold_apps_stack` | `src/expr.rs` | `while let` carries no exit reason | see below |
 | 6 | `pi_telescope_size` | `src/expr.rs` | `while let` (uniformity with entry 5) | desugaring |
 | 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
+| 8 | `replace_pfx`, `get_pfx` | `src/name.rs` | or-pattern with a match guard; or-pattern needing per-arm unfolding | desugaring |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -191,3 +192,16 @@ in the model from one that ran out of binders. `pi_telescope_size` therefore
 claims its result is *a* peelable count, not the maximal one, and
 `get_nth_pi_binder` says nothing about its `None` case. Claiming more would be
 claiming something false.
+
+
+### 8. The two name walkers — `src/name.rs`
+
+`replace_pfx`: Verus rejects *"a match arm containing both an or-pattern (|) and
+a match-guard"*, so `Str(..) | Num(..) if n == outgoing` is split into two
+guarded arms. Order is preserved, so the two are equivalent.
+
+`get_pfx`: `Str(pfx, ..) | Num(pfx, ..)` is split so each branch can unfold
+`root_of` at its own constructor, and `sfx` is bound so the proof can name the
+node's shape. Bodies are identical between the two arms.
+
+Both are the lowest-risk kind: no control flow changes, no reordering.

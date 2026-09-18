@@ -186,6 +186,17 @@ pub open spec fn root_of(n: NameSpec) -> NameSpec
     }
 }
 
+/// One peel of `root_of`, proven where `root_of` is defined -- a caller in
+/// another module cannot unfold it at a nested constructor even with
+/// `reveal_with_fuel`.
+pub proof fn root_of_peel(p: NameSpec, s: u32, num: u64, is_str: bool)
+    requires p != NameSpec::Anon
+    ensures
+        is_str ==> root_of(NameSpec::Str(Box::new(p), s)) == root_of(p),
+        !is_str ==> root_of(NameSpec::Num(Box::new(p), num)) == root_of(p),
+{
+}
+
 pub fn get_pfx_model(n: &NameSpec) -> (result: NameSpec)
     ensures result == root_of(*n)
     decreases n
