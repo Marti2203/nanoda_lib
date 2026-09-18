@@ -624,13 +624,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Convert the deBruijn level of a free variable to a deBruijn index for a bound
-    /// variable. This is the same thing as asking "if this element is the `nth` element
-    /// when counting from the front of a sequence of length `m`, what is its position
-    /// when counting from the back?"
-    pub(crate) fn fvar_to_bvar(&mut self, num_open_binders: u16, dbj_level: u16) -> ExprPtr<'t> {
-        self.mk_var((num_open_binders - dbj_level) - 1)
-    }
 }
 
 #[derive(Debug)]
@@ -1138,6 +1131,23 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let hash = hash64!(crate::expr::SORT_HASH, level);
         self.alloc_expr(Expr::Sort { level, hash })
+    }
+
+    /// Convert the deBruijn level of a free variable to a deBruijn index for a bound
+    /// variable. This is the same thing as asking "if this element is the `nth` element
+    /// when counting from the front of a sequence of length `m`, what is its position
+    /// when counting from the back?"
+    ///
+    /// Verified in place. The level-to-index flip, and the one place the
+    /// `u16` underflow the `dbj_serials_below` precondition exists to prevent
+    /// would actually happen.
+    pub(crate) fn fvar_to_bvar(&mut self, num_open_binders: u16, dbj_level: u16) -> (result: ExprPtr<'t>)
+        requires dbj_level < num_open_binders,
+        ensures
+            to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
+            final(self).expr_cache == old(self).expr_cache,
+    {
+        self.mk_var((num_open_binders - dbj_level) - 1)
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)

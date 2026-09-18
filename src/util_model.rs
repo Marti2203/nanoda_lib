@@ -74,6 +74,13 @@ pub proof fn ptr_triple_obeys_key_model<A, B, C>()
 {
 }
 
+/// And for the `(pointer, start, open-binders)` triple `abstr_cache_levels` uses.
+#[verifier::external_body]
+pub proof fn ptr_u16_u16_obeys_key_model<A>()
+    ensures obeys_key_model::<(Ptr<A>, u16, u16)>()
+{
+}
+
 /// Same, for the `(pointer, offset)` keys `inst_cache`/`abstr_cache` use.
 #[verifier::external_body]
 pub proof fn ptr_u16_obeys_key_model<A>()

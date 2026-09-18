@@ -544,6 +544,17 @@ pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPt
                 == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
 }
 
+/// The de Bruijn-LEVEL abstraction's cache. Keyed by the full triple, unlike the
+/// other two: `abstr_levels` resets it per call the way `abstr` does, but both
+/// `start_pos` and `num_open_binders` vary WITHIN a single traversal, so neither
+/// can be left out of the key.
+pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
+    forall |k: (ExprPtr<'t>, u16, u16)|
+        #[trigger] ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==>
+            to_model(ctx.expr_cache.abstr_cache_levels@[k])
+                == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
+}
+
 /// The abstraction cache. Keyed `(expr, offset)` like the instantiation one and
 /// for the same reason: `abstr` clears it per call, so the `locals` list need
 /// not be part of the key and soundness is relative to the list in flight.

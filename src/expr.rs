@@ -180,61 +180,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Abstraction with deBruijn levels instead of unique identifiers.
-    fn abstr_aux_levels(&mut self, e: ExprPtr<'t>, start_pos: u16, num_open_binders: u16) -> ExprPtr<'t> {
-        if !self.has_fvars(e) {
-            e
-        } else if let Some(cached) = self.expr_cache.abstr_cache_levels.get(&(e, start_pos, num_open_binders)) {
-            *cached
-        } else {
-            let calcd = match self.read_expr(e) {
-                Local { id: FVarId::DbjLevel(serial), .. } =>
-                    if serial < start_pos {
-                        e
-                    } else {
-                        self.fvar_to_bvar(num_open_binders, serial)
-                    },
-                Local { id: FVarId::Unique(..), .. } => e,
-                App { fun, arg, .. } => {
-                    let fun = self.abstr_aux_levels(fun, start_pos, num_open_binders);
-                    let arg = self.abstr_aux_levels(arg, start_pos, num_open_binders);
-                    self.mk_app(fun, arg)
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
-                    let body = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
-                    self.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
-                    let body = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
-                    self.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
-                    let val = self.abstr_aux_levels(val, start_pos, num_open_binders);
-                    let body = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
-                    self.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                StringLit { .. } | NatLit { .. } => panic!(),
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.abstr_aux_levels(structure, start_pos, num_open_binders);
-                    self.mk_proj(ty_name, idx, structure)
-                }
-                Var { .. } | Sort { .. } | Const { .. } => panic!("should flag as no locals"),
-            };
-            self.expr_cache.abstr_cache_levels.insert((e, start_pos, num_open_binders), calcd);
-            calcd
-        }
-    }
 
-    pub fn abstr_levels(&mut self, e: ExprPtr<'t>, start_pos: u16) -> ExprPtr<'t> {
-        if self.expr_cache.abstr_cache_levels.capacity() > 1024 { 
-            self.expr_cache.abstr_cache_levels = crate::util::new_fx_hash_map(); 
-        } else { 
-            self.expr_cache.abstr_cache_levels.clear(); 
-        } 
-        self.abstr_aux_levels(e, start_pos, self.dbj_level_counter)
-    }
 
 
     pub(crate) fn subst_declar_info_levels(
@@ -1075,6 +1021,181 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             n = n - 1;
         }
         e
+    }
+
+
+
+    /// Verified in place. Like `inst` and `abstr`, it RESETS its cache, so it
+    /// establishes the soundness invariant itself and demands nothing of
+    /// callers beyond the well-formedness the underlying walk needs.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn abstr_levels(&mut self, e: ExprPtr<'t>, start_pos: u16) -> (result: ExprPtr<'t>)
+        requires
+            crate::expr_model::dbj_serials_below(crate::expr_arena_bridge::to_model(e), old(self).dbj_level_counter),
+            old(self).dbj_level_counter as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
+                crate::expr_arena_bridge::to_model(e), start_pos, old(self).dbj_level_counter),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+    {
+        if self.expr_cache.abstr_cache_levels.capacity() > 1024 {
+            self.expr_cache.abstr_cache_levels = crate::util::new_fx_hash_map();
+        } else {
+            self.expr_cache.abstr_cache_levels.clear();
+        }
+        proof {
+            assert(self.expr_cache.abstr_cache_levels@ =~= vstd::map::Map::empty());
+            assert(crate::expr_arena_bridge::abstr_levels_cache_sound(*self));
+        }
+        self.abstr_aux_levels(e, start_pos, self.dbj_level_counter)
+    }
+
+    /// Verified in place. Abstraction by de Bruijn LEVEL, against
+    /// `abstr_levels_full`.
+    ///
+    /// `dbj_serials_below` is a REAL precondition, not a modelling artefact:
+    /// `fvar_to_bvar` computes `(num_open_binders - serial) - 1` in `u16`, and
+    /// the `serial < start_pos` guard does not stop that underflowing on its own.
+    ///
+    /// Both `panic!()` arms are discharged from the `has_fvars` guard above them,
+    /// exactly as in `abstr_aux`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn abstr_aux_levels(&mut self, e: ExprPtr<'t>, start_pos: u16, num_open_binders: u16) -> (result: ExprPtr<'t>)
+        requires
+            crate::expr_arena_bridge::abstr_levels_cache_sound(*old(self)),
+            crate::expr_model::dbj_serials_below(crate::expr_arena_bridge::to_model(e), num_open_binders),
+            // Paired with depth, for the same reason `abstr_aux`'s offset is:
+            // `num_open_binders` grows by one per binder descended, and no
+            // interval is closed under that on its own. Depth falls by at least
+            // one at each `Bind`, so the SUM is what stays under.
+            num_open_binders as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result)
+                == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders),
+            crate::expr_arena_bridge::abstr_levels_cache_sound(*final(self)),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+    {
+        proof {
+            crate::util_model::fx_builds_valid_hashers();
+            crate::util_model::ptr_u16_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+        }
+        if !self.has_fvars(e) {
+            proof { crate::expr_model::abstr_levels_full_noop(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders); }
+            e
+        } else if let Some(cached) = self.expr_cache.abstr_cache_levels.get(&(e, start_pos, num_open_binders)) {
+            proof {
+                let k = (e, start_pos, num_open_binders);
+                assert(self.expr_cache.abstr_cache_levels@.contains_key(k));
+                assert(self.expr_cache.abstr_cache_levels@[k] == *cached);
+            }
+            *cached
+        } else {
+            let calcd = match self.read_expr(e) {
+                Local { id: FVarId::DbjLevel(serial), .. } => {
+                    proof {
+                        assert(crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(e)) == Some(serial));
+                        assert(serial < num_open_binders);
+                    }
+                    if serial < start_pos {
+                        e
+                    } else {
+                        let res = self.fvar_to_bvar(num_open_binders, serial);
+                        proof {
+                            assert(crate::expr_arena_bridge::to_model(res)
+                                == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                        }
+                        res
+                    }
+                }
+                Local { id: FVarId::Unique(..), .. } => {
+                    proof { assert(crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(e)) is None); }
+                    e
+                }
+                App { fun, arg, .. } => {
+                    let fun2 = self.abstr_aux_levels(fun, start_pos, num_open_binders);
+                    let arg2 = self.abstr_aux_levels(arg, start_pos, num_open_binders);
+                    let res = self.mk_app(fun2, arg2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                    }
+                    res
+                }
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
+                            num_open_binders, (num_open_binders + 1) as u16);
+                    }
+                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
+                    let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                    }
+                    res
+                }
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
+                            num_open_binders, (num_open_binders + 1) as u16);
+                    }
+                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
+                    let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                    }
+                    res
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    proof {
+                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
+                            num_open_binders, (num_open_binders + 1) as u16);
+                    }
+                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let val2 = self.abstr_aux_levels(val, start_pos, num_open_binders);
+                    let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
+                    let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                    }
+                    res
+                }
+                StringLit { .. } | NatLit { .. } => {
+                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    panic!()
+                }
+                Proj { ty_name, idx, structure, .. } => {
+                    let structure2 = self.abstr_aux_levels(structure, start_pos, num_open_binders);
+                    let res = self.mk_proj(ty_name, idx, structure2);
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                    }
+                    res
+                }
+                Var { .. } | Sort { .. } | Const { .. } => {
+                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    panic!("should flag as no locals")
+                }
+            };
+            let ghost before = self.expr_cache.abstr_cache_levels@;
+            self.expr_cache.abstr_cache_levels.insert((e, start_pos, num_open_binders), calcd);
+            proof {
+                assert(self.expr_cache.abstr_cache_levels@
+                    =~= before.insert((e, start_pos, num_open_binders), calcd));
+            }
+            calcd
+        }
     }
 
     /// Verified in place. Like `inst`, it RESETS its cache before descending, so

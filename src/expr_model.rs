@@ -305,6 +305,58 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
     }
 }
 
+/// Every `DbjLevel` free variable in `e` has a serial below `bound`.
+///
+/// This is what stops `abstr_levels_full`'s saturating branch from ever being
+/// taken, and it is a REAL precondition of the kernel's code: `fvar_to_bvar`
+/// computes `(num_open_binders - serial) - 1` in `u16`, which underflows
+/// otherwise. `Unique` free variables are unconstrained -- the algorithm leaves
+/// them alone.
+pub open spec fn dbj_serials_below(e: ExprSpec, bound: u16) -> bool
+    decreases e
+{
+    match e {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
+            Some(s) => s < bound,
+            None => true,
+        },
+        ExprSpec::App(f, a) => dbj_serials_below(*f, bound) && dbj_serials_below(*a, bound),
+        ExprSpec::Bind(t, b) =>
+            dbj_serials_below(*t, bound) && dbj_serials_below(*b, bound),
+        ExprSpec::Let(t, v, b) =>
+            dbj_serials_below(*t, bound) && dbj_serials_below(*v, bound)
+                && dbj_serials_below(*b, bound),
+        ExprSpec::Proj(_, st) => dbj_serials_below(*st, bound),
+        _ => true,
+    }
+}
+
+/// Raising the bound keeps it true -- needed because the recursion descends
+/// under binders with `num_open_binders + 1`.
+pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
+    requires dbj_serials_below(e, b1), b1 <= b2
+    ensures dbj_serials_below(e, b2)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            dbj_serials_below_mono(*f, b1, b2);
+            dbj_serials_below_mono(*a, b1, b2);
+        }
+        ExprSpec::Bind(t, b) => {
+            dbj_serials_below_mono(*t, b1, b2);
+            dbj_serials_below_mono(*b, b1, b2);
+        }
+        ExprSpec::Let(t, v, b) => {
+            dbj_serials_below_mono(*t, b1, b2);
+            dbj_serials_below_mono(*v, b1, b2);
+            dbj_serials_below_mono(*b, b1, b2);
+        }
+        ExprSpec::Proj(_, st) => { dbj_serials_below_mono(*st, b1, b2); }
+        _ => {}
+    }
+}
+
 /// The model of `TcCtx::abstr_aux_levels` -- abstraction by de Bruijn LEVEL
 /// rather than by an explicit list of locals.
 ///
