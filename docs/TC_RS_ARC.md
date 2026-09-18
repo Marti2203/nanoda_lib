@@ -403,3 +403,86 @@ So `quot.rs` waits on the cycle like everything else, and there is no fourth
 front. `level.rs` is complete bar a vstd gap, `tc.rs`'s independent set is
 exhausted, `inductive.rs` is open with its gate through, and `quot.rs` is not
 independent at all.
+
+## 13. The three core contracts, and the real reason the cycle is atomic
+
+§11 said the cycle "should be planned as one, not approached function by
+function in the hope that it decomposes", and gave the reason as mutual
+recursion. That reason is true but weak — mutual recursion alone is not fatal,
+because in Verus a *contract* cuts a call cycle (`leq_core`'s clique in §5 was
+exactly that: a genuine 7-function cycle that untied once each member had a
+contract and the crate had given up on termination). If contracts were all that
+were needed here, the 48 could land in waves.
+
+They cannot, and this section records the sharper reason, found by pinning down
+the three contracts at the centre before planning around them.
+
+### The contracts themselves lift
+
+All three centres already have a shadow mirror whose contract is proven, so
+these are not designed from scratch:
+
+| kernel fn | mirror | claim |
+|---|---|---|
+| `infer(e, flag)` | `verified_infer_free` | `infer_shadow_claim(env, e, r)` |
+| `whnf(e)` | `verified_whnf_free` | `pstep_star(env, e, r)` |
+| `def_eq(x, y)` | `verified_def_eq` | `def_eq_witness(x,y) && deq_full_claim(x,y)` |
+
+Each also carries the `dbj_level_counter` frame condition, which is the same
+clause already threaded through ~85 functions.
+
+One adjustment is needed, and only one. `infer` takes an `InferFlag`, and
+`types_to`'s application rule requires the argument to have the domain type
+(the conjunct whose absence was the 2026-09-14 soundness bug). `InferOnly`
+skips precisely that check — it never infers the argument at all — so under
+`InferOnly` no derivation exists and the claim is simply false. The contract
+must therefore be flag-conditional:
+
+```rust
+flag == InferFlag::Check ==> infer_shadow_claim(*self.env, e, result)
+```
+
+This is self-supporting, which is the part that had to be checked rather than
+assumed: `infer_app` threads the flag unchanged into both recursive calls
+(`self.infer(fun, flag)` and, inside `if flag == Check`, `self.infer(arg, flag)`),
+so every call reachable from a `Check` call is itself at `Check`. The
+implication never has to be discharged from an `InferOnly` premise.
+
+### What actually makes it atomic: four caches carry claims
+
+`infer`'s first two statements are cache lookups that `return` before any work
+happens. To discharge its own postcondition on that path, the value coming out
+of the cache must already satisfy the claim. So the claim has to be an
+invariant of the cache — and that invariant is *env-relative*, while `TcCache`
+has no `env` field. It cannot live on `TcCache` at all; it belongs to
+`TypeChecker`, which holds the cache and the environment together.
+
+Of `TcCache`'s eight maps, the split is:
+
+- **Four need a claim invariant.** `infer_cache_check` (`infer_shadow_claim`),
+  `whnf_cache` and `whnf_no_unfolding_cache` (`pstep_star`), `eq_cache`
+  (the `def_eq` claim).
+- **Three are free**, and it is the one-directional contracts that make them
+  free. `infer_cache_no_check` is only ever *read* in `InferOnly` mode, where
+  the contract promises nothing; `congr_fail_cache` and `defeq_fail_cache` are
+  negative caches, and `def_eq`'s `Some(true) => claim, _ => true` shape means
+  a `false` answer promises nothing either. Negative caching costs no proof.
+  (The cache discipline is also sound in the direction that matters: a `Check`
+  call consults only `infer_cache_check`, never the weaker map, while an
+  `InferOnly` call may use either.)
+- **One is off-path**: `strong_cache`, for strong reduction, which the comment
+  on it correctly notes is not used during type-checking.
+
+That single shared invariant — call it `self.wf()` — is what makes the arc
+indivisible. It has to appear in the `requires` *and* the `ensures` of every
+function that touches the cache, which is every function that calls `infer`,
+`whnf` or `def_eq`, which is the cycle. A wave of ten functions cannot adopt it
+while the other thirty-eight do not, because the thirty-eight would have to
+restore an invariant they do not mention, and they hand the cache back
+unconstrained. Mutual recursion would have permitted waves; a shared mutable
+cache invariant does not.
+
+This is the concrete thing to design first when the arc starts, ahead of the 43
+contracts: `wf()` is a precondition of all of them, and the insert sites (the
+two `tc_cache.*.insert(e, r)` calls at the foot of `infer`, and their
+counterparts in `whnf` and `def_eq`) are where it must be re-established.

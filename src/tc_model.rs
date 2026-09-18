@@ -2350,32 +2350,26 @@ pub open spec fn types_to(
     // Recursion on the syntactic subterm `f` at the SAME fuel
     // (`decreases fuel, e`); the trigger is the non-recursive reduction fact.
     //
-    // UNSOUND AS WRITTEN -- 2026-09-14, found by the shadow certifier's
-    // disagreement counter on `Init.Data.List.Lemmas` (see `4bf07bb`).
+    // The argument check (`types_to .. *a, aty2` + `deq_any aty2 aty`) is
+    // load-bearing, and was missing until `0602cfb`. Keeping the account,
+    // because it is the one soundness bug the shadow certifier has caught on
+    // its own and the reason to keep running it:
     //
-    // `a` is never required to HAVE type `aty`. The domain is bound by the
-    // `exists` and then never used, so this says only "f's type reduces to a
-    // Pi and t is the instantiated codomain" -- the argument is ignored
-    // entirely. `types_to` is therefore not a typing relation, and an
-    // ill-typed application gets a type anyway.
-    //
-    // How that becomes a false conversion. `def_eq_eta` compares `x` against
+    // Without those two conjuncts `aty` was bound by the `exists` and then
+    // never used, so the rule said only "f's type reduces to a Pi and t is
+    // the instantiated codomain" -- the argument was ignored, and an
+    // ill-typed application got a type anyway. That turns into a false
+    // CONVERSION through eta: `def_eq_eta` compares `x` against
     // `lambda (_ : t2). x #0`, taking the binder `t2` from the OTHER side's
     // lambda. In the kernel that is sound because `def_eq` is only ever
     // reached on two terms already known to share a type; the shadow
     // certifier has no such invariant, because it is handed whatever pair the
-    // kernel happens to be probing. So `x #0` gets built with `#0 : t2` even
-    // when `x`'s domain is a different proposition. This rule then types it
-    // regardless, both sides come out as proofs of `False`, and proof
-    // irrelevance equates them -- so `h : (head :: tail) != []` is certified
-    // equal to a proof of `(a :: head :: tail) != []`.
-    //
-    // The fix is the missing conjunct: the argument must have the domain
-    // type, `types_to(dty, denv, lctx, *a, aty, fuel)` (or, matching Lean
-    // more closely, some `aty2` with `deq_any(denv, aty2, aty)`). That is not
-    // a local edit -- `verified_infer_free`'s application arm currently walks
-    // the spine inferring only the HEAD and instantiating, so it would have
-    // to infer and check every argument, and 144 sites mention `types_to`.
+    // kernel happens to be probing. So `x #0` got built with `#0 : t2` even
+    // when `x`'s domain was a different proposition, this rule typed it
+    // regardless, both sides came out as proofs of `False`, and proof
+    // irrelevance equated them -- certifying `h : (head :: tail) != []` equal
+    // to a proof of `(a :: head :: tail) != []`. Found 2026-09-14 by the
+    // disagreement counter on `Init.Data.List.Lemmas` (see `4bf07bb`).
     ||| (match e {
         ExprSpec::App(f, a) => exists |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]

@@ -2599,6 +2599,13 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     }
 }
 
+// Sits at the default rlimit boundary: this function and its `_p` twin passed
+// and failed across identical runs of the SAME commit (`6d44b35` verified green
+// when committed, then reported `rlimit exceeded` on a re-run with no source
+// change). `spinoff_prover` was already on both and is not enough on its own.
+// The budget is raised rather than tuned to the observed edge, so that a slow
+// run is not a red tree.
+#[verifier::rlimit(40)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
@@ -4465,6 +4472,13 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     Some(r)
 }
 
+// Sits at the default rlimit boundary: this function and its `_p` twin passed
+// and failed across identical runs of the SAME commit (`6d44b35` verified green
+// when committed, then reported `rlimit exceeded` on a re-run with no source
+// change). `spinoff_prover` was already on both and is not enough on its own.
+// The budget is raised rather than tuned to the observed edge, so that a slow
+// run is not a red tree.
+#[verifier::rlimit(40)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
