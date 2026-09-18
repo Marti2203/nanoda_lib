@@ -473,8 +473,35 @@ were probed before committing to the plumbing, and both came back clean:
 Probe before writing seven interlocking contracts, not after. Neither result was
 obvious, and either failure would have meant a different measure entirely.
 
-**What is left is plumbing**: write the four-component `decreases` on all seven
-functions and discharge each edge against the table above. Still a real chunk —
+### What "plumbing" actually means — three of the seven are not verified at all
+
+Worth stating precisely, because "add a `decreases` clause" undersells it.
+`level.rs` has its verified section starting at the `VERIFIED KERNEL CODE`
+banner; everything above it is an ordinary `impl` block Verus never sees. Of the
+seven clique members:
+
+| | in `verus!` | has a contract |
+|---|---|---|
+| `simplify` | yes | yes |
+| `subst_simp` | yes | yes |
+| `is_zero`, `is_one` | yes | yes |
+| **`leq`** | **no** | no |
+| **`leq_core`** | **no** | no |
+| **`leq_imax_by_cases`** | **no** | no |
+
+So `leq_core`'s `diff - 1` is not overflow-checked today because the function is
+not checked at all — which is also why the crate is green while §3 describes an
+unproven overflow.
+
+The remaining work is therefore: move three functions into `verus!`, give them
+contracts (that part exists on `leq-core-clique-wip`), AND add the four-component
+`decreases` to all seven. It is the WIP branch plus the measure, not an
+increment on top of what is on the main line. Budget accordingly: a mutual
+clique cannot go green piecewise, so none of it lands until all of it does.
+
+**What is left is plumbing in the sense that no idea is missing**: write the
+four-component `decreases` on all seven functions and discharge each edge
+against the table above. Still a real chunk —
 a mutual clique cannot go green piecewise, so seven contracts land together or
 not at all — but every mathematical ingredient is on the shelf and both
 mechanisms are known to work.
