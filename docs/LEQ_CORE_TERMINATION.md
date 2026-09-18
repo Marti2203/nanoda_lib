@@ -275,20 +275,55 @@ them all but puts each under a `Succ`, where `params_outside_succ` is blind by
 construction. That second line is precisely what the refuted subtree variant
 could not see.
 
-### One thing left
+### `simplify` non-growth — proven
 
-**`simplify` cannot grow the set.** `by_cases` re-simplifies after substituting,
-so the decrease above only survives if `simplify` does not undo it. The
-argument: `simplify` creates no new `IMax` nodes (its only producer is
-`imax(l_simp, r_simp)` from an existing one), no new `Param`s, and never deletes
-a `Succ` in a way that exposes a parameter — `combining`'s `Succ`/`Succ` fold
-moves a `Succ` OUTWARD, which keeps everything beneath it covered. Each clause
-is a lemma, not an observation.
+`by_cases` re-simplifies after substituting, so the decrease above only survives
+if `simplify` does not undo it. Both `simplify` and `combining` now carry it as
+an `ensures`, proven in place with their bodies unchanged:
 
-This is the larger job of the two but the more mechanical one, and `simplify` is
-already verified in place, so it is an extra `ensures` on an existing proof
-rather than a proof from nothing. It is also the last thing standing between
-this candidate and the first component of the measure being real.
+```
+undet_imax_params(result).subset_of(undet_imax_params(ptr))
+params_outside_succ(result).subset_of(params_outside_succ(ptr))
+```
+
+`combining` needed it first, since `simplify` routes three of its four arms
+through it. Every `combining` arm returns an input, a `Succ` over a combined
+pair, or the `Max` — none can add a parameter to either set, and the `Succ`
+fold pushes a `Succ` OUTWARD, which keeps everything beneath it covered rather
+than exposing it.
+
+### Where the first component stands
+
+Every arm is now proven for `|undet(l) u undet(r)|`:
+
+| arm | status |
+|---|---|
+| `Succ` peel (both) | non-increasing — `undet_imax_params_succ` |
+| `Max` arms | non-increasing — `undet_imax_params_max_sub` |
+| `IMax(a,IMax(x,y))` rewrite | non-increasing — `undet_imax_params_imax_imax` |
+| `IMax(a,Max(x,y))` rewrite | flat — `undet_imax_params_imax_max` |
+| `leq_imax_by_cases` | **strictly decreases** — `undet_imax_params_by_cases_drops` + `undet_imax_params_subst_no_growth` |
+| `simplify`/`combining` in between | cannot undo it — clauses on both |
+
+**What this is, and is not.** The mathematical obstacle §4 recorded is cleared:
+three candidates were refuted by witnesses, and the fourth is proven to have the
+decrease property on every arm. That was "the whole task" in §6's sense.
+
+What remains is assembly, and it is not nothing:
+
+1. Wire the lexicographic measure into `leq_core` as an actual `decreases`
+   clause and discharge each arm against it, combining the first component with
+   the existing `lw` lemmas (`lw_decreases_imax_imax`, `lw_decreases_imax_max`)
+   and `depth`.
+2. Tie the exec `leq_imax_by_cases` to the spec substitution the lemmas are
+   stated over — they describe `subst_level_spec(l, seq![p], seq![v])`, and the
+   exec side must be shown to compute that.
+3. Then §5: the `diff` bound follows, `exec_allows_no_decreases_clause` comes
+   off `leq_core`, and the `leq` axiom added in `2382e1f` retires onto the
+   proof, with its seven consumers untouched.
+
+So: the hard part is done, the wiring is not. Do not describe this as a
+termination proof until step 1 verifies.
 
 Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
 is finite, which is why `imax_params_finite` now raises a warning.

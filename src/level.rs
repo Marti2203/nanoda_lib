@@ -182,7 +182,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, undet_imax_params, params_outside_succ, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
@@ -541,6 +541,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // and costs no more than the `Max` it stands in for -- the bound
             // `simplify` needs to stay weight-non-increasing
             lw(to_model(result)) <= 1 + max_nat(lw(to_model(l)), lw(to_model(r))),
+            // `leq_core`'s fourth measure candidate: `combining` never invents
+            // an undecided parameter in `IMax` second position, nor a parameter
+            // outside a `Succ`. Every arm returns an input, a `Succ` over a
+            // combined pair, or the `Max` -- none of which can add either.
+            undet_imax_params(to_model(result))
+                .subset_of(undet_imax_params(to_model(l)).union(undet_imax_params(to_model(r)))),
+            params_outside_succ(to_model(result))
+                .subset_of(params_outside_succ(to_model(l)).union(params_outside_succ(to_model(r)))),
     {
         // the `Succ` arm shadows `l` and `r`, so the proof needs names for the
         // originals; these are ghost and erased, the body below is unchanged
@@ -560,6 +568,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         assert(interp(to_model(l0), rho) == interp(to_model(l), rho) + 1);
                         assert(interp(to_model(r0), rho) == interp(to_model(r), rho) + 1);
                     }
+                }
+                proof {
+                    // `l`/`r` are the SHADOWED inner names here; the measure
+                    // facts have to be stated about `l0`/`r0`.
+                    assert(to_model(l0) == LevelSpec::Succ(Box::new(to_model(l))));
+                    assert(to_model(r0) == LevelSpec::Succ(Box::new(to_model(r))));
+                    assert(undet_imax_params(to_model(l0)) =~= undet_imax_params(to_model(l)));
+                    assert(undet_imax_params(to_model(r0)) =~= undet_imax_params(to_model(r)));
+                    assert(params_outside_succ(to_model(out)) =~= Set::<u64>::empty());
+                    assert(undet_imax_params(to_model(out)) =~= undet_imax_params(to_model(pred)));
                 }
                 out
             }
@@ -592,28 +610,59 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // re-simplifies, and the measure argument requires that step not
             // to grow `lw`.
             lw(to_model(result)) <= lw(to_model(ptr)),
+            // The LAST arm of `leq_core`'s fourth measure candidate: `by_cases`
+            // re-simplifies after substituting, so the parameter it removed
+            // must not come back. `simplify` creates no new `IMax` node (its
+            // only producer is the `imax(l_simp, r_simp)` fall-through, from an
+            // `IMax` that was already there) and no new `Param`, and the only
+            // place a `Succ` moves is `combining`'s fold, which pushes it
+            // OUTWARD and so keeps everything beneath it covered.
+            undet_imax_params(to_model(result)).subset_of(undet_imax_params(to_model(ptr))),
+            params_outside_succ(to_model(result)).subset_of(params_outside_succ(to_model(ptr))),
     {
+        let ghost ptr0 = ptr;
         match self.read_level(ptr) {
             Zero | Param(..) => ptr,
             Succ(val, ..) => {
-                let val = self.simplify(val);
-                self.succ(val)
+                let val_simp = self.simplify(val);
+                let out = self.succ(val_simp);
+                proof {
+                    assert(to_model(ptr0) == LevelSpec::Succ(Box::new(to_model(val))));
+                    assert(undet_imax_params(to_model(ptr0)) =~= undet_imax_params(to_model(val)));
+                    assert(undet_imax_params(to_model(out)) =~= undet_imax_params(to_model(val_simp)));
+                    assert(params_outside_succ(to_model(out)) =~= Set::<u64>::empty());
+                }
+                out
             }
             Max(l, r, ..) => {
-                let l = self.simplify(l);
-                let r = self.simplify(r);
-                self.combining(l, r)
+                let l_simp = self.simplify(l);
+                let r_simp = self.simplify(r);
+                let out = self.combining(l_simp, r_simp);
+                proof {
+                    assert(to_model(ptr0) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))));
+                }
+                out
             }
             IMax(l, r, ..) => {
                 let l_simp = self.simplify(l);
                 let r_simp = self.simplify(r);
+                proof {
+                    assert(to_model(ptr0) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))));
+                }
                 if self.is_zero(l_simp) || self.is_one(l_simp) {
                     r_simp
                 } else {
                   match self.read_level(r_simp) {
                       Zero => r_simp,
                       Succ(..) => self.combining(l_simp, r_simp),
-                      _ => self.imax(l_simp, r_simp)
+                      _ => {
+                          let out = self.imax(l_simp, r_simp);
+                          proof {
+                              assert(to_model(out)
+                                  == LevelSpec::IMax(Box::new(to_model(l_simp)), Box::new(to_model(r_simp))));
+                          }
+                          out
+                      }
                   }
                 }
             }
