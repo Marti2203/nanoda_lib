@@ -305,6 +305,106 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
     }
 }
 
+/// The model of `TcCtx::abstr_aux_levels` -- abstraction by de Bruijn LEVEL
+/// rather than by an explicit list of locals.
+///
+/// A `Free` node is rewritten only when it is a `DbjLevel` free variable whose
+/// serial has reached `start_pos`; `Unique` free variables and earlier serials
+/// are left alone. The `num_open_binders - serial - 1` is the level-to-index
+/// flip, which is the whole reason this is a separate algorithm from
+/// `abstr_full`: that one looks a pointer up in a list, this one does
+/// arithmetic on a counter.
+///
+/// Saturating at 0 rather than wrapping. The real code computes
+/// `(num_open_binders - serial) - 1` in `u16`; the guard `serial >= start_pos`
+/// does not by itself stop that underflowing, so the model says what a
+/// well-formed call produces and `abstr_aux_levels`' eventual contract will have
+/// to carry `serial < num_open_binders` as a precondition.
+pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders: u16) -> ExprSpec
+    decreases e
+{
+    match e {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
+            Some(s) =>
+                if s < start_pos {
+                    e
+                } else if (s as int) < (num_open_binders as int) {
+                    ExprSpec::Var((num_open_binders - s - 1) as u32)
+                } else {
+                    ExprSpec::Var(0)
+                },
+            None => e,
+        },
+        ExprSpec::App(f, a) => ExprSpec::App(
+            Box::new(abstr_levels_full(*f, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(*a, start_pos, num_open_binders)),
+        ),
+        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+            Box::new(abstr_levels_full(*t, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(*b, start_pos, (num_open_binders + 1) as u16)),
+        ),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(
+            Box::new(abstr_levels_full(*t, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(*v, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(*b, start_pos, (num_open_binders + 1) as u16)),
+        ),
+        ExprSpec::Proj(pidx, st) => ExprSpec::Proj(pidx,
+            Box::new(abstr_levels_full(*st, start_pos, num_open_binders))),
+        _ => e,
+    }
+}
+
+/// Like `abstr_full`, it rewrites leaves into leaves, so depth is untouched.
+pub proof fn abstr_levels_full_depth(e: ExprSpec, start_pos: u16, num_open_binders: u16)
+    ensures depth(abstr_levels_full(e, start_pos, num_open_binders)) == depth(e)
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            abstr_levels_full_depth(*f, start_pos, num_open_binders);
+            abstr_levels_full_depth(*a, start_pos, num_open_binders);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_levels_full_depth(*t, start_pos, num_open_binders);
+            abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_levels_full_depth(*t, start_pos, num_open_binders);
+            abstr_levels_full_depth(*v, start_pos, num_open_binders);
+            abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
+        }
+        ExprSpec::Proj(_, st) => { abstr_levels_full_depth(*st, start_pos, num_open_binders); }
+        _ => {}
+    }
+}
+
+/// A term with no free variables is untouched -- the counterpart of
+/// `abstr_full_noop`, and what discharges `abstr_aux_levels`' `!has_fvars`
+/// short-circuit.
+pub proof fn abstr_levels_full_noop(e: ExprSpec, start_pos: u16, num_open_binders: u16)
+    requires !has_fv(e)
+    ensures abstr_levels_full(e, start_pos, num_open_binders) == e
+    decreases e
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            abstr_levels_full_noop(*f, start_pos, num_open_binders);
+            abstr_levels_full_noop(*a, start_pos, num_open_binders);
+        }
+        ExprSpec::Bind(t, b) => {
+            abstr_levels_full_noop(*t, start_pos, num_open_binders);
+            abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
+        }
+        ExprSpec::Let(t, v, b) => {
+            abstr_levels_full_noop(*t, start_pos, num_open_binders);
+            abstr_levels_full_noop(*v, start_pos, num_open_binders);
+            abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
+        }
+        ExprSpec::Proj(_, st) => { abstr_levels_full_noop(*st, start_pos, num_open_binders); }
+        _ => {}
+    }
+}
+
 /// The domain of a `Bind` (`Closed` elsewhere -- never consulted). A named
 /// accessor so a contract can name the binder type without an `exists`.
 pub open spec fn bind_dom(e: ExprSpec) -> ExprSpec {

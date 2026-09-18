@@ -476,6 +476,35 @@ pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
     a == b
 }
 
+// ---------------------------------------------------------------------
+// The de Bruijn-LEVEL abstraction's model support.
+//
+// `abstr_aux_levels` branches on a free variable's `DbjLevel` SERIAL, and the
+// model has erased it: `to_model(local) == ExprSpec::Free(expr_id(ptr))` carries
+// an opaque pointer identity, not the serial.
+//
+// `FVarId` is transparent, so the FVarId-keyed version below is a DEFINITION.
+// The ID-keyed one cannot be: tying it to the node means inverting `expr_id`,
+// which is injective (`expr_id_injective`) but not invertible in spec without a
+// `choose` over a lifetime-parameterised type. So `dbj_serial` is uninterpreted
+// and keyed on `read_expr`, exactly as the `Const`/`Local`/`NatLit`/`StringLit`
+// payload clauses are -- that keying is what made those provable rather than
+// assumed, and it does the same job here.
+// ---------------------------------------------------------------------
+
+/// The `DbjLevel` serial an `FVarId` carries, `None` for a `Unique` one.
+/// DEFINED -- `ExFVarId` is transparent.
+pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
+    match id {
+        FVarId::DbjLevel(s) => Some(s),
+        FVarId::Unique(_) => None,
+    }
+}
+
+/// The same, keyed by the id a `Free` node carries in the model. Uninterpreted;
+/// `read_expr` ties it to the node.
+pub uninterp spec fn dbj_serial(id: u32) -> Option<u16>;
+
 /// The memo caches are sound: every entry maps its key to a pointer denoting
 /// exactly what the key's function computes. `subst_aux`'s `return cached`
 /// branch is correct precisely when this holds, and its `insert` branch is what
@@ -552,12 +581,18 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
         // reason as the others: keyed on `read_expr` there is no `(ptr, e)`
         // pair to get wrong. This is what lets the kernel's `abstr_aux` learn
         // anything at its `Local` arm.
-        result matches Expr::Local { .. } ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr));
+        result matches Expr::Local { .. } ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
+        // The de Bruijn-LEVEL serial, keyed here for the same reason as the
+        // payload clauses above: on `read_expr` there is no `(ptr, e)` pair to
+        // get wrong.
+        result matches Expr::Local { id, .. } ==>
+            dbj_serial(expr_id(ptr)) == fvar_dbj_serial(id);
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
-// assuming exactly the five clauses above (`to_model_of_expr(e) ==
+// assuming exactly the six clauses above (`to_model_of_expr(e) ==
 // to_model(ptr)` together with the `Const`, `Local`, `NatLit` and `StringLit`
-// payload correspondences) and claiming `ensures false`, FAILS to verify.
+// payload correspondences, and the `dbj_serial` one) and claiming
+// `ensures false`, FAILS to verify.
 // That is the result wanted -- had it verified, the conjuncts would have been
 // inconsistent with the rest of the arena model and every proof downstream of
 // them worthless. Non-degeneracy is witnessed on the other side by the
