@@ -678,6 +678,41 @@ The `Succ` figure being **exact** is what matters for the overflow: that is the
 only arm where `diff` moves, and `|diff|` rises by at most one there, so
 `|diff| + M` never rises.
 
+### The `diff` overflow is SOLVED — tested, on branch `leq-core-port-wip`
+
+§3 has called the `diff` overflow the blocker since this note was written. It is
+dischargeable, and that is now demonstrated rather than argued. Branch
+`leq-core-port-wip` (commit `741af8c`, deliberately **not green**, same
+convention as `leq-core-clique-wip`) carries `leq_core` with
+
+```
+requires diff + leq_measure(l_in, r_in) <= 1_000_000_000,
+         diff - leq_measure(l_in, r_in) >= -1_000_000_000,
+```
+
+and **every recursive call re-establishes it. Zero precondition errors remain**
+— `Succ` peels via the exact −1, both `Max` sides, all four `IMax` rewrites, and
+`by_cases`. A constant interval could never do this, which is exactly why
+`leq-core-clique-wip` stalled on `-1e9 <= diff <= 1e9`.
+
+Thirteen of `leq_core`'s fifteen semantic arms are proven there too.
+
+### The one thing left: `simplify`'s denotation preservation
+
+```
+forall rho. interp(to_model(result), rho) == interp(to_model(ptr), rho)
+```
+
+`leq-core-clique-wip` proves it in about 60 lines of per-arm reasoning. The two
+unproven `leq_core` arms are both `IMax`/`Max` rewrites, which re-simplify, so
+they need it and nothing else does.
+
+Worth noting **why it is statable at all now, and was not this morning**: the
+clause is sound only because `simplify`'s `IMax` arm shortcuts when the left
+side denotes 0 or 1 — and `is_zero`/`is_one` only acquired those contracts
+today, when the `leq` axiom let them be verified. Retiring that axiom is what
+makes proving it possible, which is the opposite of how it looked going in.
+
 ### What the remaining work actually is
 
 1. Move `leq`, `leq_core`, `leq_imax_by_cases` into `verus!` with the contracts
