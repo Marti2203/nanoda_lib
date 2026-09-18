@@ -923,6 +923,30 @@ pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result:
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't;
 
+// ATTEMPTED AND BACKED OUT: retiring this onto
+// `abstr_levels_full_eq_abstr_full`. The algorithmic half is DONE -- that lemma
+// proves the level walk equals the list walk, and `abstr_levels` itself is
+// verified. Writing the contract out makes clear what this axiom has been
+// bundling, which is worth recording even though the retirement did not land:
+//
+//   start_pos <= ctx.dbj_level_counter
+//   locals_hint.len() == ctx.dbj_level_counter - start_pos
+//   each locals_hint[k] has de Bruijn serial start_pos + k
+//   serial_determines_id  -- a serial in range picks out exactly ONE local,
+//                            which is NOT free: `replace_dbj_level` decrements
+//                            the counter, so serials are reused
+//   dbj_serials_below     -- every free variable reached is in scope
+//
+// The first one is what actually blocks it, and not for a deep reason:
+// `verified_inst` and `verified_infer_free` run between the caller reading
+// `start_pos` and this call, and neither says anything about
+// `dbj_level_counter`, so Verus havocs it. Fixing that means a counter-frame
+// condition through the shadow route -- the same 39-function closure that
+// blocks verifying `mk_dbj_level`, reached from the other end.
+//
+// So both halves of this arc are gated on one thing: nothing in the shadow
+// route currently promises what it does to the de Bruijn counter.
+
 pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, locals_hint: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>) where 'p: 't
     ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0);
 
