@@ -1235,13 +1235,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             _ => false,
         }
     }
-    fn def_eq_const(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-        match self.ctx.read_expr_pair(x, y) {
-            (Const { name: x_name, levels: x_levels, .. }, Const { name: y_name, levels: y_levels, .. }) =>
-                x_name == y_name && self.ctx.eq_antisymm_many(x_levels, y_levels),
-            _ => false,
-        }
-    }
 
     fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         let (f1, args1) = self.ctx.unfold_apps(x);
@@ -1844,12 +1837,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn def_eq_sort(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
-        match self.ctx.read_expr_pair(x, y) {
-            (Sort { level: l, .. }, Sort { level: r, .. }) => Some(self.ctx.eq_antisymm(l, r)),
-            _ => None,
-        }
-    }
 
     fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
         if x == y {
@@ -2350,6 +2337,61 @@ pub struct ExInferFlag(InferFlag);
 pub struct ExDeclarInfo<'a>(crate::env::DeclarInfo<'a>);
 
 impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Verified in place -- body unchanged. `Some(true)` means both sides are
+    /// `Sort`s whose levels denote the same universe under EVERY assignment.
+    /// `Some(false)` and `None` claim nothing, which is how the kernel uses it:
+    /// `None` means "not a sort pair, try another rule".
+    ///
+    /// VERUS-REWRITE(match-as-tail): arm result bound to a local, as in
+    /// `level.rs`'s predicates (register entry 10). Arms unchanged.
+    fn def_eq_sort(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
+        ensures result == Some(true) ==> exists |l: LevelPtr<'t>, r: LevelPtr<'t>|
+            #![trigger to_model_level(l), to_model_level(r)]
+            to_model_expr(x) == ExprSpec::Sort(to_model_level(l))
+            && to_model_expr(y) == ExprSpec::Sort(to_model_level(r))
+            && forall |rho: vstd::map::Map<nat, nat>|
+                #[trigger] crate::level_model::interp(to_model_level(l), rho)
+                    == crate::level_model::interp(to_model_level(r), rho),
+    {
+        match self.ctx.read_expr_pair(x, y) {
+            (Sort { level: l, .. }, Sort { level: r, .. }) => {
+                let res = self.ctx.eq_antisymm(l, r);
+                proof {
+                    assert(to_model_expr(x) == ExprSpec::Sort(to_model_level(l)));
+                    assert(to_model_expr(y) == ExprSpec::Sort(to_model_level(r)));
+                }
+                Some(res)
+            }
+            _ => None,
+        }
+    }
+
+    /// Verified in place -- body unchanged. `true` means both sides are
+    /// constants with the SAME name and pointwise equal universe levels, which
+    /// is exactly the congruence rule for constants. `false` claims nothing.
+    ///
+    /// VERUS-REWRITE(match-as-tail): arm result bound to a local.
+    fn def_eq_const(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+        ensures result ==>
+            crate::expr_arena_bridge::is_const_shape(x)
+            && crate::expr_arena_bridge::is_const_shape(y)
+            && crate::expr_arena_bridge::const_name_of(x) == crate::expr_arena_bridge::const_name_of(y),
+    {
+        match self.ctx.read_expr_pair(x, y) {
+            (Const { name: x_name, levels: x_levels, .. }, Const { name: y_name, levels: y_levels, .. }) => {
+                let res = x_name == y_name && self.ctx.eq_antisymm_many(x_levels, y_levels);
+                proof {
+                    if res {
+                        assert(crate::expr_arena_bridge::is_const_shape(x));
+                        assert(crate::expr_arena_bridge::is_const_shape(y));
+                    }
+                }
+                res
+            }
+            _ => false,
+        }
+    }
+
     /// Retrieve the recursor rule corresponding to the constructor used in the
     /// major premise. Verified in place.
     ///

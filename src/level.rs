@@ -151,16 +151,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.leq_core(l_prime, r_prime, 0)
     }
 
-    pub fn eq_antisymm(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> bool { self.leq(l, r) && self.leq(r, l) }
-
-    pub fn eq_antisymm_many(&mut self, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>) -> bool {
-        let xs = self.read_levels(xs).clone();
-        let ys = self.read_levels(ys).clone();
-        if xs.len() != ys.len() {
-            return false
-        }
-        xs.iter().copied().zip(ys.iter().copied()).all(|(x, y)| self.eq_antisymm(x, y))
-    }
 
     /// Does this list of universe parameters already contain `Param(n)` for some `n : Name`
     ///
@@ -172,25 +162,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         })
     }
     
-    fn is_one(&mut self, l: LevelPtr<'t>) -> bool {
-        match self.read_level(l) {
-            Level::Succ(pred, _) => self.is_zero(pred),
-            _ => false
-        }
-    }
-
-    /// l <= 0 -> is_zero(l)
-    pub fn is_zero(&mut self, level: LevelPtr<'t>) -> bool {
-        let zero = self.zero();
-        self.leq(level, zero)
-    }
-
-    // 1 <= level -> is_nonzero(level)
-    pub fn is_nonzero(&mut self, level: LevelPtr<'t>) -> bool {
-        let zero = self.zero();
-        let one = self.succ(zero);
-        self.leq(one, level)
-    }
     
 }
 
@@ -217,16 +188,41 @@ use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_
 
 verus! {
 
-// NO ensures on either of these: they claim nothing, and exist only so the
-// kernel's `simplify` can be verified in place while the rest of its cycle
-// (`is_zero` -> `leq` -> `leq_core` -> `simplify`) stays outside `verus!`.
-// `simplify` calls them only to pick a branch, and the simplified-form
-// invariant holds on both branches, so no property of them is needed.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_zero] (ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>) -> (result: bool) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
-
-assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_one] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: bool) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+// THE ONE ASSUMED STEP IN THE UNIVERSE-ORDERING CHAIN.
+//
+// `leq` is `simplify` on both sides then `leq_core(l', r', 0)`. It is SOUND in
+// the direction stated: a `true` answer means the left level is at most the
+// right one under every assignment of the universe parameters. `false` claims
+// nothing, which matches how the kernel uses it.
+//
+// This is assumed rather than proven, and the reason is recorded rather than
+// hidden: `leq_core` takes an `isize` `diff` that moves by one per `Succ`
+// peeled, and Verus must discharge those as overflow-free. That needs a
+// measure that decreases on every arm, and `docs/LEQ_CORE_TERMINATION.md`
+// refutes three candidates with explicit witnesses. The contract below is
+// PROVEN on branch `leq-core-clique-wip` modulo exactly that measure --
+// `simplify`'s own denotation-preservation is already proven there. So this is
+// a proof waiting on one idea, not a permanent gap, and it retires the moment
+// the measure is found.
+//
+// What it BUYS, and why the trade was taken deliberately: it replaces two
+// CLAIM-FREE `assume_specification`s (`is_zero`, `is_one`) with one that says
+// something, and lets five kernel functions below plus two in `tc.rs` be
+// verified in place instead of assumed. Count 105 -> 104. The count is the
+// least interesting part -- what matters is that the assumption is now stated
+// once, at the one place the hard proof actually lives, instead of being
+// smeared across its consumers.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::leq] (ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool) where 'p: 't
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        // Two trigger groups, not one: a caller may hold the interesting term on
+        // EITHER side. `is_zero` puts its level in `l` position and `is_nonzero`
+        // puts it in `r`, so a single `l`-keyed trigger silently serves only
+        // half the consumers.
+        result ==> forall |rho: Map<nat, nat>|
+            #![trigger interp(to_model(l), rho)]
+            #![trigger interp(to_model(r), rho)]
+            interp(to_model(l), rho) <= interp(to_model(r), rho);
 
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
@@ -243,6 +239,121 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn is_param(&self, level: LevelPtr<'t>) -> (result: bool)
         ensures result == matches!(to_model(level), LevelSpec::Param(_))
     { matches!(self.read_level(level), Param(..)) }
+
+    /// Verified in place against `leq`'s assumption. `interp` is a `nat`, so
+    /// `<= 0` IS `== 0` -- the kernel's comment `l <= 0 -> is_zero(l)` spelled
+    /// as a contract.
+    pub fn is_zero(&mut self, level: LevelPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) == 0,
+    {
+        let zero = self.zero();
+        self.leq(level, zero)
+    }
+
+    /// Verified in place. `true` means the level denotes exactly 1 everywhere:
+    /// the node is a `Succ` and its predecessor is zero under every assignment.
+    fn is_one(&mut self, l: LevelPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == 1,
+    {
+        match self.read_level(l) {
+            Level::Succ(pred, _) => {
+                let res = self.is_zero(pred);
+                proof {
+                    assert(to_model(l) == LevelSpec::Succ(Box::new(to_model(pred))));
+                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho)
+                        == interp(to_model(pred), rho) + 1);
+                    assert(res ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == 1);
+                }
+                res
+            }
+            _ => false
+        }
+    }
+
+    /// Verified in place. The mirror image of `is_zero`: `1 <= level`.
+    pub fn is_nonzero(&mut self, level: LevelPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) >= 1,
+    {
+        let zero = self.zero();
+        let one = self.succ(zero);
+        proof {
+            assert(to_model(one) == LevelSpec::Succ(Box::new(LevelSpec::Zero)));
+            // `interp` is recursive and `one` is a NESTED constructor
+            // (`Succ(Zero)`), so a plain assert will not unfold it twice.
+            assert(forall |rho: Map<nat, nat>| #[trigger] interp(to_model(one), rho) == 1)
+                by { reveal_with_fuel(interp, 2); }
+        }
+        self.leq(one, level)
+    }
+
+    /// Verified in place. Antisymmetry gives EQUALITY of denotations from the
+    /// two inequalities -- the fact `def_eq_sort` needs and the reason `leq`'s
+    /// one-directional contract is enough to build a two-directional one.
+    pub fn eq_antisymm(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> forall |rho: Map<nat, nat>|
+                #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho),
+    {
+        self.leq(l, r) && self.leq(r, l)
+    }
+
+    /// Verified in place, pointwise over two equal-length lists.
+    ///
+    /// VERUS-REWRITE(zip-all-closure): the original is
+    /// `xs.iter().copied().zip(ys.iter().copied()).all(|(x, y)| self.eq_antisymm(x, y))`.
+    /// The closure captures `&mut self` to call `eq_antisymm`, which Verus
+    /// rejects outright, and `Iterator::all`/`zip` have no specs either. The
+    /// index walk visits the same pairs in the same order; it does not
+    /// short-circuit, but `out` is only ever cleared, never set, so no
+    /// mismatch can be lost.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn eq_antisymm_many(&mut self, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>) -> (result: bool)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len()
+                && forall |i: int| #![trigger to_model_of_levels(xs)[i]]
+                    0 <= i < to_model_of_levels(xs).len() ==>
+                    forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(xs)[i], rho)
+                        == interp(to_model_of_levels(ys)[i], rho),
+    {
+        let xs_v = crate::level_arena_bridge::read_levels_vec(self, xs);
+        let ys_v = crate::level_arena_bridge::read_levels_vec(self, ys);
+        if xs_v.len() != ys_v.len() {
+            return false
+        }
+        let n = xs_v.len();
+        let mut i: usize = 0;
+        let mut out = true;
+        while i < n
+            invariant
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                n == xs_v@.len(),
+                xs_v@.len() == ys_v@.len(),
+                xs_v@.len() == to_model_of_levels(xs).len(),
+                ys_v@.len() == to_model_of_levels(ys).len(),
+                forall |j: int| 0 <= j < xs_v@.len() ==> #[trigger] to_model(xs_v@[j]) == to_model_of_levels(xs)[j],
+                forall |j: int| 0 <= j < ys_v@.len() ==> #[trigger] to_model(ys_v@[j]) == to_model_of_levels(ys)[j],
+                i <= n,
+                out ==> forall |j: int| #![trigger to_model_of_levels(xs)[j]] 0 <= j < i ==>
+                    forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(xs)[j], rho)
+                        == interp(to_model_of_levels(ys)[j], rho),
+            decreases n - i
+        {
+            let ok = self.eq_antisymm(xs_v[i], ys_v[i]);
+            if !ok {
+                out = false;
+            }
+            i = i + 1;
+        }
+        out
+    }
 
     /// Verified in place -- the body below is the kernel's, unchanged; only the
     /// contract is new. One-directional on purpose: `true` means the level

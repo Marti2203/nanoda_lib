@@ -390,10 +390,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Convenience function for reading two items as a tuple.
-    pub fn read_expr_pair(&self, a: ExprPtr<'t>, x: ExprPtr<'t>) -> (Expr<'t>, Expr<'t>) {
-        (self.read_expr(a), self.read_expr(x))
-    }
 
     pub fn read_string(&self, p: StringPtr<'t>) -> &CowStr<'t> {
         match p.dag_marker() {
@@ -988,6 +984,8 @@ use crate::level_arena_bridge::{to_model, to_model_of_level};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model as to_model_expr;
 #[cfg(verus_only)]
+use crate::expr_arena_bridge::to_model_of_expr;
+#[cfg(verus_only)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
@@ -1064,6 +1062,26 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
         self.alloc_expr(Expr::Lambda { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+    }
+
+    /// Convenience function for reading two items as a tuple.
+    ///
+    /// Verified in place, body unchanged. Every clause is `read_expr`'s own,
+    /// mirrored once per component -- nothing new is assumed, it just carries
+    /// the facts through the tuple so `tc.rs`'s pair-matching functions
+    /// (`def_eq_sort`, `def_eq_const`, ...) can use them.
+    pub fn read_expr_pair(&self, a: ExprPtr<'t>, x: ExprPtr<'t>) -> (result: (Expr<'t>, Expr<'t>))
+        ensures
+            to_model_of_expr(result.0) == to_model_expr(a),
+            to_model_of_expr(result.1) == to_model_expr(x),
+            result.0 matches Expr::Const { name, levels, .. } ==>
+                crate::expr_arena_bridge::const_name_of(a) == name
+                && crate::expr_arena_bridge::const_levels_of(a) == levels,
+            result.1 matches Expr::Const { name, levels, .. } ==>
+                crate::expr_arena_bridge::const_name_of(x) == name
+                && crate::expr_arena_bridge::const_levels_of(x) == levels,
+    {
+        (self.read_expr(a), self.read_expr(x))
     }
 
     pub fn mk_pi(
