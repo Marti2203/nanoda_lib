@@ -69,10 +69,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `forall Param(n) e. l, n e. params`
 
 
-    fn subst_simp(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> LevelPtr<'t> {
-        let l = self.subst_level(level, ks, vs);
-        self.simplify(l)
-    }
 
     /// Test whether `lhs <= rhs` by checking whether it holds regardless of whether
     /// a parameter `p` is zero or non-zero.
@@ -182,7 +178,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, undet_imax_params, params_outside_succ, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, undet_imax_params, params_outside_succ, undet_imax_params_subst_single, undet_imax_params_subst_no_growth, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
@@ -260,6 +256,55 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn is_param(&self, level: LevelPtr<'t>) -> (result: bool)
         ensures result == matches!(to_model(level), LevelSpec::Param(_))
     { matches!(self.read_level(level), Param(..)) }
+
+    /// Verified in place -- body unchanged. `subst_level` then `simplify`.
+    ///
+    /// The second `ensures` is the EXEC-SIDE BRIDGE for `leq_core`'s fourth
+    /// measure candidate (docs/LEQ_CORE_TERMINATION.md). The measure lemmas in
+    /// `level_model.rs` are stated over `subst_level_spec(l, seq![p], seq![v])`;
+    /// this is what ties them to the real function, for the single-key shape
+    /// `leq_imax_by_cases` actually builds. Both of its substituted values --
+    /// `Zero` and `Succ(Param p)` -- satisfy the hypothesis.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn subst_simp(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
+            forall |j: int| 0 <= j < to_model_of_levels(ks).len()
+                ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            ({
+                &&& to_model_of_levels(ks).len() == 1
+                &&& params_outside_succ(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+                &&& undet_imax_params(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+            }) ==> ({
+                &&& !undet_imax_params(to_model(result))
+                        .contains(level_names(to_model_of_levels(ks))[0])
+                &&& undet_imax_params(to_model(result))
+                        .subset_of(undet_imax_params(to_model(level)))
+            }),
+    {
+        let l = self.subst_level(level, ks, vs);
+        let out = self.simplify(l);
+        proof {
+            if to_model_of_levels(ks).len() == 1
+                && params_outside_succ(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+                && undet_imax_params(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+            {
+                let p = level_names(to_model_of_levels(ks))[0];
+                let v = to_model_of_levels(vs)[0];
+                assert(level_names(to_model_of_levels(ks)) =~= seq![p]);
+                assert(to_model_of_levels(vs) =~= seq![v]);
+                assert(to_model(l) == subst_level_spec(to_model(level), seq![p], seq![v]));
+                undet_imax_params_subst_single(to_model(level), p, v);
+                undet_imax_params_subst_no_growth(to_model(level), p, v);
+                // `simplify` carries both through -- the clause proven on it
+                assert(undet_imax_params(to_model(out))
+                    .subset_of(undet_imax_params(to_model(l))));
+            }
+        }
+        out
+    }
 
     /// Verified in place against `leq`'s assumption. `interp` is a `nat`, so
     /// `<= 0` IS `== 0` -- the kernel's comment `l <= 0 -> is_zero(l)` spelled
@@ -604,6 +649,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
             imax_normal(to_model(result)),
             // `simplify` never increases the termination weight. This is the
             // fact `leq_imax_by_cases` needs: it substitutes a `Param` and

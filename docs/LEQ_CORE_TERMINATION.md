@@ -315,15 +315,25 @@ What remains is assembly, and it is not nothing:
    clause and discharge each arm against it, combining the first component with
    the existing `lw` lemmas (`lw_decreases_imax_imax`, `lw_decreases_imax_max`)
    and `depth`.
-2. Tie the exec `leq_imax_by_cases` to the spec substitution the lemmas are
-   stated over — they describe `subst_level_spec(l, seq![p], seq![v])`, and the
-   exec side must be shown to compute that.
+2. ~~Tie the exec `leq_imax_by_cases` to the spec substitution the lemmas are
+   stated over.~~ **DONE.** `subst_simp` is verified in place and carries the
+   bridge as an `ensures`: for the single-key shape `leq_imax_by_cases` actually
+   builds, the substituted parameter is not in `undet_imax_params` of the
+   result, and the set does not grow. `subst_level`'s existing contract already
+   produced exactly the `subst_level_spec(l, seq![p], seq![v])` form the lemmas
+   are stated over, so this was a matter of naming `p` and `v` and chaining
+   `simplify`'s non-growth clause. `simplify` also gained the counter frame it
+   had been missing.
 3. Then §5: the `diff` bound follows, `exec_allows_no_decreases_clause` comes
    off `leq_core`, and the `leq` axiom added in `2382e1f` retires onto the
    proof, with its seven consumers untouched.
 
-So: the hard part is done, the wiring is not. Do not describe this as a
-termination proof until step 1 verifies.
+So: the hard part is done and step 2 of the wiring with it. **Step 1 is all
+that is left**, and it is the one that needs the whole clique at once — a
+`decreases` clause on `leq_core` means every arm discharged together, against a
+measure combining this component with `lw` and `depth`.
+
+Do not describe this as a termination proof until step 1 verifies.
 
 Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
 is finite, which is why `imax_params_finite` now raises a warning.
