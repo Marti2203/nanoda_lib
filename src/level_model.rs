@@ -1642,6 +1642,19 @@ pub proof fn interp_congr(l: LevelSpec, rho1: Map<nat, nat>, rho2: Map<nat, nat>
     }
 }
 
+/// The `forall rho` form, which is the shape `subst_expr_levels_rel`'s `Sort`
+/// arm is written in.
+pub proof fn subst_level_spec_interp_forall(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires ks.len() == vs.len()
+    ensures forall |rho: Map<nat, nat>| #[trigger] interp(subst_level_spec(l, ks, vs), rho)
+        == interp(l, subst_env(rho, ks, vs))
+{
+    assert forall |rho: Map<nat, nat>| #[trigger] interp(subst_level_spec(l, ks, vs), rho)
+        == interp(l, subst_env(rho, ks, vs)) by {
+        subst_level_spec_interp(l, ks, vs, rho);
+    }
+}
+
 pub proof fn subst_level_spec_interp(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, rho: Map<nat, nat>)
     requires ks.len() == vs.len()
     ensures interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs))

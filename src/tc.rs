@@ -1807,17 +1807,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Try to unfold the base `Const` and re-fold applications, but don't
     /// do any further reduction.
-    fn unfold_def(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
-        let (fun, args) = self.ctx.unfold_apps(e);
-        let (name, levels) = self.ctx.try_const_info(fun)?;
-        let (def_uparams, def_value) = self.env.get_declar_val(&name)?;
-        if self.ctx.read_levels(levels).len() == self.ctx.read_levels(def_uparams).len() {
-            let def_val = self.ctx.subst_expr_levels(def_value, def_uparams, levels);
-            Some(self.ctx.foldl_apps(def_val, args.into_iter()))
-        } else {
-            None
-        }
-    }
 
 
     fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
@@ -2371,6 +2360,74 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 res
             }
             _ => false,
+        }
+    }
+
+    /// Delta reduction: unfold an applied definition.
+    ///
+    /// Verified in place. The contract is the one `tc_model`'s mirror carries,
+    /// so this is the kernel proving what a hand-written twin was standing in
+    /// for.
+    ///
+    /// VERUS-REWRITE(question-mark): the two `?`s are spelled as their `match`
+    /// desugaring, and `args.into_iter()` as a slice, because `Vec::into_iter`
+    /// has no vstd spec while `verified_foldl_apps`' slice form does.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::expr_model::nlbv(to_model_expr(e)) <= 0,
+            crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
+        ensures
+            match result {
+                Some(r) => crate::beta_model::pstep_star(
+                        crate::env_model::env_model_nofv(*old(self).env),
+                        to_model_expr(e), to_model_expr(r))
+                    && crate::expr_model::nlbv(to_model_expr(r)) <= 0,
+                None => true,
+            }
+    {
+        let (fun, args) = self.ctx.unfold_apps(e);
+        proof { crate::beta_model::spine_app_nlbv_decompose(to_model_expr(fun),
+            Seq::new(args@.len(), |i: int| to_model_expr(args@[i]))); }
+        let (name, levels) = match self.ctx.try_const_info(fun) {
+            Some(p) => p,
+            None => return None,
+        };
+        let (def_uparams, def_value) = match self.env.get_declar_val(&name) {
+            Some(p) => p,
+            None => return None,
+        };
+        if self.ctx.read_levels(levels).len() == self.ctx.read_levels(def_uparams).len() {
+            let def_val = self.ctx.subst_expr_levels(def_value, def_uparams, levels);
+            let ghost id = crate::level_arena_bridge::name_id(name);
+            let ghost ks = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(def_uparams));
+            let ghost val = to_model_expr(def_value);
+            let ghost cm = crate::env_model::env_model_nofv(*self.env);
+            let ghost am = Seq::new(args@.len(), |i: int| to_model_expr(args@[i]));
+            proof {
+                crate::expr_arena_bridge::is_const_shape_model(fun);
+                crate::expr_arena_bridge::const_levels_vec_model(fun);
+                assert(to_model_expr(fun) == ExprSpec::Const(crate::expr_arena_bridge::const_id(fun),
+                    crate::expr_arena_bridge::const_levels_vec(fun)));
+                assert(crate::expr_arena_bridge::const_levels_vec(fun) =~= crate::level_arena_bridge::to_model_of_levels(levels));
+                // the declaration is closed, so it survives into the
+                // free-variable-free environment view the pstep rules use
+                crate::env_model::env_model_nofv_has(*self.env, id);
+                crate::beta_model::pstep_star_one(cm, to_model_expr(fun), to_model_expr(def_val));
+                crate::beta_model::pstep_spine_app_star(cm, to_model_expr(fun), to_model_expr(def_val), am);
+                // the kernel returns the FUNCTIONAL substitution; the nlbv
+                // lemma is stated over the relational one
+                crate::expr_model::subst_expr_levels_fn_rel(val, ks,
+                    crate::level_arena_bridge::to_model_of_levels(levels));
+                crate::beta_model::subst_expr_levels_rel_nlbv(val, ks,
+                    crate::level_arena_bridge::to_model_of_levels(levels),
+                    to_model_expr(def_val));
+            }
+            let r = crate::expr_arena_bridge::verified_foldl_apps(self.ctx, def_val, args.as_slice());
+            proof { crate::beta_model::spine_app_nlbv(to_model_expr(def_val), am); }
+            Some(r)
+        } else {
+            None
         }
     }
 

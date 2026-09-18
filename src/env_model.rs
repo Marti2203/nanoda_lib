@@ -343,6 +343,12 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
             && to_model_of_env(*env)[name_id(*n)]
                 == (level_names(to_model_of_levels(uparams)), expr_to_model(val))
             && nlbv(expr_to_model(val)) == 0
+            // A top-level declaration's stored value is CLOSED in the
+            // free-variable sense too, not just the loose-de-Bruijn sense.
+            // Local constants exist only while a declaration is being checked;
+            // nothing that survives into the environment can mention one.
+            // `nlbv == 0` above is the de Bruijn half and does NOT imply this.
+            && !has_fv(expr_to_model(val))
             && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
         None => !to_model_of_env(*env).contains_key(name_id(*n)),
     };

@@ -88,28 +88,10 @@ use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_
 
 verus! {
 
-// THE leq AXIOM IS RETIRED. It stated
-//
-//     result ==> forall rho. interp(l, rho) <= interp(r, rho)
-//
-// and `leq` now PROVES exactly that, a few functions below. What made the
-// difference was not a cleverer proof of `leq` -- its body is unchanged -- but
-// the `diff` bound on `leq_core` becoming statable: `|diff| + leq_measure` is an
-// invariant of the recursion where a constant interval was not.
-//
-// The contradiction detector and non-degeneracy witness that accompanied it are
-// kept below; `leq_contract_is_not_vacuous` still says something useful about
-// the contract, which is now a theorem rather than an assumption.
-
-// Contradiction detector, run and removed: a `proof fn` taking `l` and `r`,
-// assuming exactly the clause above (`forall rho. interp(l, rho) <= interp(r,
-// rho)`) and claiming `ensures false`, FAILS to verify. That is the result
-// wanted -- had it verified, the axiom would have been inconsistent with the
-// level model and every proof downstream of it worthless.
-//
-// Non-degeneracy is witnessed below, and it needs BOTH halves: that the
-// relation is satisfiable (or the axiom could never fire) and that it is not
-// universally true (or `leq` returning `true` would say nothing).
+// `leq_contract_is_not_vacuous` is kept: it says the relation `leq` decides is
+// neither always true nor always false, so the contract below carries
+// information. It was written when that contract was assumed and is still
+// worth having now that it is proven.
 pub proof fn leq_contract_is_not_vacuous()
     ensures
         // satisfiable: 0 <= 1, so a `true` answer is possible

@@ -874,6 +874,50 @@ pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
 /// through `level_model::interp`/`subst_env` directly (the same semantic
 /// characterization `level_model::subst_levels` itself is specified by),
 /// matching `subst_aux`'s real behavior without redefining it structurally.
+/// The functional form satisfies the relational one. `subst_expr_levels` is
+/// what the KERNEL's `subst_expr_levels` returns; `subst_expr_levels_rel` is
+/// what the model's lemmas are stated over, because the mirror was built
+/// against a fuelled search. This connects them.
+pub proof fn subst_expr_levels_fn_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires ks.len() == vs.len()
+    ensures subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs))
+    decreases e
+{
+    match e {
+        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_) => {}
+        // the two level-bearing arms are where the shapes genuinely differ:
+        // the function substitutes SYNTACTICALLY, the relation compares
+        // INTERPRETATIONS, and `subst_level_spec_interp` is the bridge
+        ExprSpec::Sort(l) => {
+            crate::level_model::subst_level_spec_interp_forall(l, ks, vs);
+        }
+        ExprSpec::Const(_, ls) => {
+            assert forall |j: int, rho: Map<nat, nat>| 0 <= j < ls.len() implies
+                #[trigger] crate::level_model::interp(
+                    crate::level_model::subst_levels_spec(ls, ks, vs)[j], rho)
+                == crate::level_model::interp(ls[j],
+                    crate::level_model::subst_env(rho, ks, vs)) by {
+                crate::level_model::subst_level_spec_interp(ls[j], ks, vs, rho);
+            }
+        }
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_fn_rel(*f, ks, vs);
+            subst_expr_levels_fn_rel(*a, ks, vs);
+        }
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_fn_rel(*t, ks, vs);
+            subst_expr_levels_fn_rel(*b, ks, vs);
+        }
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_fn_rel(*t, ks, vs);
+            subst_expr_levels_fn_rel(*v, ks, vs);
+            subst_expr_levels_fn_rel(*b, ks, vs);
+        }
+        ExprSpec::Proj(_, st) => { subst_expr_levels_fn_rel(*st, ks, vs); }
+    }
+}
+
 pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, result: ExprSpec) -> bool
     decreases e
 {

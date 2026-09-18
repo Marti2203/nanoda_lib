@@ -194,12 +194,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
     ensures to_model(result) == LevelSpec::Zero;
 
-// RETIRED: `contains_param`'s `assume_specification` is gone -- the kernel's own
-// function is verified in place in `level.rs`, with the SAME bidirectional
-// contract this axiom stated. The `false` direction needed `name_id`
-// injectivity, which is where the exec pointer comparison meets the model's
-// name ids.
-
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.
 ///
