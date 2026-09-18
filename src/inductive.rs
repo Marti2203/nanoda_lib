@@ -1349,15 +1349,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let verified_val = crate::inductive_model::verified_mk_rec_rule_val(
             self.ctx, params.as_slice(), motives.as_slice(), minors_v.as_slice(),
             args_v.as_slice(), rec_args_v.as_slice(), this_minor);
-        // NOTE, and it is relied upon rather than enforced: this counts BIND
-        // nodes while the kernel's `num_fields` below counts PI nodes
-        // (`ctx.pi_telescope_size`). The model conflates `Pi` and `Lambda` into
-        // `ExprSpec::Bind`, so the shadow cannot tell them apart and would walk
-        // through a `Lambda` where the kernel stops. They agree on well-formed
-        // input -- a constructor's type is a term whose type is a `Sort`, and a
-        // `Lambda`'s type is a `Pi`, so a `Lambda` cannot head a constructor
-        // type -- but nothing here checks that. The disagreement counter below
-        // is what would catch it.
+        // This counts BIND nodes; the kernel's `num_fields` below counts PI
+        // nodes (`ctx.pi_telescope_size`). The model conflates `Pi` and
+        // `Lambda` into `ExprSpec::Bind`, so the shadow cannot tell them apart.
+        //
+        // This is NOT a soundness gap, and the direction matters: the check
+        // below is `verified_fields == Some(kernel_num_fields)`, so a
+        // divergence bumps DISAGREE. The coarser count can cost a spurious
+        // disagreement; it can never produce a false certification.
+        //
+        // And it does not diverge on well-typed input: a `Lambda` is never
+        // `Sort`-typed, so it cannot appear anywhere in the leading spine of a
+        // constructor type. Recorded because the two names differ by nothing at
+        // this call site, not because anything is wrong.
         let verified_fields = match crate::inductive_model::verified_pi_telescope_size(self.ctx, ctor.ty, 100000) {
             Some(n) => (n as usize).checked_sub(params.len()),
             None => None,

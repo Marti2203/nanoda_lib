@@ -819,10 +819,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// indistinguishable in the model from one that ran out of binders. Claiming
     /// maximality here would be claiming something false.
     ///
-    /// That gap is not academic: `inductive.rs` compares this PI count against
-    /// the shadow's `verified_pi_telescope_size`, which counts BIND nodes and so
-    /// walks through a `Lambda` where this stops. See the note at that call
-    /// site.
+    /// `inductive.rs` compares this PI count against the shadow's
+    /// `verified_pi_telescope_size`, which counts BIND nodes. They coincide on
+    /// well-typed input (a `Lambda` is never `Sort`-typed, so it cannot head a
+    /// constructor type), and a divergence could only ever cost a spurious
+    /// disagreement, never a false certification. See the note at that site.
     ///
     /// VERUS-REWRITE(while-let-exit): `loop`/`match` for the same reason as the
     /// spine helpers -- except here the exit needs nothing, so the rewrite is
