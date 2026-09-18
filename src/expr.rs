@@ -833,6 +833,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// indistinguishable in the model from one that ran out of binders. Claiming
     /// maximality here would be claiming something false.
     ///
+    /// That gap is not academic: `inductive.rs` compares this PI count against
+    /// the shadow's `verified_pi_telescope_size`, which counts BIND nodes and so
+    /// walks through a `Lambda` where this stops. See the note at that call
+    /// site.
+    ///
     /// VERUS-REWRITE(while-let-exit): `loop`/`match` for the same reason as the
     /// spine helpers -- except here the exit needs nothing, so the rewrite is
     /// only to keep the family uniform. The `depth` ceiling is what bounds the
