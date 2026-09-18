@@ -567,17 +567,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    /// Retrieve the recursor rule corresponding to the constructor used in the major premise.
-    fn get_rec_rule(&self, rec_rules: &[RecRule<'t>], major_const: ExprPtr<'t>) -> Option<RecRule<'t>> {
-        if let Const { name: major_ctor_name, .. } = self.ctx.read_expr(major_const) {
-            for r @ RecRule { ctor_name, .. } in rec_rules.iter().copied() {
-                if ctor_name == major_ctor_name {
-                    return Some(r)
-                }
-            }
-        }
-        None
-    }
 
     /// Expand `(x : Prod A B)` into `Prod.mk (Prod.fst x) (Prod.snd x)`
     fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
@@ -2361,6 +2350,63 @@ pub struct ExInferFlag(InferFlag);
 pub struct ExDeclarInfo<'a>(crate::env::DeclarInfo<'a>);
 
 impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Retrieve the recursor rule corresponding to the constructor used in the
+    /// major premise. Verified in place.
+    ///
+    /// The contract says the two things a caller can rely on: the rule returned
+    /// is one of the ones passed in (not fabricated), and its `ctor_name` is the
+    /// major premise's head constant. `None` claims nothing -- one-directional,
+    /// like the level predicates in `level.rs`.
+    ///
+    /// VERUS-REWRITE(return-in-for): the original is
+    /// `for r @ RecRule { ctor_name, .. } in rec_rules.iter().copied()` with a
+    /// `return Some(r)` inside. Returning out of a `for` leaves the ghost
+    /// iterator mid-flight, so it is spelled as the index walk it desugars to --
+    /// the same treatment `get_nth_pi_binder` already has (register entry 7).
+    fn get_rec_rule(&self, rec_rules: &[RecRule<'t>], major_const: ExprPtr<'t>) -> (result: Option<RecRule<'t>>)
+        ensures match result {
+            Some(r) => (exists |i: int| 0 <= i < rec_rules@.len() && #[trigger] rec_rules@[i] == r)
+                && crate::expr_arena_bridge::is_const_shape(major_const)
+                && r.ctor_name == crate::expr_arena_bridge::const_name_of(major_const),
+            None => true,
+        }
+    {
+        let el = self.ctx.read_expr(major_const);
+        if let Const { name: major_ctor_name, .. } = el {
+            proof {
+                // `read_expr` links the node to the pointer's uninterpreted
+                // `const_name_of`; `is_const_shape` is an open spec fn over
+                // `to_model`, so its unfolding has to be asked for explicitly.
+                assert(crate::expr_arena_bridge::is_const_shape(major_const));
+                assert(crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name);
+            }
+            let n = rec_rules.len();
+            let mut i: usize = 0;
+            while i < n
+                invariant
+                    n == rec_rules@.len(),
+                    i <= n,
+                    // The loop havocs these, so the facts established above the
+                    // loop have to ride the invariant to reach the `return`.
+                    crate::expr_arena_bridge::is_const_shape(major_const),
+                    crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name,
+                decreases n - i
+            {
+                let r = rec_rules[i];
+                if r.ctor_name == major_ctor_name {
+                    proof {
+                        assert(rec_rules@[i as int] == r);
+                        assert(exists |k: int| 0 <= k < rec_rules@.len()
+                            && #[trigger] rec_rules@[k] == r);
+                    }
+                    return Some(r)
+                }
+                i = i + 1;
+            }
+        }
+        None
+    }
+
     /// Verified in place -- the body is the kernel's, unchanged.
     ///
     /// `Sort l : Sort (l+1)`. The `Check`-mode guard is a side condition, not

@@ -150,6 +150,7 @@ re-checking if anything here is ever suspected:
 | 10 | `is_never_zero` | `src/level.rs` | a tail `match` carries no per-arm knowledge out | bind arm results |
 | 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
 | 12 | `infer_sort` | `src/tc.rs` | `assert!` on a REACHABLE rejection path | `kernel_check` wrapper |
+| 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
