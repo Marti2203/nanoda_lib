@@ -328,12 +328,48 @@ What remains is assembly, and it is not nothing:
    off `leq_core`, and the `leq` axiom added in `2382e1f` retires onto the
    proof, with its seven consumers untouched.
 
-So: the hard part is done and step 2 of the wiring with it. **Step 1 is all
-that is left**, and it is the one that needs the whole clique at once — a
-`decreases` clause on `leq_core` means every arm discharged together, against a
-measure combining this component with `lw` and `depth`.
+So: the hard part of §4 is done and step 2 of the wiring with it. But step 1 is
+bigger than this note has been saying, and the correction matters enough to
+state on its own.
 
-Do not describe this as a termination proof until step 1 verifies.
+### Correction to §6: there IS a second problem
+
+§6 said "§4 is the whole task. There is no second problem after it." That is
+**wrong**, and measuring the call graph is what shows it.
+
+`decreases` on a mutually recursive function needs a measure that decreases at
+EVERY edge of the clique, not just at the arms of one member. And the clique in
+`level.rs` is not `leq_core` plus `by_cases` — it is **seven functions, 239
+lines**:
+
+```
+is_one, is_zero, leq, leq_core, leq_imax_by_cases, simplify, subst_simp
+```
+
+with, among others, the cycle
+
+```
+simplify -> is_zero -> leq -> leq_core -> simplify
+```
+
+`simplify` is inside the recursion, not beneath it. Its `IMax` arm calls
+`is_zero(l_simp)`, `is_zero` is `leq(x, zero)`, `leq` is
+`leq_core(simplify(l), simplify(r), 0)`, and `leq_core` calls `simplify` again.
+
+So the measure of §4 governs `leq_core`'s own arms, which is what it was built
+for and what is now proven. It says nothing yet about the `simplify -> is_zero`
+edge, where the argument is a level that `simplify` has just produced. Closing
+that plausibly needs idempotence of `simplify` (so `simplify(l_simp)` is `l_simp`
+rather than fresh work) or a size argument on the original call — neither of
+which exists here today.
+
+**This does not devalue §4.** Three candidates were refuted and a fourth is
+proven on every `leq_core` arm; that was real and it was the blocker everyone
+kept hitting. It does mean the remaining work is a second measure problem over a
+larger clique, not the mechanical assembly this note implied. Anyone picking
+this up should scope for that.
+
+Do not describe any of this as a termination proof.
 
 Finiteness needs nothing: this vstd deprecates `Set::finite` because every `Set`
 is finite, which is why `imax_params_finite` now raises a warning.
@@ -355,10 +391,13 @@ This is why §4 is the whole task. There is no second problem after it.
 
 ## 6. Order of work, if resumed
 
-1. **Find a measure.** This is the whole problem, and it is harder than it
-   looks: three candidates are now refuted by explicit witnesses (§4). Do not
-   start Verus work on a fourth until it has been run against both `by_cases`
-   branches on paper.
+1. **Find a measure for `leq_core`'s arms.** DONE -- §4's fourth candidate,
+   proven. (Three earlier candidates are refuted by explicit witnesses; do not
+   start Verus work on a fifth without running it against both `by_cases`
+   branches on paper first.)
+1b. **Find a measure for the rest of the seven-function clique**, in particular
+   the `simplify -> is_zero` edge. NOT done, and not anticipated by this note
+   until the call graph was measured -- see the correction above.
 2. Prove termination with the three-component measure. Drop
    `exec_allows_no_decreases_clause` from `leq_core`.
 3. The `diff` bound then follows *immediately*, with no extra argument: carry
