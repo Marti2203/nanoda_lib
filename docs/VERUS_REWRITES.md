@@ -411,3 +411,48 @@ rewrite replaced a runtime check with a precondition.
 `get_declar_info_ty`'s axiom also gained `!has_fv(ty)`, exactly as
 `get_declar_val` did for values: a stored declaration TYPE cannot mention a
 local constant either, and `nlbv == 0` is only the de Bruijn half.
+
+---
+
+## Proof margin survey (2026-09-18)
+
+Prompted by a real failure, not a hypothetical: re-running verus on the
+*unmodified* committed HEAD `6d44b35` reported `rlimit exceeded` for
+`verified_conv_inner` and `verified_conv_inner_p`, on a tree that had verified
+727 / 0 errors when that commit was gated. Same source, two verdicts. Verus's
+default rlimit is 10, documented as "roughly in seconds", so a proof that needs
+close to the whole budget can land on either side of it depending on the run.
+
+That makes every `N verified, 0 errors` line a statement about *a run* rather
+than about the tree, which is not good enough to stand behind. So the margin
+was measured rather than guessed, by re-running the whole crate at reduced
+budgets:
+
+| budget | result | at the edge |
+|---|---|---|
+| `--rlimit 10` (default) | flaky | `verified_conv_inner`, `verified_conv_inner_p` |
+| `--rlimit 5` | **727 verified, 0 errors** | — nothing |
+| `--rlimit 2` | 724 verified, 3 errors | `leq_core`, `rec_result_bounds`, `shift_up_min_escaping` |
+
+The headline is the middle row: at *half* the default budget the entire crate
+still verifies. The two functions that went flaky were not the tip of a
+pattern — they were uniquely expensive, and everything else has at least 2x
+headroom.
+
+The three that fail at a fifth of the budget sit somewhere in (2, 5], so they
+were comfortable, but they are demonstrably next in line and one of them is
+`leq_core` — kernel code, and the centre of the clique this session verified.
+All five now carry an explicit `#[verifier::rlimit(..)]`: 40 for the two that
+actually failed, 20 for the three found by the survey. The numbers are headroom
+over measured need, not a fit to the observed edge; pinning a budget that a
+function *just* clears would reproduce the original problem.
+
+Note that `#[verifier::spinoff_prover]` does not substitute for this. Both
+flaky functions already had it — it isolates a query, which helps a proof that
+is fragile because of *interference*, and does nothing for one that is simply
+large.
+
+Re-running the survey: `rm -rf target/debug/.fingerprint/nanoda_lib-*` first,
+or cargo-verus returns a cached pass without verifying anything (it "finishes"
+in ~0.2s and prints no results line at all — a gate that only greps for
+`0 errors` reads that silence as success).

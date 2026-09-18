@@ -871,6 +871,12 @@ pub proof fn spine_head_spine_app(head: ExprSpec, args: Seq<ExprSpec>)
 /// headroom, escaping references, loose bound variables -- all in terms
 /// of the application `s` plus the rule body's 500 gate.
 #[verifier::spinoff_prover]
+// Margin survey (2026-09-18): the whole crate verifies at half the default
+// rlimit; this is one of only three functions that fail at a fifth of it,
+// so it is the next closest to the edge after the two `verified_conv_inner`
+// twins actually went flaky. Pinned pre-emptively rather than after a red
+// tree. See docs/VERUS_REWRITES.md for the survey.
+#[verifier::rlimit(20)]
 pub proof fn rec_result_bounds(s: ExprSpec, bound: nat, cap: nat, k: nat)
     requires rec_ready(s)
     ensures
@@ -1970,6 +1976,12 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
 /// the induction even though `subst`'s own re-shift always uses cutoff 0
 /// at the top.
 #[verifier::spinoff_prover]
+// Margin survey (2026-09-18): the whole crate verifies at half the default
+// rlimit; this is one of only three functions that fail at a fifth of it,
+// so it is the next closest to the edge after the two `verified_conv_inner`
+// twins actually went flaky. Pinned pre-emptively rather than after a red
+// tree. See docs/VERUS_REWRITES.md for the survey.
+#[verifier::rlimit(20)]
 pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
     requires bound <= 0xFFFF_0000, max_var_below(s, bound)
     ensures min_escaping(shift(1, c0, s)) == match min_escaping(s) {
