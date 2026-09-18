@@ -178,7 +178,7 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, undet_imax_params, params_outside_succ, undet_imax_params_subst_single, undet_imax_params_subst_no_growth, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
+use crate::level_model::{imax_normal, interp, lw, max_nat, LevelSpec, subst_level_spec, level_names, param_names, undet_imax_params, params_outside_succ, level_depth, undet_imax_params_subst_single, undet_imax_params_subst_no_growth, level_spec_param_name, find_level_idx, subst_levels_spec, find_level_idx_first_match, find_level_idx_no_match};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{to_model_of_levels, level_ptr_eq_iff_same_model_param};
 
@@ -277,11 +277,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 &&& to_model_of_levels(ks).len() == 1
                 &&& params_outside_succ(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
                 &&& undet_imax_params(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+                &&& lw(to_model_of_levels(vs)[0]) == 0
+                &&& level_depth(to_model_of_levels(vs)[0]) <= 1
             }) ==> ({
                 &&& !undet_imax_params(to_model(result))
                         .contains(level_names(to_model_of_levels(ks))[0])
                 &&& undet_imax_params(to_model(result))
                         .subset_of(undet_imax_params(to_model(level)))
+                &&& lw(to_model(result)) <= lw(to_model(level))
+                &&& level_depth(to_model(result)) <= level_depth(to_model(level)) + 1
             }),
     {
         let l = self.subst_level(level, ks, vs);
@@ -290,6 +294,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             if to_model_of_levels(ks).len() == 1
                 && params_outside_succ(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
                 && undet_imax_params(to_model_of_levels(vs)[0]) == Set::<u64>::empty()
+                && lw(to_model_of_levels(vs)[0]) == 0
+                && level_depth(to_model_of_levels(vs)[0]) <= 1
             {
                 let p = level_names(to_model_of_levels(ks))[0];
                 let v = to_model_of_levels(vs)[0];
@@ -298,6 +304,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 assert(to_model(l) == subst_level_spec(to_model(level), seq![p], seq![v]));
                 undet_imax_params_subst_single(to_model(level), p, v);
                 undet_imax_params_subst_no_growth(to_model(level), p, v);
+                // the other two components of the scalar measure: `lw` is
+                // exactly preserved by a weightless substitution, and the
+                // height rises by at most one because `level_depth` maxes
+                crate::level_model::lw_subst_preserved(to_model(level), p, v);
+                crate::level_model::level_depth_subst_le(to_model(level), p, v);
                 // `simplify` carries both through -- the clause proven on it
                 assert(undet_imax_params(to_model(out))
                     .subset_of(undet_imax_params(to_model(l))));
@@ -594,6 +605,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 .subset_of(undet_imax_params(to_model(l)).union(undet_imax_params(to_model(r)))),
             params_outside_succ(to_model(result))
                 .subset_of(params_outside_succ(to_model(l)).union(params_outside_succ(to_model(r)))),
+            // ...and it is no taller than the `Max` it stands in for. The third
+            // component of the scalar measure needs this, and `simplify` needs
+            // it before it can promise the same.
+            level_depth(to_model(result))
+                <= 1 + max_nat(level_depth(to_model(l)), level_depth(to_model(r))),
     {
         // the `Succ` arm shadows `l` and `r`, so the proof needs names for the
         // originals; these are ghost and erased, the body below is unchanged
@@ -623,6 +639,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     assert(undet_imax_params(to_model(r0)) =~= undet_imax_params(to_model(r)));
                     assert(params_outside_succ(to_model(out)) =~= Set::<u64>::empty());
                     assert(undet_imax_params(to_model(out)) =~= undet_imax_params(to_model(pred)));
+                    assert(level_depth(to_model(l0)) == 1 + level_depth(to_model(l)));
+                    assert(level_depth(to_model(r0)) == 1 + level_depth(to_model(r)));
+                    assert(level_depth(to_model(out)) == 1 + level_depth(to_model(pred)));
                 }
                 out
             }
@@ -665,6 +684,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // OUTWARD and so keeps everything beneath it covered.
             undet_imax_params(to_model(result)).subset_of(undet_imax_params(to_model(ptr))),
             params_outside_succ(to_model(result)).subset_of(params_outside_succ(to_model(ptr))),
+            // Never taller than what it simplified. `by_cases` re-simplifies
+            // after substituting, so without this the depth bound proven on the
+            // substitution does not survive to the recursive call.
+            level_depth(to_model(result)) <= level_depth(to_model(ptr)),
     {
         let ghost ptr0 = ptr;
         match self.read_level(ptr) {

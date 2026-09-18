@@ -606,10 +606,31 @@ Every arm strictly decreases, `M` is a single `nat`, and §5's
 `|diff| + M <= 1e9` therefore works as originally written — `diff` moves only on
 the `Succ` arms, where `M` drops by one, so the sum never rises.
 
-**One gap remains**: `simplify` is proven non-growing for `undet` and `lw` but
-not yet for `level_depth`. `by_cases` re-simplifies, so that clause is needed
-before `M` is airtight. It should be the same shape as the two already on
-`simplify`, and `combining` will need it first.
+**That gap is closed.** `combining` and `simplify` both carry the height bound
+now, proven in place with their bodies unchanged:
+
+```
+combining :  level_depth(result) <= 1 + max_nat(level_depth(l), level_depth(r))
+simplify  :  level_depth(result) <= level_depth(ptr)
+```
+
+`combining` needed it first, since `simplify` routes three arms through it. And
+`subst_simp` carries all three components across the real substitution:
+
+```
+undet_imax_params(result) subset_of undet_imax_params(level)
+lw(result)          ==  lw(level)
+level_depth(result) <=  level_depth(level) + 1
+```
+
+So every ingredient of
+
+> **`M = 2·|undet(l) ∪ undet(r)| + 2·(lw(l) + lw(r)) + depth(l) + depth(r)`**
+
+is proven, on the model side and across the exec functions `by_cases` actually
+calls. What is left is writing `M` into `leq_core`'s `decreases` and its
+`|diff| + M <= 1e9` precondition — and moving `leq`, `leq_core` and
+`leq_imax_by_cases` into `verus!` to hold them, which is the WIP branch's work.
 
 So the answer to "ceiling or scalar measure" is **scalar measure, no ceiling** —
 which is the outcome worth having, since a ceiling on `leq_core` could not have
