@@ -161,6 +161,7 @@ re-checking if anything here is ever suspected:
 | 21 | `contains_param` | `src/level.rs` | `Iterator::any` has no spec (sibling of entry 11) | index walk |
 | 22 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` can overflow `u64` | overflow guard that aborts |
 | 23 | `ctor_app_params_ok` | `src/inductive.rs` | `Iterator::zip` in a `for` with a `return` inside | index walk |
+| 24 | `init_k_target` | `src/inductive.rs` | slice pattern `[only_ctor]` (entry 9) | length test + index |
 
 
 ### 5. The three spine helpers — `src/expr.rs`

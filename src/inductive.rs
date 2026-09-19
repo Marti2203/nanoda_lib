@@ -316,17 +316,24 @@ impl<'a> InductiveCheckState<'a> {
     fn is_nested(&self) -> bool { !self.nested_to_unspecialized_ty_nofvars.is_empty() }
 }
 
+/// Fields `pub` so `ExIndTyHeader` can be a TRANSPARENT
+/// `external_type_specification` -- Verus rejects private fields on those.
+/// `init_k_target` reads `.ctors`, so an opaque header would not let the
+/// kernel's own body be verified as written. Nothing outside this crate
+/// reads them.
 #[derive(Debug, Clone)]
 pub struct IndTyHeader<'a> {
-    name: NamePtr<'a>,
-    ty: ExprPtr<'a>,
-    ctors: Vec<CtorHeader<'a>>,
+    pub name: NamePtr<'a>,
+    pub ty: ExprPtr<'a>,
+    pub ctors: Vec<CtorHeader<'a>>,
 }
 
+/// Same, and for the same reason -- `init_k_target` reads `.ty` off one of
+/// these.
 #[derive(Debug, Clone, Copy)]
 pub struct CtorHeader<'a> {
-    name: NamePtr<'a>,
-    ty: ExprPtr<'a>,
+    pub name: NamePtr<'a>,
+    pub ty: ExprPtr<'a>,
 }
 
 
@@ -1086,18 +1093,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
     }
 
-    /// To be a target for k-like reduction, a type cannot be mutual or nested, must be an inductive
-    /// prop, must have only one constructor, and the constructor can take only the type's parameters
-    /// as arguments.
-    fn init_k_target(&mut self, st: &mut InductiveCheckState<'t>) {
-        let is_k_target = st.is_zero.unwrap()
-            && st.all_inductives_incl_specialized.len() == 1
-            && match st.all_inductives_incl_specialized[0].ctors.as_slice() {
-                [only_ctor] => self.ctx.pi_telescope_size(only_ctor.ty) as usize == st.local_params.len(),
-                _ => false,
-            };
-        st.k_target = Some(is_k_target);
-    }
 
 
     fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> ExprPtr<'t> {
@@ -1933,6 +1928,12 @@ use crate::level_model::LevelSpec;
 
 verus! {
 
+    /// To be a target for k-like reduction, a type cannot be mutual or nested, must be an inductive
+    /// prop, must have only one constructor, and the constructor can take only the type's parameters
+    /// as arguments.///
+
+
+
 /// Condition 3:
 ///     assert that the first arguments being applied to the base `Const(..)`
 ///     in any given constructor are exactly the parameters required by the block.
@@ -1941,7 +1942,8 @@ verus! {
 ///     e.g.:
 ///     {A : Sort u}
 ///     for `@eq.refl A a a`
-///     unfolds as (Const(eq, [u]), [A, a, a])///
+///     unfolds as (Const(eq, [u]), [A, a, a])
+///
 /// VERUS-REWRITE(zip-for): the original walks
 /// `ctor_apps.iter().copied().zip(local_params.iter().copied())` in a `for`
 /// with a `return false` inside. Neither `Iterator::zip` nor a `return` out of
@@ -1977,6 +1979,38 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
 
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// VERUS-REWRITE(slice-pattern): the original matches
+    /// `match ..ctors.as_slice() { [only_ctor] => .., _ => false }`. Slice
+    /// patterns are unsupported outright (register entry 9), so it is the length
+    /// test and index the pattern stands for.
+    ///
+    /// The `.unwrap()` on `st.is_zero` is NOT rewritten. It is the kernel
+    /// assuming its caller ran the Prop test first, and that assumption is
+    /// expressible as a precondition, which leaves the body alone -- preferable to
+    /// a guard that invents behaviour the original does not have. Same for
+    /// `pi_telescope_size`'s depth bound, stated only for the one constructor this
+    /// function can actually reach.
+    fn init_k_target(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            old(st).is_zero is Some,
+            old(st).all_inductives_incl_specialized@.len() == 1
+                && old(st).all_inductives_incl_specialized@[0].ctors@.len() == 1
+                ==> crate::expr_model::depth(crate::expr_arena_bridge::to_model(
+                        old(st).all_inductives_incl_specialized@[0].ctors@[0].ty)) <= 60000,
+        ensures
+            final(st).k_target is Some,
+            final(st).all_inductives_incl_specialized == old(st).all_inductives_incl_specialized,
+            final(st).local_params == old(st).local_params,
+            final(st).is_zero == old(st).is_zero,
+    {
+        let is_k_target = st.is_zero.unwrap()
+            && st.all_inductives_incl_specialized.len() == 1
+            && st.all_inductives_incl_specialized[0].ctors.len() == 1
+            && self.ctx.pi_telescope_size(st.all_inductives_incl_specialized[0].ctors[0].ty) as usize
+                == st.local_params.len();
+        st.k_target = Some(is_k_target);
+    }
+
 
     /// Generate an elimination universe name that does not clash with the
     /// block's own universe parameters.

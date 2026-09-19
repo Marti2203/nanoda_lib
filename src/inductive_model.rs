@@ -137,10 +137,18 @@ pub struct ExIndexMap<
     #[verifier::reject_recursive_types] S,
 >(indexmap::map::IndexMap<K, V, S>);
 
+/// TRANSPARENT: `init_k_target` reads `.ctors` off one of these, so an opaque
+/// header would block verifying the kernel's body as written. Its payload
+/// types (`NamePtr`, `ExprPtr`, `Vec<CtorHeader>`) only have to be KNOWN, not
+/// readable -- the same trick `TcCtx` and `InductiveCheckState` needed.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExIndTyHeader<'a>(crate::inductive::IndTyHeader<'a>);
+
+/// And the constructor header it holds.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExCtorHeader<'a>(crate::inductive::CtorHeader<'a>);
 
 /// TRANSPARENT: `inductive.rs`'s check functions read its fields, and fourteen
 /// of the file's twenty-three tc-cycle-free leaves take it.
