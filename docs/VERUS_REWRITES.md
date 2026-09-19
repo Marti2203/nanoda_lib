@@ -151,13 +151,15 @@ re-checking if anything here is ever suspected:
 | 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
 | 12 | `infer_sort` | `src/tc.rs` | `assert!` on a REACHABLE rejection path | `kernel_check` wrapper |
 | 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
+| 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
+| 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 | 16 | `unfold_def` | `src/tc.rs` | `?` operator; `Vec::into_iter` has no spec | `match` + slice |
 | 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
 | 18 | `expand_eta_struct_aux` | `src/tc.rs` | `?`; range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
 | 19 | `infer_const` | `src/tc.rs` | closure; `assert!`; a `panic!` with nothing to decline to; a precondition that had to be re-established | accessor swap + `kernel_check` + `kernel_fail` + hoisted check |
 | 20 | `mk_majors` | `src/inductive.rs` | `Iterator::enumerate` has no spec; an unguarded index | index walk + a length check |
-| 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
-| 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
+| 21 | `contains_param` | `src/level.rs` | `Iterator::any` has no spec (sibling of entry 11) | index walk |
+| 22 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` can overflow `u64` | overflow guard that aborts |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -414,7 +416,7 @@ local constant either, and `nlbv == 0` is only the de Bruijn half.
 
 ---
 
-### 20. `TcCtx::contains_param` — `src/level.rs`
+### 21. `TcCtx::contains_param` — `src/level.rs`
 
 `.iter().copied().any(|lptr| ..)` spelled as the index walk it desugars to.
 `Iterator::any` has no vstd specification, the same gap that produced entry 11
@@ -426,7 +428,7 @@ but `found` is only ever set and never cleared, so no match can be lost and the
 result is identical. Cost is a full scan of a universe-parameter list, which is
 a handful of entries.
 
-### 21. `InductiveCheckState::gen_elim_level` — `src/inductive.rs`
+### 22. `InductiveCheckState::gen_elim_level` — `src/inductive.rs`
 
 `i += 1` inside an unbounded `loop`, which Verus will not accept because the
 `u64` can overflow. A guard now aborts instead.
@@ -437,16 +439,20 @@ universe parameters. The original would have wrapped silently in release and
 then looped forever on a name it had already tried. Aborting is the better of
 the two, but it IS different, which is exactly why it belongs in this register.
 
-### A note on the numbering
+### How this file is structured, and how to audit it
 
-Entries 13-16 do not exist. The numbers were skipped rather than lost: the
-register was written up in batches and the count drifted from the count of
-`VERUS-REWRITE` markers in the source. That drift is the thing to watch —
-**the markers are the ground truth and this file is a derived index**, so the
-audit is: extract every `VERUS-REWRITE(..)` marker, attribute each to the
-function whose contiguous doc block contains it, and check that function is
-named here. Run that way, the register was missing exactly the two entries
-above, out of 27 marked rewrites across six kernel files.
+The **table above is the register**. Every numbered entry has a row there;
+prose sections exist only for the entries that needed the explanation, which is
+why the `###` headings skip 13-16 and 20 — those are table rows without prose,
+not missing entries.
+
+**The `VERUS-REWRITE(..)` markers in the source are the ground truth and this
+file is a derived index**, so the audit is mechanical:
+`scripts/rewrite-register-audit.sh` extracts every marker, attributes it to the
+function whose contiguous doc block contains it, and checks that function is
+named somewhere here. Run that way, the register was missing exactly the two
+entries above, out of 32 marked rewrites across 27 functions in six kernel
+files.
 
 Attributing markers to functions needs the *contiguous doc block* rule
 specifically. Taking "the next `fn` after the marker line" misattributes
