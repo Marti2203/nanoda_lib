@@ -49,20 +49,31 @@ Tried, on `all_uparams_defined`, whose original is a single line:
 Param(..) => self.read_levels(params).iter().copied().any(|x| x == level),
 ```
 
-`Iterator::any` has a full contract in the fork, and `Ptr` now has
-`PartialEqSpec`, so the closure is fine. The obstacle is elsewhere: `any`'s
-postcondition is stated over the iterator's `remaining()` sequence, so using it
-means bridging `Copied<slice::Iter>`'s prophetic-iterator state back to `ls@`
-— `obeys_prophetic_iter_laws`, `remaining()`, and the trait import to name
-them. That bridging is more annotation than the 19-line index loop it would
-replace, and it did not come out in several attempts.
+Everything on the iterator side turns out to be there:
 
-**The honest status of `any` and `zip`, then: the specification is no longer
-missing, but the ergonomics still cost more than the rewrite.** That is a
-different problem from a missing spec and wants a different fix — a small
-lemma bridging `slice.iter().copied()`'s `remaining()` to `slice@` would
-probably make all four revertible at once, and THAT is the standalone piece of
-work worth pulling out.
+- `Iterator::any` has a full contract (PR #2873);
+- `Iterator::copied`'s `copied_postcondition` already exposes the elementwise
+  facts — `remaining(&r)[k] == *i.remaining()[k]` — so the `Copied` layer is
+  not opaque after all, provided `broadcast use group_iter_axioms` is in scope
+  (nothing in `level.rs` had it);
+- `<[T]>::iter` pins `remaining(&iter) == s@.as_ref()`;
+- `Ptr` now has `PartialEqSpec`, so the closure is fine.
+
+**The blocker is one link earlier, and it is not about iterators at all.**
+`read_levels` returns `Arc<[LevelPtr]>`, so `ls.iter()` reaches the slice
+method through `Arc`'s `Deref` — and vstd's `smart_ptrs.rs` specifies only
+`Arc::new` and `Arc: Default`. **There is no `Deref` specification for `Arc`.**
+So `ls.iter()`'s `remaining()` is never tied to `ls@`, and the chain is broken
+at its first step rather than its last.
+
+That is a precise, standalone upstream item: a `Deref` specification for
+`Arc<T>` (and the unsized `Arc<[T]>` case), which is small, general, and
+unblocks any kernel code reaching through an `Arc`. `read_levels`,
+`read_name`, `read_expr` and the constructor lists all return `Arc`s, so this
+is not a one-site fix.
+
+Until it exists, the index loops stay. They are correct and verified; they are
+just larger than the kernel's original lines.
 
 ## Closed: `Option::eq`
 
