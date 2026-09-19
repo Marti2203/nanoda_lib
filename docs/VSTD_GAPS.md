@@ -16,26 +16,53 @@ Classifying all 34 marked rewrites by root cause:
 
 | root cause | sites | fixable how |
 |---|---:|---|
-| **vstd gap** | **8** | supply the specification |
+| **vstd gap** | **8** | supply the spec — but see the correction below |
 | Verus language limit | 19 | prover/language work, or leave |
 | real defect found in the kernel | 5 | keep the rewrite, it is an improvement |
 | by design (`panic!` must be proven unreachable) | 3 | keep |
 | nanoda-specific shape | 2 | keep |
 
-The eight, by the specification that is missing:
+The eight, by the specification involved — **and the classification needed
+correcting once it was checked against the fork rather than against when the
+rewrites were written**:
 
-| missing spec | rewrites it would revert |
-|---|---|
-| `Iterator::any` | `all_uparams_defined`, `contains_param` (entries 11, 21) |
-| `Iterator::zip` | `eq_antisymm_many`, `ctor_app_params_ok` (entries 14, 23) |
-| `Iterator::enumerate` | `mk_majors` (entry 20) |
-| `Iterator::nth` | `inst_aux` (entry 3) |
-| `Iterator::position` + `Option::map` | `abstr_aux` (entry 4) |
-| an unspecified `alloc` variant | `subst_levels` (entry 1) |
+| specification | rewrites | status in the fork TODAY |
+|---|---|---|
+| `Iterator::any` | `all_uparams_defined`, `contains_param` (11, 21) | **exists** (PR #2873) |
+| `Iterator::zip` | `eq_antisymm_many`, `ctor_app_params_ok` (14, 23) | **exists** (PR #2858) |
+| `Iterator::enumerate` | `mk_majors` (20) | missing |
+| `Iterator::nth` | `inst_aux` (3) | missing |
+| `Iterator::position` + `Option::map` | `abstr_aux` (4) | missing |
+| unspecified `alloc` variant | `subst_levels` (1) | missing |
+| `Option::eq` | `quot_kind_code`, `nat_bin_op_code` | **CLOSED** — see below |
 
-Five of the six are iterator adapters, which is one coherent piece of work
-rather than six. `Iterator::copied` was already closed this way (fork PRs
-\#2935, merged, and \#2944), so the route is established.
+So half of these are not gaps at all any more. `any` and `zip` were specified
+upstream after the rewrites that worked around them, which is exactly the
+staleness trap: an audit written from the rewrite comments describes the world
+when the rewrite was made.
+
+### But the specs existing is not the same as the rewrites being revertible
+
+Tried, on `all_uparams_defined`, whose original is a single line:
+
+```ignore
+Param(..) => self.read_levels(params).iter().copied().any(|x| x == level),
+```
+
+`Iterator::any` has a full contract in the fork, and `Ptr` now has
+`PartialEqSpec`, so the closure is fine. The obstacle is elsewhere: `any`'s
+postcondition is stated over the iterator's `remaining()` sequence, so using it
+means bridging `Copied<slice::Iter>`'s prophetic-iterator state back to `ls@`
+— `obeys_prophetic_iter_laws`, `remaining()`, and the trait import to name
+them. That bridging is more annotation than the 19-line index loop it would
+replace, and it did not come out in several attempts.
+
+**The honest status of `any` and `zip`, then: the specification is no longer
+missing, but the ergonomics still cost more than the rewrite.** That is a
+different problem from a missing spec and wants a different fix — a small
+lemma bridging `slice.iter().copied()`'s `remaining()` to `slice@` would
+probably make all four revertible at once, and THAT is the standalone piece of
+work worth pulling out.
 
 ## Closed: `Option::eq`
 
