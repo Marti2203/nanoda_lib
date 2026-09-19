@@ -596,20 +596,47 @@ diagnostics that never decide anything, and they are in the cycle for a thin
 reason: they call `delta`, `whnf` and `whnf_no_unfolding`, and `def_eq` calls
 them back at four sites. Excising them gives:
 
-| | functions | lines | blockers |
-|---|---|---|---|
-| whole SCC | 48 | ~1175 | 69 |
-| without the two shadow fns | 46 | ~954 | **44** |
+| | functions | lines | blockers | closures |
+|---|---|---|---|---|
+| before | 48 | ~1175 | 69 | 24 |
+| after removing the dumps | 46 | ~954 | **44** | **1** |
 
-and the closure count drops from 24 to 1. Everything remaining sits in a
-category this project already has an adapter for.
+Everything remaining sits in a category this project already has an adapter
+for. The single surviving closure is
+`str_lit_to_ctor_reducing`'s `.map(|x| self.whnf(x))`.
 
-They also never touch `tc_cache` — they work through `shadow_memo` — so the
-route out is an `assume_specification` stating that they preserve `tc_wf` and
-the `dbj_level_counter`, which is the assumption the project already makes
-about shadow diagnostics by construction. One trust item to remove 21 of 22
-closures and a fifth of the lines from the atomic step. It cannot be validated
-until `def_eq` is inside `verus!`, so it is planned rather than done.
+On the closures specifically: they were never the real obstacle. Verus can
+handle closures, with friction — `Option::map`/`and_then` need vstd
+specifications for an exec closure. But these particular closure bodies
+contained `format!`, `eprintln!`, `debug_print` and atomic loads, none of which
+Verus can reason about at all. The closure count was a proxy for "this is
+formatting-and-I/O diagnostic code", which is why deleting the code dissolved
+the category rather than 21 individual fights.
+
+**Done, and more cheaply than planned.** The route out looked like an
+`assume_specification` saying the two functions preserve `tc_wf` and the
+counter — one trust item. Reading them instead showed the cut is finer than
+the function boundary. `shadow_check` is:
+
+```
+pair_certified(x, y)                     <- the certifier
+ROUTE_HIT / UNCERT_EVENTS / note_uncert  <- the counters
+if uncertified && budget { 171 lines }   <- forensic dump A
+if which != 0 { ... bump(SHADOW_DISAGREE); 19 lines }  <- alarm + forensic dump B
+```
+
+The certifier and the counters are the apparatus — `SHADOW_DISAGREE` is what
+caught the `types_to` soundness bug. The two **forensic dumps** are something
+else: they print reduct shapes, recursor major premises and per-leaf counters
+to work out *why* a pair was not certified. That investigation is finished —
+coverage is 99.7-99.8% across the measured corpora with zero disagreements —
+and the dumps carried 21 of the 24 closures and every `eprintln!` in the cycle.
+
+Deleting them (189 lines, plus 35 more in two functions they orphaned) costs
+**no trust at all**, which beats the assume_specification. Every signal
+survives: route histogram, uncertified count, certified count, disagreement
+alarm. If a disagreement ever fires again the counter still reports it, and
+git has the forensics.
 
 ### Revised shape of the arc
 

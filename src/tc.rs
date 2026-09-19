@@ -322,10 +322,6 @@ pub mod route_stats {
     /// original checker accepted and no verified route could confirm, so the
     /// residual gap can be read instead of guessed at.
     pub static UNCERTIFIED_SHOWN: AtomicU64 = AtomicU64::new(0);
-    pub fn uncertified_budget() -> bool {
-        let cap = knob("NANODA_UNCERTIFIED", 0) as u64;
-        cap > 0 && UNCERTIFIED_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
-    }
 
     pub static CONVFAIL_SHOWN: AtomicU64 = AtomicU64::new(0);
     pub fn conv_fail_print_budget() -> bool {
@@ -1350,37 +1346,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         0
     }
 
-    /// SHADOW certification of a def_eq verdict (diagnostics only,
-    /// `NANODA_SHADOW=1`): run the verified routes on the pair the original
-    /// code just decided and count (a) verdicts they certify and (b)
-    /// disagreements (a verified confirmation of a pair the original code
-    /// rejected -- never expected; would mean either an unsound bridge
-    /// axiom or a legacy incompleteness). Never touches `tc_cache`.
-    /// Diagnostic: the SMALLEST subterm of `e` on which the verified
-    /// inference declines. Inference is compositional, so the smallest
-    /// failing subterm names the shape that is actually unsupported.
-    fn smallest_infer_failure(&mut self, e: ExprPtr<'t>, depth: u32) -> Option<ExprPtr<'t>> {
-        if depth == 0 {
-            return None;
-        }
-        if crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e).is_some() {
-            return None;
-        }
-        let kids: Vec<ExprPtr<'t>> = match self.ctx.read_expr(e) {
-            crate::expr::Expr::App { fun, arg, .. } => vec![fun, arg],
-            crate::expr::Expr::Pi { binder_type, body, .. } => vec![binder_type, body],
-            crate::expr::Expr::Lambda { binder_type, body, .. } => vec![binder_type, body],
-            crate::expr::Expr::Let { binder_type, val, body, .. } => vec![binder_type, val, body],
-            crate::expr::Expr::Proj { structure, .. } => vec![structure],
-            _ => vec![],
-        };
-        for k in kids {
-            if let Some(inner) = self.smallest_infer_failure(k, depth - 1) {
-                return Some(inner);
-            }
-        }
-        Some(e)
-    }
 
     fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64) {
         self.shadow_root_entry = entry;
@@ -1398,201 +1363,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             route_stats::UNCERT_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             route_stats::note_uncert(route_stats::uncert_events() == self.shadow_root_entry + 1);
         }
-        if which == 0 && verdict && route_stats::uncertified_budget() {
-            let wx = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, x);
-            let wy = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, y);
-            let lx = self.whnf(x);
-            let ly = self.whnf(y);
-            // if the verified reduct is stuck under a Proj, show what the
-            // structure itself reduces to
-            if let crate::expr::Expr::Proj { structure, .. } = self.ctx.read_expr(wx) {
-                let ws = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, structure);
-                eprintln!("  PROJ-STRUCT: {:?}\n  PROJ-WHNF  : {:?}",
-                    self.ctx.debug_print(structure), self.ctx.debug_print(ws));
-            }
-            // if a verified reduct is a stuck RECURSOR, show its major
-            // premise, the type we infer for it, and whether structure eta
-            // can rewrite it -- that is the exact input to
-            // `verified_major_eta_spine`, the rule that would have to fire
-            for (tag, t) in [("X", wx), ("Y", wy)] {
-                if let Some((_hd, name, _lv, args)) =
-                    self.ctx.unfold_const_apps(t)
-                {
-                    if let Some((_np, _nm, _nmin, mi, _up, _rules)) =
-                        crate::env_model::get_recursor_data(self.env, &name)
-                    {
-                        if (mi as usize) < args.len() {
-                            let major = args[mi as usize];
-                            let mw = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, major);
-                            let mty = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
-                            let ety = crate::delta_bound_model::verified_eta_struct_shadow(self.ctx, self.env, &mut self.shadow_memo, major);
-                            // the exact call `verified_conv_major_eta_p` makes,
-                            // and what reducing its result gets you
-                            let sp = crate::delta_bound_model::verified_major_eta_fix(self.ctx, self.env, &mut self.shadow_memo, t, 64);
-                            let spw = sp.map(|r| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, r));
-                            let moved = match spw { Some(v) => !crate::expr_arena_bridge::expr_ptr_eq(v, t), None => false };
-                            // would the rewritten side actually close against
-                            // the other one, given a FULL budget? if yes, the
-                            // rule works and only its gate is in the way
-                            // what does the rewrite put in the major slot,
-                            // and does it look like a constructor application?
-                            let rewritten_major = sp.and_then(|r| {
-                                self.ctx.unfold_const_apps(r)
-                                    .and_then(|(_h, _n, _l, a)| a.get(mi as usize).copied())
-                            });
-                            let rm_txt = rewritten_major.map(|m| format!("{:?}", self.ctx.debug_print(m)));
-                            let rm_head = rm_txt.as_ref().map(|t| t.chars().take(60).collect::<String>());
-                            // run the iota producer on the rewrite itself and
-                            // report which exit it takes
-                            let (iota_ok, iota_exit) = match sp {
-                                Some(r) => {
-                                    let before: Vec<u64> = (0..64).map(|q| route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed)).collect();
-                                    let got = crate::tc_model::verified_rec_step_free(self.ctx, self.env, &mut self.shadow_memo, r).is_some();
-                                    let moved: Vec<usize> = (0..64).filter(|q| route_stats::CONV_LEAF[*q].load(std::sync::atomic::Ordering::Relaxed) != before[*q]).collect();
-                                    (got, format!("{:?}", moved))
-                                }
-                                None => (false, String::from("-")),
-                            };
-                            let other = if tag == "X" { wy } else { wx };
-                            let would = match spw {
-                                Some(v) => matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, v, other, 100, route_stats::conv_budget()), Some(true)),
-                                None => false,
-                            };
-                            eprintln!("  REC-{} rec={:?} major_idx={} major={:?}\n    major-whnf={:?}\n    major-type={:?}\n    eta={:?}\n    SPINE-REWRITE={} REWRITE-REDUCES-TO-NEW={} WOULD-CLOSE={} IOTA-ON-REWRITE={} exits={}\n    rewritten-major={:?}\n    rewrite-whnf={:?}",
-                                tag, self.ctx.debug_print(name), mi,
-                                self.ctx.debug_print(major),
-                                self.ctx.debug_print(mw),
-                                mty.map(|v| self.ctx.debug_print(v)),
-                                ety.map(|v| self.ctx.debug_print(v)),
-                                sp.is_some(), moved, would, iota_ok, iota_exit, rm_head,
-                                spw.map(|v| self.ctx.debug_print(v)));
-                        }
-                    }
-                }
-            }
-            let ix = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x).is_some();
-            let iy = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y).is_some();
-            route_stats::clear_last_leaf();
-            let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget());
-            let pir_leaf = route_stats::last_leaf();
-            // when the KERNEL decided by proof irrelevance and we did not,
-            // show the four terms the rule turns on
-            if route_stats::legacy_branch_name() == "proof_irrel" {
-                let xt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
-                let yt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y);
-                let xtt = xt.and_then(|t| crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, t));
-                let ytt = yt.and_then(|t| crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, t));
-                let px = xtt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
-                let py = ytt.map(|t| crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, t, 100));
-                let wxt = xt.map(|t| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, t));
-                let wyt = yt.map(|t| crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, t));
-                eprintln!("  IRREL whnf(xt)={:?}\n  IRREL whnf(yt)={:?}",
-                    wxt.map(|t| self.ctx.debug_print(t)), wyt.map(|t| self.ctx.debug_print(t)));
-                // which ARGUMENT of the two propositions fails to convert,
-                // and what does each side reduce to on its own
-                if let (Some(a), Some(b)) = (wxt, wyt) {
-                    {
-                        let (h1, a1) = self.ctx.unfold_apps(a);
-                        let (h2, a2) = self.ctx.unfold_apps(b);
-                        let hc = matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, h1, h2, 100, route_stats::conv_budget()), Some(true));
-                        eprintln!("  IRREL head_conv={} nargs={}/{}", hc, a1.len(), a2.len());
-                        if a1.len() == a2.len() {
-                            for q in 0..a1.len() {
-                                let ok = matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, a1[q], a2[q], 100, route_stats::conv_budget()), Some(true));
-                                if !ok {
-                                    let ra = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, a1[q]);
-                                    let rb = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, a2[q]);
-                                    eprintln!("  IRREL arg{} FAILS\n    a={:?}\n    b={:?}\n    whnf(a)={:?}\n    whnf(b)={:?}",
-                                        q, self.ctx.debug_print(a1[q]), self.ctx.debug_print(a2[q]),
-                                        self.ctx.debug_print(ra), self.ctx.debug_print(rb));
-                                    // a reduct stuck under a Proj: what does
-                                    // the structure itself reduce to?
-                                    if let crate::expr::Expr::Proj { structure, .. } = self.ctx.read_expr(ra) {
-                                        let ws = crate::tc_model::verified_whnf_free(self.ctx, self.env, &mut self.shadow_memo, structure);
-                                        let un = crate::tc_model::verified_unfold_def_step_free(self.ctx, self.env, structure, 100000);
-                                        eprintln!("    STRUCT={:?}\n    whnf(STRUCT)={:?}\n    delta(STRUCT)={:?}",
-                                            self.ctx.debug_print(structure), self.ctx.debug_print(ws),
-                                            un.map(|t| self.ctx.debug_print(t)));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                eprintln!("  IRREL xt={:?}\n  IRREL yt={:?}\n  IRREL xtt={:?} is_prop={:?}\n  IRREL ytt={:?} is_prop={:?}",
-                    xt.map(|t| self.ctx.debug_print(t)), yt.map(|t| self.ctx.debug_print(t)),
-                    xtt.map(|t| self.ctx.debug_print(t)), px,
-                    ytt.map(|t| self.ctx.debug_print(t)), py);
-            }
-            let szx = crate::expr_arena_bridge::verified_size(self.ctx, x, 100000);
-            let szy = crate::expr_arena_bridge::verified_size(self.ctx, y, 100000);
-            if !ix {
-                let before = route_stats::infer_exit_snapshot();
-                let _ = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
-                eprintln!("  INFER-EXITS-FOR-X: {}", route_stats::infer_exit_delta(before));
-                if let Some(bad) = self.smallest_infer_failure(x, 40) {
-                    eprintln!("  INFER-FAILS-ON: {:?}", self.ctx.debug_print(bad));
-                }
-            }
-            if !iy {
-                if let Some(bad) = self.smallest_infer_failure(y, 40) {
-                    eprintln!("  INFER-FAILS-ON: {:?}", self.ctx.debug_print(bad));
-                }
-            }
-            eprintln!("  DIAG: infer_x={} infer_y={} proof_irrel={:?} (exit {}) size_x={:?} size_y={:?}", ix, iy, pir, pir_leaf, szx, szy);
-            let is_root = route_stats::uncert_events() == self.shadow_root_entry + 1;
-            if is_root {
-                let b = route_stats::conv_budget();
-                let xn = self.whnf_no_unfolding(x);
-                let yn = self.whnf_no_unfolding(y);
-                {
-                    {
-                        let (hx, ax) = self.ctx.unfold_apps(xn);
-                        let (hy, ay) = self.ctx.unfold_apps(yn);
-                        let head_eq = hx == hy;
-                        let head_conv = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, hx, hy, 100, b), Some(true));
-                        let mut args_ok = String::new();
-                        if ax.len() == ay.len() {
-                            for i in 0..ax.len() {
-                                let ok = matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, ax[i], ay[i], 100, b), Some(true));
-                                args_ok.push(if ok { 'y' } else { 'n' });
-                            }
-                        }
-                        let spine = matches!(crate::delta_bound_model::verified_conv_spine_p(self.ctx, self.env, &mut self.shadow_memo, xn, yn, 100, b), Some(true));
-                        eprintln!("  ROOTINFO: head_eq={} head_conv={} nargs={}/{} args=[{}] spine_step={}",
-                            head_eq, head_conv, ax.len(), ay.len(), args_ok, spine);
-                    }
-                }
-            }
-            eprintln!("UNCERTIFIED root={} kernel-branch={} last-leaf={}\n  X : {:?}\n  Y : {:?}\n  vX: {:?}\n  vY: {:?}\n  kX: {:?}\n  kY: {:?}",
-                is_root, route_stats::legacy_branch_name(), route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
-                self.ctx.debug_print(wx), self.ctx.debug_print(wy),
-                self.ctx.debug_print(lx), self.ctx.debug_print(ly));
-        }
+        // The forensic dumps that used to sit here (171 lines for uncertified
+        // pairs, 19 for disagreements) were investigation scaffolding: they
+        // printed reduct shapes, recursor major premises and per-leaf counters
+        // to work out WHY a pair had not been certified. That investigation is
+        // done -- coverage is 99.7-99.8% across the measured corpora with zero
+        // disagreements -- and they carried 21 of the cycle's 24 closures plus
+        // every `eprintln!`, which is most of what kept `shadow_check` out of
+        // `verus!`. Every SIGNAL is still here: the route histogram, the
+        // uncertified count, and the disagreement counter below, which is the
+        // one that actually caught a soundness bug. If a disagreement ever
+        // fires again, the counter says so and git has the forensics.
         if which != 0 {
             if verdict {
                 route_stats::bump(&route_stats::SHADOW_CERTIFIED);
             } else {
                 route_stats::bump(&route_stats::SHADOW_DISAGREE);
-                let before: Vec<u64> = (0..64).map(|q| route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed)).collect();
-                let again = matches!(crate::delta_bound_model::verified_conv_inner_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true));
-                let used: Vec<(usize, u64)> = (0..64)
-                    .map(|q| (q, route_stats::CONV_LEAF[q].load(std::sync::atomic::Ordering::Relaxed) - before[q]))
-                    .filter(|(_, d)| *d > 0).collect();
-                eprintln!("  reproduces-here={} leaves-used={:?}", again, used);
-                let pir = crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget());
-                let xt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, x);
-                let yt = crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, y);
-                let (tc_untyped, tc_typed) = match (xt, yt) {
-                    (Some(a), Some(b)) => (
-                        matches!(crate::delta_bound_model::verified_conv(self.ctx, self.env, &mut self.shadow_memo, a, b, 100, route_stats::conv_budget()), Some(true)),
-                        matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, a, b, 100, route_stats::conv_budget()), Some(true)),
-                    ),
-                    _ => (false, false),
-                };
-                eprintln!("SHADOW DISAGREEMENT (route {}, leaf {}): verified routes confirm a pair the original checker rejected\n  X: {:?}\n  Y: {:?}\n  proof_irrel={:?} types-conv-untyped={} types-conv-typed={}",
-                    which, route_stats::last_leaf(), self.ctx.debug_print(x), self.ctx.debug_print(y),
-                    pir, tc_untyped, tc_typed);
             }
         }
     }
