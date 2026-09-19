@@ -3956,7 +3956,7 @@ pub proof fn spine_app_concat(base: ExprSpec, args1: Seq<ExprSpec>, args2: Seq<E
 /// measure on "how many steps" (parallel reduction can grow a term's
 /// size, so there's no obvious structural bound on chain length).
 pub open spec fn pstep_chain_valid(env: Map<u64, (Seq<u64>, ExprSpec)>, chain: Seq<ExprSpec>) -> bool {
-    forall |i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 ==> pstep(env, chain[i], chain[i + 1])
+    forall |i: int| #![trigger pstep(env, chain[i], chain[i + 1])] 0 <= i < chain.len() - 1 ==> pstep(env, chain[i], chain[i + 1])
 }
 
 /// The reflexive-transitive closure of `pstep`, witnessed by an explicit

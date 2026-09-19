@@ -2599,13 +2599,24 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     }
 }
 
-// Sits at the default rlimit boundary: this function and its `_p` twin passed
+// Sat at the default rlimit boundary: this function and its `_p` twin passed
 // and failed across identical runs of the SAME commit (`6d44b35` verified green
 // when committed, then reported `rlimit exceeded` on a re-run with no source
 // change). `spinoff_prover` was already on both and is not enough on its own.
-// The budget is raised rather than tuned to the observed edge, so that a slow
-// run is not a red tree.
-#[verifier::rlimit(40)]
+//
+// 2026-09-19: `pstep_chain_valid` was retriggered on its conclusion, cutting
+// this function's quantifier instantiations 19,369 -> 5,724 -- that one
+// quantifier was 70% of them, because a `chain[i]` trigger fires on every
+// chain indexing in the query, including the two in `pstep_star`'s own body.
+//
+// That did NOT make this function cheaper in budget terms, and the pin went
+// 40 -> 60. Fewer instantiations is not less work: a narrower trigger also
+// means Z3 searches harder for the ones it still needs. The change is kept
+// because it halved the `_p` twin (40 -> 20) and removes an over-permissive
+// trigger from a definition the whole crate uses, but the trade is real and
+// this twin paid for it. What remains is `deq_chain_valid`, now 93% of the
+// cost, which does NOT take the same fix -- see docs/VERUS_REWRITES.md.
+#[verifier::rlimit(60)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,
@@ -4472,13 +4483,10 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
     Some(r)
 }
 
-// Sits at the default rlimit boundary: this function and its `_p` twin passed
-// and failed across identical runs of the SAME commit (`6d44b35` verified green
-// when committed, then reported `rlimit exceeded` on a re-run with no source
-// change). `spinoff_prover` was already on both and is not enough on its own.
-// The budget is raised rather than tuned to the observed edge, so that a slow
-// run is not a red tree.
-#[verifier::rlimit(40)]
+// Was pinned at 40 for the same reason as its twin above. After
+// `pstep_chain_valid` was retriggered (instantiations 6,828 -> 2,713) this one
+// verifies at 20, so the pin is halved rather than inherited.
+#[verifier::rlimit(20)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,

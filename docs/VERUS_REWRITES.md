@@ -456,3 +456,70 @@ Re-running the survey: `rm -rf target/debug/.fingerprint/nanoda_lib-*` first,
 or cargo-verus returns a cached pass without verifying anything (it "finishes"
 in ~0.2s and prints no results line at all — a gate that only greps for
 `0 errors` reads that silence as success).
+
+### Lightening the proof instead of raising the budget (2026-09-19)
+
+The pins above were headroom, not a fix, so the next step was to make the two
+`verified_conv_inner` twins genuinely cheaper. Verus's `--profile` said where
+the cost was, and it was not where the code looked heavy:
+
+```
+verified_conv_inner: 19,369 total instantiations of user-level quantifiers
+  70%  beta_model.rs:3959  pstep_chain_valid  forall |i| #![trigger chain[i]] ...
+  27%  tc_model.rs:3009    deq_chain_valid    forall |i| #![trigger ch[i]] ...
+```
+
+Two quantifiers, 97% of the cost, and both for the same reason: a trigger of
+`chain[i]` fires on **any** indexing of a chain anywhere in the query. That
+includes `pstep_star`'s own body, which writes `chain[0]` and
+`chain[chain.len() - 1]` — so merely *stating* `pstep_star` instantiates the
+whole step obligation.
+
+**`pstep_chain_valid`: fixed.** Retriggered on its conclusion,
+`#![trigger pstep(env, chain[i], chain[i + 1])]`. No consumer needed changing —
+the crate verified unchanged — and instantiations fell 19,369 → 5,724 in
+`verified_conv_inner` and 6,828 → 2,713 in the `_p` twin. `_p`'s pin halved
+from 40 to 20 as a result. This is a crate-wide saving, not a local one:
+`pstep_chain_valid` is used throughout `beta_model`.
+
+It is not a free win, though, and the honest version matters here. The heavy
+twin got *more* expensive: `verified_conv_inner` had verified at 40 and no
+longer did, and its pin went to 60. **Fewer instantiations is not less work** —
+a narrower trigger also means Z3 searches harder for the ones it still needs.
+The change is kept for the crate-wide reduction and the halved `_p` pin, but
+one of the two functions it was aimed at paid for it.
+
+**`deq_chain_valid`: does not take the same fix.** The identical change broke
+17 proofs, every failure the same shape — an `assert(deq_c(env, ch[i],
+ch[i + 1], h))` under a `deq_chain_valid` hypothesis. The obvious repair is a
+link lemma that does the instantiation once:
+
+```rust
+pub proof fn deq_chain_link(env: ..., ch: Seq<ExprSpec>, h: nat, i: int)
+    requires deq_chain_valid(env, ch, h), 0 <= i < ch.len() - 1
+    ensures deq_c(env, ch[i], ch[i + 1], h)
+{ }
+```
+
+That lemma **does not verify**, in an empty context, with the goal being
+literally the trigger term. So this is not about context size, and no amount of
+rewriting the 29 consumer sites would have helped: a conclusion trigger
+carrying arithmetic (`ch[i + 1]`) does not reliably e-match. Probing it cost
+one scoped `cargo verus focus` run instead of 29 edits. A marker-predicate
+trigger (`#![trigger deq_link_marker(ch, i)]`, no arithmetic) is the route that
+should work, but it does require touching all 29 sites, so it is left scoped
+rather than half-done. `deq_chain_valid` is now 93% of what is left.
+
+**A thing that did not work, recorded so it is not retried.** The three leaf
+routes (sort, const, nat-zero) were lifted out of both twins into shared
+`conv_leaf_*` helpers — textually identical in the two twins apart from the
+closing lemma, so it deduplicated real work and read better. It made the heavy
+twin *worse*: it had passed at 40 and then would not, with or without the
+trigger fix. Giving a proof a contract boundary costs it the inline context,
+and here that cost more than the duplication did. Reverted. Splitting a large
+exec fn by arm is good advice on average and was wrong for this function.
+
+Net: `verified_conv_inner_p` 40 → 20, `verified_conv_inner` 40 → 60 while
+carrying 70% fewer instantiations, and one over-permissive trigger removed from
+a definition the whole crate uses. Three restructurings were tried: one landed,
+one is scoped for later, one was measured and reverted.
