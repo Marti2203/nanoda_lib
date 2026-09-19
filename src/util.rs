@@ -74,6 +74,12 @@ impl<A> Ptr<A> {
         (self.raw & IDX_MASK) as usize
     }
 
+    /// Verified in place, body unchanged. Needed in spec-land because
+    /// `SortedPair::new` orders its two pointers by this.
+    pub(crate) fn get_hash(&self) -> (result: u64)
+        ensures result == crate::util_model::ptr_raw(*self) as u64
+    { self.raw as u64 }
+
     pub(crate) fn dag_marker(&self) -> (result: DagMarker)
         ensures crate::util_model::dm_is_tc(result)
             == (crate::util_model::ptr_raw(*self) & 0x8000_0000u32 != 0)
@@ -104,7 +110,7 @@ impl<A> Ptr<A> {
     }
 
 
-    pub(crate) fn get_hash(&self) -> u64 { self.raw as u64 }
+
 
 
 }
@@ -771,16 +777,25 @@ pub struct NameCache<'p> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SortedPair<'t>(ExprPtr<'t>, ExprPtr<'t>);
+pub struct SortedPair<'t>(pub ExprPtr<'t>, pub ExprPtr<'t>);
 
+::vstd::prelude::verus! {
 impl<'t> SortedPair<'t> {
-    pub fn new(a: ExprPtr<'t>, b: ExprPtr<'t>) -> Self {
+    /// Verified in place, body unchanged. The postcondition is deliberately
+    /// the DISJUNCTION rather than anything about the hash order: every
+    /// consumer cares only that the stored pair is the two given pointers in
+    /// some order, and `eq_cache`'s invariant discharges the swapped case with
+    /// `deq_any_symm`. Saying less here keeps the hash out of the proofs.
+    pub fn new(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: Self)
+        ensures (result.0 == a && result.1 == b) || (result.0 == b && result.1 == a)
+    {
         if a.get_hash() <= b.get_hash() {
             Self(a, b)
         } else {
             Self(b, a)
         }
     }
+}
 }
 
 pub struct TcCache<'t> {

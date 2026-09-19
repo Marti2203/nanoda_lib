@@ -60,9 +60,13 @@ pub struct ExUniqueHasher(crate::unique_hasher::UniqueHasher);
 #[verifier::external_type_specification]
 pub struct ExTcCache<'t>(crate::util::TcCache<'t>);
 
+/// Transparent, not opaque: `eq_cache` is a `FxHashSet<SortedPair>`, and the
+/// invariant that every cached pair is genuinely convertible has to project
+/// the pair's two pointers to say so. Same widening `TcCtx` and
+/// `InductiveCheckState` needed, and for the same reason -- Verus needs the
+/// fields KNOWN, not readable.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExSortedPair<'a>(crate::util::SortedPair<'a>);
 
 #[cfg(verus_only)]
@@ -115,6 +119,25 @@ pub proof fn ptr_u16_u16_obeys_key_model<A>()
 #[verifier::external_body]
 pub proof fn ptr_u16_obeys_key_model<A>()
     ensures obeys_key_model::<(Ptr<A>, u16)>()
+{
+}
+
+/// And for the bare pointer keys, which is what `TcCache`'s four
+/// claim-carrying caches use (`infer_cache_check`, both whnf caches keyed by
+/// `ExprPtr`). Same justification as the tuple shapes above: `Ptr`'s `Hash` is
+/// derived over one `u32`, its `==` is spec equality, and `Clone` is `Copy`.
+#[verifier::external_body]
+pub proof fn ptr_obeys_key_model<A>()
+    ensures obeys_key_model::<Ptr<A>>()
+{
+}
+
+/// And for `eq_cache`'s key, which is a pair of pointers rather than a single
+/// one. Same justification: `SortedPair` derives `Hash`/`Eq` over its two
+/// `Ptr` fields and is `Copy`.
+#[verifier::external_body]
+pub proof fn sorted_pair_obeys_key_model<'t>()
+    ensures obeys_key_model::<crate::util::SortedPair<'t>>()
 {
 }
 

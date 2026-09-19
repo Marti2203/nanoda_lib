@@ -486,3 +486,48 @@ This is the concrete thing to design first when the arc starts, ahead of the 43
 contracts: `wf()` is a precondition of all of them, and the insert sites (the
 two `tc_cache.*.insert(e, r)` calls at the foot of `infer`, and their
 counterparts in `whnf` and `def_eq`) are where it must be re-established.
+
+## 14. The cache invariant, landed
+
+§13 named `tc_wf` as the thing to design before the 43 contracts, and said the
+arc is indivisible because every member must both require and restore it. That
+turns out to understate what can be done first: the invariant *and its write
+side* land independently, because none of the write sites calls anything the
+cycle defines.
+
+**`tc_wf` is statable** (`src/tc.rs`). Four of `TcCache`'s eight maps carry a
+claim — `infer_cache_check` (`infer_shadow_claim`), `whnf_cache` and
+`whnf_no_unfolding_cache` (`pstep_star`), `eq_cache` (`deq_any`) — and the
+other four are free for reasons that are all one-directional contracts paying
+off, recorded in the predicate's own doc comment.
+
+Two things had to be fixed before it could even be written:
+
+- `SortedPair` had **private tuple fields and no accessors at all**, and was
+  registered opaque. `eq_cache`'s clause has to project the pair's two
+  pointers, so it is now transparent — the same widening `TcCtx` and
+  `InductiveCheckState` needed, for the same reason: Verus needs the fields
+  known, not readable.
+- Nothing in the crate had ever viewed these caches (the probe the
+  `ExTcCache` comment mentions really was throwaway), so there was no
+  `obeys_key_model` axiom for a bare `Ptr` key or for `SortedPair`. Both added.
+
+**The write side is verified** — `cache_infer_check`, `cache_whnf`,
+`cache_whnf_no_unfolding`, `cache_eq`, each taking its claim as a precondition
+and restoring `tc_wf`. That was the one mechanism the whole arc rests on: if a
+cache write could not restore the invariant, no amount of contract design would
+save it. Probed with a throwaway first, then written for real.
+
+`cache_eq` is the interesting one. It is a set rather than a map, and
+`SortedPair::new` may store the pair either way round, so the clause has to be
+discharged for both orders. `deq_any_symm` makes that free, which in turn lets
+`SortedPair::new`'s own postcondition stay a disjunction that never mentions
+the hash — both it and `Ptr::get_hash` are now verified in place rather than
+axiomatised, so the ordering costs no trust.
+
+Trust surface 94 → 96 claiming (125 total): two `obeys_key_model` axioms, the
+same shape as the three already there.
+
+What is left of the cycle is unchanged in size but no longer unstarted: when
+`infer`/`whnf`/`def_eq` are written against `tc_wf`, their cache tails become
+calls to these four. The 43 contracts still land together.

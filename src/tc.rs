@@ -2262,6 +2262,158 @@ pub struct ExInferFlag(InferFlag);
 #[verifier::external_type_specification]
 pub struct ExDeclarInfo<'a>(crate::env::DeclarInfo<'a>);
 
+/// THE CACHE INVARIANT -- what every member of the `def_eq`/`infer`/`whnf`
+/// cycle must both require and restore.
+///
+/// `infer`'s first two statements are cache lookups that `return` before any
+/// work happens, so to discharge its own postcondition on that path the value
+/// coming out of the cache must already satisfy the claim. The claim is
+/// therefore an invariant of the cache -- and it is env-relative, while
+/// `TcCache` has no `env` field, so it cannot live on `TcCache` at all. It
+/// belongs here, on `TypeChecker`, which holds the cache and the environment
+/// together.
+///
+/// Four of `TcCache`'s eight maps carry a claim. The other four are free, and
+/// it is the one-directional contracts that make them free:
+///   * `infer_cache_no_check` is only ever READ in `InferOnly` mode, where the
+///     contract promises nothing (`types_to`'s application rule requires the
+///     argument to have the domain type, and `InferOnly` skips exactly that
+///     check, so no derivation exists to claim).
+///   * `congr_fail_cache` and `defeq_fail_cache` are negative caches, and
+///     `def_eq`'s `Some(true) => claim, _ => true` shape means a `false`
+///     answer promises nothing. Negative caching costs no proof.
+///   * `strong_cache` is for strong reduction, which is not used during
+///     type-checking.
+pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
+    &&& forall |e: crate::util::ExprPtr<'t>|
+            #[trigger] tc.tc_cache.infer_cache_check@.contains_key(e) ==>
+            crate::tc_model::infer_shadow_claim(*tc.env, e, tc.tc_cache.infer_cache_check@[e])
+    &&& forall |e: crate::util::ExprPtr<'t>|
+            #[trigger] tc.tc_cache.whnf_cache@.contains_key(e) ==>
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*tc.env),
+                to_model_expr(e),
+                to_model_expr(tc.tc_cache.whnf_cache@[e]))
+    &&& forall |e: crate::util::ExprPtr<'t>|
+            #[trigger] tc.tc_cache.whnf_no_unfolding_cache@.contains_key(e) ==>
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*tc.env),
+                to_model_expr(e),
+                to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]))
+    &&& forall |p: crate::util::SortedPair<'t>|
+            #[trigger] tc.tc_cache.eq_cache@.contains(p) ==>
+            crate::tc_model::deq_any(
+                crate::env_model::to_model_of_env(*tc.env),
+                to_model_expr(p.0),
+                to_model_expr(p.1))
+}
+
+/// The four claim-carrying caches' WRITE side, verified.
+///
+/// These are the sites where `tc_wf` has to be re-established, and they are
+/// the part of the cycle that can land on its own: each takes the claim as a
+/// precondition and calls nothing the cycle defines, so none of them is
+/// waiting on the 43 contracts. When `infer`/`whnf`/`def_eq` are eventually
+/// written against `tc_wf`, their cache tails become calls to these.
+///
+/// The `obeys_key_model`/`builds_valid_hashers` pair is what vstd needs before
+/// a `HashMap` has a usable `Map` view at all; see `util_model.rs`.
+impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// `infer`'s tail, `Check` branch. Note there is deliberately no
+    /// counterpart for `infer_cache_no_check`: `InferOnly` promises nothing,
+    /// so that cache carries no claim and needs no guarded writer.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cache_infer_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
+        requires
+            tc_wf(*old(self)),
+            crate::tc_model::infer_shadow_claim(*(*old(self)).env, e, r),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        self.tc_cache.infer_cache_check.insert(e, r);
+    }
+
+    /// `whnf`'s tail. The claim is a reduction, not a typing derivation.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cache_whnf(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
+        requires
+            tc_wf(*old(self)),
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*(*old(self)).env),
+                to_model_expr(e), to_model_expr(r)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        self.tc_cache.whnf_cache.insert(e, r);
+    }
+
+    /// `whnf_no_unfolding`'s tail. Same claim as `cache_whnf`, and that is not
+    /// an oversight: `pstep_star` is "reduces to", a lower bound, so a reduct
+    /// reached without unfolding satisfies it just as one reached with
+    /// unfolding does. The two caches differ in what they hold, not in what
+    /// holding it claims.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cache_whnf_no_unfolding(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
+        requires
+            tc_wf(*old(self)),
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*(*old(self)).env),
+                to_model_expr(e), to_model_expr(r)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        self.tc_cache.whnf_no_unfolding_cache.insert(e, r);
+    }
+
+    /// `def_eq`'s positive tail. Two things make this one different from the
+    /// three above. It is a SET of pairs, not a map, so the claim is over
+    /// membership; and `SortedPair::new` may store the pair either way round,
+    /// so the invariant's clause has to be discharged for both orders --
+    /// `deq_any_symm` is what makes that free, and is the reason `new`'s own
+    /// postcondition can stay a disjunction that never mentions the hash.
+    ///
+    /// Only the POSITIVE cache is guarded. `congr_fail_cache` and
+    /// `defeq_fail_cache` hold pairs that were NOT shown equal, and since
+    /// `def_eq`'s contract is one-directional a negative answer promises
+    /// nothing -- so they need no claim and no guarded writer.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cache_eq(&mut self, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>)
+        requires
+            tc_wf(*old(self)),
+            crate::tc_model::deq_any(
+                crate::env_model::to_model_of_env(*(*old(self)).env),
+                to_model_expr(x), to_model_expr(y)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+    {
+        let p = crate::util::SortedPair::new(x, y);
+        proof {
+            crate::tc_model::deq_any_symm(
+                crate::env_model::to_model_of_env(*(*old(self)).env),
+                to_model_expr(x), to_model_expr(y));
+            crate::util_model::sorted_pair_obeys_key_model();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+        }
+        self.tc_cache.eq_cache.insert(p);
+    }
+}
+
 impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Verified in place -- body unchanged. `Some(true)` means both sides are
     /// `Sort`s whose levels denote the same universe under EVERY assignment.
