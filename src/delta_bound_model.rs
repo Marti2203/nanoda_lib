@@ -4486,7 +4486,11 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
 // Was pinned at 40 for the same reason as its twin above. After
 // `pstep_chain_valid` was retriggered (instantiations 6,828 -> 2,713) this one
 // verifies at 20, so the pin is halved rather than inherited.
-#[verifier::rlimit(20)]
+// Pin raised 20 -> 40 on 2026-09-19: `read_expr`'s ensures gained
+// `node_cache_ok`, so every node read in this function now carries two more
+// conjuncts. That is the cost of retiring the `num_loose_bvars`/`has_fvars`
+// axioms, and it lands here because this function reads a lot of nodes.
+#[verifier::rlimit(40)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,

@@ -489,21 +489,27 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None
         }
     }
-    
-    /// The number of "loose" bound variables, which is the number of bound variables
-    /// in an expression which are boudn by something above it.
-    pub(crate) fn num_loose_bvars(&self, e: ExprPtr<'t>) -> u16 { self.read_expr(e).num_loose_bvars() }
-
-    pub(crate) fn has_fvars(&self, e: ExprPtr<'t>) -> bool { self.read_expr(e).has_fvars() }
 }
 
-impl<'t> Expr<'t> {
-    /// The number of "loose" bound variables, which is the number of bound variables
-    /// in an expression which are boudn by something above it.
-    pub(crate) fn num_loose_bvars(&self) -> u16 {
+
+::vstd::prelude::verus! {
+impl<'a> Expr<'a> {
+    /// Verified in place, body unchanged. The cached arms are discharged by
+    /// `node_cache_ok`, which the caller gets from `read_expr`; the `Var` and
+    /// leaf arms need no assumption at all -- `nlbv(Var(i)) == i + 1` and the
+    /// leaves' zeros follow from `nlbv`'s own definition.
+    pub(crate) fn num_loose_bvars(&self) -> (result: u16)
+        requires crate::expr_arena_bridge::node_cache_ok(*self)
+        ensures result as nat == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model_of_expr(*self))
+    {
         match self {
             Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => 0,
-            Var { dbj_idx, .. } => dbj_idx + 1,
+            Var { dbj_idx, .. } => {
+                // `node_cache_ok` bounds this away from `u16::MAX`; the fact
+                // has to be asked for inside the arm, where the shape is known.
+                proof { assert(*dbj_idx < u16::MAX); }
+                dbj_idx + 1
+            },
             App { num_loose_bvars, .. }
             | Pi { num_loose_bvars, .. }
             | Lambda { num_loose_bvars, .. }
@@ -512,7 +518,10 @@ impl<'t> Expr<'t> {
         }
     }
 
-    pub(crate) fn has_fvars(&self) -> bool {
+    pub(crate) fn has_fvars(&self) -> (result: bool)
+        requires crate::expr_arena_bridge::node_cache_ok(*self)
+        ensures result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model_of_expr(*self))
+    {
         match self {
             Local { .. } => true,
             Var { .. } | Sort { .. } | Const { .. } | NatLit { .. } | StringLit { .. } => false,
@@ -524,10 +533,26 @@ impl<'t> Expr<'t> {
         }
     }
 }
-
+}
 
 ::vstd::prelude::verus! {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place, bodies unchanged. Both used to be
+    /// `assume_specification`s in `expr_arena_bridge.rs`; they are now proved
+    /// from `read_expr`'s `node_cache_ok`, which states the arena's
+    /// cached-field invariant once at the read boundary instead of twice here.
+    pub(crate) fn num_loose_bvars(&self, e: ExprPtr<'t>) -> (result: u16)
+        ensures result as nat == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e))
+    {
+        self.read_expr(e).num_loose_bvars()
+    }
+
+    pub(crate) fn has_fvars(&self, e: ExprPtr<'t>) -> (result: bool)
+        ensures result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))
+    {
+        self.read_expr(e).has_fvars()
+    }
+
     /// From `e[x_1..x_n/v_1..v_n]`, abstract and re-inst, creating `e[y_1..y_n/v_1..v_n]`.
     ///
     /// Verified in place, body unchanged -- the contract is just `abstr`'s

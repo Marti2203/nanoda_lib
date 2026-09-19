@@ -571,9 +571,57 @@ pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<u32> {
     Seq::new(locals.len(), |i: int| expr_id(locals[i]))
 }
 
+/// THE ARENA'S CACHED-FIELD INVARIANT.
+///
+/// Five of `Expr`'s shapes carry precomputed `num_loose_bvars` and `has_fvars`
+/// alongside their children, and `to_model_of_expr` deliberately IGNORES them
+/// -- a node's denotation is built from its children, so the cached values are
+/// not part of what it means. Their correctness is therefore a property of the
+/// arena, maintained by whoever allocates, and it cannot be derived from the
+/// denotation.
+///
+/// It is stated ONCE here, at the read boundary, rather than separately on
+/// each accessor that happens to read a cached field. That is what lets
+/// `TcCtx::num_loose_bvars` and `TcCtx::has_fvars` be PROVEN rather than
+/// assumed -- and it is available to anything else that matches on a node,
+/// which the per-accessor form was not.
+///
+/// The leaf shapes need no clause -- their zeros follow from `nlbv`'s own
+/// definition, so the kernel computes rather than caches them.
+///
+/// `Var` needs one, but not about a cached field: the kernel computes
+/// `dbj_idx + 1` in `u16`, which overflows at `u16::MAX`. The original wraps
+/// to 0 there and silently reports a closed term as having no loose bound
+/// variables. Saying the arena never stores such a node keeps the kernel's
+/// arithmetic as written; the alternative was a guard, which would be a
+/// behaviour change on a path no real term reaches (a de Bruijn index of
+/// 65535 means 65535 enclosing binders).
+pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
+    match e {
+        Expr::App { num_loose_bvars, has_fvars, .. } =>
+            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
+            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Pi { num_loose_bvars, has_fvars, .. } =>
+            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
+            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Lambda { num_loose_bvars, has_fvars, .. } =>
+            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
+            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Let { num_loose_bvars, has_fvars, .. } =>
+            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
+            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Proj { num_loose_bvars, has_fvars, .. } =>
+            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
+            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Var { dbj_idx, .. } => dbj_idx < u16::MAX,
+        _ => true,
+    }
+}
+
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
+        node_cache_ok(result),
         // `const_name_of`/`const_levels_of` are uninterpreted, so until now the
         // ONLY way to learn what they are was `expr_as_const`'s own axiom --
         // which is keyed on a caller-supplied `(ptr, e)` pair and silently
@@ -1719,12 +1767,6 @@ pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, Ex
 {
     match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
 }
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::num_loose_bvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: u16) where 'p: 't
-    ensures result as nat == nlbv(to_model(e));
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::has_fvars] (ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
-    ensures result == has_fv(to_model(e));
 
 /// THE storage primitive for expressions: allocation returns a pointer
 /// denoting exactly the node handed in. Hash-consing may return an existing
