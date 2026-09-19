@@ -216,23 +216,10 @@ pub mod route_stats {
         /// uncertified-pair print can say where the route gave up.
         pub static LAST_LEAF: std::cell::Cell<u8> = const { std::cell::Cell::new(255) };
     }
-    pub fn last_leaf() -> u8 { LAST_LEAF.with(|c| c.get()) }
     pub fn clear_last_leaf() { LAST_LEAF.with(|c| c.set(255)); }
     pub static INFER_EXIT: [AtomicU64; 32] = [const { AtomicU64::new(0) }; 32];
     pub fn infer_exit(kind: u8) {
         if (kind as usize) < 32 { INFER_EXIT[kind as usize].fetch_add(1, Ordering::Relaxed); }
-    }
-    pub fn infer_exit_snapshot() -> [u64; 32] {
-        let mut out = [0u64; 32];
-        for i in 0..32 { out[i] = INFER_EXIT[i].load(Ordering::Relaxed); }
-        out
-    }
-    pub fn infer_exit_delta(before: [u64; 32]) -> String {
-        let v: Vec<String> = (0..32)
-            .filter(|i| INFER_EXIT[*i].load(Ordering::Relaxed) > before[*i])
-            .map(|i| format!("{}:+{}", i, INFER_EXIT[i].load(Ordering::Relaxed) - before[i]))
-            .collect();
-        v.join(" ")
     }
     pub fn infer_exit_report() -> String {
         let v: Vec<String> = (0..32).filter(|i| INFER_EXIT[*i].load(Ordering::Relaxed) > 0)
@@ -375,14 +362,6 @@ pub mod route_stats {
         }
         out
     }
-    pub fn legacy_branch_name() -> &'static str {
-        match LEGACY_BRANCH.with(|c| c.get()) {
-            2 => "bool_true", 3 => "quick2", 4 => "proof_irrel", 5 => "lazy_delta",
-            6 => "const/local/proj leaf", 7 => "whnf-retry recursion", 8 => "def_eq_app",
-            9 => "eta", 10 => "eta_struct", 11 => "string_lit", 12 => "unit", 13 => "all failed",
-            _ => "?",
-        }
-    }
 
     pub fn conv_fail_clear() {
         CONV_FAIL.with(|c| c.borrow_mut().clear());
@@ -458,15 +437,6 @@ pub mod route_stats {
     pub static LEG_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
     #[inline]
     pub fn bump(c: &AtomicU64) { c.fetch_add(1, Ordering::Relaxed); }
-    fn branches() -> String {
-        let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        format!(
-            "env cert: built {} | failed {} | non-quick def_eq calls without a cert {}\nlegacy branches: bool_true {} | quick2 true {} / false {} | proof_irrel {} | lazy_delta {} | const {} | local {} | proj {} | whnf_retry {} | app {} | eta {} | eta_struct {} | string_lit {} | unit {} | exhausted(false) {}",
-            g(&CERT_OK), g(&CERT_NONE), g(&NONQUICK_WITHOUT_CERT),
-            g(&LEG_BOOL_TRUE), g(&LEG_QUICK2_TRUE), g(&LEG_QUICK2_FALSE), g(&LEG_PROOF_IRREL), g(&LEG_LAZY_DELTA), g(&LEG_CONST), g(&LEG_LOCAL), g(&LEG_PROJ),
-            g(&LEG_WHNF_RETRY), g(&LEG_APP), g(&LEG_ETA), g(&LEG_ETA_STRUCT), g(&LEG_STRING), g(&LEG_UNIT), g(&LEG_EXHAUSTED),
-        )
-    }
     pub fn report() -> String {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let (q, lt, lf) = (g(&QUICK), g(&LEGACY_TRUE), g(&LEGACY_FALSE));

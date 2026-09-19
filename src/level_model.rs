@@ -36,6 +36,9 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
     if a >= b { a } else { b }
 }
 
+/// `lw` deliberately ignores `Succ`: `lw(Succ a) == lw(a)`. Those arms are
+/// the ones that move `diff`, and they shrink the term, so they are paid
+/// for by `level_depth` rather than by `lw`.
 /// The value a level denotes under a parameter assignment `rho`. Unassigned
 /// params default to 0, matching Lean's convention that missing substitutions
 /// leave the level unconstrained-but-well-defined for our purposes here.
@@ -211,34 +214,8 @@ pub proof fn params_in_imax_not_monotone_under_simplify()
     }
 }
 
-/// The `Succ`-stripping arms -- the ones that MOVE `diff`, and so the ones
-/// the overflow obligation is really about -- leave both of the first two
-/// components alone, and are paid for by `size` instead.
-///
-/// `lw` is handled by `lw_succ_eq`; this is its counterpart for the second
-/// component, and together they are what lets the third do the work.
-pub proof fn params_in_imax_succ_eq(a: LevelSpec)
-    ensures params_in_imax(LevelSpec::Succ(Box::new(a))) == params_in_imax(a),
-{
-}
 
-/// The descending arms: `(Max(a, b), _)` recurses on `a` and on `b`, and
-/// `(Param|Zero, Max(x, y))` recurses on `x` and on `y`.
-pub proof fn lw_max_gt_parts(a: LevelSpec, b: LevelSpec)
-    ensures
-        lw(a) < lw(LevelSpec::Max(Box::new(a), Box::new(b))),
-        lw(b) < lw(LevelSpec::Max(Box::new(a), Box::new(b))),
-{
-}
 
-/// Stripping a `Succ` leaves the weight ALONE -- `lw(Succ a) == lw(a)`. That
-/// is deliberate: those arms are the ones that move `diff`, and they shrink
-/// the term, so they are paid for by the third component below rather than
-/// by `lw`.
-pub proof fn lw_succ_eq(a: LevelSpec)
-    ensures lw(LevelSpec::Succ(Box::new(a))) == lw(a),
-{
-}
 
 /// The parameters appearing DIRECTLY as an `IMax`'s second argument.
 ///
@@ -322,34 +299,6 @@ pub proof fn leq_measure_succ_right(l: LevelSpec, sub: LevelSpec)
         =~= undet_imax_params(l).union(undet_imax_params(sub)));
 }
 
-/// THE `by_cases` ARM, at the scalar measure. Substituting the parameter into
-/// BOTH sides strictly drops `M`.
-///
-/// The arithmetic is tight and worth seeing: `undet` drops by at least one, so
-/// `3*undet` drops by at least 3; `lw` is exactly preserved; and `level_depth`
-/// grows by at most one PER SIDE, so at most +2. Net at most -1.
-///
-/// Stated before `simplify` runs. The exec path is `subst_simp`, which
-/// simplifies afterwards, and `simplify` is non-growing on all three
-/// components -- so the real decrease is at least this good.
-pub proof fn leq_measure_by_cases(l: LevelSpec, r: LevelSpec, p: u64, v: LevelSpec)
-    requires
-        params_outside_succ(v) == Set::<u64>::empty(),
-        undet_imax_params(v) == Set::<u64>::empty(),
-        lw(v) == 0,
-        level_depth(v) <= 1,
-        undet_imax_params(l).union(undet_imax_params(r)).contains(p),
-    ensures
-        leq_measure(subst_level_spec(l, seq![p], seq![v]),
-                    subst_level_spec(r, seq![p], seq![v]))
-            < leq_measure(l, r)
-{
-    undet_len_decreases_at_by_cases_pair(l, r, p, v);
-    lw_subst_preserved(l, p, v);
-    lw_subst_preserved(r, p, v);
-    level_depth_subst_le(l, p, v);
-    level_depth_subst_le(r, p, v);
-}
 
 /// The `Max` arms: `leq_core` recurses into one side at a time, and `lw` alone
 /// pays for it (`lw(Max(a,b)) = 1 + max(..)` is strictly above either branch).
@@ -540,32 +489,6 @@ pub proof fn undet_imax_params_contains_imax_param(a: LevelSpec, p: u64)
 {
 }
 
-/// THE CAPSTONE for the measure's first component: at the `by_cases` edge, the
-/// cardinality strictly drops.
-///
-/// Three proven facts compose into it -- the parameter is in the set before
-/// (`_contains_imax_param`), it is not in it after (`_subst_single`), and
-/// nothing else arrived (`_subst_no_growth`) -- which `undet_len_strict` turns
-/// into `<`. This is the form a `decreases` clause on `leq_core` consumes.
-pub proof fn undet_len_decreases_at_by_cases(a: LevelSpec, p: u64, v: LevelSpec)
-    requires
-        params_outside_succ(v) == Set::<u64>::empty(),
-        undet_imax_params(v) == Set::<u64>::empty(),
-    ensures ({
-        let l = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)));
-        undet_imax_params(subst_level_spec(l, seq![p], seq![v])).len()
-            < undet_imax_params(l).len()
-    })
-{
-    let l = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)));
-    undet_imax_params_contains_imax_param(a, p);
-    undet_imax_params_subst_single(l, p, v);
-    undet_imax_params_subst_no_growth(l, p, v);
-    undet_len_strict(
-        undet_imax_params(subst_level_spec(l, seq![p], seq![v])),
-        undet_imax_params(l),
-        p);
-}
 
 // PROBE, run and removed: two mutually recursive EXEC functions, one keeping
 // its argument and dropping a phase constant, the other raising the phase and
@@ -573,34 +496,6 @@ pub proof fn undet_len_decreases_at_by_cases(a: LevelSpec, p: u64, v: LevelSpec)
 // the phase component is sound machinery and not wishful thinking. Recorded
 // here rather than left in the tree, like the contradiction detectors.
 
-/// The PAIR form of the `by_cases` capstone, which is what `leq_core` actually
-/// needs: its measure is over BOTH level arguments, and `by_cases` substitutes
-/// into both. `p` lives in whichever side carried the `IMax(_, Param p)`, so
-/// the caller supplies that side and this covers the union.
-pub proof fn undet_len_decreases_at_by_cases_pair(l: LevelSpec, r: LevelSpec, p: u64, v: LevelSpec)
-    requires
-        params_outside_succ(v) == Set::<u64>::empty(),
-        undet_imax_params(v) == Set::<u64>::empty(),
-        undet_imax_params(l).union(undet_imax_params(r)).contains(p),
-    ensures
-        undet_imax_params(subst_level_spec(l, seq![p], seq![v]))
-            .union(undet_imax_params(subst_level_spec(r, seq![p], seq![v]))).len()
-        < undet_imax_params(l).union(undet_imax_params(r)).len()
-{
-    let sl = subst_level_spec(l, seq![p], seq![v]);
-    let sr = subst_level_spec(r, seq![p], seq![v]);
-    undet_imax_params_subst_single(l, p, v);
-    undet_imax_params_subst_single(r, p, v);
-    undet_imax_params_subst_no_growth(l, p, v);
-    undet_imax_params_subst_no_growth(r, p, v);
-    assert(undet_imax_params(sl).union(undet_imax_params(sr))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
-    assert(!undet_imax_params(sl).union(undet_imax_params(sr)).contains(p));
-    undet_len_strict(
-        undet_imax_params(sl).union(undet_imax_params(sr)),
-        undet_imax_params(l).union(undet_imax_params(r)),
-        p);
-}
 
 /// The `subst_simp -> simplify` edge's `lw` column. Substituting a parameter by
 /// a WEIGHTLESS value leaves `lw` exactly unchanged -- and both of `by_cases`'
@@ -734,11 +629,6 @@ pub proof fn level_depth_imax_max_le(a: LevelSpec, x: LevelSpec, y: LevelSpec)
         == 1 + max_nat(da, 1 + max_nat(dx, dy)));
 }
 
-/// The `Succ`-peel edges: `lw` is flat there, `level_depth` is not.
-pub proof fn level_depth_succ(a: LevelSpec)
-    ensures level_depth(LevelSpec::Succ(Box::new(a))) > level_depth(a)
-{
-}
 
 /// `lw` strictly drops into either `Max` branch -- `leq_core`'s `Max` arms and
 /// `simplify`'s `Max` arm.
@@ -749,22 +639,7 @@ pub proof fn lw_max_gt(a: LevelSpec, b: LevelSpec)
 {
 }
 
-/// `lw` strictly drops into an `IMax`'s FIRST argument. This is the edge that
-/// closes the `simplify -> is_zero` cycle: `simplify`'s `IMax` arm tests
-/// `is_zero(l_simp)`, and `lw(IMax(l,r)) = lw(l) + 2*lw(r) + 1 > lw(l)`, while
-/// `simplify` is already proven `lw`-non-increasing, so `lw(l_simp) <= lw(l)`.
-pub proof fn lw_imax_gt_left(a: LevelSpec, b: LevelSpec)
-    ensures lw(LevelSpec::IMax(Box::new(a), Box::new(b))) > lw(a)
-{
-}
 
-/// `undet_imax_params` never grows going into a sub-level of a `Max` or the
-/// FIRST argument of an `IMax` -- the non-strict half of the same edges.
-pub proof fn undet_imax_params_imax_left_sub(a: LevelSpec, b: LevelSpec)
-    ensures undet_imax_params(a)
-        .subset_of(undet_imax_params(LevelSpec::IMax(Box::new(a), Box::new(b))))
-{
-}
 
 /// Parameters occurring at a position NOT underneath any `Succ`. A `Succ`
 /// wrapper is the syntactic marker for "known nonzero", so everything beneath
@@ -1012,28 +887,6 @@ pub proof fn undet_imax_params_subst_no_growth(l: LevelSpec, p: u64, v: LevelSpe
     }
 }
 
-/// `by_cases`' two branches, instantiated. This is the strict-decrease fact the
-/// first component of the measure needs, modulo `simplify` non-growth.
-pub proof fn undet_imax_params_by_cases_drops(l: LevelSpec, p: u64)
-    ensures
-        !undet_imax_params(subst_level_spec(l, seq![p], seq![LevelSpec::Zero])).contains(p),
-        !undet_imax_params(subst_level_spec(l, seq![p],
-            seq![LevelSpec::Succ(Box::new(LevelSpec::Param(p)))])).contains(p),
-{
-    // Both branch values satisfy the hypotheses, and for the two different
-    // reasons the whole candidate turns on.
-    assert(params_outside_succ(LevelSpec::Zero) =~= Set::<u64>::empty());
-    assert(undet_imax_params(LevelSpec::Zero) =~= Set::<u64>::empty());
-    undet_imax_params_subst_single(l, p, LevelSpec::Zero);
-
-    let sp = LevelSpec::Succ(Box::new(LevelSpec::Param(p)));
-    // `params_outside_succ` is empty at a `Succ` BY CONSTRUCTION -- this is the
-    // line that distinguishes this candidate from the refuted subtree variant.
-    assert(params_outside_succ(sp) =~= Set::<u64>::empty());
-    assert(undet_imax_params(sp) =~= undet_imax_params(LevelSpec::Param(p)));
-    assert(undet_imax_params(sp) =~= Set::<u64>::empty());
-    undet_imax_params_subst_single(l, p, sp);
-}
 
 /// Every parameter name occurring anywhere in a level. Distinct from
 /// `imax_params` below, which counts only those in an `IMax`'s SECOND
@@ -1083,48 +936,8 @@ pub proof fn imax_params_finite(l: LevelSpec)
     }
 }
 
-/// `Succ` is transparent to the set -- which is what makes `leq_core`'s two
-/// `Succ`-peeling arms leave the second component alone, so the third (`depth`)
-/// can do the work there.
-pub proof fn imax_params_succ(a: LevelSpec)
-    ensures imax_params(LevelSpec::Succ(Box::new(a))) == imax_params(a)
-{
-}
 
-/// Both `Max` children are covered, so descending into either cannot grow it.
-pub proof fn imax_params_max_sub(a: LevelSpec, b: LevelSpec)
-    ensures
-        imax_params(a).subset_of(imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
-        imax_params(b).subset_of(imax_params(LevelSpec::Max(Box::new(a), Box::new(b)))),
-{
-}
 
-/// The `IMax(a, IMax(x,y)) -> Max(IMax(a,y), IMax(x,y))` rewrite does not grow
-/// the set: the only parameter the rewrite puts into a second position is `y`'s,
-/// and `IMax(x, y)` already had it there.
-pub proof fn imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures imax_params(LevelSpec::Max(
-                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
-            .subset_of(imax_params(LevelSpec::IMax(
-                Box::new(a),
-                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))))
-{
-    let inner = LevelSpec::IMax(Box::new(x), Box::new(y));
-    let lhs = LevelSpec::Max(
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
-    let rhs = LevelSpec::IMax(Box::new(a), Box::new(inner));
-    // Both sides unfold to ip(a) u ip(x) u ip(y) u here(y): on the left the
-    // `here(y)` comes from either branch, on the right from the inner `IMax`.
-    // `here` of the right's second argument is empty, an `IMax` not being a
-    // `Param`.
-    assert forall |q: u64| imax_params(lhs).contains(q) implies
-        imax_params(rhs).contains(q) by {
-        assert(imax_params(lhs) == imax_params(LevelSpec::IMax(Box::new(a), Box::new(y)))
-            .union(imax_params(inner)));
-    }
-}
 
 pub open spec fn imax_normal(l: LevelSpec) -> bool
     decreases l
@@ -1173,39 +986,6 @@ pub open spec fn leq_core_covered(l: LevelSpec, r: LevelSpec, diff: int) -> bool
     ||| (ls_is_imax(r) && ls_is_any_max(ls_imax_snd(r)))
 }
 
-/// THE CATCH-ALL IS UNREACHABLE under the simplified-form invariant.
-///
-/// This is the load-bearing fact for putting the kernel's `leq_core` into
-/// `verus!` as written: its final `_ => panic!()` can only be reached by a
-/// pair that `leq_core_covered` rejects, and no such pair satisfies
-/// `imax_normal` on both sides. The single case that does the work is
-/// `IMax(a, b)`: `imax_normal` rules `b` out of being `Zero` or `Succ`,
-/// which leaves `Param`, `Max` and `IMax` -- and those are precisely the
-/// shapes the `is_param(b)` and `is_any_max(b)` guards catch.
-pub proof fn imax_normal_covers_leq_core(l: LevelSpec, r: LevelSpec, diff: int)
-    requires imax_normal(l), imax_normal(r),
-    ensures leq_core_covered(l, r, diff),
-{
-    match l {
-        LevelSpec::Succ(_) => {}
-        LevelSpec::Max(_, _) => {}
-        LevelSpec::IMax(_, b) => {
-            // `imax_normal(l)` leaves `b` a Param, a Max or an IMax
-            assert(ls_imax_snd(l) == *b);
-            assert(ls_is_param(*b) || ls_is_any_max(*b));
-        }
-        // l is Zero or Param: the pair is settled by r's shape
-        _ => {
-            match r {
-                LevelSpec::IMax(_, y) => {
-                    assert(ls_imax_snd(r) == *y);
-                    assert(ls_is_param(*y) || ls_is_any_max(*y));
-                }
-                _ => {}
-            }
-        }
-    }
-}
 
 /// Non-vacuity check for the lemma above (a conditional lemma that happens
 /// to have an always-true conclusion would prove nothing). `IMax(p, 0)`
