@@ -329,27 +329,6 @@ pub struct CtorHeader<'a> {
     ty: ExprPtr<'a>,
 }
 
-/// Condition 3:
-///     assert that the first arguments being applied to the base `Const(..)`
-///     in any given constructor are exactly the parameters required by the block.
-///     In vernacular lean, we're used to just giving indices, but pretend everything
-///     has an `@` prefix.
-///     e.g.:
-///     {A : Sort u}
-///     for `@eq.refl A a a`
-///     unfolds as (Const(eq, [u]), [A, a, a])
-fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>]) -> bool {
-    if ctor_apps.len() < local_params.len() {
-        return false
-    }
-
-    for (app, param) in ctor_apps.iter().copied().zip(local_params.iter().copied()) {
-        if app != param {
-            return false
-        }
-    }
-    true
-}
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn specialize_nested(
@@ -1953,6 +1932,49 @@ use crate::level_arena_bridge::to_model_of_levels;
 use crate::level_model::LevelSpec;
 
 verus! {
+
+/// Condition 3:
+///     assert that the first arguments being applied to the base `Const(..)`
+///     in any given constructor are exactly the parameters required by the block.
+///     In vernacular lean, we're used to just giving indices, but pretend everything
+///     has an `@` prefix.
+///     e.g.:
+///     {A : Sort u}
+///     for `@eq.refl A a a`
+///     unfolds as (Const(eq, [u]), [A, a, a])///
+/// VERUS-REWRITE(zip-for): the original walks
+/// `ctor_apps.iter().copied().zip(local_params.iter().copied())` in a `for`
+/// with a `return false` inside. Neither `Iterator::zip` nor a `return` out of
+/// a `for` is usable here (register entries 14 and 7), so it is the index walk
+/// the zip desugars to. Same pairs, same order, same early exit.
+fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>]) -> (result: bool)
+    ensures
+        result == (ctor_apps@.len() >= local_params@.len()
+            && forall |i: int| 0 <= i < local_params@.len()
+                ==> #[trigger] ctor_apps@[i] == local_params@[i]),
+{
+    if ctor_apps.len() < local_params.len() {
+        return false
+    }
+    let n = local_params.len();
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            0 <= i <= n,
+            n == local_params@.len(),
+            n <= ctor_apps@.len(),
+            forall |k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k] == local_params@[k],
+        decreases n - i,
+    {
+        if ctor_apps[i] != local_params[i] {
+            return false
+        }
+        i += 1;
+    }
+    true
+}
+
+
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
