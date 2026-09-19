@@ -8,6 +8,150 @@ use serde::Deserialize;
 // Inside `verus!` only so the `hash64!` calls in `util.rs`'s constructors are
 // expressible there; the values are unchanged and no spec reads them.
 ::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// VERUS-REWRITE(option-eq-chain): the original compares
+    /// `Some(name) == nc.quot_lift`. vstd's `Option::eq` specification is
+    /// CLAIM-FREE, so that branch tells Verus nothing; `Ptr`'s own `eq` does
+    /// have a contract, so the comparison is destructured and done on the
+    /// pointers. Same slots, same order, same early exit.
+    pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
+        ensures match result {
+            Some(kind) => crate::expr_arena_bridge::quot_kind_of(
+                crate::level_arena_bridge::name_id(name)) == Some(kind),
+            None => true,
+        },
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let nc = &self.export_file.name_cache;
+        if let Some(q) = nc.quot_lift { if q == name { return Some(0) } }
+        if let Some(q) = nc.quot_ind { if q == name { return Some(1) } }
+        if let Some(q) = nc.quot_mk { if q == name { return Some(2) } }
+        None
+    }
+
+    /// VERUS-REWRITE(option-eq-chain): as `quot_kind_code` above, over the
+    /// fourteen nat operation slots.
+    pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
+        ensures match result {
+            Some(op) => crate::expr_arena_bridge::nat_bin_op_of(
+                crate::level_arena_bridge::name_id(name)) == Some(op),
+            None => true,
+        },
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let nc = &self.export_file.name_cache;
+        if !self.export_file.config.nat_extension_on() { return None }
+        if let Some(q) = nc.nat_add { if q == name { return Some(0) } }
+        if let Some(q) = nc.nat_sub { if q == name { return Some(1) } }
+        if let Some(q) = nc.nat_mul { if q == name { return Some(2) } }
+        if let Some(q) = nc.nat_div { if q == name { return Some(3) } }
+        if let Some(q) = nc.nat_mod { if q == name { return Some(4) } }
+        if let Some(q) = nc.nat_pow { if q == name { return Some(5) } }
+        if let Some(q) = nc.nat_gcd { if q == name { return Some(6) } }
+        if let Some(q) = nc.nat_beq { if q == name { return Some(7) } }
+        if let Some(q) = nc.nat_ble { if q == name { return Some(8) } }
+        if let Some(q) = nc.nat_land { if q == name { return Some(9) } }
+        if let Some(q) = nc.nat_lor { if q == name { return Some(10) } }
+        if let Some(q) = nc.nat_xor { if q == name { return Some(11) } }
+        if let Some(q) = nc.nat_shl { if q == name { return Some(12) } }
+        if let Some(q) = nc.nat_shr { if q == name { return Some(13) } }
+        None
+    }
+}
+}
+
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place, body unchanged. Was an `assume_specification`; now
+    /// proved from `mk_const` (itself verified) plus the name-cache invariant.
+    pub(crate) fn c_bool_true(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_true_id(),
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.bool_true?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+
+    /// Verified in place, body unchanged. Was an `assume_specification`; now
+    /// proved from `mk_const` (itself verified) plus the name-cache invariant.
+    pub(crate) fn c_nat_zero(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_zero_id()
+            && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.nat_zero?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+
+    /// Verified in place, body unchanged. Was an `assume_specification`; now
+    /// proved from `mk_const` (itself verified) plus the name-cache invariant.
+    pub(crate) fn c_nat_succ(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_succ_id()
+            && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.nat_succ?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+
+    /// Verified in place, body unchanged. Was an `assume_specification`; now
+    /// proved from `mk_const` (itself verified) plus the name-cache invariant.
+    pub(crate) fn nat_type(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_type_id(),
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.nat?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+
+    /// Verified in place, body unchanged. Was an `assume_specification`; now
+    /// proved from `mk_const` (itself verified) plus the name-cache invariant.
+    pub(crate) fn string_type(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::string_type_id(),
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.string?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+}
+}
+
+::vstd::prelude::verus! {
 pub(crate) const VAR_HASH: u64 = 281;
 pub(crate) const SORT_HASH: u64 = 563;
 pub(crate) const CONST_HASH: u64 = 1129;
@@ -210,33 +354,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The quotient primitive a constant name denotes (the same name-cache
     /// dispatch `tc.rs::reduce_quot` performs): 0 `Quot.lift`, 1 `Quot.ind`,
     /// 2 `Quot.mk`. Bridged to `expr_arena_bridge::quot_kind_of`.
-    pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> Option<u8> {
-        let nc = &self.export_file.name_cache;
-        if Some(name) == nc.quot_lift { Some(0) }
-        else if Some(name) == nc.quot_ind { Some(1) }
-        else if Some(name) == nc.quot_mk { Some(2) }
-        else { None }
-    }
 
-    pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> Option<u8> {
-        let nc = &self.export_file.name_cache;
-        if !self.export_file.config.nat_extension { return None }
-        if Some(name) == nc.nat_add { Some(0) }
-        else if Some(name) == nc.nat_sub { Some(1) }
-        else if Some(name) == nc.nat_mul { Some(2) }
-        else if Some(name) == nc.nat_div { Some(3) }
-        else if Some(name) == nc.nat_mod { Some(4) }
-        else if Some(name) == nc.nat_pow { Some(5) }
-        else if Some(name) == nc.nat_gcd { Some(6) }
-        else if Some(name) == nc.nat_beq { Some(7) }
-        else if Some(name) == nc.nat_ble { Some(8) }
-        else if Some(name) == nc.nat_land { Some(9) }
-        else if Some(name) == nc.nat_lor { Some(10) }
-        else if Some(name) == nc.nat_xor { Some(11) }
-        else if Some(name) == nc.nat_shl { Some(12) }
-        else if Some(name) == nc.nat_shr { Some(13) }
-        else { None }
-    }
 
     pub(crate) fn is_nat_zero(&mut self, e: ExprPtr<'t>) -> bool {
         match self.read_expr(e) {
@@ -356,11 +474,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    pub(crate) fn c_bool_true(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.bool_true?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
     pub(crate) fn c_bool_false(&mut self) -> Option<ExprPtr<'t>> {
         let n = self.export_file.name_cache.bool_false?;
@@ -368,31 +481,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         Some(self.mk_const(n, levels))
     }
 
-    pub(crate) fn c_nat_zero(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.nat_zero?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
-    pub(crate) fn c_nat_succ(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.nat_succ?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
     /// Make `Const("Nat", [])`
-    pub(crate) fn nat_type(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.nat?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
     /// Make `Const("String", [])`
-    pub(crate) fn string_type(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.string?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
     /// Abstract `e` with the binders in `binders`, creating a lambda
     /// telescope while backing out.

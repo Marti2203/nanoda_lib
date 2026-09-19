@@ -263,7 +263,9 @@ impl<'t> ExprCache<'t> {
 
 pub struct ExportFile<'p> {
     /// The underlying storage for `Name`, `Level`, and `Expr` items (and Strings).
-    pub(crate) dag: LeanDag<'p>,
+    /// `pub` so `ExExportFile` can be TRANSPARENT (Verus rejects private
+    /// fields on those). Nothing outside this crate reads it.
+    pub dag: LeanDag<'p>,
     /// Declarations from the export file
     pub declars: DeclarMap<'p>,
     /// Notations from the export file
@@ -758,38 +760,38 @@ impl<'a> LeanDag<'a> {
 /// is present in the export file, otherwise they're `None`.
 #[derive(Debug, Clone, Copy)]
 pub struct NameCache<'p> {
-    pub(crate) eager_reduce: Option<NamePtr<'p>>,
-    pub(crate) quot: Option<NamePtr<'p>>,
-    pub(crate) quot_mk: Option<NamePtr<'p>>,
-    pub(crate) quot_lift: Option<NamePtr<'p>>,
-    pub(crate) quot_ind: Option<NamePtr<'p>>,
-    pub(crate) nat: Option<NamePtr<'p>>,
-    pub(crate) nat_zero: Option<NamePtr<'p>>,
-    pub(crate) nat_succ: Option<NamePtr<'p>>,
-    pub(crate) nat_add: Option<NamePtr<'p>>,
-    pub(crate) nat_sub: Option<NamePtr<'p>>,
-    pub(crate) nat_mul: Option<NamePtr<'p>>,
-    pub(crate) nat_pow: Option<NamePtr<'p>>,
-    pub(crate) nat_mod: Option<NamePtr<'p>>,
-    pub(crate) nat_div: Option<NamePtr<'p>>,
-    pub(crate) nat_beq: Option<NamePtr<'p>>,
-    pub(crate) nat_ble: Option<NamePtr<'p>>,
-    pub(crate) nat_gcd: Option<NamePtr<'p>>,
-    pub(crate) nat_xor: Option<NamePtr<'p>>,
-    pub(crate) nat_land: Option<NamePtr<'p>>,
-    pub(crate) nat_lor: Option<NamePtr<'p>>,
-    pub(crate) nat_shr: Option<NamePtr<'p>>,
-    pub(crate) nat_shl: Option<NamePtr<'p>>,
-    pub(crate) string: Option<NamePtr<'p>>,
-    pub(crate) string_of_list: Option<NamePtr<'p>>,
-    pub(crate) bool_false: Option<NamePtr<'p>>,
-    pub(crate) bool_true: Option<NamePtr<'p>>,
-    pub(crate) char: Option<NamePtr<'p>>,
-    pub(crate) char_of_nat: Option<NamePtr<'p>>,
+    pub eager_reduce: Option<NamePtr<'p>>,
+    pub quot: Option<NamePtr<'p>>,
+    pub quot_mk: Option<NamePtr<'p>>,
+    pub quot_lift: Option<NamePtr<'p>>,
+    pub quot_ind: Option<NamePtr<'p>>,
+    pub nat: Option<NamePtr<'p>>,
+    pub nat_zero: Option<NamePtr<'p>>,
+    pub nat_succ: Option<NamePtr<'p>>,
+    pub nat_add: Option<NamePtr<'p>>,
+    pub nat_sub: Option<NamePtr<'p>>,
+    pub nat_mul: Option<NamePtr<'p>>,
+    pub nat_pow: Option<NamePtr<'p>>,
+    pub nat_mod: Option<NamePtr<'p>>,
+    pub nat_div: Option<NamePtr<'p>>,
+    pub nat_beq: Option<NamePtr<'p>>,
+    pub nat_ble: Option<NamePtr<'p>>,
+    pub nat_gcd: Option<NamePtr<'p>>,
+    pub nat_xor: Option<NamePtr<'p>>,
+    pub nat_land: Option<NamePtr<'p>>,
+    pub nat_lor: Option<NamePtr<'p>>,
+    pub nat_shr: Option<NamePtr<'p>>,
+    pub nat_shl: Option<NamePtr<'p>>,
+    pub string: Option<NamePtr<'p>>,
+    pub string_of_list: Option<NamePtr<'p>>,
+    pub bool_false: Option<NamePtr<'p>>,
+    pub bool_true: Option<NamePtr<'p>>,
+    pub char: Option<NamePtr<'p>>,
+    pub char_of_nat: Option<NamePtr<'p>>,
     #[allow(dead_code)]
-    pub(crate) list: Option<NamePtr<'p>>,
-    pub(crate) list_nil: Option<NamePtr<'p>>,
-    pub(crate) list_cons: Option<NamePtr<'p>>,
+    pub list: Option<NamePtr<'p>>,
+    pub list_nil: Option<NamePtr<'p>>,
+    pub list_cons: Option<NamePtr<'p>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -916,6 +918,16 @@ pub struct Config {
     /// This is checked so as to be mutually exclusive with any of the axiom allow list/whitelist features.
     #[serde(default)]
     pub unsafe_permit_all_axioms: bool,
+}
+
+impl Config {
+    /// The `nat_extension` flag, reached through a method so `nat_bin_op_code`
+    /// can read it inside `verus!` without `Config` being transparent -- it
+    /// holds a `PathBuf` and a `PpOptions`, which Verus cannot take.
+    /// Specified CLAIM-FREE in `util_model.rs`: the flag only gates an early
+    /// `None`, and `None` promises nothing, so nothing needs to be assumed
+    /// about its value.
+    pub fn nat_extension_on(&self) -> bool { self.nat_extension }
 }
 
 impl TryFrom<&Path> for Config {

@@ -146,10 +146,36 @@ pub proof fn sorted_pair_obeys_key_model<'t>()
 // TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay
 // opaque -- nothing needs their internals yet; registering them is only what
 // lets `TcCtx` be looked inside at all.
+/// TRANSPARENT: the name cache lives in here, and seven kernel functions
+/// (`c_nat_zero` and its four siblings, `quot_kind_code`, `nat_bin_op_code`)
+/// can only be proved rather than assumed if their cached name is
+/// projectable. Its field types just have to be KNOWN.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
+
+/// TRANSPARENT, for the same reason -- this is the struct being read.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExNameCache<'p>(crate::util::NameCache<'p>);
+
+/// OPAQUE, and it has to stay that way: `Config` holds a `PathBuf` and a
+/// `PpOptions`, neither of which Verus can take, so transparency cascades into
+/// two unsupported types. `nat_bin_op_code` reads `config.nat_extension`
+/// through the claim-free accessor below instead.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
-pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
+pub struct ExConfig(crate::util::Config);
+
+/// CLAIM-FREE: says only that it returns a `bool`. `nat_bin_op_code` uses it
+/// to bail out early, and its contract promises nothing on the `None` branch.
+pub assume_specification [crate::util::Config::nat_extension_on] (c: &crate::util::Config) -> (result: bool);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExNotation<'a>(crate::env::Notation<'a>);
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]

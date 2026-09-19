@@ -1065,12 +1065,46 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCt
 /// `c_bool_true`/`c_bool_false` construct the SAME `Bool.true`/`Bool.
 /// false` constant `bool_to_expr` does, just without needing a `bool` to
 /// select which one.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_bool_true] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == bool_true_id(),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+/// THE NAME-CACHE INVARIANT.
+///
+/// `ExportFile::name_cache` holds the handful of names the kernel needs by
+/// identity -- `Nat`, `Nat.zero`, `Bool.true`, the quotient primitives, the
+/// nat binary operations. That a populated slot really holds the name it is
+/// named after is a property of how the export file was READ, not something
+/// derivable from anything here, so it is assumed.
+///
+/// It is assumed ONCE, here, for the same reason `node_cache_ok` is: seven
+/// kernel functions used to each carry their own `assume_specification`
+/// precisely because this fact was not available to them. With it they are
+/// theorems -- `c_bool_true`, `c_nat_zero`, `c_nat_succ`, `nat_type`,
+/// `string_type`, `quot_kind_code` and `nat_bin_op_code`.
+#[verifier::external_body]
+pub proof fn name_cache_ids_ok<'p>(nc: crate::util::NameCache<'p>)
+    ensures
+        nc.bool_true matches Some(n) ==> name_id(n) == bool_true_id(),
+        nc.nat_zero matches Some(n) ==> name_id(n) == nat_zero_id(),
+        nc.nat_succ matches Some(n) ==> name_id(n) == nat_succ_id(),
+        nc.nat matches Some(n) ==> name_id(n) == nat_type_id(),
+        nc.string matches Some(n) ==> name_id(n) == string_type_id(),
+        nc.quot_lift matches Some(n) ==> quot_kind_of(name_id(n)) == Some(0u8),
+        nc.quot_ind matches Some(n) ==> quot_kind_of(name_id(n)) == Some(1u8),
+        nc.quot_mk matches Some(n) ==> quot_kind_of(name_id(n)) == Some(2u8),
+        nc.nat_add matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(0u8),
+        nc.nat_sub matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(1u8),
+        nc.nat_mul matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(2u8),
+        nc.nat_div matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(3u8),
+        nc.nat_mod matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(4u8),
+        nc.nat_pow matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(5u8),
+        nc.nat_gcd matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(6u8),
+        nc.nat_beq matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(7u8),
+        nc.nat_ble matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(8u8),
+        nc.nat_land matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(9u8),
+        nc.nat_lor matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(10u8),
+        nc.nat_xor matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(11u8),
+        nc.nat_shl matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(12u8),
+        nc.nat_shr matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(13u8),
+{
+}
 
 /// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
 /// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`
@@ -1415,45 +1449,9 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx
     ensures result == nat_repr_is_zero(e),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::quot_kind_code] (ctx: &TcCtx<'t, 'p>, name: NamePtr<'t>) -> (result: Option<u8>) where 'p: 't
-    ensures match result {
-        Some(kind) => quot_kind_of(name_id(name)) == Some(kind),
-        None => true,
-    };
-
-/// `expr.rs::TcCtx::nat_bin_op_code`'s identity: the name-cache dispatch
-/// agrees with the arena-global `nat_bin_op_of` (a `Some` verdict is the
-/// real dispatch; `None` is conservative -- the extension may be
-/// disabled -- so only the `Some` direction is stated).
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_bin_op_code] (ctx: &TcCtx<'t, 'p>, name: NamePtr<'t>) -> (result: Option<u8>) where 'p: 't
-    ensures match result {
-        Some(op) => nat_bin_op_of(name_id(name)) == Some(op),
-        None => true,
-    };
-
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures match result {
         Some(r) => nat_repr_pred(e, r),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
-
-/// `expr.rs::TcCtx::c_nat_zero`/`c_nat_succ`'s result identity, same
-/// "`Const(name_cache.nat_zero/nat_succ, [])`" shape as `c_bool_true`
-/// above -- the CONSTRUCTION-side counterpart to `nat_zero_id`/`nat_
-/// succ_id` (already used above on the READ side, via `nat_repr_is_
-/// zero`/`nat_repr_pred`), needed by `nat_lit_to_constructor`'s own
-/// composition (`expr.rs:523-533`).
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_zero] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_zero_id() && const_levels_vec(e).len() == 0,
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::c_nat_succ] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_succ_id() && const_levels_vec(e).len() == 0,
         None => true,
     },
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
@@ -1563,20 +1561,6 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
 /// else in this arc.
 pub uninterp spec fn nat_type_id() -> u64;
 pub uninterp spec fn string_type_id() -> u64;
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_type] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == nat_type_id(),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
-
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::string_type] (ctx: &mut TcCtx<'t, 'p>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_const_shape(e) && const_id(e) == string_type_id(),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
