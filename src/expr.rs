@@ -168,16 +168,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Instantiate `e` with the substitutions in `substs`
 
 
-    /// From `e[x_1..x_n/v_1..v_n]`, abstract and re-inst, creating `e[y_1..y_n/v_1..v_n]`.
-    pub(crate) fn replace_params(
-        &mut self,
-        e: ExprPtr<'t>,
-        ingoing: &[ExprPtr<'t>],
-        outgoing: &[ExprPtr<'t>],
-    ) -> ExprPtr<'t> {
-        let e = self.abstr(e, outgoing);
-        self.inst(e, ingoing)
-    }
 
     /// Abstraction with deBruijn levels instead of unique identifiers.
 
@@ -538,6 +528,40 @@ impl<'t> Expr<'t> {
 
 ::vstd::prelude::verus! {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// From `e[x_1..x_n/v_1..v_n]`, abstract and re-inst, creating `e[y_1..y_n/v_1..v_n]`.
+    ///
+    /// Verified in place, body unchanged -- the contract is just `abstr`'s
+    /// composed with `inst`'s. `inst`'s depth bound lands on the INTERMEDIATE
+    /// term, not on `e`, and `abstr_full_depth` is what discharges it:
+    /// abstraction replaces locals with `Var`s and so preserves depth exactly.
+    pub(crate) fn replace_params(
+        &mut self,
+        e: ExprPtr<'t>,
+        ingoing: &[ExprPtr<'t>],
+        outgoing: &[ExprPtr<'t>],
+    ) -> (result: ExprPtr<'t>)
+        requires
+            outgoing@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            ingoing@.len() < 60000,
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
+                crate::expr_model::abstr_full(
+                    crate::expr_arena_bridge::to_model(e),
+                    crate::expr_arena_bridge::local_ids(outgoing@), 0),
+                crate::expr_arena_bridge::ptr_models(ingoing@), 0),
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        // `let e = ..` below SHADOWS the parameter, so the depth lemma has to
+        // be applied to the original term, captured here before the rebind.
+        let ghost e0 = crate::expr_arena_bridge::to_model(e);
+        let e = self.abstr(e, outgoing);
+        proof {
+            crate::expr_model::abstr_full_depth(
+                e0, crate::expr_arena_bridge::local_ids(outgoing@), 0);
+        }
+        self.inst(e, ingoing)
+    }
+
     /// Verified AS WRITTEN. Contract derived from `mk_sort` (itself now
     /// verified in place) composed with `zero`'s storage axiom -- the first
     /// case of a COMPOSITE kernel function proven from other kernel
