@@ -9,11 +9,6 @@ use serde::Deserialize;
 // expressible there; the values are unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
-    /// VERUS-REWRITE(option-eq-chain): the original compares
-    /// `Some(name) == nc.quot_lift`. vstd's `Option::eq` specification is
-    /// CLAIM-FREE, so that branch tells Verus nothing; `Ptr`'s own `eq` does
-    /// have a contract, so the comparison is destructured and done on the
-    /// pointers. Same slots, same order, same early exit.
     pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
         ensures match result {
             Some(kind) => crate::expr_arena_bridge::quot_kind_of(
@@ -23,14 +18,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
         let nc = &self.export_file.name_cache;
-        if let Some(q) = nc.quot_lift { if q == name { return Some(0) } }
-        if let Some(q) = nc.quot_ind { if q == name { return Some(1) } }
-        if let Some(q) = nc.quot_mk { if q == name { return Some(2) } }
-        None
+        if Some(name) == nc.quot_lift { Some(0) }
+        else if Some(name) == nc.quot_ind { Some(1) }
+        else if Some(name) == nc.quot_mk { Some(2) }
+        else { None }
     }
 
-    /// VERUS-REWRITE(option-eq-chain): as `quot_kind_code` above, over the
-    /// fourteen nat operation slots.
     pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
         ensures match result {
             Some(op) => crate::expr_arena_bridge::nat_bin_op_of(
@@ -41,21 +34,21 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
         let nc = &self.export_file.name_cache;
         if !self.export_file.config.nat_extension_on() { return None }
-        if let Some(q) = nc.nat_add { if q == name { return Some(0) } }
-        if let Some(q) = nc.nat_sub { if q == name { return Some(1) } }
-        if let Some(q) = nc.nat_mul { if q == name { return Some(2) } }
-        if let Some(q) = nc.nat_div { if q == name { return Some(3) } }
-        if let Some(q) = nc.nat_mod { if q == name { return Some(4) } }
-        if let Some(q) = nc.nat_pow { if q == name { return Some(5) } }
-        if let Some(q) = nc.nat_gcd { if q == name { return Some(6) } }
-        if let Some(q) = nc.nat_beq { if q == name { return Some(7) } }
-        if let Some(q) = nc.nat_ble { if q == name { return Some(8) } }
-        if let Some(q) = nc.nat_land { if q == name { return Some(9) } }
-        if let Some(q) = nc.nat_lor { if q == name { return Some(10) } }
-        if let Some(q) = nc.nat_xor { if q == name { return Some(11) } }
-        if let Some(q) = nc.nat_shl { if q == name { return Some(12) } }
-        if let Some(q) = nc.nat_shr { if q == name { return Some(13) } }
-        None
+        if Some(name) == nc.nat_add { Some(0) }
+        else if Some(name) == nc.nat_sub { Some(1) }
+        else if Some(name) == nc.nat_mul { Some(2) }
+        else if Some(name) == nc.nat_div { Some(3) }
+        else if Some(name) == nc.nat_mod { Some(4) }
+        else if Some(name) == nc.nat_pow { Some(5) }
+        else if Some(name) == nc.nat_gcd { Some(6) }
+        else if Some(name) == nc.nat_beq { Some(7) }
+        else if Some(name) == nc.nat_ble { Some(8) }
+        else if Some(name) == nc.nat_land { Some(9) }
+        else if Some(name) == nc.nat_lor { Some(10) }
+        else if Some(name) == nc.nat_xor { Some(11) }
+        else if Some(name) == nc.nat_shl { Some(12) }
+        else if Some(name) == nc.nat_shr { Some(13) }
+        else { None }
     }
 }
 }

@@ -159,14 +159,29 @@ pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
 #[verifier::external_type_specification]
 pub struct ExNameCache<'p>(crate::util::NameCache<'p>);
 
-/// OPAQUE, and it has to stay that way: `Config` holds a `PathBuf` and a
-/// `PpOptions`, neither of which Verus can take, so transparency cascades into
-/// two unsupported types. `nat_bin_op_code` reads `config.nat_extension`
-/// through the claim-free accessor below instead.
+/// OPAQUE -- but not for the reason an earlier note here gave. It claimed
+/// `Config` "has to stay that way" because it holds a `PathBuf` and a
+/// `PpOptions`. That was an overclaim, and the two are different problems:
+/// `PpOptions` is nanoda's OWN type and was simply never registered, and
+/// `PathBuf` has no vstd specification, which is a GAP rather than a wall.
+///
+/// Registering both was tried. It gets one step further and then wants
+/// `PathBuf`'s `Deref` impl registered as well, which is a real piece of vstd
+/// work (`vstd::std_specs::path` does not exist). Parked because the only
+/// thing transparency buys here is dropping the claim-free accessor below --
+/// see docs/VSTD_GAPS.md, where it is recorded as a candidate rather than a
+/// closed door.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExConfig(crate::util::Config);
+
+/// Nanoda's own type. Registered opaquely; it costs nothing and removes one of
+/// the two reasons `Config` could not be looked inside.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExPpOptions(crate::pretty_printer::PpOptions);
 
 /// CLAIM-FREE: says only that it returns a `bool`. `nat_bin_op_code` uses it
 /// to bail out early, and its contract promises nothing on the `None` branch.
@@ -205,6 +220,30 @@ pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
 /// be verified in place.
 pub assume_specification<A: PartialEq> [<crate::util::Ptr<A> as PartialEq>::eq] (a: &crate::util::Ptr<A>, b: &crate::util::Ptr<A>) -> (result: bool)
     ensures result == (*a == *b);
+
+/// `Ptr`'s equality, registered through vstd's `PartialEqSpec` extension as
+/// well as the plain `assume_specification` above.
+///
+/// This is what makes `Option<Ptr<_>>` comparisons usable. vstd provides
+/// `PartialEqSpecImpl for Option<T>` gated on `T: PartialEqSpec`, while its
+/// plain `assume_specification` for `<Option<T> as PartialEq>::eq` is
+/// CLAIM-FREE -- so without this impl, `Some(name) == nc.quot_lift` told the
+/// verifier nothing, and two kernel functions had to be rewritten to compare
+/// the pointers by hand (register entries 25-26, now reverted).
+///
+/// Four lines, and it belongs here rather than in the fork: `Ptr` is nanoda's
+/// type, so nothing upstream could have provided it.
+/// `#[cfg(verus_only)]` because `vstd::std_specs` is configured out of the
+/// plain build -- the same gate every cross-module spec import in this crate
+/// needs.
+#[cfg(verus_only)]
+impl<A: PartialEq> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
+    open spec fn obeys_eq_spec() -> bool { true }
+
+    open spec fn eq_spec(&self, other: &crate::util::Ptr<A>) -> bool {
+        *self == *other
+    }
+}
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]

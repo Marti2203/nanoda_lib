@@ -162,8 +162,6 @@ re-checking if anything here is ever suspected:
 | 22 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` can overflow `u64` | overflow guard that aborts |
 | 23 | `ctor_app_params_ok` | `src/inductive.rs` | `Iterator::zip` in a `for` with a `return` inside | index walk |
 | 24 | `init_k_target` | `src/inductive.rs` | slice pattern `[only_ctor]` (entry 9) | length test + index |
-| 25 | `quot_kind_code` | `src/expr.rs` | `Option::eq` has a CLAIM-FREE vstd spec | destructure, compare `Ptr`s |
-| 26 | `nat_bin_op_code` | `src/expr.rs` | same, over fourteen slots | destructure, compare `Ptr`s |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -443,39 +441,38 @@ universe parameters. The original would have wrapped silently in release and
 then looped forever on a name it had already tried. Aborting is the better of
 the two, but it IS different, which is exactly why it belongs in this register.
 
-### 25-26. The two name-cache dispatchers — `src/expr.rs`
+### 25-26. WITHDRAWN — the two name-cache dispatchers
 
-`quot_kind_code` and `nat_bin_op_code` both decide by comparing a name against
-cache slots, written in the original as
+These two were registered, and then undone the same day. Recording the round
+trip because the lesson is worth more than the entries were.
 
-```ignore
-if Some(name) == nc.quot_lift { Some(0) }
-else if Some(name) == nc.quot_ind { Some(1) }
-```
+`quot_kind_code` and `nat_bin_op_code` decide by comparing a name against cache
+slots, `if Some(name) == nc.quot_lift { .. }`. That would not verify, because
+**vstd's `assume_specification` for `<Option<T> as PartialEq>::eq` is
+claim-free** — no `ensures` — so taking the branch tells the verifier nothing.
+Both bodies were rewritten to destructure and compare the pointers by hand.
 
-The obstacle is not that Verus cannot compile this. It is that **vstd's
-`assume_specification` for `<Option<T> as PartialEq>::eq` has no `ensures` at
-all** — it is claim-free, so taking that branch tells the verifier nothing
-about why it was taken, and the postcondition is unprovable no matter what
-else is known. (vstd does provide a `PartialEqSpecImpl` for `Option<T>` gated
-on `T: PartialEqSpec`; implementing that trait for `Ptr` would be the other
-route, and is the better fix if this pattern recurs.)
-
-`Ptr`'s own `eq` does have a contract — `ensures result == (*a == *b)` — so the
-comparison is destructured onto the pointers:
+That was the wrong fix. vstd also ships `PartialEqSpecImpl for Option<T>`,
+gated on `T: PartialEqSpec`, and `Ptr` simply did not implement it. Four lines
+in `util_model.rs`:
 
 ```ignore
-if let Some(q) = nc.quot_lift { if q == name { return Some(0) } }
-if let Some(q) = nc.quot_ind { if q == name { return Some(1) } }
+impl<A: PartialEq> vstd::std_specs::cmp::PartialEqSpecImpl for Ptr<A> {
+    open spec fn obeys_eq_spec() -> bool { true }
+    open spec fn eq_spec(&self, other: &Ptr<A>) -> bool { *self == *other }
+}
 ```
 
-Same slots, same order, same early exit, and the `None` fallthrough is
-unchanged. 17 lines across the two functions.
+and both functions verify with the kernel's original bodies. Two rewrites
+reverted for four lines of specification, and the fix generalises to every
+`Option<Ptr<_>>` comparison in the kernel rather than the two sites that
+happened to need it.
 
-**What it bought.** These two were the last of seven `assume_specification`s
-that existed only because the name cache was unreachable from spec mode. With
-`ExportFile` and `NameCache` transparent and the cache invariant stated once,
-all seven are now theorems: trust surface 93 → 87 claiming.
+**The rule this implies:** a missing or claim-free vstd specification is a
+GAP to fill, not a constraint to route around. Rewriting the kernel is the
+fallback, and it should come after checking whether the specification can be
+supplied — in the crate when the type is ours, in the fork when it is not. See
+`docs/VSTD_GAPS.md` for the audit of which remaining rewrites this applies to.
 
 ### How this file is structured, and how to audit it
 
