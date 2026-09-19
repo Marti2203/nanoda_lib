@@ -548,3 +548,74 @@ What is left is unchanged in size but no longer unstarted. When
 `infer`/`whnf`/`def_eq` are written against `tc_wf`, their cache lookups and
 cache tails are already built and verified — the 43 contracts still land
 together, but they land on top of this rather than alongside it.
+
+## 15. The cycle, measured properly
+
+§11 said 48 functions and §14 said the 43 contracts still land together. Both
+hold, but until now the *cost* of the arc was an estimate. This is the
+inventory, computed from the call graph rather than read off the function list.
+
+**The SCC is 48 functions, ~1175 lines** — the documented figure, reproduced
+independently. `infer`, `whnf` and `def_eq` are all in it, as expected: the
+back-edge is `def_eq → try_eta_expansion → try_eta_expansion_aux →
+infer_then_whnf → infer`, and the forward edge runs `infer → infer_app →
+assert_def_eq → def_eq`.
+
+That second edge is worth a warning. `assert_def_eq` is a **one-line
+function**, and a first pass at this measurement reported an SCC of 19 with
+`infer` and `whnf` outside it — a result that would have meant the cycle
+decomposed and the arc was far cheaper than documented. The bug was slicing
+each function's body as `lines[signature .. next_signature]`, which drops the
+signature line itself; harmless for a normal function, fatal for a one-liner
+whose entire body is on that line. `assert_def_eq` is
+`pub fn assert_def_eq(..) { assert!(self.def_eq(u, v)) }`, so its only edge
+vanished and the cycle fell apart. **A measurement that makes the work look
+much cheaper deserves a hand-check before it is believed.**
+
+### What is actually in the way
+
+| blocker | count | route |
+|---|---|---|
+| `panic!` | 16 | `util::kernel_fail` (established) |
+| `.unwrap()` / `.expect(` | 12 | runtime guard, or `kernel_fail` |
+| `while let` | 6 | rewrite to `loop` + `match` — `while let` carries no exit reason |
+| `assert!` / `assert_eq!` | 5 | `util::kernel_check` (established) |
+| `for` loop | 5 | the generic for-loop recipe |
+| closure | 24 | — see below |
+| slice pattern | 1 | unsupported outright |
+
+### The closures are one function
+
+21 of the 24 closures are in **`shadow_check` alone**, and they are
+diagnostics: `debug_print`, `format!`, and reads of the `route_stats` atomics.
+Exactly one closure is in real kernel code —
+`str_lit_to_ctor_reducing`'s `.map(|x| self.whnf(x))`.
+
+`shadow_check` and `shadow_check_rooted` are 219 lines of shadow-only
+diagnostics that never decide anything, and they are in the cycle for a thin
+reason: they call `delta`, `whnf` and `whnf_no_unfolding`, and `def_eq` calls
+them back at four sites. Excising them gives:
+
+| | functions | lines | blockers |
+|---|---|---|---|
+| whole SCC | 48 | ~1175 | 69 |
+| without the two shadow fns | 46 | ~954 | **44** |
+
+and the closure count drops from 24 to 1. Everything remaining sits in a
+category this project already has an adapter for.
+
+They also never touch `tc_cache` — they work through `shadow_memo` — so the
+route out is an `assume_specification` stating that they preserve `tc_wf` and
+the `dbj_level_counter`, which is the assumption the project already makes
+about shadow diagnostics by construction. One trust item to remove 21 of 22
+closures and a fifth of the lines from the atomic step. It cannot be validated
+until `def_eq` is inside `verus!`, so it is planned rather than done.
+
+### Revised shape of the arc
+
+Not "43 contracts from scratch". It is: excise the shadow diagnostics, convert
+~44 blockers in categories that all have known routes, and thread `tc_wf`
+through 46 signatures — where the cache layer those contracts rest on is
+already built and proven (§14), and only five functions touch a
+claim-bearing cache at all (`infer`, `whnf`, `whnf_no_unfolding_aux`, `def_eq`,
+`def_eq_quick_check`), mapping one-to-one onto the eight helpers.
