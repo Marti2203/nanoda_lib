@@ -2412,6 +2412,101 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         self.tc_cache.eq_cache.insert(p);
     }
+
+    // ---- the READ side: the same four caches, handing the claim back ----
+    //
+    // These are why `tc_wf` has to exist at all. `infer` opens with a cache
+    // lookup that `return`s before any work happens, so on that path its
+    // postcondition can only be discharged if the cached value already
+    // carries the claim. `tc_wf` is what supplies it, and these four are
+    // where it gets cashed in. Like the writers, none of them calls anything
+    // the cycle defines, so they land now.
+
+    /// `infer`'s opening lookup, `Check`. A hit carries a typing derivation.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cached_infer_check(&self, e: crate::util::ExprPtr<'t>) -> (result: Option<crate::util::ExprPtr<'t>>)
+        requires tc_wf(*self),
+        ensures match result {
+            Some(r) => crate::tc_model::infer_shadow_claim(*self.env, e, r),
+            None => true,
+        },
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        match self.tc_cache.infer_cache_check.get(&e) {
+            Some(r) => Some(*r),
+            None => None,
+        }
+    }
+
+    /// `whnf`'s opening lookup. A hit carries a reduction.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cached_whnf(&self, e: crate::util::ExprPtr<'t>) -> (result: Option<crate::util::ExprPtr<'t>>)
+        requires tc_wf(*self),
+        ensures match result {
+            Some(r) => crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*self.env), to_model_expr(e), to_model_expr(r)),
+            None => true,
+        },
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        match self.tc_cache.whnf_cache.get(&e) {
+            Some(r) => Some(*r),
+            None => None,
+        }
+    }
+
+    /// `whnf_no_unfolding`'s opening lookup.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cached_whnf_no_unfolding(&self, e: crate::util::ExprPtr<'t>) -> (result: Option<crate::util::ExprPtr<'t>>)
+        requires tc_wf(*self),
+        ensures match result {
+            Some(r) => crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*self.env), to_model_expr(e), to_model_expr(r)),
+            None => true,
+        },
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        match self.tc_cache.whnf_no_unfolding_cache.get(&e) {
+            Some(r) => Some(*r),
+            None => None,
+        }
+    }
+
+    /// `def_eq`'s positive-cache hit. Returns a bool rather than an `Option`
+    /// because a miss is simply "not known equal" -- and note the contract is
+    /// one-directional in exactly the way the rest of the cycle is: `true`
+    /// carries the claim, `false` promises nothing. That is what lets the two
+    /// FAIL caches stay unguarded.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cached_eq(&self, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>) -> (result: bool)
+        requires tc_wf(*self),
+        ensures result ==> crate::tc_model::deq_any(
+            crate::env_model::to_model_of_env(*self.env), to_model_expr(x), to_model_expr(y)),
+    {
+        let p = crate::util::SortedPair::new(x, y);
+        proof {
+            crate::util_model::sorted_pair_obeys_key_model();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+        }
+        let hit = self.tc_cache.eq_cache.contains(&p);
+        proof {
+            if hit {
+                crate::tc_model::deq_any_symm(
+                    crate::env_model::to_model_of_env(*self.env),
+                    to_model_expr(p.0), to_model_expr(p.1));
+            }
+        }
+        hit
+    }
 }
 
 impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {

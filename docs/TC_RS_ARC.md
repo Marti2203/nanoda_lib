@@ -528,6 +528,23 @@ axiomatised, so the ordering costs no trust.
 Trust surface 94 → 96 claiming (125 total): two `obeys_key_model` axioms, the
 same shape as the three already there.
 
-What is left of the cycle is unchanged in size but no longer unstarted: when
-`infer`/`whnf`/`def_eq` are written against `tc_wf`, their cache tails become
-calls to these four. The 43 contracts still land together.
+**The read side is verified too** — `cached_infer_check`, `cached_whnf`,
+`cached_whnf_no_unfolding`, `cached_eq`, each requiring `tc_wf` and handing the
+claim back. These are the reason the invariant has to exist: `infer` opens with
+a lookup that `return`s before any work happens, so on that path its
+postcondition can only be discharged if the cached value already carries the
+claim. `cached_eq` returns a plain `bool` rather than an `Option`, and its
+contract is one-directional in exactly the way the rest of the cycle is —
+`true` carries the claim, `false` promises nothing — which is the same property
+that lets the two fail caches stay unguarded.
+
+**These eight are not yet called by the kernel, and cannot be.** Wiring
+`infer`'s opening lookup to `cached_infer_check` needs `infer` to supply
+`tc_wf`, which means `infer` needs its contract, which is the cycle. So they
+sit unused until the 43 land. That is the honest status: the cycle's cache
+layer is finished and proven, the cycle itself is not started.
+
+What is left is unchanged in size but no longer unstarted. When
+`infer`/`whnf`/`def_eq` are written against `tc_wf`, their cache lookups and
+cache tails are already built and verified — the 43 contracts still land
+together, but they land on top of this rather than alongside it.
