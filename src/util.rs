@@ -336,6 +336,26 @@ pub struct TcCtx<'t, 'p> {
     pub eager_mode: bool
 }
 
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place, body unchanged. Was the last of fifteen `mk_*`
+    /// constructors still carrying its own `assume_specification`; it derives
+    /// from `alloc_expr`'s storage contract like the other twelve, once that
+    /// contract says what the two uninterpreted `Const` accessors are.
+    pub fn mk_const(&mut self, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+        ensures
+            crate::expr_arena_bridge::is_const_shape(result),
+            crate::expr_arena_bridge::const_name_of(result) == name,
+            crate::expr_arena_bridge::const_levels_of(result) == levels,
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        let hash = hash64!(crate::expr::CONST_HASH, name, levels);
+        self.alloc_expr(Expr::Const { name, levels, hash })
+    }
+}
+}
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> Self {
         Self { 
@@ -528,10 +548,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 
 
-    pub fn mk_const(&mut self, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> ExprPtr<'t> {
-        let hash = hash64!(crate::expr::CONST_HASH, name, levels);
-        self.alloc_expr(Expr::Const { name, levels, hash })
-    }
 
 
 

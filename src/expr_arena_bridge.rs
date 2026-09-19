@@ -906,13 +906,6 @@ pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 /// read-side contract above (same three facts), letting `is_const_shape_
 /// model`/`const_levels_vec_model` derive `to_model(result)` the same way
 /// for either a freshly-built or a pre-existing `Const` pointer.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_const] (ctx: &mut TcCtx<'t, 'p>, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures
-        is_const_shape(result),
-        const_name_of(result) == name,
-        const_levels_of(result) == levels,
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 /// Construction-side mirror for `Local`, same pattern as `mk_const` above:
 /// `mk_dbj_level` (`util.rs:612-623`, "open a binder with a fresh free
@@ -1777,6 +1770,13 @@ pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, Ex
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<'t, 'p>, e: Expr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         to_model(result) == to_model_of_expr(e),
+        // The same clause `read_expr` carries, on the write side. `const_name_of`
+        // and `const_levels_of` are uninterpreted, so `to_model(result)` alone
+        // cannot say what they are -- which is why `mk_const` was the one
+        // constructor of fifteen still needing its own axiom while the other
+        // twelve derived from this one. With this, it derives too.
+        e matches Expr::Const { name, levels, .. } ==>
+            const_name_of(result) == name && const_levels_of(result) == levels,
         // FRAME. Allocation touches the dag, never the memo caches. Without
         // this, every constructor call inside a cache-wrapped function havocs
         // the cache and its soundness invariant cannot survive the body.
