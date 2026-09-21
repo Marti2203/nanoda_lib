@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **31 rewrites across 28 functions.**
+Current: **31 rewrites across 27 functions.**
 
 ---
 
@@ -17,40 +17,26 @@ Current: **31 rewrites across 28 functions.**
 These are not decisions. Each exists because something is missing upstream, and
 each would revert if that were supplied.
 
-### `Iterator::any` — 1 rewrite
+### `Iterator::any` — 0 rewrites, CLOSED
 
-| function | file |
-|---|---|
-| `contains_param` | `src/level.rs` |
+Both `all_uparams_defined` and `contains_param` are back to the kernel's own
+`.iter().copied().any(..)`.
 
-`all_uparams_defined` is **reverted**: the kernel's
-`.iter().copied().any(|x| x == level)` is back. The missing piece was an
-explicitly *annotated* closure — `|x: LevelPtr| -> (r: bool) ensures r == (x == level)`
-— which is what lets `any`'s `f.ensures((item,), true)` reach the use site.
-The closure body is unchanged; it carries a spec annotation the way every
-verified function carries a contract.
+Two things were needed, and neither is a vstd change:
 
-`contains_param` does not revert, and the reason is specific. Its contract is
-**bidirectional** (`result == (exists ..)`), because `inductive_model` consumes
-the FALSE direction. The annotated closure proves the bidirectional *element*
-fact fine, but getting from `any`'s `!r ==> forall i: f.ensures((remaining[i],), false)`
-to a statement about `to_model_of_levels(uparams)` needs `remaining` bridged to
-that sequence, which is the same chain that blocks `zip`. So the index loop
-stays.
+1. an explicitly **annotated closure** — `|x: T| -> (r: bool) ensures ..` —
+   which is what lets `any`'s `f.ensures((item,), _)` reach the use site;
+2. for the **bidirectional** case, naming the trigger term. `any`'s `!r` clause
+   is triggered on `old(self).remaining()[i]`, so the proof has to write that
+   term before the `forall` will fire:
 
-Worth recording how that was caught: the one-directional contract verified
-*locally* and broke `inductive_model.rs` two files away. Only the full run
-found it.
+```ignore
+assert(IteratorSpec::remaining(&it0)[i] == ls@[i]);
+```
 
-`Iterator::any` *does* have a full contract (upstream #2873), and
-`copied_postcondition` exposes the elementwise facts, and `Arc`'s `Deref` is
-now specified (fork `487753530`) so the chain reaches `ls@`. **What is still
-missing is the last link**: `any`'s postcondition names the index it stopped at
-as `old.remaining().len() - final.remaining().len() - 1` and asserts
-`f.ensures((remaining[idx],), true)`, and getting from there to
-`ls@[idx] == level` needs the closure's own postcondition to reach the use
-site. Inferring it did not work; an explicitly annotated closure is the next
-thing to try.
+`contains_param`'s contract is `result == (exists ..)` and must stay so —
+`inductive_model` consumes the false direction, and a one-directional version
+verifies locally while breaking two proofs there.
 
 ### `Iterator::zip` — 2 rewrites
 
@@ -75,9 +61,12 @@ Two separate things block it, and only one is about `zip`:
    to a slice INDEX. A `for` over a `Zip` gives an iterator-shaped invariant,
    and bridging that to `ctor_apps@[k]` is the same missing link as `any`'s.
 
-So the index walk stays, but the remaining obstacle is narrow and shared: **a
-lemma relating an iterator's `remaining()` to the sequence it came from** would
-close `any`'s bidirectional case and this one together.
+So the index walk stays. The `any` sites turned out NOT to need a new lemma —
+an annotated closure plus naming the trigger term was enough (see above) — but
+that technique does not transfer here, because a `for` over a `Zip` gives an
+iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
+with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
+either, and it changes the kernel's line more, not less.
 
 ### `Iterator::enumerate`, `Iterator::nth`, `Iterator::position`, `Vec::into_iter` — 4 rewrites
 

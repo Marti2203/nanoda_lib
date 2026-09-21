@@ -768,17 +768,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// some `n : Name`. Used for generating a unique elim universe in the
     /// inductive module.
     ///
-    /// Verified in place. One-directional as everywhere else here: `true` means
-    /// the candidate's name really does occur in the list. `false` claims
-    /// nothing, which is how `gen_elim_level` uses it -- it keeps trying fresh
-    /// candidates until one is NOT present, and a spurious `true` only costs it
-    /// another attempt.
-    ///
-    /// VERUS-REWRITE(any-closure): the `.iter().copied().any(|lptr| ..)` is the
-    /// index walk it desugars to, for the same reason as
-    /// `all_uparams_defined` -- `Iterator::any` has no spec in vstd (register
-    /// entry 11). Same elements, same order; the loop does not short-circuit,
-    /// but `found` is only ever set, so no match can be lost.
+    /// Verified with the kernel's own `.any(..)` call. The contract is
+    /// BIDIRECTIONAL and must stay so -- `inductive_model` consumes the false
+    /// direction, and weakening it verifies here while breaking two proofs
+    /// there.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn contains_param(&self, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result: bool)
         ensures result == (exists |i: int| 0 <= i < to_model_of_levels(uparams).len()
@@ -786,56 +779,56 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate))),
     {
         let ls = self.read_levels(uparams);
-        let n = ls.len();
-        let mut i: usize = 0;
-        let mut found = false;
-        while i < n
-            invariant
-                n == ls@.len(),
-                ls@.len() == to_model_of_levels(uparams).len(),
-                forall |j: int| 0 <= j < ls@.len()
-                    ==> #[trigger] to_model(ls@[j]) == to_model_of_levels(uparams)[j],
-                i <= n,
-                found ==> exists |j: int| 0 <= j < to_model_of_levels(uparams).len()
-                    && #[trigger] to_model_of_levels(uparams)[j]
-                        == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)),
-                // the other direction, which the axiom this retires also had:
-                // nothing scanned so far matched
-                !found ==> forall |j: int| 0 <= j < i ==>
-                    #[trigger] to_model_of_levels(uparams)[j]
-                        != LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)),
-            decreases n - i
-        {
-            let lptr = ls[i];
-            match self.read_level(lptr) {
-                Param(nm, ..) => {
-                    proof {
-                        // the `false` direction needs `name_id` injectivity: a
-                        // model-level name match forces the POINTERS equal, which
-                        // is what the exec comparison tests
-                        if crate::level_arena_bridge::name_id(nm) == crate::level_arena_bridge::name_id(candidate) {
-                            crate::level_arena_bridge::name_id_injective(nm, candidate);
-                        }
-                        assert(to_model(lptr) == LevelSpec::Param(crate::level_arena_bridge::name_id(nm)));
-                    }
-                    if nm == candidate {
+        let mut it = ls.iter().copied();
+        let ghost it0 = it;
+        let found = it.any(
+            |lptr: LevelPtr<'t>| -> (r: bool)
+                ensures r == (to_model(lptr) == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)))
+            {
+                match self.read_level(lptr) {
+                    Param(nm, ..) => {
                         proof {
-                            assert(to_model(lptr)
-                                == LevelSpec::Param(crate::level_arena_bridge::name_id(nm)));
-                            assert(to_model_of_levels(uparams)[i as int]
-                                == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)));
+                            if crate::level_arena_bridge::name_id(nm) == crate::level_arena_bridge::name_id(candidate) {
+                                crate::level_arena_bridge::name_id_injective(nm, candidate);
+                            }
+                            assert(to_model(lptr) == LevelSpec::Param(crate::level_arena_bridge::name_id(nm)));
                         }
-                        found = true;
+                        nm == candidate
                     }
+                    _ => false,
                 }
-                other => {
-                    proof {
-                        assert(to_model(lptr) == crate::level_arena_bridge::to_model_of_level(other));
-                        assert(!(to_model(lptr) is Param));
-                    }
+            });
+        proof {
+            broadcast use vstd::std_specs::iter::group_iter_axioms;
+            // the chain the `Arc` `Deref` spec makes statable: the iterator's
+            // sequence IS `ls@`, which the loop invariant used to carry.
+            assert(vstd::std_specs::iter::IteratorSpec::remaining(&it0).len() == ls@.len());
+            assert forall |k: int| 0 <= k < ls@.len() implies
+                #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&it0)[k] == ls@[k] by {}
+            // and the link `read_levels` gives, which the index loop carried
+            // as an invariant: the pointer vector denotes the model sequence
+            // elementwise.
+            assert(ls@.len() == to_model_of_levels(uparams).len());
+            assert forall |j: int| 0 <= j < ls@.len() implies
+                #[trigger] to_model(ls@[j]) == to_model_of_levels(uparams)[j] by {}
+            // the postcondition's own shape, stated in each direction
+            if found {
+                let idx = vstd::std_specs::iter::IteratorSpec::remaining(&it0).len()
+                    - vstd::std_specs::iter::IteratorSpec::remaining(&it).len() - 1;
+                assert(0 <= idx < ls@.len());
+                assert(to_model(ls@[idx as int]) == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)));
+                assert(to_model_of_levels(uparams)[idx as int]
+                    == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)));
+            } else {
+                assert forall |i: int| 0 <= i < to_model_of_levels(uparams).len() implies
+                    #[trigger] to_model_of_levels(uparams)[i]
+                        != LevelSpec::Param(crate::level_arena_bridge::name_id(candidate)) by {
+                    // name the iterator element at `i` so `any`'s `!r` clause,
+                    // which is triggered on `old(self).remaining()[i]`, fires
+                    assert(vstd::std_specs::iter::IteratorSpec::remaining(&it0)[i] == ls@[i]);
+                    assert(to_model(ls@[i]) == to_model_of_levels(uparams)[i]);
                 }
             }
-            i = i + 1;
         }
         found
     }
