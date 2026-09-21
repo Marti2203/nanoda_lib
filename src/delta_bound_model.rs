@@ -2616,7 +2616,7 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
 // trigger from a definition the whole crate uses, but the trade is real and
 // this twin paid for it. What remains is `deq_chain_valid`, now 93% of the
 // cost, which does NOT take the same fix -- see docs/VERUS_REWRITES.md.
-#[verifier::rlimit(60)]
+#[verifier::rlimit(90)]
 #[verifier::spinoff_prover]
 pub fn verified_conv_inner<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32, budget: u32) -> (result: Option<bool>)
     requires memo.wf(), memo.spec_env() == *env,

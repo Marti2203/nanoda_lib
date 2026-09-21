@@ -191,16 +191,34 @@ and #2959 "Use Seq range syntax", which touch `builtin_macros/src/syntax.rs`
 and `vstd/seq.rs` and no pattern code at all. Easy to conflate with slice
 patterns; different feature.
 
-## Parked: merging upstream into the fork
+## Done: merged upstream into the fork
 
-The fork is 13 commits behind `upstream/main`. Merging conflicts in
-`vstd/std_specs/iter.rs` and `rust_verify_test/tests/iterators.rs`, because
-upstream's #2956 "Iterator clean up" reorganised the whole provided-methods
-block into alphabetical order — and the fork's own `copied`/`cloned` methods,
-which nanoda depends on for every `.iter().copied()` chain, sit inside the
-conflicted region.
+Fork commit `32a4e712e`; the fork is now level with `upstream/main` (0 behind).
 
-Resolving means re-applying those into upstream's new structure, which is real
-merge work with a real way to go wrong. Nothing in the 13 commits is needed
-here, so the merge is parked rather than rushed; `git merge --abort` leaves the
-fork at 2059 / 0 and nanoda at 739 / 0.
+The conflict was `vstd/std_specs/iter.rs`: upstream #2956 "Iterator clean up"
+reorganised the provided methods into alphabetical order, and this fork's
+`copied()`/`cloned()` support sits in that region. Checked first whether
+upstream had gained them (it has not — still fork-only), which decided the
+resolution: **take upstream's structure and re-land the fork's additions into
+it**, rather than keeping the fork's version of the file.
+
+- `Cloned, Copied` back on the import line
+- the `copied`/`cloned` trait methods placed alphabetically, before `filter`
+- their definition blocks before `Definitions for filter()`, matching the
+  file's convention
+- `copied_postcondition`, `cloned_postcondition`, `cloned_value_is_cloned`
+  back in `group_iter_axioms`
+
+One trap worth recording: the fork's `copied`/`cloned` region runs on into the
+`VerusForLoopWrapper` section, which upstream now also has. Taking the region
+wholesale gives `VerusForLoopWrapper` and `trigger_peek_implications` defined
+twice, and the error names the duplicates rather than the overlap. The
+extraction has to stop at the wrapper banner.
+
+`tests/iterators.rs` conflicted against an empty upstream side — 252 lines of
+fork tests for fork-only features — so those are kept unchanged.
+
+**Cost on the nanoda side: two rlimit pins.** `verified_conv_inner` 60 → 90 and
+`rec_result_bounds` 20 → 40. A toolchain move changes proof costs, so re-pinning
+after one is expected rather than a symptom; both were found by the gate, not
+guessed at. vstd 2059 / 0, nanoda 739 / 0, 79 tests.
