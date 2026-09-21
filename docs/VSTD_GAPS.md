@@ -158,3 +158,49 @@ A missing or claim-free specification is a gap to fill, not a wall to route
 around. Check whether the specification can be supplied — in this crate when
 the type is ours, in the fork when it is not — *before* rewriting kernel code.
 Rewriting is the fallback.
+
+## Closed: `assert_failed` (so `assert_eq!` works)
+
+Fork commit `79263cd85`, separate from the `Arc` one so each pulls out alone.
+
+`assert_eq!` and `assert_ne!` expand to `core::panicking::assert_failed`, which
+had no specification — so the macros were unusable inside `verus!`, and the
+error named `core::panicking::AssertKind` rather than anything the author
+wrote. That is register entry 2's justification ("`assert_eq!` is uncompilable
+by Verus"), and it was wrong: uncompilable and unspecified are different
+things.
+
+Specified exactly as `core::panicking::panic` already is — `requires false`, so
+reaching it must be proven impossible, which is the right reading for these
+macros too. `AssertKind` is registered **transparent**, not opaque: the macro
+CONSTRUCTS an `AssertKind::Eq`, and a constructor for an opaque datatype is
+disallowed. Its variants are unit-only, so transparency costs nothing.
+
+## Not what it looked like: slice patterns
+
+Checked on request, because they were believed to be supported now. They are
+not, including on current upstream:
+
+```
+upstream/main:source/rust_verify/src/rust_to_vir_expr.rs:926
+    PatKind::Slice(..) => unsupported_err!(pat.span, "slice patterns", pat)
+```
+
+What landed recently is *index range* syntax — #2913 "Spec index range syntax"
+and #2959 "Use Seq range syntax", which touch `builtin_macros/src/syntax.rs`
+and `vstd/seq.rs` and no pattern code at all. Easy to conflate with slice
+patterns; different feature.
+
+## Parked: merging upstream into the fork
+
+The fork is 13 commits behind `upstream/main`. Merging conflicts in
+`vstd/std_specs/iter.rs` and `rust_verify_test/tests/iterators.rs`, because
+upstream's #2956 "Iterator clean up" reorganised the whole provided-methods
+block into alphabetical order — and the fork's own `copied`/`cloned` methods,
+which nanoda depends on for every `.iter().copied()` chain, sit inside the
+conflicted region.
+
+Resolving means re-applying those into upstream's new structure, which is real
+merge work with a real way to go wrong. Nothing in the 13 commits is needed
+here, so the merge is parked rather than rushed; `git merge --abort` leaves the
+fork at 2059 / 0 and nanoda at 739 / 0.

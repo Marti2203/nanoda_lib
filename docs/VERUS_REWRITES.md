@@ -527,7 +527,7 @@ isolated probe and then against the real function. The results:
 | `while let` carries no exit reason | **FALSE** | desugars to `loop`+`match`; takes `invariant`/`ensures`. 7 rewrites withdrawn |
 | returning out of a `for` leaves the ghost iterator mid-flight | **FALSE** | `get_nth_pi_binder` verifies with its original `for _ in 0..n` and `return None` |
 | the `?` operator is unusable | **FALSE** | all 7 `?` sites restored; `unfold_def` and the others verify |
-| `assert_eq!` is uncompilable | **FILLABLE GAP** | fails on unspecified `core::panicking::AssertKind` and `assert_failed`, and Verus says so — a vstd spec would close it |
+| `assert_eq!` is uncompilable | **FALSE — now CLOSED** | it was unspecified, not uncompilable; fixed in fork `79263cd85`, see `VSTD_GAPS.md` |
 | slice patterns are unsupported | **TRUE** | "The verifier does not yet support the following Rust feature: slice patterns" |
 | a tail `match` carries no per-arm knowledge | **TRUE**, and not a limitation | it is proof structure: each arm's fact has to be stated about a bound result |
 | an or-pattern needs per-arm unfolding | **TRUE**, and not a limitation | same — `get_pfx` must unfold `root_of` at each constructor, so the arms cannot share a body |
