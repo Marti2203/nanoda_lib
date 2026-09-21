@@ -847,10 +847,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `None` case cannot be characterised -- only the `Some` case says
     /// something, and it says the binder really is the domain at that depth.
     ///
-    /// VERUS-REWRITE(range-for-with-return): the original walks the telescope
-    /// with a `for _ in 0..n` containing a `return None`. Returning out of a
-    /// `for` leaves the ghost iterator mid-flight, so it is spelled as the
-    /// `while` over an explicit index that it desugars to.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn get_nth_pi_binder(&self, e0: ExprPtr<'t>, n: usize) -> (result: Option<ExprPtr<'t>>)
         ensures result matches Some(t) ==> {
@@ -860,12 +856,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         },
     {
         let mut e = e0;
-        let mut i: usize = 0;
-        while i < n
+        for i in 0..n
             invariant
-                i <= n,
                 crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), i as nat) == Some(crate::expr_arena_bridge::to_model(e)),
-            decreases n - i
         {
             match self.read_expr(e) {
                 Pi { binder_type, body, .. } => {
@@ -874,7 +867,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
                     }
                     e = body;
-                    i = i + 1;
                 }
                 _ => return None,
             }

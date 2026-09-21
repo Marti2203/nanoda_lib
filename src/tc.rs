@@ -2398,22 +2398,15 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// markers below; both decline instead, which the `Option` return already
     /// provides for.
     ///
-    /// VERUS-REWRITE(question-mark, range-for): the `?`s are their `match`
-    /// desugaring and the two `for i in 0..n` loops are the `while` they
-    /// desugar to, as in `get_nth_pi_binder` (register entry 7).
+    /// VERUS-REWRITE(range-for): the two `for i in 0..n` loops are the `while`
+    /// they desugar to.
     #[verifier::exec_allows_no_decreases_clause]
     fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     {
         // `c_name = Point`
-        let (_f, c_name, c_levels, args) = match self.ctx.unfold_const_apps(e_type) {
-            Some(p) => p,
-            None => return None,
-        };
+        let (_f, c_name, c_levels, args) = self.ctx.unfold_const_apps(e_type)?;
         // `Point` declaration
-        let InductiveData { all_ctor_names, .. } = match self.env.get_structure(&c_name, false) {
-            Some(p) => p,
-            None => return None,
-        };
+        let InductiveData { all_ctor_names, .. } = self.env.get_structure(&c_name, false)?;
         // Name = `Point.mk`
         let ctor_name0 = match all_ctor_names.get(0).copied() {
             Some(n) => n,
@@ -2423,10 +2416,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // first constructor name is not registered as a constructor would panic.
         // Well-formed environments do not do that, and nothing in the code says
         // so; declining is what the `Option` return is for.
-        let ConstructorData { num_params, num_fields, .. } = match self.env.get_constructor(&ctor_name0) {
-            Some(p) => p,
-            None => return None,
-        };
+        let ConstructorData { num_params, num_fields, .. } = self.env.get_constructor(&ctor_name0)?;
         // VERUS-REWRITE(unchecked-index): `args[i]` below was unguarded. For a
         // well-typed `e_type` the head application supplies at least as many
         // arguments as the structure has parameters, but that is a fact about
@@ -2469,14 +2459,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn mk_nullary_ctor(&mut self, e: ExprPtr<'t>, num_params: usize) -> (result: Option<ExprPtr<'t>>)
     {
-        let (_fun, name, levels, args) = match self.ctx.unfold_const_apps(e) {
-            Some(p) => p,
-            None => return None,
-        };
-        let InductiveData { all_ctor_names, .. } = match self.env.get_inductive(&name) {
-            Some(p) => p,
-            None => return None,
-        };
+        let (_fun, name, levels, args) = self.ctx.unfold_const_apps(e)?;
+        let InductiveData { all_ctor_names, .. } = self.env.get_inductive(&name)?;
         // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded.
         // An inductive with NO constructors (`False`, `Empty`) would panic here.
         // Unreachable from the one call site -- `to_ctor_when_k` fires only for
@@ -2499,9 +2483,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// so this is the kernel proving what a hand-written twin was standing in
     /// for.
     ///
-    /// VERUS-REWRITE(question-mark): the two `?`s are spelled as their `match`
-    /// desugaring, and `args.into_iter()` as a slice, because `Vec::into_iter`
-    /// has no vstd spec while `verified_foldl_apps`' slice form does.
+    /// VERUS-REWRITE(vec-into-iter): `args.into_iter()` as a slice, because
+    /// `Vec::into_iter` has no vstd spec while `verified_foldl_apps`' slice
+    /// form does.
     #[verifier::exec_allows_no_decreases_clause]
     fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
@@ -2519,14 +2503,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (fun, args) = self.ctx.unfold_apps(e);
         proof { crate::beta_model::spine_app_nlbv_decompose(to_model_expr(fun),
             Seq::new(args@.len(), |i: int| to_model_expr(args@[i]))); }
-        let (name, levels) = match self.ctx.try_const_info(fun) {
-            Some(p) => p,
-            None => return None,
-        };
-        let (def_uparams, def_value) = match self.env.get_declar_val(&name) {
-            Some(p) => p,
-            None => return None,
-        };
+        let (name, levels) = self.ctx.try_const_info(fun)?;
+        let (def_uparams, def_value) = self.env.get_declar_val(&name)?;
         if self.ctx.read_levels(levels).len() == self.ctx.read_levels(def_uparams).len() {
             let def_val = self.ctx.subst_expr_levels(def_value, def_uparams, levels);
             let ghost id = crate::level_arena_bridge::name_id(name);

@@ -143,7 +143,6 @@ re-checking if anything here is ever suspected:
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
 | 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
 | 5 | `unfold_apps_stack`, `unfold_apps` | `src/expr.rs` | `while let` gives no place for the EXIT proof | `loop` + `match` |
-| 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
 | 8 | `replace_pfx`, `get_pfx` | `src/name.rs` | or-pattern with a match guard; or-pattern needing per-arm unfolding | desugaring |
 | 9 | `abstr_pi_telescope`, `abstr_lambda_telescope` | `src/expr.rs` | slice patterns are unsupported outright | index walk |
 | 10 | `is_never_zero` | `src/level.rs` | a tail `match` carries no per-arm knowledge out | bind arm results |
@@ -152,9 +151,9 @@ re-checking if anything here is ever suspected:
 | 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
-| 16 | `unfold_def` | `src/tc.rs` | `?` operator; `Vec::into_iter` has no spec | `match` + slice |
-| 17 | `mk_nullary_ctor` | `src/tc.rs` | `?`; and an UNGUARDED index Verus rejects | `match` + a bounds guard |
-| 18 | `expand_eta_struct_aux` | `src/tc.rs` | `?`; range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
+| 16 | `unfold_def` | `src/tc.rs` | `Vec::into_iter` has no vstd spec | slice form |
+| 17 | `mk_nullary_ctor` | `src/tc.rs` | an UNGUARDED index Verus rejects | `match` + a bounds guard |
+| 18 | `expand_eta_struct_aux` | `src/tc.rs` | range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
 | 19 | `infer_const` | `src/tc.rs` | closure; `assert!`; a `panic!` with nothing to decline to; a precondition that had to be re-established | accessor swap + `kernel_check` + `kernel_fail` + hoisted check |
 | 20 | `mk_majors` | `src/inductive.rs` | `Iterator::enumerate` has no spec; an unguarded index | index walk + a length check |
 | 21 | `contains_param` | `src/level.rs` | `Iterator::any` has no spec (sibling of entry 11) | index walk |
@@ -516,6 +515,40 @@ needed none, which is why they revert.
 
 The two remaining entry-25 functions stay for unrelated reasons — a slice
 pattern and an or-pattern of two tuples — both genuinely unsupported.
+
+### What Verus actually cannot do — retested 2026-09-21
+
+Several entries here were justified by a claim about Verus that turned out to
+be false, or to have stopped being true. Each claim was retested with an
+isolated probe and then against the real function. The results:
+
+| claim | verdict | evidence |
+|---|---|---|
+| `while let` carries no exit reason | **FALSE** | desugars to `loop`+`match`; takes `invariant`/`ensures`. 7 rewrites withdrawn |
+| returning out of a `for` leaves the ghost iterator mid-flight | **FALSE** | `get_nth_pi_binder` verifies with its original `for _ in 0..n` and `return None` |
+| the `?` operator is unusable | **FALSE** | all 7 `?` sites restored; `unfold_def` and the others verify |
+| `assert_eq!` is uncompilable | **FILLABLE GAP** | fails on unspecified `core::panicking::AssertKind` and `assert_failed`, and Verus says so — a vstd spec would close it |
+| slice patterns are unsupported | **TRUE** | "The verifier does not yet support the following Rust feature: slice patterns" |
+| a tail `match` carries no per-arm knowledge | **TRUE**, and not a limitation | it is proof structure: each arm's fact has to be stated about a bound result |
+| an or-pattern needs per-arm unfolding | **TRUE**, and not a limitation | same — `get_pfx` must unfold `root_of` at each constructor, so the arms cannot share a body |
+
+**The pattern is worth naming.** Three of the seven claims were false, and all
+three had been written as statements about Verus in a comment and then trusted
+for months. A rewrite's justification is a claim that decays: Verus gains
+features, vstd gains specifications, and nothing re-examines the comment. The
+`while let`, `for`-with-`return` and `?` entries cost 15 rewrites between them
+and all three reverted on a first attempt.
+
+The two "TRUE, and not a limitation" rows matter for a different reason: they
+are cases where the code changed because the *proof* needed a shape, not
+because the construct was rejected. Those are legitimate, but they should not
+be filed next to "Verus does not support X" — the remedy is different and they
+will never be fixed upstream.
+
+So the standing rule: **retest a rewrite's justification before relying on it,
+and prefer a probe to a comment.** `scripts/rewrite-register-audit.sh` checks
+that rewrites are registered; it does not and cannot check that their reasons
+are still true.
 
 ### How this file is structured, and how to audit it
 
