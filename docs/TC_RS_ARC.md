@@ -721,7 +721,8 @@ too. That is **8 functions beyond the cycle**, not an open-ended set:
 | | status |
 |---|---|
 | `failure_cache_contains`, `failure_cache_insert` | **verified in place** — neither carries a claim (`congr_fail_cache` records pairs NOT shown equal, so a hit promises nothing); the insert needed only the frame, that it leaves the four claim-bearing caches alone |
-| `bump`, `uncert_events`, `legacy_branch` | **claim-free specs** — diagnostics over atomics and thread-locals, never read by verified code. Specified rather than wrapped so the kernel's call sites need no change |
+| `bump` | **verified** — it takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add` |
+| `uncert_events`, `legacy_branch` | **claim-free specs**, and for different reasons: one reads a `static`, which Verus does not know; the other goes through a thread-local and a closure. Neither is read by verified code |
 | `shadow_check`, `shadow_check_rooted` | remaining — an `assume_specification` preserving `tc_wf` and the counter |
 | `TypeChecker::new` | remaining |
 

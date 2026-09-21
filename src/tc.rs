@@ -436,7 +436,10 @@ pub mod route_stats {
     pub static LEG_UNIT: AtomicU64 = AtomicU64::new(0);
     pub static LEG_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
     #[inline]
+    ::vstd::prelude::verus! {
+    /// Verified, not assumed: vstd specifies `AtomicU64::fetch_add`.
     pub fn bump(c: &AtomicU64) { c.fetch_add(1, Ordering::Relaxed); }
+    }
     pub fn report() -> String {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let (q, lt, lf) = (g(&QUICK), g(&LEGACY_TRUE), g(&LEGACY_FALSE));
@@ -2055,12 +2058,12 @@ use crate::level_model::LevelSpec;
 
 verus! {
 
-// Diagnostics reached from inside the `def_eq` cycle. CLAIM-FREE: each says
-// only that the call is well-formed, because the counters are never read by
-// verified code. Specified rather than wrapped so the kernel's own call sites
-// need no change.
-pub assume_specification [route_stats::bump] (c: &std::sync::atomic::AtomicU64);
-
+// Two of the three cycle-reachable diagnostics have to be assumed, and for
+// different reasons: `legacy_branch`'s body goes through a thread-local and a
+// closure, and `uncert_events` reads a `static`, which Verus does not know.
+// Both CLAIM-FREE -- they say only that the call is well-formed, because the
+// counters are never read by verified code. `bump` is VERIFIED instead: it
+// takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add`.
 pub assume_specification [route_stats::uncert_events] () -> (result: u64);
 
 pub assume_specification [route_stats::legacy_branch] (tag: u8);
