@@ -895,24 +895,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
             Param(..) => {
                 let ls = self.read_levels(params);
-                let mut i: usize = 0;
-                let mut found = false;
-                while i < ls.len()
-                    invariant
-                        ls@.len() == to_model_of_levels(params).len(),
-                        forall |j: int| 0 <= j < ls@.len()
-                            ==> #[trigger] to_model(ls@[j]) == to_model_of_levels(params)[j],
-                        found ==> exists |j: int| 0 <= j < ls@.len() && #[trigger] ls@[j] == level,
-                        i <= ls@.len(),
-                    decreases ls@.len() - i
-                {
-                    if ls[i] == level {
-                        found = true;
-                        assert(ls@[i as int] == level);
-                    }
-                    i = i + 1;
-                }
+                // PROBE: the closure's postcondition stated explicitly, which
+                // is what `any`'s `f.ensures((item,), true)` needs to reach the
+                // use site.
+                let found = ls.iter().copied().any(
+                    |x: LevelPtr<'t>| -> (r: bool) ensures r == (x == level) { x == level });
                 proof {
+                    broadcast use vstd::std_specs::iter::group_iter_axioms;
                     if found {
                         let j = choose |j: int| 0 <= j < ls@.len() && #[trigger] ls@[j] == level;
                         assert(to_model(ls@[j]) == to_model(level));

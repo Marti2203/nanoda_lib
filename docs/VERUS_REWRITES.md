@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **32 rewrites across 28 functions.**
+Current: **31 rewrites across 28 functions.**
 
 ---
 
@@ -17,14 +17,30 @@ Current: **32 rewrites across 28 functions.**
 These are not decisions. Each exists because something is missing upstream, and
 each would revert if that were supplied.
 
-### `Iterator::any` has no usable ergonomics — 2 rewrites
+### `Iterator::any` — 1 rewrite
 
 | function | file |
 |---|---|
-| `all_uparams_defined` | `src/level.rs` |
 | `contains_param` | `src/level.rs` |
 
-Both were `self.read_levels(..).iter().copied().any(|x| ..)`, now index loops.
+`all_uparams_defined` is **reverted**: the kernel's
+`.iter().copied().any(|x| x == level)` is back. The missing piece was an
+explicitly *annotated* closure — `|x: LevelPtr| -> (r: bool) ensures r == (x == level)`
+— which is what lets `any`'s `f.ensures((item,), true)` reach the use site.
+The closure body is unchanged; it carries a spec annotation the way every
+verified function carries a contract.
+
+`contains_param` does not revert, and the reason is specific. Its contract is
+**bidirectional** (`result == (exists ..)`), because `inductive_model` consumes
+the FALSE direction. The annotated closure proves the bidirectional *element*
+fact fine, but getting from `any`'s `!r ==> forall i: f.ensures((remaining[i],), false)`
+to a statement about `to_model_of_levels(uparams)` needs `remaining` bridged to
+that sequence, which is the same chain that blocks `zip`. So the index loop
+stays.
+
+Worth recording how that was caught: the one-directional contract verified
+*locally* and broke `inductive_model.rs` two files away. Only the full run
+found it.
 
 `Iterator::any` *does* have a full contract (upstream #2873), and
 `copied_postcondition` exposes the elementwise facts, and `Arc`'s `Deref` is
