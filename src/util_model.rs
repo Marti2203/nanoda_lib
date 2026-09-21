@@ -187,6 +187,8 @@ pub struct ExPpOptions(crate::pretty_printer::PpOptions);
 /// to bail out early, and its contract promises nothing on the `None` branch.
 pub assume_specification [crate::util::Config::nat_extension_on] (c: &crate::util::Config) -> (result: bool);
 
+pub assume_specification [crate::util::Config::string_extension_on] (c: &crate::util::Config) -> (result: bool);
+
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]

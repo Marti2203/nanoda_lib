@@ -980,6 +980,9 @@ impl Config {
     /// `None`, and `None` promises nothing, so nothing needs to be assumed
     /// about its value.
     pub fn nat_extension_on(&self) -> bool { self.nat_extension }
+
+    /// Sibling of `nat_extension_on`, same reasoning.
+    pub fn string_extension_on(&self) -> bool { self.string_extension }
 }
 
 impl TryFrom<&Path> for Config {

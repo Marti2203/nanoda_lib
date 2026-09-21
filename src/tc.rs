@@ -346,6 +346,9 @@ pub mod route_stats {
     pub fn bump_proof_irrel() { bump(&SHADOW_PROOF_IRREL); }
     pub fn bump_shadow_certified() { bump(&SHADOW_CERTIFIED); }
     pub fn bump_shadow_disagree() { bump(&SHADOW_DISAGREE); }
+    pub fn bump_quick() { bump(&QUICK); }
+    pub fn bump_legacy_true() { bump(&LEGACY_TRUE); }
+    pub fn bump_legacy_false() { bump(&LEGACY_FALSE); }
 
     pub fn legacy_branch(tag: u8) {
         if shadow_enabled() { LEGACY_BRANCH.with(|c| c.set(tag)); }
@@ -553,333 +556,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn ensure_pi(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> {
-        if let Pi { .. } = self.ctx.read_expr(e) {
-            return e
-        }
-        let whnfd = self.whnf(e);
-        match self.ctx.read_expr(whnfd) {
-            Pi { .. } => whnfd,
-            _ => crate::util::kernel_fail("ensure_pi could not produce a pi"),
-        }
-    }
 
-    pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> LevelPtr<'t> {
-        let whnfd = self.infer_then_whnf(e, flag);
-        match self.ctx.read_expr(whnfd) {
-            Sort { level, .. } => level,
-            _ => crate::util::kernel_fail("infer_sort_of could not infer a sort"),
-        }
-    }
 
-    fn try_eta_struct(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-        matches!(self.try_eta_struct_aux(x, y), Some(true)) || matches!(self.try_eta_struct_aux(y, x), Some(true))
-    }
 
-    fn try_eta_struct_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
-        let (_, name, _, args) = self.ctx.unfold_const_apps(y)?;
-        let ConstructorData { inductive_name, num_params, num_fields, .. } = self.env.get_constructor(&name)?;
-        if args.len() == (*num_params + *num_fields) as usize && self.env.can_be_struct(inductive_name) {
-            let (x_type, y_type) = (self.infer(x, InferOnly), self.infer(y, InferOnly));
-            if self.def_eq(x_type, y_type) {
-                for i in (*num_params as usize)..args.len() {
-                    let proj = self.ctx.mk_proj(*inductive_name, i - *num_params as usize, x);
-                    let rhs = args[i];
-                    if !self.def_eq(proj, rhs) {
-                        return None
-                    }
-                }
-                return Some(true)
-            }
-        }
-        None
-    }
 
-    /// VERUS-REWRITE(closure-captures-mut-self): the original is
-    /// `self.ctx.str_lit_to_constructor(x).map(|x| self.whnf(x))`. Verus
-    /// rejects closures that capture a mutable reference outright -- "Verus
-    /// does not currently support closures capturing a mutable reference" --
-    /// and the closure captures `self`. Spelled as the `match` `Option::map`
-    /// is; same call, same order.
-    fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> Option<ExprPtr<'t>> {
-        match self.ctx.str_lit_to_constructor(x) {
-            Some(c) => Some(self.whnf(c)),
-            None => None,
-        }
-    }
 
-    fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
-        if let (StringLit { ptr, .. }, App { fun, .. }) = self.ctx.read_expr_pair(x, y) {
-            if let Some((name, _levels)) = self.ctx.try_const_info(fun) {
-                if name == self.ctx.export_file.name_cache.string_of_list? {
-                    // levels should be empty
-                    let lhs = self.str_lit_to_ctor_reducing(ptr)?;
-                    return Some(self.def_eq(lhs, y))
-                }
-            }
-        }
-        None
-    }
 
-    fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-        if !self.ctx.export_file.config.string_extension {
-            return false
-        }
-        matches!(self.try_string_lit_expansion_aux(x, y), Some(true))
-            || matches!(self.try_string_lit_expansion_aux(y, x), Some(true))
-    }
 
-    // For structures that carry no additional information, elements with the same type are def_eq.
-    fn def_eq_unit(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
-        let x_ty = self.infer_then_whnf(x, InferOnly);
-        let (_, name, _levels, _) = self.ctx.unfold_const_apps(x_ty)?;
-        let InductiveData { all_ctor_names, .. } = self.env.get_structure(&name, false)?;
-        let ctor_name = &all_ctor_names[0];
-        let ctor = self.env.get_constructor(ctor_name)?;
-        if ctor.num_fields != 0 {
-            return None
-        }
-        let y_type = self.infer(y, InferOnly);
-        Some(self.def_eq(x_ty, y_type))
-    }
 
-    fn do_nat_bin(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, op: NatBinOp) -> Option<ExprPtr<'t>> {
-        use NatBinOp::*;
-        let (x, y) = (self.whnf(x), self.whnf(y));
-        let (arg1, arg2) = (self.ctx.get_bignum_from_expr(x)?, self.ctx.get_bignum_from_expr(y)?);
-        match op {
-            Add => self.ctx.mk_nat_lit_quick(arg1 + arg2),
-            Sub => self.ctx.mk_nat_lit_quick(nat_sub(arg1, arg2)),
-            Mul => self.ctx.mk_nat_lit_quick(arg1 * arg2),
-            Pow => self.ctx.mk_nat_lit_quick(arg1.pow(arg2)),
-            Div => self.ctx.mk_nat_lit_quick(nat_div(arg1, arg2)),
-            Mod => self.ctx.mk_nat_lit_quick(nat_mod(arg1, arg2)),
-            Gcd => self.ctx.mk_nat_lit_quick(nat_gcd(&arg1, &arg2)),
-            LAnd => self.ctx.mk_nat_lit_quick(nat_land(arg1, arg2)),
-            LOr => self.ctx.mk_nat_lit_quick(nat_lor(arg1, arg2)),
-            XOr => self.ctx.mk_nat_lit_quick(nat_xor(&arg1, &arg2)),
-            Shl => self.ctx.mk_nat_lit_quick(nat_shl(arg1, arg2)),
-            Shr => self.ctx.mk_nat_lit_quick(nat_shr(arg1, arg2)),
-            Beq => self.ctx.bool_to_expr(arg1 == arg2),
-            Ble => self.ctx.bool_to_expr(arg1 <= arg2),
-        }
-    }
     
-    /// Try to reduce an expression `e` which is an application of `Nat.succ`,
-    /// or an application of a supported binary operation. `e` must have no free
-    /// variables.
-    pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
-        if !self.ctx.export_file.config.nat_extension {
-            return None
-        }
-        if self.ctx.has_fvars(e) {
-            return None
-        }
-        let (f, args) = self.ctx.unfold_apps(e);
-        let out = match (self.ctx.read_expr(f), args.as_slice()) {
-            (Const { name, .. }, [arg]) if Some(name) == self.ctx.export_file.name_cache.nat_succ => {
-                let v_expr = self.whnf(*arg);
-                self.ctx.get_bignum_succ_from_expr(v_expr)
-            }
-            (Const { name, .. }, [arg1, arg2]) => {
-                let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
-                    NatBinOp::Add
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
-                    NatBinOp::Sub
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
-                    NatBinOp::Mul
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
-                    NatBinOp::Pow
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
-                    NatBinOp::Mod
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
-                    NatBinOp::Div
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
-                    NatBinOp::Beq
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
-                    NatBinOp::Ble
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
-                    NatBinOp::LAnd
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
-                    NatBinOp::LOr
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
-                    NatBinOp::XOr
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
-                    NatBinOp::Gcd
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
-                    NatBinOp::Shl
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
-                    NatBinOp::Shr
-                } else {
-                    return None
-                };
-                self.do_nat_bin(*arg1, *arg2, op)
-            }
-            _ => None,
-        };
-        out
-    }
-
-    fn reduce_proj(&mut self, idx: usize, structure: ExprPtr<'t>, cheap: bool) -> Option<ExprPtr<'t>> {
-        let mut structure = if cheap { self.whnf_no_unfolding_cheap_proj(structure) } else { self.whnf(structure) };
-        if let StringLit { ptr, .. } = self.ctx.read_expr(structure) {
-            if let Some(s) = self.str_lit_to_ctor_reducing(ptr) {
-                structure = s;
-            }
-        }
-        let (_, name, _, args) = self.ctx.unfold_const_apps(structure)?;
-        let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;
-        let i = (*num_params as usize) + idx;
-        Some(args.get(i).copied().unwrap())
-    }
-
-    pub(crate) fn infer_then_whnf(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        let ty = self.infer(e, flag);
-        self.whnf(ty)
-    }
-
-    fn infer_proj(&mut self, _ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        let structure_ty = self.infer_then_whnf(structure, flag);
-        let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
-        let (_, struct_ty_name, struct_ty_levels, struct_ty_args) = self.ctx.unfold_const_apps(structure_ty).unwrap();
-
-        let InductiveData { info: inductive_info, all_ctor_names, num_params, .. } =
-            self.env.get_structure(&struct_ty_name, true).unwrap();
-
-        let ConstructorData { info: ctor_info, .. } = self.env.get_constructor(&all_ctor_names[0]).unwrap();
-        let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
-        for i in 0..(*num_params) {
-            ctor_ty = self.whnf(ctor_ty);
-            match self.ctx.read_expr(ctor_ty) {
-                Pi { body, .. } => {
-                    ctor_ty = self.ctx.inst(body, &[struct_ty_args[i as usize]]);
-                }
-            _ => crate::util::kernel_fail("Ran out of param telescope"),
-            }
-        }
-        for i in 0..idx {
-            ctor_ty = self.whnf(ctor_ty);
-            match self.ctx.read_expr(ctor_ty) {
-                Pi { binder_type, body, .. } => {
-                    if self.ctx.num_loose_bvars(body) != 0 {
-                      if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-            crate::util::kernel_fail("infer_proj prop")
-                      }
-                      let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
-                      ctor_ty = self.ctx.inst(body, &[arg]);
-                    } else {
-                      ctor_ty = body;
-                    }
-                }
-            _ => crate::util::kernel_fail("Ran out of constructor telescope"),
-            }
-        }
-        let reduced = self.whnf(ctor_ty);
-        match self.ctx.read_expr(reduced) {
-            Pi { binder_type, .. } => {
-                if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-            crate::util::kernel_fail("infer_proj prop")
-                }
-                binder_type
-            }
-            _ => crate::util::kernel_fail("Ran out of constructor telescope getting field"),
-        }
-    }
-
-    pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        if let Some(cached) = self.tc_cache.infer_cache_check.get(&e).copied() {
-            return cached
-        }
-        if flag == InferFlag::InferOnly {
-            if let Some(cached) = self.tc_cache.infer_cache_no_check.get(&e).copied() {
-                return cached
-            }
-        }
-        let r = match self.ctx.read_expr(e) {
-            Local { binder_type, .. } => binder_type,
-            Var { .. } => crate::util::kernel_fail("no loose bvars allowed in infer"),
-            Sort { level, .. } => self.infer_sort(level, flag),
-            App { .. } => self.infer_app(e, flag),
-            Pi { .. } => self.infer_pi(e, flag),
-            Lambda { .. } => self.infer_lambda(e, flag),
-            Let { binder_type, val, body, .. } => self.infer_let(binder_type, val, body, flag),
-            Const { name, levels, .. } => self.infer_const(name, levels, flag),
-            Proj { ty_name, idx, structure, .. } => self.infer_proj(ty_name, idx, structure, flag),
-            NatLit { .. } => {
-                crate::util::kernel_check(self.ctx.export_file.config.nat_extension,
-                    "infer: nat literal without the nat extension enabled");
-                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. The
-                // `kernel_check` above tests the CONFIG FLAG; this tests
-                // whether the name is actually cached, which is a different
-                // condition, so the unwrap could genuinely fire. `infer`
-                // returns an `ExprPtr` with nothing to decline to.
-                match self.ctx.nat_type() {
-                    Some(t) => t,
-                    None => crate::util::kernel_fail("infer: Nat is not in the environment"),
-                }
-            }
-            StringLit { .. } => {
-                crate::util::kernel_check(self.ctx.export_file.config.string_extension,
-                    "infer: string literal without the string extension enabled");
-                // VERUS-REWRITE(unchecked-unwrap): as the `NatLit` arm above.
-                match self.ctx.string_type() {
-                    Some(t) => t,
-                    None => crate::util::kernel_fail("infer: String is not in the environment"),
-                }
-            }
-        };
-        match flag {
-            InferFlag::InferOnly => {
-                self.tc_cache.infer_cache_no_check.insert(e, r);
-            }
-            InferFlag::Check => {
-                self.tc_cache.infer_cache_check.insert(e, r);
-            }
-        }
-        r
-    }
 
 
-    fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
-        let mut ctx = Vec::new();
-        fun = self.infer(fun, flag);
-        while !args.is_empty() {
-            match self.ctx.read_expr(fun) {
-                Pi { binder_type, body, .. } => {
-                    let arg = args.pop().unwrap();
-                    if flag == Check {
-                        let arg_type = self.infer(arg, flag);
-                        let binder_type = self.ctx.inst(binder_type, ctx.as_slice());
-                        let outer_scope_eager_setting = self.ctx.eager_mode;
-                        if self.ctx.is_eager_reduce_app(arg) {
-                            self.ctx.eager_mode = true;
-                        }
-                        // `arg_type` and `binder_type` get swapped here to accommodate the 
-                        // eager reduction branch in `def_eq` being focused on reducing the lhs.
-                        self.assert_def_eq(binder_type, arg_type);
-                        // replace the outer scope's setting before next iteration
-                        self.ctx.eager_mode = outer_scope_eager_setting;
-                    }
-                    ctx.push(arg);
-                    fun = body;
-                }
-                _ => {
-                    let as_pi = self.ctx.inst(fun, ctx.as_slice());
-                    let as_pi = self.ensure_pi(as_pi);
-                    match self.ctx.read_expr(as_pi) {
-                        Pi { .. } => {
-                            // Only clear what we just instantiated.
-                            ctx.clear();
-                            fun = as_pi;
-                        }
-                        _ => crate::util::kernel_fail("infer_app: applied a non-function"),
-                    }
-                }
-            }
-        }
-        self.ctx.inst(fun, ctx.as_slice())
-    }
+
+
+
+
 
     //fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
     //    match self.ctx.read_expr(e) {
@@ -905,75 +596,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     //    }
     //}
 
-    fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        let mut locals = Vec::new();
-        let start_pos = self.ctx.dbj_level_counter;
-        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
-            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-            if let Check = flag {
-                self.infer_sort_of(binder_type, flag);
-            }
 
-            let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
-            locals.push(local);
-            e = body;
-        }
 
-        let instd = self.ctx.inst(e, locals.as_slice());
-        let infd = self.infer(instd, flag);
-        let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
-        while let Some(local) = locals.pop() {
-            match self.ctx.read_expr(local) {
-                Local { binder_name, binder_style, binder_type, .. } => {
-                    self.ctx.replace_dbj_level(local);
-                    let t = self.ctx.abstr_levels(binder_type, start_pos);
-                    abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
-                }
-            _ => crate::util::kernel_fail("infer_lambda: binder type is not a sort"),
-            }
-        }
-        abstrd
-    }
-
-    fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
-        let mut universes = Vec::new();
-        let mut locals = Vec::new();
-        let c0 = self.ctx.dbj_level_counter;
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
-            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-            let dom_univ = self.infer_sort_of(binder_type, flag);
-            universes.push(dom_univ);
-            locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
-            e = body;
-        }
-        let instd = self.ctx.inst(e, locals.as_slice());
-        let mut infd = self.infer_sort_of(instd, flag);
-        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop()) {
-            infd = self.ctx.imax(universe, infd);
-            self.ctx.replace_dbj_level(local);
-        }
-        crate::util::kernel_check(c0 == self.ctx.dbj_level_counter,
-            "infer_pi: de Bruijn level counter was left unbalanced");
-        self.ctx.mk_sort(infd)
-    }
-
-    fn infer_let(
-        &mut self,
-        binder_type: ExprPtr<'t>,
-        val: ExprPtr<'t>,
-        body: ExprPtr<'t>,
-        flag: InferFlag,
-    ) -> ExprPtr<'t> {
-        if flag == Check {
-            // The binder type has to be a type
-            self.infer_sort_of(binder_type, flag);
-            let val_ty = self.infer(val, flag);
-            // assert that the type annotation of the let value is appropriate.
-            self.assert_def_eq(val_ty, binder_type);
-        }
-        let body = self.ctx.inst(body, &[val]);
-        self.infer(body, flag)
-    }
     
     // Not well tested, used for introspection/debugging.
     #[allow(dead_code)]
@@ -1045,7 +669,571 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         out
     }
 
-    pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /// SHADOW certification of a top-level INFERENCE (diagnostics only):
+    /// the verified inference re-derives a type for `e`; the kernel's
+    /// answer `kernel_ty` counts as certified when a verified equality route
+    /// confirms the two types. Counts: attempted / certified / verified type
+    /// produced but not shown equal (informative, not an alarm: the equality
+    /// routes are incomplete).
+    /// Shadow-only: certify that a declaration type's (certified) type reduces
+    /// to a sort, and for theorems to `Prop` (`check_declar_info`'s
+    /// `ensure_sort` / `is_zero`). Never affects a verdict.
+    pub(crate) fn shadow_ensure_sort(&mut self, ty: ExprPtr<'t>, must_be_prop: bool) {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        route_stats::bump(&route_stats::SHADOW_SORT_TOTAL);
+        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, ty) { Some(v) => v, None => return };
+        if self.ctx.num_loose_bvars(vty) != 0 {
+            return;
+        }
+        if must_be_prop {
+            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100) == Some(true) {
+                route_stats::bump(&route_stats::SHADOW_SORT_CERT);
+            }
+        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 32).is_some() {
+            route_stats::bump(&route_stats::SHADOW_SORT_CERT);
+        }
+    }
+
+    pub(crate) fn shadow_infer(&mut self, e: ExprPtr<'t>, kernel_ty: ExprPtr<'t>) {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        route_stats::bump(&route_stats::SHADOW_INFER_TOTAL);
+        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e) {
+            Some(vty) => {
+                if std::ptr::eq(vty.raw_bits() as *const u8, kernel_ty.raw_bits() as *const u8) || self.pair_certified(vty, kernel_ty) != 0 {
+                    route_stats::bump(&route_stats::SHADOW_INFER_CERT);
+                } else {
+                    route_stats::bump(&route_stats::SHADOW_INFER_UNEQUAL);
+                }
+            }
+            None => {}
+        }
+    }
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+verus! {
+impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn ensure_pi(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if let Pi { .. } = self.ctx.read_expr(e) {
+            return e
+        }
+        let whnfd = self.whnf(e);
+        match self.ctx.read_expr(whnfd) {
+            Pi { .. } => whnfd,
+            _ => crate::util::kernel_fail("ensure_pi could not produce a pi"),
+        }
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> LevelPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let whnfd = self.infer_then_whnf(e, flag);
+        match self.ctx.read_expr(whnfd) {
+            Sort { level, .. } => level,
+            _ => crate::util::kernel_fail("infer_sort_of could not infer a sort"),
+        }
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_eta_struct(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        matches!(self.try_eta_struct_aux(x, y), Some(true)) || matches!(self.try_eta_struct_aux(y, x), Some(true))
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_eta_struct_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let (_, name, _, args) = self.ctx.unfold_const_apps(y)?;
+        let ConstructorData { inductive_name, num_params, num_fields, .. } = self.env.get_constructor(&name)?;
+        if args.len() == (*num_params + *num_fields) as usize && self.env.can_be_struct(inductive_name) {
+            let (x_type, y_type) = (self.infer(x, InferOnly), self.infer(y, InferOnly));
+            if self.def_eq(x_type, y_type) {
+                for i in (*num_params as usize)..args.len() {
+                    let proj = self.ctx.mk_proj(*inductive_name, i - *num_params as usize, x);
+                    let rhs = args[i];
+                    if !self.def_eq(proj, rhs) {
+                        return None
+                    }
+                }
+                return Some(true)
+            }
+        }
+        None
+    }
+
+    /// VERUS-REWRITE(closure-captures-mut-self): the original is
+    /// `self.ctx.str_lit_to_constructor(x).map(|x| self.whnf(x))`. Verus
+    /// rejects closures that capture a mutable reference outright -- "Verus
+    /// does not currently support closures capturing a mutable reference" --
+    /// and the closure captures `self`. Spelled as the `match` `Option::map`
+    /// is; same call, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        match self.ctx.str_lit_to_constructor(x) {
+            Some(c) => Some(self.whnf(c)),
+            None => None,
+        }
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if let (StringLit { ptr, .. }, App { fun, .. }) = self.ctx.read_expr_pair(x, y) {
+            if let Some((name, _levels)) = self.ctx.try_const_info(fun) {
+                if name == self.ctx.export_file.name_cache.string_of_list? {
+                    // levels should be empty
+                    let lhs = self.str_lit_to_ctor_reducing(ptr)?;
+                    return Some(self.def_eq(lhs, y))
+                }
+            }
+        }
+        None
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if !self.ctx.export_file.config.string_extension_on() {
+            return false
+        }
+        matches!(self.try_string_lit_expansion_aux(x, y), Some(true))
+            || matches!(self.try_string_lit_expansion_aux(y, x), Some(true))
+    }
+
+    // For structures that carry no additional information, elements with the same type are def_eq.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_unit(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let x_ty = self.infer_then_whnf(x, InferOnly);
+        let (_, name, _levels, _) = self.ctx.unfold_const_apps(x_ty)?;
+        let InductiveData { all_ctor_names, .. } = self.env.get_structure(&name, false)?;
+        let ctor_name = &all_ctor_names[0];
+        let ctor = self.env.get_constructor(ctor_name)?;
+        if ctor.num_fields != 0 {
+            return None
+        }
+        let y_type = self.infer(y, InferOnly);
+        Some(self.def_eq(x_ty, y_type))
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn do_nat_bin(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, op: NatBinOp) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        use NatBinOp::*;
+        let (x, y) = (self.whnf(x), self.whnf(y));
+        let (arg1, arg2) = (self.ctx.get_bignum_from_expr(x)?, self.ctx.get_bignum_from_expr(y)?);
+        match op {
+            Add => self.ctx.mk_nat_lit_quick(arg1 + arg2),
+            Sub => self.ctx.mk_nat_lit_quick(nat_sub(arg1, arg2)),
+            Mul => self.ctx.mk_nat_lit_quick(arg1 * arg2),
+            Pow => self.ctx.mk_nat_lit_quick(arg1.pow(arg2)),
+            Div => self.ctx.mk_nat_lit_quick(nat_div(arg1, arg2)),
+            Mod => self.ctx.mk_nat_lit_quick(nat_mod(arg1, arg2)),
+            Gcd => self.ctx.mk_nat_lit_quick(nat_gcd(&arg1, &arg2)),
+            LAnd => self.ctx.mk_nat_lit_quick(nat_land(arg1, arg2)),
+            LOr => self.ctx.mk_nat_lit_quick(nat_lor(arg1, arg2)),
+            XOr => self.ctx.mk_nat_lit_quick(nat_xor(&arg1, &arg2)),
+            Shl => self.ctx.mk_nat_lit_quick(nat_shl(arg1, arg2)),
+            Shr => self.ctx.mk_nat_lit_quick(nat_shr(arg1, arg2)),
+            Beq => self.ctx.bool_to_expr(arg1 == arg2),
+            Ble => self.ctx.bool_to_expr(arg1 <= arg2),
+        }
+    }
+
+    /// Try to reduce an expression `e` which is an application of `Nat.succ`,
+    /// or an application of a supported binary operation. `e` must have no free
+    /// variables.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if !self.ctx.export_file.config.nat_extension_on() {
+            return None
+        }
+        if self.ctx.has_fvars(e) {
+            return None
+        }
+        let (f, args) = self.ctx.unfold_apps(e);
+        // VERUS-REWRITE(slice-pattern): the original matches on
+        // `args.as_slice()` with `[arg]` and `[arg1, arg2]`. Slice patterns are
+        // unsupported outright, so the arity is tested and the elements
+        // indexed; same three cases, same order.
+        let out = match self.ctx.read_expr(f) {
+            Const { name, .. } if args.len() == 1
+                && Some(name) == self.ctx.export_file.name_cache.nat_succ => {
+                let arg = args[0];
+                let v_expr = self.whnf(arg);
+                self.ctx.get_bignum_succ_from_expr(v_expr)
+            }
+            Const { name, .. } if args.len() == 2 => {
+                let arg1 = args[0];
+                let arg2 = args[1];
+                let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
+                    NatBinOp::Add
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
+                    NatBinOp::Sub
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
+                    NatBinOp::Mul
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
+                    NatBinOp::Pow
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
+                    NatBinOp::Mod
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
+                    NatBinOp::Div
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
+                    NatBinOp::Beq
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
+                    NatBinOp::Ble
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
+                    NatBinOp::LAnd
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
+                    NatBinOp::LOr
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
+                    NatBinOp::XOr
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
+                    NatBinOp::Gcd
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
+                    NatBinOp::Shl
+                } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
+                    NatBinOp::Shr
+                } else {
+                    return None
+                };
+                self.do_nat_bin(arg1, arg2, op)
+            }
+            _ => None,
+        };
+        out
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn reduce_proj(&mut self, idx: usize, structure: ExprPtr<'t>, cheap: bool) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let mut structure = if cheap { self.whnf_no_unfolding_cheap_proj(structure) } else { self.whnf(structure) };
+        if let StringLit { ptr, .. } = self.ctx.read_expr(structure) {
+            if let Some(s) = self.str_lit_to_ctor_reducing(ptr) {
+                structure = s;
+            }
+        }
+        let (_, name, _, args) = self.ctx.unfold_const_apps(structure)?;
+        let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;
+        let i = (*num_params as usize) + idx;
+        Some(args.get(i).copied().unwrap())
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn infer_then_whnf(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let ty = self.infer(e, flag);
+        self.whnf(ty)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_proj(&mut self, _ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let structure_ty = self.infer_then_whnf(structure, flag);
+        let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
+        let (_, struct_ty_name, struct_ty_levels, struct_ty_args) = self.ctx.unfold_const_apps(structure_ty).unwrap();
+
+        let InductiveData { info: inductive_info, all_ctor_names, num_params, .. } =
+            self.env.get_structure(&struct_ty_name, true).unwrap();
+
+        let ConstructorData { info: ctor_info, .. } = self.env.get_constructor(&all_ctor_names[0]).unwrap();
+        let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
+        for i in 0..(*num_params) {
+            ctor_ty = self.whnf(ctor_ty);
+            match self.ctx.read_expr(ctor_ty) {
+                Pi { body, .. } => {
+                    ctor_ty = self.ctx.inst(body, &[struct_ty_args[i as usize]]);
+                }
+            _ => crate::util::kernel_fail("Ran out of param telescope"),
+            }
+        }
+        for i in 0..idx {
+            ctor_ty = self.whnf(ctor_ty);
+            match self.ctx.read_expr(ctor_ty) {
+                Pi { binder_type, body, .. } => {
+                    if self.ctx.num_loose_bvars(body) != 0 {
+                      if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
+            crate::util::kernel_fail("infer_proj prop")
+                      }
+                      let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
+                      ctor_ty = self.ctx.inst(body, &[arg]);
+                    } else {
+                      ctor_ty = body;
+                    }
+                }
+            _ => crate::util::kernel_fail("Ran out of constructor telescope"),
+            }
+        }
+        let reduced = self.whnf(ctor_ty);
+        match self.ctx.read_expr(reduced) {
+            Pi { binder_type, .. } => {
+                if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
+            crate::util::kernel_fail("infer_proj prop")
+                }
+                binder_type
+            }
+            _ => crate::util::kernel_fail("Ran out of constructor telescope getting field"),
+        }
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if let Some(cached) = self.tc_cache.infer_cache_check.get(&e).copied() {
+            return cached
+        }
+        if flag == InferFlag::InferOnly {
+            if let Some(cached) = self.tc_cache.infer_cache_no_check.get(&e).copied() {
+                return cached
+            }
+        }
+        let r = match self.ctx.read_expr(e) {
+            Local { binder_type, .. } => binder_type,
+            Var { .. } => crate::util::kernel_fail("no loose bvars allowed in infer"),
+            Sort { level, .. } => self.infer_sort(level, flag),
+            App { .. } => self.infer_app(e, flag),
+            Pi { .. } => self.infer_pi(e, flag),
+            Lambda { .. } => self.infer_lambda(e, flag),
+            Let { binder_type, val, body, .. } => self.infer_let(binder_type, val, body, flag),
+            Const { name, levels, .. } => self.infer_const(name, levels, flag),
+            Proj { ty_name, idx, structure, .. } => self.infer_proj(ty_name, idx, structure, flag),
+            NatLit { .. } => {
+                crate::util::kernel_check(self.ctx.export_file.config.nat_extension_on(),
+                    "infer: nat literal without the nat extension enabled");
+                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. The
+                // `kernel_check` above tests the CONFIG FLAG; this tests
+                // whether the name is actually cached, which is a different
+                // condition, so the unwrap could genuinely fire. `infer`
+                // returns an `ExprPtr` with nothing to decline to.
+                match self.ctx.nat_type() {
+                    Some(t) => t,
+                    None => crate::util::kernel_fail("infer: Nat is not in the environment"),
+                }
+            }
+            StringLit { .. } => {
+                crate::util::kernel_check(self.ctx.export_file.config.string_extension_on(),
+                    "infer: string literal without the string extension enabled");
+                // VERUS-REWRITE(unchecked-unwrap): as the `NatLit` arm above.
+                match self.ctx.string_type() {
+                    Some(t) => t,
+                    None => crate::util::kernel_fail("infer: String is not in the environment"),
+                }
+            }
+        };
+        match flag {
+            InferFlag::InferOnly => {
+                self.tc_cache.infer_cache_no_check.insert(e, r);
+            }
+            InferFlag::Check => {
+                self.tc_cache.infer_cache_check.insert(e, r);
+            }
+        }
+        r
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
+        let mut ctx = Vec::new();
+        fun = self.infer(fun, flag);
+        while !args.is_empty() {
+            match self.ctx.read_expr(fun) {
+                Pi { binder_type, body, .. } => {
+                    let arg = args.pop().unwrap();
+                    if flag == Check {
+                        let arg_type = self.infer(arg, flag);
+                        let binder_type = self.ctx.inst(binder_type, ctx.as_slice());
+                        let outer_scope_eager_setting = self.ctx.eager_mode;
+                        if self.ctx.is_eager_reduce_app(arg) {
+                            self.ctx.eager_mode = true;
+                        }
+                        // `arg_type` and `binder_type` get swapped here to accommodate the 
+                        // eager reduction branch in `def_eq` being focused on reducing the lhs.
+                        self.assert_def_eq(binder_type, arg_type);
+                        // replace the outer scope's setting before next iteration
+                        self.ctx.eager_mode = outer_scope_eager_setting;
+                    }
+                    ctx.push(arg);
+                    fun = body;
+                }
+                _ => {
+                    let as_pi = self.ctx.inst(fun, ctx.as_slice());
+                    let as_pi = self.ensure_pi(as_pi);
+                    match self.ctx.read_expr(as_pi) {
+                        Pi { .. } => {
+                            // Only clear what we just instantiated.
+                            ctx.clear();
+                            fun = as_pi;
+                        }
+                        _ => crate::util::kernel_fail("infer_app: applied a non-function"),
+                    }
+                }
+            }
+        }
+        self.ctx.inst(fun, ctx.as_slice())
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let mut locals = Vec::new();
+        let start_pos = self.ctx.dbj_level_counter;
+        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+            if let Check = flag {
+                self.infer_sort_of(binder_type, flag);
+            }
+
+            let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+            locals.push(local);
+            e = body;
+        }
+
+        let instd = self.ctx.inst(e, locals.as_slice());
+        let infd = self.infer(instd, flag);
+        let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
+        while let Some(local) = locals.pop() {
+            match self.ctx.read_expr(local) {
+                Local { binder_name, binder_style, binder_type, .. } => {
+                    self.ctx.replace_dbj_level(local);
+                    let t = self.ctx.abstr_levels(binder_type, start_pos);
+                    abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
+                }
+            _ => crate::util::kernel_fail("infer_lambda: binder type is not a sort"),
+            }
+        }
+        abstrd
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        let mut universes = Vec::new();
+        let mut locals = Vec::new();
+        let c0 = self.ctx.dbj_level_counter;
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+            let dom_univ = self.infer_sort_of(binder_type, flag);
+            universes.push(dom_univ);
+            locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
+            e = body;
+        }
+        let instd = self.ctx.inst(e, locals.as_slice());
+        let mut infd = self.infer_sort_of(instd, flag);
+        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop()) {
+            infd = self.ctx.imax(universe, infd);
+            self.ctx.replace_dbj_level(local);
+        }
+        crate::util::kernel_check(c0 == self.ctx.dbj_level_counter,
+            "infer_pi: de Bruijn level counter was left unbalanced");
+        self.ctx.mk_sort(infd)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn infer_let(
+        &mut self,
+        binder_type: ExprPtr<'t>,
+        val: ExprPtr<'t>,
+        body: ExprPtr<'t>,
+        flag: InferFlag,
+    ) -> ExprPtr<'t> {
+        if flag == Check {
+            // The binder type has to be a type
+            self.infer_sort_of(binder_type, flag);
+            let val_ty = self.infer(val, flag);
+            // assert that the type annotation of the let value is appropriate.
+            self.assert_def_eq(val_ty, binder_type);
+        }
+        let body = self.ctx.inst(body, &[val]);
+        self.infer(body, flag)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
             return e
         }
@@ -1066,11 +1254,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> { self.whnf_no_unfolding_aux(e, true) }
+    #[verifier::exec_allows_no_decreases_clause]
+    fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    { self.whnf_no_unfolding_aux(e, true) }
 
-    pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> { self.whnf_no_unfolding_aux(e, false) }
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    { self.whnf_no_unfolding_aux(e, false) }
 
-    fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> ExprPtr<'t> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if let Some(cached) = self.tc_cache.whnf_no_unfolding_cache.get(&e).copied() {
             return cached
         }
@@ -1140,12 +1340,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         eprime
     }
 
-    fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if self.ctx.is_nat_zero(x) && self.ctx.is_nat_zero(y) {
             return Some(true)
         }
         if let (NatLit { .. }, NatLit { .. }) = (self.ctx.read_expr(x), self.ctx.read_expr(y)) {
-        crate::util::kernel_check(self.ctx.export_file.config.nat_extension,
+        crate::util::kernel_check(self.ctx.export_file.config.nat_extension_on(),
             "def_eq_nat: nat literal without the nat extension enabled");
             return Some(x == y)
         }
@@ -1156,7 +1360,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn def_eq_binder_multi(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_binder_multi(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if matches!(self.ctx.read_expr_pair(x, y), (Pi { .. }, Pi { .. }) | (Lambda { .. }, Lambda { .. })) {
             self.def_eq_binder_aux(x, y)
         } else {
@@ -1165,7 +1373,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[allow(unused_parens)]
-    fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let mut locals = Vec::new();
         loop {
             let (binder_name, binder_style, t1, body1, t2, body2) =
@@ -1213,7 +1425,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(r)
     }
 
-    fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         match self.ctx.read_expr_pair(x, y) {
             (
                 Proj { ty_name: ty_name_l, idx: idx_l, structure: structure_l, .. },
@@ -1223,7 +1439,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         match self.ctx.read_expr_pair(x, y) {
             (Local { id: x_id, binder_type: tx, .. }, Local { id: y_id, binder_type: ty, .. }) =>
                 x_id == y_id && self.def_eq(tx, ty),
@@ -1231,7 +1451,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let (f1, args1) = self.ctx.unfold_apps(x);
         if args1.is_empty() {
             return false
@@ -1246,7 +1470,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return false
         }
 
-        let args_eq = args1.into_iter().zip(args2).all(|(xx, yy)| self.def_eq(xx, yy));
+        // VERUS-REWRITE(zip-all-closure): the original is
+        // `args1.into_iter().zip(args2).all(|(xx, yy)| self.def_eq(xx, yy))`.
+        // The closure captures `&mut self`, which Verus rejects outright, and
+        // its parameter is a tuple pattern, which it also rejects. Index walk
+        // over the two vectors, whose lengths were just checked equal; same
+        // pairs, same order, same short-circuit.
+        let mut args_eq = true;
+        let mut i: usize = 0;
+        while i < args1.len() {
+            if !self.def_eq(args1[i], args2[i]) { args_eq = false; break }
+            i += 1;
+        }
 
         if !args_eq {
             return false
@@ -1258,7 +1493,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         true
     }
 
-    pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         crate::util::kernel_check(self.def_eq(u, v), "assert_def_eq: terms are not definitionally equal")
     }
 
@@ -1268,10 +1507,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// they run AFTER the verdict on the same pair, purely to CERTIFY it
     /// (`route_stats::shadow_check`), and any disagreement -- a verified
     /// confirmation the original code rejected -- is counted as an alarm.
-    pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let entry_uncert = route_stats::uncert_events();
         if let Some(easy) = self.def_eq_quick_check(x, y) {
-            route_stats::bump(&route_stats::QUICK);
+            route_stats::bump_quick();
             return easy
         }
         // Upstream's negative memo. VALIDATED 2026-09-16 by differential test:
@@ -1299,7 +1542,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let x_nn = self.whnf(x_n);
             if Some(x_nn) == self.ctx.c_bool_true() {
                 route_stats::legacy_branch(2);
-                route_stats::bump(&route_stats::LEGACY_TRUE);
+                route_stats::bump_legacy_true();
                 self.shadow_check(x, y, true);
                 return true
             }
@@ -1307,7 +1550,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
             route_stats::legacy_branch(3);
-            route_stats::bump(if easy { &route_stats::LEGACY_TRUE } else { &route_stats::LEGACY_FALSE });
+            if easy { route_stats::bump_legacy_true() } else { route_stats::bump_legacy_false() }
             self.shadow_check(x, y, easy);
             return easy
         }
@@ -1353,65 +1596,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         };
         if result {
-            route_stats::bump(&route_stats::LEGACY_TRUE);
+            route_stats::bump_legacy_true();
             self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
         } else {
-            route_stats::bump(&route_stats::LEGACY_FALSE);
+            route_stats::bump_legacy_false();
             self.tc_cache.defeq_fail_cache.insert(defeq_fail_cache_key);
         }
         self.shadow_check_rooted(x, y, result, entry_uncert);
         result
     }
 
-
-
-
-
-    /// SHADOW certification of a top-level INFERENCE (diagnostics only):
-    /// the verified inference re-derives a type for `e`; the kernel's
-    /// answer `kernel_ty` counts as certified when a verified equality route
-    /// confirms the two types. Counts: attempted / certified / verified type
-    /// produced but not shown equal (informative, not an alarm: the equality
-    /// routes are incomplete).
-    /// Shadow-only: certify that a declaration type's (certified) type reduces
-    /// to a sort, and for theorems to `Prop` (`check_declar_info`'s
-    /// `ensure_sort` / `is_zero`). Never affects a verdict.
-    pub(crate) fn shadow_ensure_sort(&mut self, ty: ExprPtr<'t>, must_be_prop: bool) {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::bump(&route_stats::SHADOW_SORT_TOTAL);
-        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, ty) { Some(v) => v, None => return };
-        if self.ctx.num_loose_bvars(vty) != 0 {
-            return;
-        }
-        if must_be_prop {
-            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100) == Some(true) {
-                route_stats::bump(&route_stats::SHADOW_SORT_CERT);
-            }
-        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 32).is_some() {
-            route_stats::bump(&route_stats::SHADOW_SORT_CERT);
-        }
-    }
-
-    pub(crate) fn shadow_infer(&mut self, e: ExprPtr<'t>, kernel_ty: ExprPtr<'t>) {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::bump(&route_stats::SHADOW_INFER_TOTAL);
-        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e) {
-            Some(vty) => {
-                if std::ptr::eq(vty.raw_bits() as *const u8, kernel_ty.raw_bits() as *const u8) || self.pair_certified(vty, kernel_ty) != 0 {
-                    route_stats::bump(&route_stats::SHADOW_INFER_CERT);
-                } else {
-                    route_stats::bump(&route_stats::SHADOW_INFER_UNEQUAL);
-                }
-            }
-            None => {}
-        }
-    }
-
-
+    #[verifier::exec_allows_no_decreases_clause]
     fn to_ctor_when_k(
         &mut self,
         major: ExprPtr<'t>,
@@ -1437,8 +1632,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-
-    fn iota_try_eta_struct(&mut self, ind_name: NamePtr<'t>, e: ExprPtr<'t>) -> ExprPtr<'t> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn iota_try_eta_struct(&mut self, ind_name: NamePtr<'t>, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if (!self.env.can_be_struct(&ind_name)) || self.is_ctor_app(e).is_some() {
             e
         } else {
@@ -1458,7 +1656,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
     }
-    
+
+    #[verifier::exec_allows_no_decreases_clause]
     fn reduce_rec(
         &mut self,
         const_name: NamePtr<'t>,
@@ -1496,7 +1695,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(self.ctx.foldl_apps(r, args.iter().skip(rec.major_idx() + 1).copied()))
     }
 
-    pub fn reduce_quot(&mut self, c_name: NamePtr<'t>, args: &[ExprPtr<'t>]) -> Option<ExprPtr<'t>> {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn reduce_quot(&mut self, c_name: NamePtr<'t>, args: &[ExprPtr<'t>]) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if !matches!(self.env.get_declar(&c_name), Some(Declar::Quot {..})) {
             return None
         }
@@ -1524,20 +1727,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(self.ctx.foldl_apps(appd, args.iter().copied().skip(rest_idx)))
     }
 
-    // We only need the name and reducibility from this.
-
     /// For an expression already known to be an applied definition, unfold
     /// the definition and perform cheap reduction on the unfolded result.
-    fn delta(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn delta(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let unfolded = self.unfold_def(e).unwrap();
         self.whnf_no_unfolding_cheap_proj(unfolded)
     }
 
-    /// Try to unfold the base `Const` and re-fold applications, but don't
-    /// do any further reduction.
-
-
-    fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if x == y {
             return Some(true)
         }
@@ -1553,8 +1758,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         None
     }
 
-
-
+    #[verifier::exec_allows_no_decreases_clause]
     fn try_eq_const_app(
         &mut self,
         x: ExprPtr<'t>,
@@ -1585,7 +1789,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     (Const { levels: l_levels, .. }, Const { levels: r_levels, .. })
                         if l_args.len() == r_args.len()
                             && !self.failure_cache_contains(x, y)
-                            && l_args.iter().copied().zip(r_args.iter().copied()).rev().all(|(x, y)| self.def_eq(x, y))
+                            && self.args_def_eq_rev(&l_args, &r_args)
                             && self.ctx.eq_antisymm_many(l_levels, r_levels) =>
                         Some(FoundEqResult(true)),
                     (Const { .. }, Const { .. }) => {
@@ -1599,7 +1803,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn try_unfold_proj_app(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_unfold_proj_app(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if let Proj { .. } = self.ctx.read_expr(self.ctx.unfold_apps_fun(e)) {
             let eprime = self.whnf_no_unfolding(e);
             if eprime != e {
@@ -1609,7 +1817,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         None
     }
 
-    fn delta_try_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<DeltaResult<'t>> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn delta_try_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<DeltaResult<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if let Some(short) = self.def_eq_nat(x, y) {
             return Some(DeltaResult::FoundEqResult(short))
         }
@@ -1623,13 +1835,40 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         None
     }
 
+    /// VERUS-REWRITE(zip-all-closure): extracted from `lazy_delta_step`'s match
+    /// guard, which had
+    /// `l_args.iter().copied().zip(r_args.iter().copied()).rev().all(|(x, y)| self.def_eq(x, y))`.
+    /// The closure captures `&mut self` and takes a tuple pattern, both of
+    /// which Verus rejects. Walked backwards over the index, which is what
+    /// `.rev()` did; same pairs, same order, same short-circuit.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn args_def_eq_rev(&mut self, l_args: &Vec<ExprPtr<'t>>, r_args: &Vec<ExprPtr<'t>>) -> (result: bool)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
+        if l_args.len() != r_args.len() { return false }
+        let mut i = l_args.len();
+        while i > 0
+            invariant i <= l_args.len(), l_args.len() == r_args.len(),
+            decreases i
+        {
+            i -= 1;
+            if !self.def_eq(l_args[i], r_args[i]) { return false }
+        }
+        true
+    }
+
     /// If `x` and/or `y` are definitions that need to be unfolded, try to lazily unfold
     /// the "higher" definition to bring it closer to the lower one. Also try to efficiently
     /// check for congruence if `x` and `y` apply the same definitions.
     ///
     /// After each reduction, check whether we can show definitional equality without having
     /// to continue unfolding.
-    fn lazy_delta_step(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> DeltaResult<'t> {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn lazy_delta_step(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> DeltaResult<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         loop {
             if let Some(r) = self.delta_try_nat(x, y) {
                 return r
@@ -1670,7 +1909,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    pub fn is_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>) {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn is_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.is_zero(level), ty),
@@ -1678,7 +1921,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    pub fn may_be_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>) {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn may_be_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.may_be_prop(level), ty),
@@ -1686,12 +1933,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    pub fn is_proof(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>) {
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn is_proof(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let infd = self.infer(e, InferOnly);
         (self.is_prop(infd).0, infd)
     }
 
-    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         match self.is_proof(x) {
             (false, _) => false,
             (true, l_type) => match self.is_proof(y) {
@@ -1701,11 +1956,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn try_eta_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_eta_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         self.try_eta_expansion_aux(x, y) || self.try_eta_expansion_aux(y, x)
     }
 
-    fn try_eta_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    #[verifier::exec_allows_no_decreases_clause]
+    fn try_eta_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if let Lambda { .. } = self.ctx.read_expr(x) {
             let y_ty = self.infer_then_whnf(y, InferOnly);
             if let Pi { binder_name, binder_type, binder_style, .. } = self.ctx.read_expr(y_ty) {
@@ -1717,6 +1980,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         false
     }
+
+}
 }
 
 #[cfg(test)]
@@ -2042,6 +2307,31 @@ pub assume_specification [route_stats::bump_shadow_disagree] ();
 
 pub assume_specification [route_stats::conv_fail_clear] ();
 
+pub assume_specification [route_stats::bump_quick] ();
+
+pub assume_specification [route_stats::bump_legacy_true] ();
+
+pub assume_specification [route_stats::bump_legacy_false] ();
+
+// Accessors the cycle reaches and nothing else needs yet. CLAIM-FREE: the
+// cycle's contracts at this stage are the `tc_wf` frame only, so its callees
+// need to be callable, not to promise anything. Each gets a real contract when
+// the function that consumes it does.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_lit_to_constructor] (ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_major_induct] (ctx: &TcCtx<'t, 'p>, rec: &crate::env::RecursorData<'t>) -> (result: Option<NamePtr<'t>>) where 'p: 't;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_bignum_succ_from_expr] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_bignum_from_expr] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
+    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+
+pub assume_specification<'a> [crate::env::RecursorData::<'a>::major_idx] (rd: &crate::env::RecursorData<'a>) -> (result: usize);
+
+pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_recursor] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::RecursorData<'a>>) where 'a: 'x;
+
 pub assume_specification [route_stats::legacy_branch] (tag: u8);
 
 
@@ -2055,6 +2345,17 @@ pub struct ExTypeChecker<'x, 't, 'p>(TypeChecker<'x, 't, 'p>);
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 pub struct ExInferFlag(InferFlag);
+
+/// Nanoda's own enums, registered so the cycle's `match`es can look inside.
+/// Unit-variant payloads only in `NatBinOp`; `DeltaResult`'s carry pointers,
+/// which only have to be KNOWN.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExNatBinOp(NatBinOp);
+
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+pub struct ExDeltaResult<'a>(DeltaResult<'a>);
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]

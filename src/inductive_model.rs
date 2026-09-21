@@ -170,9 +170,11 @@ pub struct ExInductiveData<'a>(crate::env::InductiveData<'a>);
 #[verifier::external_type_specification]
 pub struct ExConstructorData<'a>(crate::env::ConstructorData<'a>);
 
+/// TRANSPARENT: `reduce_rec` and `to_ctor_when_k` read `.is_k`, `.rec_rules`,
+/// `.num_params` and the rest, so an opaque recursor would block the cycle.
+/// Fields were already `pub`; the payload types only have to be KNOWN.
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExRecursorData<'a>(crate::env::RecursorData<'a>);
 
 /// TRANSPARENT as of 2026-09-18 -- was `external_body`. The variants have to be
