@@ -55,6 +55,69 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 ::vstd::prelude::verus! {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Return `true` iff `e` is an application of `@eagerReduce A a`
+    ///
+    /// Verified in place, body unchanged. The contract is the SHAPE claim, not
+    /// the identity one: `true` means `e` really is a constant applied to
+    /// exactly two arguments. Saying *which* constant would need an
+    /// `eager_reduce_id()` alongside the other name-cache ids, and the callers
+    /// only use this to pick a reduction strategy -- a wrong answer costs
+    /// speed, never soundness -- so the weaker claim is the honest one and
+    /// costs no trust.
+    pub(crate) fn is_eager_reduce_app(&self, e: ExprPtr<'t>) -> (result: bool)
+        ensures result ==> {
+            &&& crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) is Const
+            &&& crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).len() == 2
+        },
+    {
+        if let App {fun, arg, ..} = self.read_expr(e) {
+            if let App {fun: fun2, arg: arg2, ..} = self.read_expr(fun) {
+                if let Const {name, ..} = self.read_expr(fun2) {
+                    proof {
+                        // Each `read_expr` links the node to its pointer's
+                        // denotation; peeling two `App`s lands on the `Const`,
+                        // which is where both spine functions stop.
+                        let m2 = crate::expr_arena_bridge::to_model(fun2);
+                        let m1 = crate::expr_arena_bridge::to_model(fun);
+                        let m0 = crate::expr_arena_bridge::to_model(e);
+                        assert(m1 == crate::expr_model::ExprSpec::App(Box::new(m2),
+                            Box::new(crate::expr_arena_bridge::to_model(arg2))));
+                        assert(m0 == crate::expr_model::ExprSpec::App(Box::new(m1),
+                            Box::new(crate::expr_arena_bridge::to_model(arg))));
+                        // both are recursive over the App nesting, so they
+                        // need fuel to reach the `Const` two levels down
+                        assert(crate::beta_model::spine_head(m0) == m2) by {
+                            reveal_with_fuel(crate::beta_model::spine_head, 3);
+                        }
+                        assert(crate::beta_model::spine_args(m0).len() == 2) by {
+                            reveal_with_fuel(crate::beta_model::spine_args, 3);
+                        }
+                    }
+                    return self.export_file.name_cache.eager_reduce == Some(name)
+                }
+            }
+        }
+        false
+    }
+
+    /// Verified in place, body unchanged -- the sibling of `c_bool_true` and
+    /// the four others, proved the same way from `mk_const` plus the
+    /// name-cache invariant.
+    pub(crate) fn c_bool_false(&mut self) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_false_id(),
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        let n = self.export_file.name_cache.bool_false?;
+        let levels = self.alloc_levels_slice(&[]);
+        Some(self.mk_const(n, levels))
+    }
+
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_bool_true(&mut self) -> (result: Option<ExprPtr<'t>>)
@@ -388,17 +451,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
     
-    /// Return `true` iff `e` is an application of `@eagerReduce A a`
-    pub(crate) fn is_eager_reduce_app(&self, e: ExprPtr<'t>) -> bool {
-        if let App {fun, ..} = self.read_expr(e) {
-            if let App {fun, ..} = self.read_expr(fun) {
-                if let Const {name, ..} = self.read_expr(fun) {
-                    return self.export_file.name_cache.eager_reduce == Some(name)
-                }
-            }
-        }
-        false
-    }
 
     /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
     pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> Option<ExprPtr<'t>> {
@@ -468,11 +520,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
 
-    pub(crate) fn c_bool_false(&mut self) -> Option<ExprPtr<'t>> {
-        let n = self.export_file.name_cache.bool_false?;
-        let levels = self.alloc_levels_slice(&[]);
-        Some(self.mk_const(n, levels))
-    }
 
 
 

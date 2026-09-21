@@ -1082,6 +1082,7 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCt
 pub proof fn name_cache_ids_ok<'p>(nc: crate::util::NameCache<'p>)
     ensures
         nc.bool_true matches Some(n) ==> name_id(n) == bool_true_id(),
+        nc.bool_false matches Some(n) ==> name_id(n) == bool_false_id(),
         nc.nat_zero matches Some(n) ==> name_id(n) == nat_zero_id(),
         nc.nat_succ matches Some(n) ==> name_id(n) == nat_succ_id(),
         nc.nat matches Some(n) ==> name_id(n) == nat_type_id(),
