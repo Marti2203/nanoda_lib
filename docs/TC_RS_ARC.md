@@ -762,3 +762,32 @@ Two genuine findings fell out of doing it rather than assuming it:
 
 **All eight prerequisites are done.**
 
+## 18. The frame does not decompose out (attempted 2026-09-21)
+
+Tried the cycle as two steps: thread `tc_wf` through all 46 first, add the
+claims after. **It does not work, and §13 already said why** — I had read that
+section as "the 43 contracts are mutually dependent" when what it actually
+implies is stronger: *the invariant itself needs the claims*.
+
+Maintaining `tc_wf` across a cache WRITE requires the claim being written.
+`cache_infer_check` requires `infer_shadow_claim`; an `infer` whose contract is
+only the frame has no claim to supply, so the write cannot be justified and
+`tc_wf` cannot be re-established. Frame and claims land together.
+
+The attempt is on branch `tc-cycle-frame-wip` — 53 verified, 36 errors — and is
+worth keeping, because everything *structural* is cleared there and the next
+attempt starts from it:
+
+- all 46 moved into a `verus!` impl with frames and
+  `exec_allows_no_decreases_clause`;
+- three blockers my survey had missed, found only by trying: a slice pattern
+  `[arg]` in `try_reduce_nat` (the regex required `..`), and two
+  `zip(..).all(|(x, y)| ..)` closures (the regex did not allow a parenthesised
+  tuple parameter);
+- `NatBinOp`, `DeltaResult`, `RecursorData` registered; six accessors
+  specified; five more `static`s encapsulated.
+
+**So the shape of the remaining arc is unchanged but now fully priced**: one
+step, 46 functions, frames *and* the three core contracts of §13 lifted from
+the proven mirrors, on prerequisites and a cache layer that are all in place.
+
