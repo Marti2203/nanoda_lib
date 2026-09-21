@@ -787,23 +787,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures result == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len()
     {
         let (mut cursor, mut num_args) = (e0, 0);
-        loop
+        while let App { fun, .. } = self.read_expr(cursor)
             invariant
                 num_args + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(cursor)).len()
                     == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
                 crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
             ensures num_args == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
         {
-            match self.read_expr(cursor) {
-                App { fun, .. } => { cursor = fun; num_args += 1; }
-                other => {
-                    proof {
-                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(cursor));
-                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(cursor)).len() == 0);
-                    }
-                    break
-                }
-            }
+            cursor = fun;
+            num_args += 1;
         }
         num_args
     }
@@ -919,23 +911,18 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let mut e = e0;
         let mut size = 0u16;
-        loop
+        while let Pi { binder_type, body, .. } = self.read_expr(e)
             invariant
                 crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat) == Some(crate::expr_arena_bridge::to_model(e)),
                 size as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)),
                 crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         {
-            match self.read_expr(e) {
-                Pi { binder_type, body, .. } => {
-                    proof {
-                        crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), size as nat,
-                            crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
-                    }
-                    size += 1;
-                    e = body;
-                }
-                _ => break,
+            proof {
+                crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), size as nat,
+                    crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
             }
+            size += 1;
+            e = body;
         }
         size
     }
@@ -956,24 +943,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0))
     {
         let mut e = e0;
-        loop
+        while let App { fun, .. } = self.read_expr(e)
             invariant crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-            // `invariant` survives the `break` on its own; `ensures` is for the
-            // fact that holds only AT exit -- that the head is not an `App`.
             ensures crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
         {
-            match self.read_expr(e) {
-                App { fun, .. } => { e = fun; }
-                other => {
-                    proof {
-                        // The read said this is not an `App`, and no other
-                        // `Expr` variant denotes one, so the spine stops here.
-                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(e));
-                        assert(crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e));
-                    }
-                    break
-                }
-            }
+            e = fun;
         }
         e
     }

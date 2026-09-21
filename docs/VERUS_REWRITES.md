@@ -142,8 +142,7 @@ re-checking if anything here is ever suspected:
 | 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
 | 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
-| 5 | `unfold_apps_fun`, `num_args`, `unfold_apps_stack` | `src/expr.rs` | `while let` carries no exit reason | see below |
-| 6 | `pi_telescope_size` | `src/expr.rs` | `while let` (uniformity with entry 5) | desugaring |
+| 5 | `unfold_apps_stack`, `unfold_apps` | `src/expr.rs` | `while let` gives no place for the EXIT proof | `loop` + `match` |
 | 7 | `get_nth_pi_binder` | `src/expr.rs` | `return` inside a range `for` | desugaring |
 | 8 | `replace_pfx`, `get_pfx` | `src/name.rs` | or-pattern with a match guard; or-pattern needing per-arm unfolding | desugaring |
 | 9 | `abstr_pi_telescope`, `abstr_lambda_telescope` | `src/expr.rs` | slice patterns are unsupported outright | index walk |
@@ -162,7 +161,7 @@ re-checking if anything here is ever suspected:
 | 22 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` can overflow `u64` | overflow guard that aborts |
 | 23 | `ctor_app_params_ok` | `src/inductive.rs` | `Iterator::zip` in a `for` with a `return` inside | index walk |
 | 24 | `init_k_target` | `src/inductive.rs` | slice pattern `[only_ctor]` (entry 9) | length test + index |
-| 25 | `infer_lambda`, `infer_pi`, `def_eq_binder_aux`, `whnf_no_unfolding_aux` | `src/tc.rs` | `while let` (entry 5); one also an or-pattern and a slice pattern | `loop` + `match` |
+| 25 | `whnf_no_unfolding_aux`, `def_eq_binder_aux` | `src/tc.rs` | slice pattern; or-pattern of two tuples | `loop` + `match` |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -492,29 +491,31 @@ fallback, and it should come after checking whether the specification can be
 supplied — in the crate when the type is ours, in the fork when it is not. See
 `docs/VSTD_GAPS.md` for the audit of which remaining rewrites this applies to.
 
-### 25. The cycle's six `while let` loops — `src/tc.rs`
+### `while let` — mostly WITHDRAWN
 
-Entry 5's construct, applied to the rest of the 46-function cycle: a
-`while let` carries no exit reason, so the loop condition failing tells the
-verifier nothing about why. Mechanically `loop` + `match` with `_ => break`.
+Entries 5 and 6, and most of 25, were `while let` rewritten as `loop` + `match`
+on the grounds that "a `while let` carries no exit reason". **That is not
+true, and appears not to have been true for some time.** Verus desugars
+`while let P = e { body }` into exactly the `loop` + `match` with a wildcard
+`break` that these rewrites wrote out by hand
+(`rust_to_vir_expr.rs`, `ExprKind::Let` under `LoopSource::While`), and a
+`while let` accepts `invariant` and `ensures` headers like any other loop.
 
-Four are the plain shape (two telescope walks over `read_expr`, two unwinds
-over `pop()`). The `infer_pi` unwind matches a TUPLE of two pops, and both
-pops still happen every round in the rewritten form, which is what the tuple
-pattern did — getting that wrong would silently drop a universe.
+Reverted to the kernel's original lines, each verified after the change:
+`num_args`, `unfold_apps_fun`, `pi_telescope_size` (`expr.rs`), and
+`infer_lambda` ×2, `infer_pi` ×2 (`tc.rs`). Seven rewrites gone.
 
-Two were doing more than one thing:
+**Two stay, for a reason worth keeping straight.** `unfold_apps` and
+`unfold_apps_stack` put a `proof` block in the *wildcard* arm — the one the
+desugaring generates — to establish that the spine stops here
+(`spine_args(e).reverse() =~= empty`). A `while let` has nowhere to write
+that, and without it the postcondition fails. So the real limitation is
+narrower than "no exit reason": it is **no place to put an exit proof**, and it
+only bites when the exit fact needs one. `pi_telescope_size` and `num_args`
+needed none, which is why they revert.
 
-- `whnf_no_unfolding_aux` matched `(Lambda { body, .. }, [_arg, _rest @ ..])`.
-  The slice pattern is just "there is another argument left", and both operands
-  of the tuple are reads, so hoisting `if n_args >= args.len() { break }` is
-  the same walk — **and it removes the cycle's only slice pattern**, which was
-  otherwise an outright-unsupported construct with no other route.
-- `def_eq_binder_aux` matched an OR-pattern of two tuples (`Pi`/`Pi` or
-  `Lambda`/`Lambda`) binding the same six names. Rewritten as a `match`
-  returning that six-tuple, with `_ => break`.
-
-Cycle blockers 23 → 16 — and with the previous commit, 69 → 16 overall.
+The two remaining entry-25 functions stay for unrelated reasons — a slice
+pattern and an or-pattern of two tuples — both genuinely unsupported.
 
 ### How this file is structured, and how to audit it
 

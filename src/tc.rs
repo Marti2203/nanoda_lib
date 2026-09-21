@@ -874,27 +874,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
-        loop {
-            match self.ctx.read_expr(e) {
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-                    if let Check = flag {
-                        self.infer_sort_of(binder_type, flag);
-                    }
-
-                    let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
-                    locals.push(local);
-                    e = body;
-                }
-                _ => break,
+        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+            if let Check = flag {
+                self.infer_sort_of(binder_type, flag);
             }
+
+            let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+            locals.push(local);
+            e = body;
         }
 
         let instd = self.ctx.inst(e, locals.as_slice());
         let infd = self.infer(instd, flag);
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
-        loop {
-            let local = match locals.pop() { Some(l) => l, None => break };
+        while let Some(local) = locals.pop() {
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
                     self.ctx.replace_dbj_level(local);
@@ -911,28 +905,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut universes = Vec::new();
         let mut locals = Vec::new();
         let c0 = self.ctx.dbj_level_counter;
-        loop {
-            match self.ctx.read_expr(e) {
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-                    let dom_univ = self.infer_sort_of(binder_type, flag);
-                    universes.push(dom_univ);
-                    locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
-                    e = body;
-                }
-                _ => break,
-            }
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+            let dom_univ = self.infer_sort_of(binder_type, flag);
+            universes.push(dom_univ);
+            locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
+            e = body;
         }
         let instd = self.ctx.inst(e, locals.as_slice());
         let mut infd = self.infer_sort_of(instd, flag);
-        loop {
-            match (universes.pop(), locals.pop()) {
-                (Some(universe), Some(local)) => {
-                    infd = self.ctx.imax(universe, infd);
-                    self.ctx.replace_dbj_level(local);
-                }
-                _ => break,
-            }
+        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop()) {
+            infd = self.ctx.imax(universe, infd);
+            self.ctx.replace_dbj_level(local);
         }
         crate::util::kernel_check(c0 == self.ctx.dbj_level_counter,
             "infer_pi: de Bruijn level counter was left unbalanced");
