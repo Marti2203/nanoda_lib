@@ -572,20 +572,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.mk_string_lit(string_ptr)
     }
 
-    pub fn mk_nat_lit(&mut self, num_ptr: BigUintPtr<'t>) -> Option<ExprPtr<'t>> {
-        if !self.export_file.config.nat_extension {
-            return None
-        }
-        let hash = hash64!(crate::expr::NAT_LIT_HASH, num_ptr);
-        Some(self.alloc_expr(Expr::NatLit { ptr: num_ptr, hash }))
-    }
 
-    /// Shortcut to make an `Expr::NatLit` directly from a `BigUint`, rather than
-    /// going `alloc_bignum` and `mk_nat_lit`
-    pub fn mk_nat_lit_quick(&mut self, n: BigUint) -> Option<ExprPtr<'t>> {
-        let num_ptr = self.alloc_bignum(n)?;
-        self.mk_nat_lit(num_ptr)
-    }
+
 
     /// Construct a free variable expression representing a deBruijn level, and
     /// increment the context's counter.
@@ -644,6 +632,45 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
+}
+
+::vstd::prelude::verus! {
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place, bodies unchanged. `mk_nat_lit_quick` used to carry
+    /// its own `assume_specification`; both now derive from `alloc_expr`'s
+    /// storage contract and `alloc_bignum`'s.
+    pub fn mk_nat_lit(&mut self, num_ptr: BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
+                    && crate::expr_arena_bridge::nat_lit_value(e) == crate::expr_arena_bridge::bignum_ptr_value(num_ptr),
+                None => true,
+            },
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        if !self.export_file.config.nat_extension_on() {
+            return None
+        }
+        let hash = hash64!(crate::expr::NAT_LIT_HASH, num_ptr);
+        Some(self.alloc_expr(Expr::NatLit { ptr: num_ptr, hash }))
+    }
+
+    /// Shortcut to make an `Expr::NatLit` directly from a `BigUint`, rather than
+    /// going `alloc_bignum` and `mk_nat_lit`
+    pub fn mk_nat_lit_quick(&mut self, n: BigUint) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
+                    && crate::expr_arena_bridge::nat_lit_value(e) == crate::nat_lit_model::to_nat(n),
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        let num_ptr = self.alloc_bignum(n)?;
+        self.mk_nat_lit(num_ptr)
+    }
+}
 }
 
 #[derive(Debug)]

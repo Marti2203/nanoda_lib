@@ -1672,16 +1672,6 @@ pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: cr
         None => true,
     };
 
-/// Construction-side mirror: a freshly-built `NatLit` (via `mk_nat_lit_
-/// quick`) is `is_nat_lit_shape` and denotes exactly the given `BigUint`'s
-/// value -- same pattern as `mk_const` above.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_nat_lit_quick] (ctx: &mut TcCtx<'t, 'p>, n: num_bigint::BigUint) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
-        Some(e) => is_nat_lit_shape(e) && nat_lit_value(e) == crate::nat_lit_model::to_nat(n),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
-
 /// `Sort`'s level, read directly off the shallow value -- simpler than
 /// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s
 /// payload (one `LevelPtr`) needs no `const_id`-style derivation or
@@ -1746,6 +1736,23 @@ pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, Ex
     match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
 }
 
+/// THE storage primitive for bignums: allocation returns a pointer denoting
+/// exactly the value handed in. Hash-consing may return an existing pointer
+/// rather than appending, but either way the stored value IS `n`.
+///
+/// This replaces `mk_nat_lit_quick`'s own axiom. The assumption is the same
+/// size but sits in a better place: a fact about what STORAGE holds, rather
+/// than about what one convenience constructor returns -- and with it both
+/// `mk_nat_lit` and `mk_nat_lit_quick` are proved rather than assumed.
+pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_bignum] (ctx: &mut TcCtx<'t, 'p>, n: num_bigint::BigUint) -> (result: Option<crate::util::BigUintPtr<'t>>) where 'p: 't
+    ensures
+        match result {
+            Some(p) => bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
+            None => true,
+        },
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+
 /// THE storage primitive for expressions: allocation returns a pointer
 /// denoting exactly the node handed in. Hash-consing may return an existing
 /// pointer rather than appending, but either way the stored node IS `e`, and
@@ -1762,6 +1769,10 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
         // twelve derived from this one. With this, it derives too.
         e matches Expr::Const { name, levels, .. } ==>
             const_name_of(result) == name && const_levels_of(result) == levels,
+        // Same, for the literal's payload pointer: `nat_lit_ptr_of` is a
+        // separate uninterpreted projection from the one the denotation
+        // carries, so `to_model(result)` alone does not pin it.
+        e matches Expr::NatLit { ptr, .. } ==> nat_lit_ptr_of(result) == ptr,
         // FRAME. Allocation touches the dag, never the memo caches. Without
         // this, every constructor call inside a cache-wrapped function havocs
         // the cache and its soundness invariant cannot survive the body.

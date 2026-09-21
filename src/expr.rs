@@ -373,13 +373,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 
 
-    pub(crate) fn subst_declar_info_levels(
-        &mut self,
-        info: crate::env::DeclarInfo<'t>,
-        in_vals: LevelsPtr<'t>,
-    ) -> ExprPtr<'t> {
-        self.subst_expr_levels(info.ty, info.uparams, in_vals)
-    }
 
 
 
@@ -1727,6 +1720,30 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
             calcd
         }
+    }
+
+    /// Verified in place, body unchanged -- `subst_expr_levels`' contract,
+    /// read through the declaration's own type and universe parameters.
+    pub(crate) fn subst_declar_info_levels(
+        &mut self,
+        info: crate::env::DeclarInfo<'t>,
+        in_vals: LevelsPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::level_arena_bridge::to_model_of_levels(info.uparams).len() == crate::level_arena_bridge::to_model_of_levels(in_vals).len(),
+            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(info.uparams).len()
+                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(info.uparams)[j] is Param,
+            crate::expr_arena_bridge::dsubst_cache_sound(*old(self)),
+            !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(info.ty)),
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
+                crate::expr_arena_bridge::to_model(info.ty),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(info.uparams)),
+                crate::level_arena_bridge::to_model_of_levels(in_vals)),
+            crate::expr_arena_bridge::dsubst_cache_sound(*final(self)),
+    {
+        self.subst_expr_levels(info.ty, info.uparams, in_vals)
     }
 
     /// Verified in place. The outer level-substitution cache; `subst_aux`
