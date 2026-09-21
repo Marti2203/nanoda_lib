@@ -651,3 +651,57 @@ through 46 signatures — where the cache layer those contracts rest on is
 already built and proven (§14), and only five functions touch a
 claim-bearing cache at all (`infer`, `whnf`, `whnf_no_unfolding_aux`, `def_eq`,
 `def_eq_quick_check`), mapping one-to-one onto the eight helpers.
+
+## 17. What is actually left of the cycle
+
+The blocker count in §16 carried a stale category. Re-measured 2026-09-21,
+after retesting which constructs Verus accepts:
+
+| | count | note |
+|---|---:|---|
+| `.unwrap()` / `.expect(` | 12 | surveyed below |
+| closure capturing `&mut self` | 1 | `str_lit_to_ctor_reducing`'s `.map(\|x\| self.whnf(x))` |
+| `for` loops | ~~3~~ **0** | all three are range `for`s, which verify — see `VERUS_REWRITES.md`'s retest table |
+| `while let`, slice pattern, `panic!`/`assert!` | 0 | done or never real |
+
+So **13 sites, not 16**, and one of the two categories is a single function.
+
+### The twelve `.unwrap()`s, classified
+
+They are not one problem. Sorting them by what each would actually need:
+
+**Provable as written — no change (1).**
+`infer_app:816` — `args.pop().unwrap()` inside `while !args.is_empty()`. The
+loop condition gives it; it needs a loop invariant, not a code change.
+
+**The caller established it — a PRECONDITION, no code change (6).**
+`infer_proj:722,725,727` (the structure's type is a constant application, the
+name is a registered structure, its first constructor is registered),
+`delta:1535` (`unfold_def` succeeds because the caller checked the declaration
+is a definition), `reduce_rec:1483` (the recursor has a major premise),
+`reduce_proj:711` (enough arguments for the field index). Each is the kernel
+assuming something its caller guarantees, and that is exactly what a `requires`
+is for — as with `init_k_target`, this costs zero diff.
+
+**A real robustness gap — a GUARD, and a registered rewrite (5).**
+`def_eq_binder_aux:1156,1164` (`u16::try_from(locals.len())` — more than 65535
+open binders wraps), `infer:789,794` (`nat_type()`/`string_type()` return
+`None` when the name is not cached, and the `kernel_check` above them tests the
+*config flag*, which is a different condition — so these can fire),
+`reduce_rec:1494` (`checked_sub` underflow).
+
+That last group is the only part of the cycle's remaining blockers that costs a
+kernel change: **five guards.** The other seven are contract work that leaves
+the bodies alone.
+
+### Revised cost
+
+Not "43 contracts from scratch", and no longer "convert 44 blockers". It is:
+
+1. five guards on genuine robustness gaps (registered rewrites);
+2. seven preconditions and one loop invariant, costing no diff;
+3. one closure to deal with, in one function;
+4. thread `tc_wf` through 46 signatures — on a cache layer already built and
+   proven (§14), with only five functions touching a claim-bearing cache.
+
+The contracts themselves lift from the proven mirrors (§13).
