@@ -295,6 +295,23 @@ crate::util::kernel_check(
 
 This one is different in kind from entry 2, and the difference matters.
 
+**Extended 2026-09-21 to the whole 46-function cycle**: all 21 `assert!` /
+`assert_eq!` / `panic!` sites in it now go through `kernel_check` or
+`kernel_fail`. Same class, same reasoning, so they belong to this entry rather
+than twenty-one new ones. That takes the cycle's blocker count from 44 to 23,
+and it was done ahead of the cycle itself because it is behaviour-preserving
+and testable on its own — the arc lands more safely for being smaller.
+
+One thing that conversion got wrong first, caught by `cargo test`: the messages
+were "improved" while being moved (`"infer_proj prop"` became
+`"infer_proj: projection of a proposition"`, and so on). A panic message is
+observable behaviour — `src/tests/util.rs` has a
+`#[should_panic(expected = "infer_proj prop")]` — and rewording it is a change
+this register would have to carry. **The original message text is preserved
+verbatim at every site**; only the macro is swapped. The exceptions are the
+four bare `panic!()` calls, which had no message at all and now name their
+function.
+
 Entry 2 replaced an `assert_eq!` that Verus cannot COMPILE, on a path the
 function's own precondition already proves unreachable. Here the macro compiles
 fine; what fails is the proof. Verus specifies `panic!` with `requires false`,

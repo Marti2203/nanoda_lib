@@ -547,7 +547,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let whnfd = self.whnf(e);
         match self.ctx.read_expr(whnfd) {
             Pi { .. } => whnfd,
-            _ => panic!("ensure_pi could not produce a pi"),
+            _ => crate::util::kernel_fail("ensure_pi could not produce a pi"),
         }
     }
 
@@ -555,7 +555,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let whnfd = self.infer_then_whnf(e, flag);
         match self.ctx.read_expr(whnfd) {
             Sort { level, .. } => level,
-            _ => panic!("infer_sort_of could not infer a sort"),
+            _ => crate::util::kernel_fail("infer_sort_of could not infer a sort"),
         }
     }
 
@@ -732,7 +732,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Pi { body, .. } => {
                     ctor_ty = self.ctx.inst(body, &[struct_ty_args[i as usize]]);
                 }
-                _ => panic!("Ran out of param telescope"),
+            _ => crate::util::kernel_fail("Ran out of param telescope"),
             }
         }
         for i in 0..idx {
@@ -741,7 +741,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Pi { binder_type, body, .. } => {
                     if self.ctx.num_loose_bvars(body) != 0 {
                       if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-                          panic!("infer_proj prop")
+            crate::util::kernel_fail("infer_proj prop")
                       }
                       let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
                       ctor_ty = self.ctx.inst(body, &[arg]);
@@ -749,18 +749,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                       ctor_ty = body;
                     }
                 }
-                _ => panic!("Ran out of constructor telescope"),
+            _ => crate::util::kernel_fail("Ran out of constructor telescope"),
             }
         }
         let reduced = self.whnf(ctor_ty);
         match self.ctx.read_expr(reduced) {
             Pi { binder_type, .. } => {
                 if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-                    panic!("infer_proj prop")
+            crate::util::kernel_fail("infer_proj prop")
                 }
                 binder_type
             }
-            _ => panic!("Ran out of constructor telescope getting field"),
+            _ => crate::util::kernel_fail("Ran out of constructor telescope getting field"),
         }
     }
 
@@ -775,7 +775,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let r = match self.ctx.read_expr(e) {
             Local { binder_type, .. } => binder_type,
-            Var { .. } => panic!("no loose bvars allowed in infer"),
+            Var { .. } => crate::util::kernel_fail("no loose bvars allowed in infer"),
             Sort { level, .. } => self.infer_sort(level, flag),
             App { .. } => self.infer_app(e, flag),
             Pi { .. } => self.infer_pi(e, flag),
@@ -784,11 +784,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Const { name, levels, .. } => self.infer_const(name, levels, flag),
             Proj { ty_name, idx, structure, .. } => self.infer_proj(ty_name, idx, structure, flag),
             NatLit { .. } => {
-                assert!(self.ctx.export_file.config.nat_extension);
+                crate::util::kernel_check(self.ctx.export_file.config.nat_extension,
+                    "infer: nat literal without the nat extension enabled");
                 self.ctx.nat_type().unwrap()
             }
             StringLit { .. } => {
-                assert!(self.ctx.export_file.config.string_extension);
+                crate::util::kernel_check(self.ctx.export_file.config.string_extension,
+                    "infer: string literal without the string extension enabled");
                 self.ctx.string_type().unwrap()
             }
         };
@@ -837,7 +839,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             ctx.clear();
                             fun = as_pi;
                         }
-                        _ => panic!(),
+                        _ => crate::util::kernel_fail("infer_app: applied a non-function"),
                     }
                 }
             }
@@ -893,7 +895,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let t = self.ctx.abstr_levels(binder_type, start_pos);
                     abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
                 }
-                _ => panic!(),
+            _ => crate::util::kernel_fail("infer_lambda: binder type is not a sort"),
             }
         }
         abstrd
@@ -916,7 +918,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             infd = self.ctx.imax(universe, infd);
             self.ctx.replace_dbj_level(local);
         }
-        assert_eq!(c0, self.ctx.dbj_level_counter);
+        crate::util::kernel_check(c0 == self.ctx.dbj_level_counter,
+            "infer_pi: de Bruijn level counter was left unbalanced");
         self.ctx.mk_sort(infd)
     }
 
@@ -1079,12 +1082,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 } else {
                     (false, self.ctx.foldl_apps(e_fun, args.into_iter()))
                 },
-            Var { .. } => panic!("Loose bvars are not allowed"),
+            Var { .. } => crate::util::kernel_fail("Loose bvars are not allowed"),
             Pi { .. } => {
                 debug_assert!(args.is_empty());
                 (false, e_fun)
             }
-            App { .. } => panic!(),
+            App { .. } => crate::util::kernel_fail("whnf_no_unfolding_aux: unreduced application"),
             Local { .. } | NatLit { .. } | StringLit { .. } => (false, self.ctx.foldl_apps(e_fun, args.into_iter())),
         };
         if should_cache && !cheap_proj {
@@ -1098,7 +1101,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return Some(true)
         }
         if let (NatLit { .. }, NatLit { .. }) = (self.ctx.read_expr(x), self.ctx.read_expr(y)) {
-            assert!(self.ctx.export_file.config.nat_extension);
+        crate::util::kernel_check(self.ctx.export_file.config.nat_extension,
+            "def_eq_nat: nat literal without the nat extension enabled");
             return Some(x == y)
         }
         if let (Some(x_pred), Some(y_pred)) = (self.ctx.pred_of_nat_succ(x), self.ctx.pred_of_nat_succ(y)) {
@@ -1192,7 +1196,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         true
     }
 
-    pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) { assert!(self.def_eq(u, v)) }
+    pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) {
+        crate::util::kernel_check(self.def_eq(u, v), "assert_def_eq: terms are not definitionally equal")
+    }
 
     /// The ORIGINAL nanoda_lib decision procedure, verbatim (restored
     /// 2026-09-05): the legacy checker alone decides every verdict. The
@@ -1502,7 +1508,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let f = args.get(3).copied()?;
         let appd = match self.ctx.read_expr(qmk) {
             App { arg, .. } => self.ctx.mk_app(f, arg),
-            _ => panic!("Quot iota"),
+            _ => crate::util::kernel_fail("Quot iota"),
         };
         Some(self.ctx.foldl_apps(appd, args.iter().copied().skip(rest_idx)))
     }
@@ -1581,7 +1587,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.failure_cache_insert(x, y);
                         None
                     }
-                    _ => panic!(),
+            _ => crate::util::kernel_fail("try_eq_const_app: expected a constant head"),
                 }
             }
             _ => None,
@@ -1663,7 +1669,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.is_zero(level), ty),
-            _ => panic!("expected a sort")
+            _ => crate::util::kernel_fail("expected a sort")
         }
     }
 
@@ -1671,7 +1677,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.may_be_prop(level), ty),
-            _ => panic!("expected a sort")
+            _ => crate::util::kernel_fail("expected a sort")
         }
     }
 
