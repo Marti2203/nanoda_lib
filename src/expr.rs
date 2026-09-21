@@ -691,6 +691,10 @@ use vstd::prelude::*;
 
 ::vstd::prelude::verus! {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// VERUS-REWRITE(while-let-exit): `loop` + `match` rather than the
+    /// kernel's `while let`, because the wildcard arm carries a `proof`
+    /// block -- the exit fact that the spine stops here. A `while let` has
+    /// nowhere to write that; see docs/VERUS_REWRITES.md.
     /// Verified AS WRITTEN: the kernel's own spine decomposition, body
     /// unchanged. The loop walks `App(fun, arg)` down the spine pushing
     /// arguments in REVERSE order and reverses once at the end, so the
@@ -776,8 +780,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Abstraction of unique identifiers; replaces free variables with the appropriate
     /// bound variable, if the free variable is in `locals`.
     ///
-    /// Verified in place. Same `VERUS-REWRITE(while-let-exit)` as
-    /// `unfold_apps_fun` above, and the same loop `ensures` for the exit fact.
     ///
     /// The `usize` counter needs a ceiling -- nothing else in the function
     /// bounds the spine, so `num_args + 1` could overflow.
@@ -892,10 +894,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// constructor type), and a divergence could only ever cost a spurious
     /// disagreement, never a false certification. See the note at that site.
     ///
-    /// VERUS-REWRITE(while-let-exit): `loop`/`match` for the same reason as the
-    /// spine helpers -- except here the exit needs nothing, so the rewrite is
-    /// only to keep the family uniform. The `depth` ceiling is what bounds the
-    /// `u16` counter.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
         requires crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
@@ -924,12 +922,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. The cheapest of the spine helpers: no counter and no
     /// `Vec`, so nothing to bound.
     ///
-    /// VERUS-REWRITE(while-let-exit): the original body is
-    /// `while let App { fun, .. } = self.read_expr(e) { e = fun; }`. Verus takes
-    /// that and proves the invariant, but carries no information out of the
-    /// loop about WHY it stopped, so the exit cannot conclude the head is not an
-    /// `App`. Spelled as the `loop`/`match` it desugars to -- which is how
-    /// `unfold_apps` a few functions below is already written in the kernel.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn unfold_apps_fun(&self, e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         ensures crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0))
