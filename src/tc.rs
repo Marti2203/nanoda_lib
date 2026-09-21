@@ -2398,8 +2398,6 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// markers below; both decline instead, which the `Option` return already
     /// provides for.
     ///
-    /// VERUS-REWRITE(range-for): the two `for i in 0..n` loops are the `while`
-    /// they desugar to.
     #[verifier::exec_allows_no_decreases_clause]
     fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
     {
@@ -2429,26 +2427,18 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // apply the params taken from the inferred type
         // `Point.mk (A : Type) (B : Type)`
         let np = (*num_params) as usize;
-        let mut i: usize = 0;
-        while i < np
-            invariant i <= np, np <= args.len(),
-            decreases np - i
+        for i in 0..np
+            invariant np <= args.len(),
         {
             out = self.ctx.mk_app(out, args[i]);
-            i = i + 1;
         }
         // for (a : A) and (b : B),
         // `Proj {idx := 0, struct := e}`
         // `Point.mk A B (Point.0 e) (Point.1 e)`
         let nf = (*num_fields) as usize;
-        let mut j: usize = 0;
-        while j < nf
-            invariant j <= nf,
-            decreases nf - j
-        {
+        for j in 0..nf {
             let proj = self.ctx.mk_proj(c_name, j, e);
             out = self.ctx.mk_app(out, proj);
-            j = j + 1;
         }
         Some(out)
     }
@@ -2607,11 +2597,6 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// major premise's head constant. `None` claims nothing -- one-directional,
     /// like the level predicates in `level.rs`.
     ///
-    /// VERUS-REWRITE(return-in-for): the original is
-    /// `for r @ RecRule { ctor_name, .. } in rec_rules.iter().copied()` with a
-    /// `return Some(r)` inside. Returning out of a `for` leaves the ghost
-    /// iterator mid-flight, so it is spelled as the index walk it desugars to --
-    /// the same treatment `get_nth_pi_binder` already has (register entry 7).
     fn get_rec_rule(&self, rec_rules: &[RecRule<'t>], major_const: ExprPtr<'t>) -> (result: Option<RecRule<'t>>)
         ensures match result {
             Some(r) => (exists |i: int| 0 <= i < rec_rules@.len() && #[trigger] rec_rules@[i] == r)
@@ -2629,28 +2614,14 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::is_const_shape(major_const));
                 assert(crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name);
             }
-            let n = rec_rules.len();
-            let mut i: usize = 0;
-            while i < n
+            for r in rec_rules.iter().copied()
                 invariant
-                    n == rec_rules@.len(),
-                    i <= n,
-                    // The loop havocs these, so the facts established above the
-                    // loop have to ride the invariant to reach the `return`.
                     crate::expr_arena_bridge::is_const_shape(major_const),
                     crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name,
-                decreases n - i
             {
-                let r = rec_rules[i];
                 if r.ctor_name == major_ctor_name {
-                    proof {
-                        assert(rec_rules@[i as int] == r);
-                        assert(exists |k: int| 0 <= k < rec_rules@.len()
-                            && #[trigger] rec_rules@[k] == r);
-                    }
                     return Some(r)
                 }
-                i = i + 1;
             }
         }
         None

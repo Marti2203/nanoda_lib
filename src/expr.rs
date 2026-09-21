@@ -1693,12 +1693,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. The outer level-substitution cache; `subst_aux`
     /// beneath it uses its own scratch cache, which this function resets first.
     ///
-    /// VERUS-REWRITE(assert_eq): the original body has
-    /// `assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());`.
-    /// Verus cannot compile `assert_eq!` at all (`core::panicking::AssertKind`
-    /// is unsupported), so it is spelled as the `if`/`panic!` it desugars to --
-    /// same panic on the same condition, and provably unreachable here given
-    /// the precondition. See `docs/VERUS_REWRITES.md`.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn subst_expr_levels(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
         requires
@@ -1743,9 +1737,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             assert(self.expr_cache.subst_cache@ =~= Map::empty());
             assert(crate::expr_arena_bridge::subst_cache_sound(*self));
         }
-        if self.read_levels(ks).len() != self.read_levels(vs).len() {
-            panic!("subst_expr_levels: ks and vs have different lengths");
-        }
+        assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());
         let out = self.subst_aux(e, ks, vs);
         let ghost before = self.expr_cache.dsubst_cache@;
         self.expr_cache.dsubst_cache.insert((e, ks, vs), out);

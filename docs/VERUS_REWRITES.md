@@ -139,7 +139,6 @@ re-checking if anything here is ever suspected:
 | # | Function | File | Construct | Reason |
 |---|---|---|---|---|
 | 1 | `subst_levels` | `src/level.rs` | closure capturing `&mut self`; unspecified `alloc` variant | see above |
-| 2 | `subst_expr_levels` | `src/expr.rs` | `assert_eq!` is uncompilable by Verus | see above |
 | 3 | `inst_aux` (`Var` arm) | `src/expr.rs` | `Iterator::nth` has no spec | see above |
 | 4 | `abstr_aux` (`Local` arm) | `src/expr.rs` | closures in `position` and `map` | see above |
 | 5 | `unfold_apps_stack`, `unfold_apps` | `src/expr.rs` | `while let` gives no place for the EXIT proof | `loop` + `match` |
@@ -148,12 +147,11 @@ re-checking if anything here is ever suspected:
 | 10 | `is_never_zero` | `src/level.rs` | a tail `match` carries no per-arm knowledge out | bind arm results |
 | 11 | `all_uparams_defined` | `src/level.rs` | `Iterator::any` has no spec, and the same tail-`match` issue | index loop + bind |
 | 12 | `infer_sort` | `src/tc.rs` | `assert!` on a REACHABLE rejection path | `kernel_check` wrapper |
-| 13 | `get_rec_rule` | `src/tc.rs` | `return` inside a `for` (same as entry 7) | index walk |
 | 14 | `eq_antisymm_many` | `src/level.rs` | closure capturing `&mut self` inside `zip().all()` | index walk |
 | 15 | `def_eq_sort`, `def_eq_const` | `src/tc.rs` | tail-`match` again (entry 10) | bind arm results |
 | 16 | `unfold_def` | `src/tc.rs` | `Vec::into_iter` has no vstd spec | slice form |
 | 17 | `mk_nullary_ctor` | `src/tc.rs` | an UNGUARDED index Verus rejects | `match` + a bounds guard |
-| 18 | `expand_eta_struct_aux` | `src/tc.rs` | range-`for`; an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
+| 18 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` AND an unguarded index | `match` + `while` + two guards |
 | 19 | `infer_const` | `src/tc.rs` | closure; `assert!`; a `panic!` with nothing to decline to; a precondition that had to be re-established | accessor swap + `kernel_check` + `kernel_fail` + hoisted check |
 | 20 | `mk_majors` | `src/inductive.rs` | `Iterator::enumerate` has no spec; an unguarded index | index walk + a length check |
 | 21 | `contains_param` | `src/level.rs` | `Iterator::any` has no spec (sibling of entry 11) | index walk |
@@ -518,6 +516,10 @@ pattern and an or-pattern of two tuples — both genuinely unsupported.
 
 ### What Verus actually cannot do — retested 2026-09-21
 
+*Updated after acting on it: five more rewrites reverted, register down from 36
+marked rewrites to 30 across 26 functions.*
+
+
 Several entries here were justified by a claim about Verus that turned out to
 be false, or to have stopped being true. Each claim was retested with an
 isolated probe and then against the real function. The results:
@@ -525,9 +527,9 @@ isolated probe and then against the real function. The results:
 | claim | verdict | evidence |
 |---|---|---|
 | `while let` carries no exit reason | **FALSE** | desugars to `loop`+`match`; takes `invariant`/`ensures`. 7 rewrites withdrawn |
-| returning out of a `for` leaves the ghost iterator mid-flight | **FALSE** | `get_nth_pi_binder` verifies with its original `for _ in 0..n` and `return None` |
+| returning out of a `for` leaves the ghost iterator mid-flight | **FALSE**, range *and* iterator | `get_nth_pi_binder` (`for _ in 0..n`) and `get_rec_rule` (`for r in ..iter().copied()`, with `return Some(r)`) both verify with their original loops |
 | the `?` operator is unusable | **FALSE** | all 7 `?` sites restored; `unfold_def` and the others verify |
-| `assert_eq!` is uncompilable | **FALSE — now CLOSED** | it was unspecified, not uncompilable; fixed in fork `79263cd85`, see `VSTD_GAPS.md` |
+| `assert_eq!` is uncompilable | **FALSE — CLOSED, rewrite reverted** | it was unspecified, not uncompilable; fork `79263cd85`, and `subst_expr_levels` now carries the kernel's own `assert_eq!` |
 | slice patterns are unsupported | **TRUE** | "The verifier does not yet support the following Rust feature: slice patterns" |
 | a tail `match` carries no per-arm knowledge | **TRUE**, and not a limitation | it is proof structure: each arm's fact has to be stated about a bound result |
 | an or-pattern needs per-arm unfolding | **TRUE**, and not a limitation | same — `get_pfx` must unfold `root_of` at each constructor, so the arms cannot share a body |
