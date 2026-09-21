@@ -498,13 +498,6 @@ pub mod route_stats {
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
-    pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> Self {
-        assert_eq!(dag.dbj_level_counter, 0);
-        route_stats::conv_fail_clear();
-        let shadow_memo = crate::tc_model::WhnfMemo::new(env);
-        let shadow_root_entry = 0u64;
-        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info, shadow_memo, shadow_root_entry } 
-    }
 
     /// Conduct the preliminary checks done on all declarations; a declaration
     /// must not contain duplicate universe parameters, mut not have free variables,
@@ -2047,6 +2040,8 @@ pub assume_specification [route_stats::bump_shadow_certified] ();
 
 pub assume_specification [route_stats::bump_shadow_disagree] ();
 
+pub assume_specification [route_stats::conv_fail_clear] ();
+
 pub assume_specification [route_stats::legacy_branch] (tag: u8);
 
 
@@ -2153,6 +2148,26 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
         }
         self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
+    }
+
+    /// Verified in place, body unchanged -- including the kernel's own
+    /// `assert_eq!`, which is usable again now that
+    /// `core::panicking::assert_failed` has a vstd specification.
+    ///
+    /// The ensures is what the cycle rests on: a FRESH checker satisfies
+    /// `tc_wf`. Every clause holds vacuously because `TcCache::new` starts the
+    /// four claim-bearing caches empty, and `WhnfMemo::new` gives the memo its
+    /// `wf()` and `spec_env()` directly.
+    pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> (result: Self)
+        requires old(dag).dbj_level_counter == 0,
+        ensures tc_wf(result), result.env == env,
+    {
+        crate::util::kernel_check(dag.dbj_level_counter == 0,
+            "TypeChecker::new: de Bruijn level counter must start at zero");
+        route_stats::conv_fail_clear();
+        let shadow_memo = crate::tc_model::WhnfMemo::new(env);
+        let shadow_root_entry = 0u64;
+        Self { ctx: dag, env, tc_cache: TcCache::new(), declar_info, shadow_memo, shadow_root_entry }
     }
 
     /// SHADOW certification (diagnostics only, `NANODA_SHADOW=1`): run the

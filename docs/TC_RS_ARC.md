@@ -724,7 +724,7 @@ too. That is **8 functions beyond the cycle**, not an open-ended set:
 | `bump` | **verified** — it takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add` |
 | `uncert_events`, `legacy_branch` | **claim-free specs**, and for different reasons: one reads a `static`, which Verus does not know; the other goes through a thread-local and a closure. Neither is read by verified code |
 | `shadow_check`, `shadow_check_rooted`, `pair_certified` | **verified**, not assumed — see below |
-| `TypeChecker::new` | remaining |
+| `TypeChecker::new`, `TcCache::new` | **verified** — a fresh checker satisfies `tc_wf` |
 
 `shadow_check` is no longer *in* the cycle, incidentally: deleting the forensic
 dumps took its `whnf` call with it, so it is now an ordinary callee needing a
@@ -760,5 +760,5 @@ Two genuine findings fell out of doing it rather than assuming it:
 - `shadow_check` had a `u64` overflow: `self.shadow_root_entry + 1`. Rewritten
   as `checked_sub`, equivalent everywhere the original does not overflow.
 
-All eight prerequisites are now done bar `TypeChecker::new`.
+**All eight prerequisites are done.**
 

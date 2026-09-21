@@ -152,12 +152,22 @@ pub(crate) fn new_fx_hash_map<K, V>() -> (result: FxHashMap<K, V>)
 { FxHashMap::with_hasher(Default::default()) }
 }
 
-pub(crate) fn new_fx_hash_set<K>() -> FxHashSet<K> { FxHashSet::with_hasher(Default::default()) }
+::vstd::prelude::verus! {
+/// Verified, not assumed: `HashSet::with_hasher` gained a vstd specification
+/// (fork), which is what this and `TcCache::new` were waiting on.
+pub(crate) fn new_fx_hash_set<K>() -> (result: FxHashSet<K>)
+    ensures result@ == vstd::set::Set::<K>::empty()
+{ FxHashSet::with_hasher(Default::default()) }
+}
 
 pub(crate) fn new_fx_index_set<K>() -> FxIndexSet<K> { FxIndexSet::with_hasher(Default::default()) }
 pub(crate) fn new_unique_index_set<K>() -> UniqueIndexSet<K> { UniqueIndexSet::with_hasher(Default::default()) }
 
-pub(crate) fn new_unique_hash_map<K, V>() -> UniqueHashMap<K, V> { UniqueHashMap::with_hasher(Default::default()) }
+::vstd::prelude::verus! {
+pub(crate) fn new_unique_hash_map<K, V>() -> (result: UniqueHashMap<K, V>)
+    ensures result@ == vstd::map::Map::<K, V>::empty()
+{ UniqueHashMap::with_hasher(Default::default()) }
+}
 
 /// Convenience macro for creating a 64 bit hash.
 #[macro_export]
@@ -857,8 +867,19 @@ pub struct TcCache<'t> {
     pub strong_cache: UniqueHashMap<(ExprPtr<'t>, bool, bool), ExprPtr<'t>>,
 }
 
+::vstd::prelude::verus! {
 impl<'t> TcCache<'t> {
-    pub(crate) fn new() -> Self {
+    /// Verified in place, body unchanged. The ensures is what
+    /// `TypeChecker::new` needs to establish `tc_wf` on a fresh checker: the
+    /// four claim-bearing caches start empty, so every clause of the invariant
+    /// holds vacuously.
+    pub(crate) fn new() -> (result: Self)
+        ensures
+            result.infer_cache_check@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            result.whnf_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            result.whnf_no_unfolding_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            result.eq_cache@ == vstd::set::Set::<SortedPair<'t>>::empty(),
+    {
         Self {
             infer_cache_check: new_unique_hash_map(),
             infer_cache_no_check: new_unique_hash_map(),
@@ -870,6 +891,10 @@ impl<'t> TcCache<'t> {
             strong_cache: new_unique_hash_map(),
         }
     }
+}
+}
+
+impl<'t> TcCache<'t> {
 
     pub(crate) fn clear(&mut self) {
         self.infer_cache_check.clear();

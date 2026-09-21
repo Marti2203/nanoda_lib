@@ -222,3 +222,20 @@ fork tests for fork-only features — so those are kept unchanged.
 `rec_result_bounds` 20 → 40. A toolchain move changes proof costs, so re-pinning
 after one is expected rather than a symptom; both were found by the gate, not
 guessed at. vstd 2059 / 0, nanoda 739 / 0, 79 tests.
+
+## Closed: `HashSet::with_hasher`
+
+Fork commit `3b05ee1b4`. This one had been sitting in the running gap list for
+a while.
+
+`HashSet::new` and `HashSet::with_capacity` were specified; the hasher-generic
+sibling was not. Nanoda's caches are all
+`HashSet<_, BuildHasherDefault<_>>`, so their constructor could not be given a
+postcondition at all — which blocked proving that a freshly built
+`TypeChecker` starts with empty caches, which is what `TypeChecker::new` needs
+to establish `tc_wf`. `HashMap::with_hasher` already filled the same gap on the
+map side; this mirrors it.
+
+Three vstd commits now sit on the fork, each independent: `Arc`'s `Deref`,
+`core::panicking::assert_failed`, and this.
+
