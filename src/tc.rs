@@ -330,6 +330,23 @@ pub mod route_stats {
     pub static UNCERT_EVENTS: AtomicU64 = AtomicU64::new(0);
     pub fn uncert_events() -> u64 { UNCERT_EVENTS.load(Ordering::Relaxed) }
 
+    /// The route histogram and the uncertified counter, reached through
+    /// functions rather than inline, so `shadow_check` itself can be VERIFIED
+    /// -- Verus does not know `static`s, and these were the only reason it
+    /// could not be. Both are ours, not nanoda's, so this costs no register
+    /// entry.
+    pub fn route_hit(which: usize) {
+        if which < 6 { ROUTE_HIT[which].fetch_add(1, Ordering::Relaxed); }
+    }
+
+    pub fn bump_uncert_events() { UNCERT_EVENTS.fetch_add(1, Ordering::Relaxed); }
+
+    /// The three named shadow counters, likewise reached through functions so
+    /// `pair_certified` and `shadow_check` can be verified.
+    pub fn bump_proof_irrel() { bump(&SHADOW_PROOF_IRREL); }
+    pub fn bump_shadow_certified() { bump(&SHADOW_CERTIFIED); }
+    pub fn bump_shadow_disagree() { bump(&SHADOW_DISAGREE); }
+
     pub fn legacy_branch(tag: u8) {
         if shadow_enabled() { LEGACY_BRANCH.with(|c| c.set(tag)); }
     }
@@ -1353,63 +1370,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         result
     }
 
-    /// SHADOW certification (diagnostics only, `NANODA_SHADOW=1`): run the
-    /// verified routes on the pair the original code just decided and count
-    /// (a) verdicts they certify (a machine-checked `deq_any`/`defeq`
-    /// claim over the environment model) and (b) disagreements (a verified
-    /// confirmation of a pair the original code rejected -- never expected;
-    /// would mean either an unsound bridge axiom or a legacy incompleteness).
-    /// Never touches `tc_cache`, so the verdict path is unaffected.
-    /// Does some verified route certify `x == y`? (0 = none; 1..5 = the
-    /// route: core, delta, join, conv, proof-irrelevance.)
-    fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> u8 {
-        if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
-        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 2; }
-        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
-        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { return 4; }
-        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
-            route_stats::bump(&route_stats::SHADOW_PROOF_IRREL);
-            return 5;
-        }
-        0
-    }
 
 
-    fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64) {
-        self.shadow_root_entry = entry;
-        self.shadow_check(x, y, verdict);
-    }
 
-    fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool) {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::clear_last_leaf();
-        let which = self.pair_certified(x, y);
-        if (which as usize) < 6 { route_stats::ROUTE_HIT[which as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
-        if which == 0 && verdict {
-            route_stats::UNCERT_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            route_stats::note_uncert(route_stats::uncert_events() == self.shadow_root_entry + 1);
-        }
-        // The forensic dumps that used to sit here (171 lines for uncertified
-        // pairs, 19 for disagreements) were investigation scaffolding: they
-        // printed reduct shapes, recursor major premises and per-leaf counters
-        // to work out WHY a pair had not been certified. That investigation is
-        // done -- coverage is 99.7-99.8% across the measured corpora with zero
-        // disagreements -- and they carried 21 of the cycle's 24 closures plus
-        // every `eprintln!`, which is most of what kept `shadow_check` out of
-        // `verus!`. Every SIGNAL is still here: the route histogram, the
-        // uncertified count, and the disagreement counter below, which is the
-        // one that actually caught a soundness bug. If a disagreement ever
-        // fires again, the counter says so and git has the forensics.
-        if which != 0 {
-            if verdict {
-                route_stats::bump(&route_stats::SHADOW_CERTIFIED);
-            } else {
-                route_stats::bump(&route_stats::SHADOW_DISAGREE);
-            }
-        }
-    }
 
     /// SHADOW certification of a top-level INFERENCE (diagnostics only):
     /// the verified inference re-derives a type for `e`; the kernel's
@@ -2066,6 +2029,24 @@ verus! {
 // takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add`.
 pub assume_specification [route_stats::uncert_events] () -> (result: u64);
 
+pub assume_specification [route_stats::route_hit] (which: usize);
+
+pub assume_specification [route_stats::bump_uncert_events] ();
+
+pub assume_specification [route_stats::shadow_enabled] () -> (result: bool);
+
+pub assume_specification [route_stats::clear_last_leaf] ();
+
+pub assume_specification [route_stats::note_uncert] (is_root: bool);
+
+pub assume_specification [route_stats::conv_budget] () -> (result: u32);
+
+pub assume_specification [route_stats::bump_proof_irrel] ();
+
+pub assume_specification [route_stats::bump_shadow_certified] ();
+
+pub assume_specification [route_stats::bump_shadow_disagree] ();
+
 pub assume_specification [route_stats::legacy_branch] (tag: u8);
 
 
@@ -2128,6 +2109,12 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
                 crate::env_model::to_model_of_env(*tc.env),
                 to_model_expr(p.0),
                 to_model_expr(p.1))
+    // The shadow memo is a claim-bearing cache as well -- its entries are
+    // certificates carrying their own reduction claim -- so its wellformedness
+    // belongs here beside the other four rather than in every signature that
+    // reaches a verified route.
+    &&& tc.shadow_memo.wf()
+    &&& tc.shadow_memo.spec_env() == *tc.env
 }
 
 /// The four claim-carrying caches' WRITE side, verified.
@@ -2166,6 +2153,85 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
         }
         self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
+    }
+
+    /// SHADOW certification (diagnostics only, `NANODA_SHADOW=1`): run the
+    /// verified routes on the pair the original code just decided and count
+    /// (a) verdicts they certify (a machine-checked `deq_any`/`defeq`
+    /// claim over the environment model) and (b) disagreements (a verified
+    /// confirmation of a pair the original code rejected -- never expected;
+    /// would mean either an unsound bridge axiom or a legacy incompleteness).
+    /// Never touches `tc_cache`, so the verdict path is unaffected.
+    /// Does some verified route certify `x == y`? (0 = none; 1..5 = the
+    /// route: core, delta, join, conv, proof-irrelevance.)
+    fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: u8)
+        requires tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+    {
+        if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
+        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 2; }
+        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
+        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { return 4; }
+        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
+            route_stats::bump_proof_irrel();
+            return 5;
+        }
+        0
+    }
+
+    fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool)
+        requires tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+    {
+        if !route_stats::shadow_enabled() {
+            return;
+        }
+        route_stats::clear_last_leaf();
+        let which = self.pair_certified(x, y);
+        route_stats::route_hit(which as usize);
+        if which == 0 && verdict {
+            route_stats::bump_uncert_events();
+            // `+ 1` on a u64 that Verus will not assume is bounded; the
+            // checked form is equivalent everywhere the original does not
+            // overflow. Shadow code, so no register entry.
+            route_stats::note_uncert(
+                route_stats::uncert_events().checked_sub(1) == Some(self.shadow_root_entry));
+        }
+        // The forensic dumps that used to sit here (171 lines for uncertified
+        // pairs, 19 for disagreements) were investigation scaffolding: they
+        // printed reduct shapes, recursor major premises and per-leaf counters
+        // to work out WHY a pair had not been certified. That investigation is
+        // done -- coverage is 99.7-99.8% across the measured corpora with zero
+        // disagreements -- and they carried 21 of the cycle's 24 closures plus
+        // every `eprintln!`, which is most of what kept `shadow_check` out of
+        // `verus!`. Every SIGNAL is still here: the route histogram, the
+        // uncertified count, and the disagreement counter below, which is the
+        // one that actually caught a soundness bug. If a disagreement ever
+        // fires again, the counter says so and git has the forensics.
+        if which != 0 {
+            if verdict {
+                route_stats::bump_shadow_certified();
+            } else {
+                route_stats::bump_shadow_disagree();
+            }
+        }
+    }
+
+    fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64)
+        requires tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+    {
+        self.shadow_root_entry = entry;
+        self.shadow_check(x, y, verdict);
     }
 
     /// `infer`'s tail, `Check` branch. Note there is deliberately no

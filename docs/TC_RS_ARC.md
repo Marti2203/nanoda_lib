@@ -723,7 +723,7 @@ too. That is **8 functions beyond the cycle**, not an open-ended set:
 | `failure_cache_contains`, `failure_cache_insert` | **verified in place** — neither carries a claim (`congr_fail_cache` records pairs NOT shown equal, so a hit promises nothing); the insert needed only the frame, that it leaves the four claim-bearing caches alone |
 | `bump` | **verified** — it takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add` |
 | `uncert_events`, `legacy_branch` | **claim-free specs**, and for different reasons: one reads a `static`, which Verus does not know; the other goes through a thread-local and a closure. Neither is read by verified code |
-| `shadow_check`, `shadow_check_rooted` | remaining — an `assume_specification` preserving `tc_wf` and the counter |
+| `shadow_check`, `shadow_check_rooted`, `pair_certified` | **verified**, not assumed — see below |
 | `TypeChecker::new` | remaining |
 
 `shadow_check` is no longer *in* the cycle, incidentally: deleting the forensic
@@ -732,4 +732,33 @@ spec rather than a member needing a contract.
 
 So the atomic step is 46 functions plus 3 small prerequisites, on a cache layer
 already proven, with every blocker cleared.
+
+### The shadow functions are verified, not assumed
+
+§15 planned an `assume_specification` for `shadow_check` preserving `tc_wf` and
+the counter — one claiming trust item. That turned out to be avoidable, for a
+reason worth stating: **`shadow_check`, `shadow_check_rooted`, `pair_certified`
+and `route_stats` are not nanoda's code.** They are the shadow certifier this
+project added. Restructuring them costs nothing against "minimal changes to the
+original" and needs no register entry.
+
+What blocked them was only that Verus does not know `static`s, and they touched
+`ROUTE_HIT`, `UNCERT_EVENTS` and three named counters inline. Moving those
+touches into named functions (`route_hit`, `bump_uncert_events`,
+`bump_proof_irrel`, …) and giving *those* claim-free specifications leaves the
+three real functions provable. Claiming trust stays at 87; claim-free absorbs
+the difference.
+
+Two genuine findings fell out of doing it rather than assuming it:
+
+- **`tc_wf` was incomplete.** `pair_certified` calls the verified routes, which
+  require `memo.wf() && memo.spec_env() == *env`, and nothing supplied it. The
+  shadow memo is a claim-bearing cache like the other four — its entries are
+  certificates carrying their own reduction claim — so its wellformedness
+  belongs *in* the invariant rather than in every signature that reaches a
+  route. An `assume_specification` would have hidden this.
+- `shadow_check` had a `u64` overflow: `self.shadow_root_entry + 1`. Rewritten
+  as `checked_sub`, equivalent everywhere the original does not overflow.
+
+All eight prerequisites are now done bar `TypeChecker::new`.
 
