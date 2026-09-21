@@ -54,13 +54,30 @@ thing to try.
 
 ### `Iterator::zip` — 2 rewrites
 
-| function | file |
-|---|---|
-| `eq_antisymm_many` | `src/level.rs` |
-| `ctor_app_params_ok` | `src/inductive.rs` |
+| function | file | why, precisely |
+|---|---|---|
+| `eq_antisymm_many` | `src/level.rs` | its closure captures `&mut self` — rejected outright, see above |
+| `ctor_app_params_ok` | `src/inductive.rs` | see below |
 
-`zip` has a spec upstream (#2858). These are the same last-link problem as
-`any`, plus `eq_antisymm_many`'s closure captures `&mut self`.
+`zip` itself has a full spec upstream (#2858), so "no spec" is the wrong
+reason for either.
+
+`ctor_app_params_ok`'s original is
+`for (app, param) in ctor_apps.iter().copied().zip(local_params.iter().copied())`.
+Two separate things block it, and only one is about `zip`:
+
+1. the **tuple pattern** `(app, param)` in the `for` — "only variables are
+   supported here, not general patterns". Destructuring inside the body
+   instead (`for pair in ..` then `let (app, param) = pair;`) clears this, and
+   the function then compiles;
+2. what is left is the **postcondition**, which is bidirectional
+   (`result == (.. && forall i ..)`) and so needs each loop step related back
+   to a slice INDEX. A `for` over a `Zip` gives an iterator-shaped invariant,
+   and bridging that to `ctor_apps@[k]` is the same missing link as `any`'s.
+
+So the index walk stays, but the remaining obstacle is narrow and shared: **a
+lemma relating an iterator's `remaining()` to the sequence it came from** would
+close `any`'s bidirectional case and this one together.
 
 ### `Iterator::enumerate`, `Iterator::nth`, `Iterator::position`, `Vec::into_iter` — 4 rewrites
 
