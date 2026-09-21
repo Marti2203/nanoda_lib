@@ -1594,13 +1594,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         None
     }
 
-    fn failure_cache_contains(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-        self.tc_cache.congr_fail_cache.contains(&SortedPair::new(x, y))
-    }
 
-    fn failure_cache_insert(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) {
-        self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
-    }
 
     fn try_eq_const_app(
         &mut self,
@@ -2061,6 +2055,17 @@ use crate::level_model::LevelSpec;
 
 verus! {
 
+// Diagnostics reached from inside the `def_eq` cycle. CLAIM-FREE: each says
+// only that the call is well-formed, because the counters are never read by
+// verified code. Specified rather than wrapped so the kernel's own call sites
+// need no change.
+pub assume_specification [route_stats::bump] (c: &std::sync::atomic::AtomicU64);
+
+pub assume_specification [route_stats::uncert_events] () -> (result: u64);
+
+pub assume_specification [route_stats::legacy_branch] (tag: u8);
+
+
 /// TRANSPARENT, like `ExExpr`/`ExLevel`. `infer_sort` reads `self.ctx` and
 /// `self.declar_info`, so an opaque `TypeChecker` would not let the kernel's
 /// own body be verified as written.
@@ -2133,6 +2138,33 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
 /// The `obeys_key_model`/`builds_valid_hashers` pair is what vstd needs before
 /// a `HashMap` has a usable `Map` view at all; see `util_model.rs`.
 impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// The congruence-failure cache's two accessors, verified in place.
+    ///
+    /// Neither carries a claim, and that is the point: `congr_fail_cache`
+    /// records pairs that were NOT shown equal, so a hit promises nothing.
+    /// What the insert does need is the FRAME -- that it leaves the four
+    /// claim-bearing caches alone, so `tc_wf` survives it.
+    fn failure_cache_contains(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool) {
+        proof {
+            crate::util_model::sorted_pair_obeys_key_model();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+        }
+        self.tc_cache.congr_fail_cache.contains(&SortedPair::new(x, y))
+    }
+
+    fn failure_cache_insert(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+    {
+        proof {
+            crate::util_model::sorted_pair_obeys_key_model();
+            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+        }
+        self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
+    }
+
     /// `infer`'s tail, `Check` branch. Note there is deliberately no
     /// counterpart for `infer_cache_no_check`: `InferOnly` promises nothing,
     /// so that cache carries no claim and needs no guarded writer.

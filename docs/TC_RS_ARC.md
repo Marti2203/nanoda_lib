@@ -712,3 +712,23 @@ Not "43 contracts from scratch", and no longer "convert 44 blockers". It is:
    proven (§14), with only five functions touching a claim-bearing cache.
 
 The contracts themselves lift from the proven mirrors (§13).
+
+### The prerequisites, counted and mostly done
+
+Moving the 46 into `verus!` needs everything they call to be known to Verus
+too. That is **8 functions beyond the cycle**, not an open-ended set:
+
+| | status |
+|---|---|
+| `failure_cache_contains`, `failure_cache_insert` | **verified in place** — neither carries a claim (`congr_fail_cache` records pairs NOT shown equal, so a hit promises nothing); the insert needed only the frame, that it leaves the four claim-bearing caches alone |
+| `bump`, `uncert_events`, `legacy_branch` | **claim-free specs** — diagnostics over atomics and thread-locals, never read by verified code. Specified rather than wrapped so the kernel's call sites need no change |
+| `shadow_check`, `shadow_check_rooted` | remaining — an `assume_specification` preserving `tc_wf` and the counter |
+| `TypeChecker::new` | remaining |
+
+`shadow_check` is no longer *in* the cycle, incidentally: deleting the forensic
+dumps took its `whnf` call with it, so it is now an ordinary callee needing a
+spec rather than a member needing a contract.
+
+So the atomic step is 46 functions plus 3 small prerequisites, on a cache layer
+already proven, with every blocker cleared.
+
