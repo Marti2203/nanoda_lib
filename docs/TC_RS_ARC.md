@@ -365,10 +365,13 @@ true, and none of it means the contracts exist.
 and `verified_infer_sort` as a mirror of `infer` — different functions, both
 already verified in place. Exact names only.)
 
-So the cycle is: **48 functions, 1229 lines, 43 contracts to design, landing
+So the cycle is: **46 functions, ~954 lines, 43 contracts to design, landing
 together or not at all.** It is a multi-session arc and should be planned as
 one, not approached function by function in the hope that it decomposes — §3
 establishes that it does not.
+
+*(Figures current as of 2026-09-21. When this was written it was 48 functions
+and 1229 lines; §§15-16 record what came out.)*
 
 The five with mirrors are the right place to start: their contracts are known to
 be the right shape, having been proven once already against a parallel
@@ -394,10 +397,11 @@ Six such calls, none of them spelled `self.`. **A cycle-membership scan keyed on
 `self.` misses every call made through a local receiver** — and this file is
 built entirely that way.
 
-It is also blocked several times over independently: 7 slice patterns
-(unsupported outright, register entry 9), 3 `assert_eq!` (uncompilable, entry
-2), 19 uses of the `arrow!`/`pi_telescope!` builder macros, and an
-`unreachable!`.
+It is also blocked independently, though less than this section first claimed:
+7 slice patterns (genuinely unsupported), 19 uses of the
+`arrow!`/`pi_telescope!` builder macros, and an `unreachable!`. The 3
+`assert_eq!` were listed here as uncompilable and are not — that was a missing
+vstd specification, since supplied (`docs/VSTD_GAPS.md`).
 
 So `quot.rs` waits on the cycle like everything else, and there is no fourth
 front. `level.rs` is complete bar a vstd gap, `tc.rs`'s independent set is
@@ -640,8 +644,9 @@ git has the forensics.
 
 ### Revised shape of the arc
 
-Not "43 contracts from scratch". It is: excise the shadow diagnostics, convert
-~44 blockers in categories that all have known routes, and thread `tc_wf`
+Not "43 contracts from scratch". It is: excise the shadow diagnostics (done),
+convert the remaining blockers — **16 as of 2026-09-21, down from 69**: 12
+`.unwrap()`, 3 `for` loops, 1 closure — and thread `tc_wf`
 through 46 signatures — where the cache layer those contracts rest on is
 already built and proven (§14), and only five functions touch a
 claim-bearing cache at all (`infer`, `whnf`, `whnf_no_unfolding_aux`, `def_eq`,

@@ -49,11 +49,27 @@ type registrations are not claims:
 Same trick as `Declar`'s payloads: Verus needs the field types KNOWN, not
 readable. `inductive.rs` also gained its first `verus!` block, and `mk_majors`
 is verified in it — which incidentally turned up another unguarded index
-(`st.local_indices[idx]`), register entry 20.
+(`st.local_indices[idx]`); see `mk_majors` in `docs/VERUS_REWRITES.md`.
 
 The three with nothing obvious in the way — `header_of_ty` (17L), `is_nested`
 (39L), `new` (27L) — are data-shuffling rather than checking, so they are a poor
 first target despite being reachable. Prefer the state struct.
+
+## Correction (2026-09-21): this is NOT the big open surface
+
+This survey reads as though `inductive.rs` is where the remaining work is,
+because it has the most unverified functions. Measured properly with
+`scripts/verification-frontier.py` — a function is reachable when every
+function it calls is already known to Verus — **only 2 of its 63 functions are
+on the frontier**. Most of the file sits behind a handful of hubs, several of
+which are in the `tc.rs` cycle (`whnf`, `assert_def_eq`), so they are blocked
+behind all of it.
+
+The richer surfaces are elsewhere: `expr.rs` 20 of 33, `util.rs` 33 of 68,
+`env.rs` 16 of 20. Count the frontier, not the unverified functions.
+
+`ctor_app_params_ok` and `init_k_target` have since been verified here, which
+is most of what was reachable.
 
 ## Totality
 
