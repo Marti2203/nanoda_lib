@@ -162,6 +162,7 @@ re-checking if anything here is ever suspected:
 | 22 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` can overflow `u64` | overflow guard that aborts |
 | 23 | `ctor_app_params_ok` | `src/inductive.rs` | `Iterator::zip` in a `for` with a `return` inside | index walk |
 | 24 | `init_k_target` | `src/inductive.rs` | slice pattern `[only_ctor]` (entry 9) | length test + index |
+| 25 | `infer_lambda`, `infer_pi`, `def_eq_binder_aux`, `whnf_no_unfolding_aux` | `src/tc.rs` | `while let` (entry 5); one also an or-pattern and a slice pattern | `loop` + `match` |
 
 
 ### 5. The three spine helpers — `src/expr.rs`
@@ -490,6 +491,30 @@ GAP to fill, not a constraint to route around. Rewriting the kernel is the
 fallback, and it should come after checking whether the specification can be
 supplied — in the crate when the type is ours, in the fork when it is not. See
 `docs/VSTD_GAPS.md` for the audit of which remaining rewrites this applies to.
+
+### 25. The cycle's six `while let` loops — `src/tc.rs`
+
+Entry 5's construct, applied to the rest of the 46-function cycle: a
+`while let` carries no exit reason, so the loop condition failing tells the
+verifier nothing about why. Mechanically `loop` + `match` with `_ => break`.
+
+Four are the plain shape (two telescope walks over `read_expr`, two unwinds
+over `pop()`). The `infer_pi` unwind matches a TUPLE of two pops, and both
+pops still happen every round in the rewritten form, which is what the tuple
+pattern did — getting that wrong would silently drop a universe.
+
+Two were doing more than one thing:
+
+- `whnf_no_unfolding_aux` matched `(Lambda { body, .. }, [_arg, _rest @ ..])`.
+  The slice pattern is just "there is another argument left", and both operands
+  of the tuple are reads, so hoisting `if n_args >= args.len() { break }` is
+  the same walk — **and it removes the cycle's only slice pattern**, which was
+  otherwise an outright-unsupported construct with no other route.
+- `def_eq_binder_aux` matched an OR-pattern of two tuples (`Pi`/`Pi` or
+  `Lambda`/`Lambda`) binding the same six names. Rewritten as a `match`
+  returning that six-tuple, with `_ => break`.
+
+Cycle blockers 23 → 16 — and with the previous commit, 69 → 16 overall.
 
 ### How this file is structured, and how to audit it
 

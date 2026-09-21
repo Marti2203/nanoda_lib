@@ -874,21 +874,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
-        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
-            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-            if let Check = flag {
-                self.infer_sort_of(binder_type, flag);
-            }
+        loop {
+            match self.ctx.read_expr(e) {
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+                    if let Check = flag {
+                        self.infer_sort_of(binder_type, flag);
+                    }
 
-            let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
-            locals.push(local);
-            e = body;
+                    let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+                    locals.push(local);
+                    e = body;
+                }
+                _ => break,
+            }
         }
 
         let instd = self.ctx.inst(e, locals.as_slice());
         let infd = self.infer(instd, flag);
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
-        while let Some(local) = locals.pop() {
+        loop {
+            let local = match locals.pop() { Some(l) => l, None => break };
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
                     self.ctx.replace_dbj_level(local);
@@ -905,18 +911,28 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut universes = Vec::new();
         let mut locals = Vec::new();
         let c0 = self.ctx.dbj_level_counter;
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
-            let binder_type = self.ctx.inst(binder_type, locals.as_slice());
-            let dom_univ = self.infer_sort_of(binder_type, flag);
-            universes.push(dom_univ);
-            locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
-            e = body;
+        loop {
+            match self.ctx.read_expr(e) {
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.ctx.inst(binder_type, locals.as_slice());
+                    let dom_univ = self.infer_sort_of(binder_type, flag);
+                    universes.push(dom_univ);
+                    locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
+                    e = body;
+                }
+                _ => break,
+            }
         }
         let instd = self.ctx.inst(e, locals.as_slice());
         let mut infd = self.infer_sort_of(instd, flag);
-        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop()) {
-            infd = self.ctx.imax(universe, infd);
-            self.ctx.replace_dbj_level(local);
+        loop {
+            match (universes.pop(), locals.pop()) {
+                (Some(universe), Some(local)) => {
+                    infd = self.ctx.imax(universe, infd);
+                    self.ctx.replace_dbj_level(local);
+                }
+                _ => break,
+            }
         }
         crate::util::kernel_check(c0 == self.ctx.dbj_level_counter,
             "infer_pi: de Bruijn level counter was left unbalanced");
@@ -1057,9 +1073,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             Lambda { .. } if !args.is_empty() => {
                 let (mut e, mut n_args) = (e_fun, 0usize);
-                while let (Lambda { body, .. }, [_arg, _rest @ ..]) = (self.ctx.read_expr(e), &args[n_args..]) {
-                    n_args += 1;
-                    e = body;
+                loop {
+                    // `[_arg, _rest @ ..]` on `&args[n_args..]` is exactly
+                    // "there is another argument left"; both operands of the
+                    // original tuple are reads, so testing it first is the same
+                    // walk.
+                    if n_args >= args.len() { break }
+                    match self.ctx.read_expr(e) {
+                        Lambda { body, .. } => {
+                            n_args += 1;
+                            e = body;
+                        }
+                        _ => break,
+                    }
                 }
                 e = self.ctx.inst(e, &args[..n_args]);
                 e = self.ctx.foldl_apps(e, args.into_iter().skip(n_args));
@@ -1123,15 +1149,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[allow(unused_parens)]
     fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool> {
         let mut locals = Vec::new();
-        while let (
-            Pi { binder_name, binder_style, binder_type: t1, body: body1, .. },
-            Pi { binder_type: t2, body: body2, .. },
-        )
-        | (
-            Lambda { binder_name, binder_style, binder_type: t1, body: body1, .. },
-            Lambda { binder_type: t2, body: body2, .. },
-        ) = self.ctx.read_expr_pair(x, y)
-        {
+        loop {
+            let (binder_name, binder_style, t1, body1, t2, body2) =
+                match self.ctx.read_expr_pair(x, y) {
+                    (
+                        Pi { binder_name, binder_style, binder_type: t1, body: body1, .. },
+                        Pi { binder_type: t2, body: body2, .. },
+                    ) => (binder_name, binder_style, t1, body1, t2, body2),
+                    (
+                        Lambda { binder_name, binder_style, binder_type: t1, body: body1, .. },
+                        Lambda { binder_type: t2, body: body2, .. },
+                    ) => (binder_name, binder_style, t1, body1, t2, body2),
+                    _ => break,
+                };
             let t1 = self.ctx.inst(t1, locals.as_slice());
             let t2 = self.ctx.inst(t2, locals.as_slice());
             if self.def_eq(t1, t2) {
