@@ -694,6 +694,13 @@ That last group is the only part of the cycle's remaining blockers that costs a
 kernel change: **five guards.** The other seven are contract work that leaves
 the bodies alone.
 
+**Done 2026-09-21.** All five guards applied and registered, and the closure
+with them — it was probed first and Verus rejects it outright ("does not
+currently support closures capturing a mutable reference"), so it is a language
+limitation rather than a missing spec. What remains of the cycle is entirely
+contract work: seven preconditions, one loop invariant, and `tc_wf` through 46
+signatures.
+
 ### Revised cost
 
 Not "43 contracts from scratch", and no longer "convert 44 blockers". It is:

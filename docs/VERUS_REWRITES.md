@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **28 rewrites across 24 functions.**
+Current: **32 rewrites across 28 functions.**
 
 ---
 
@@ -84,6 +84,24 @@ rust_to_vir_expr.rs:  PatKind::Slice(..) => unsupported_err!(pat.span, "slice pa
 Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 #2959 — is a different feature and does not help here.)
 
+### Closures capturing `&mut self` — 3 rewrites
+
+| function | file |
+|---|---|
+| `subst_levels` | `src/level.rs` |
+| `eq_antisymm_many` | `src/level.rs` |
+| `str_lit_to_ctor_reducing` | `src/tc.rs` |
+
+Rejected outright, and the message is explicit:
+
+```
+Verus does not currently support closures capturing a mutable reference
+(mutably captured variable `self`)
+```
+
+Each is spelled as the `match`/index walk the adapter desugars to. This is the
+one blocker left in the 46-function `def_eq` cycle that is not an `.unwrap()`.
+
 ### An exit proof inside a `while let` — 1 rewrite
 
 `unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`.
@@ -123,6 +141,9 @@ still a rejection — but each is an improvement.
 | function | file | was |
 |---|---|---|
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so) |
+| `def_eq_binder_aux` | `src/tc.rs` | `u16::try_from(locals.len()).unwrap()` twice — more than 65535 open binders panics |
+| `infer` | `src/tc.rs` | `nat_type()`/`string_type()` `.unwrap()` — the guard above them tests the CONFIG FLAG, not whether the name is cached, so these could genuinely fire |
+| `reduce_rec` | `src/tc.rs` | `checked_sub(..).unwrap()` — underflows when a constructor supplies fewer arguments than its telescope claims |
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |
 | `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop`, wrapping `u64` silently |

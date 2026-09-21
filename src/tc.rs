@@ -582,8 +582,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         None
     }
 
+    /// VERUS-REWRITE(closure-captures-mut-self): the original is
+    /// `self.ctx.str_lit_to_constructor(x).map(|x| self.whnf(x))`. Verus
+    /// rejects closures that capture a mutable reference outright -- "Verus
+    /// does not currently support closures capturing a mutable reference" --
+    /// and the closure captures `self`. Spelled as the `match` `Option::map`
+    /// is; same call, same order.
     fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> Option<ExprPtr<'t>> {
-        self.ctx.str_lit_to_constructor(x).map(|x| self.whnf(x))
+        match self.ctx.str_lit_to_constructor(x) {
+            Some(c) => Some(self.whnf(c)),
+            None => None,
+        }
     }
 
     fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool> {
@@ -786,12 +795,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             NatLit { .. } => {
                 crate::util::kernel_check(self.ctx.export_file.config.nat_extension,
                     "infer: nat literal without the nat extension enabled");
-                self.ctx.nat_type().unwrap()
+                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. The
+                // `kernel_check` above tests the CONFIG FLAG; this tests
+                // whether the name is actually cached, which is a different
+                // condition, so the unwrap could genuinely fire. `infer`
+                // returns an `ExprPtr` with nothing to decline to.
+                match self.ctx.nat_type() {
+                    Some(t) => t,
+                    None => crate::util::kernel_fail("infer: Nat is not in the environment"),
+                }
             }
             StringLit { .. } => {
                 crate::util::kernel_check(self.ctx.export_file.config.string_extension,
                     "infer: string literal without the string extension enabled");
-                self.ctx.string_type().unwrap()
+                // VERUS-REWRITE(unchecked-unwrap): as the `NatLit` arm above.
+                match self.ctx.string_type() {
+                    Some(t) => t,
+                    None => crate::util::kernel_fail("infer: String is not in the environment"),
+                }
             }
         };
         match flag {
@@ -1153,7 +1174,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 x = body1;
                 y = body2;
             } else {
-                self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
+                // VERUS-REWRITE(unchecked-unwrap): was
+                // `u16::try_from(locals.len()).unwrap()`. More than 65535 open
+                // binders would panic; declining is what the `Option` return
+                // already provides for.
+                let opened = match u16::try_from(locals.len()) {
+                    Ok(n) => n,
+                    Err(_) => return None,
+                };
+                self.ctx.dbj_level_counter -= opened;
                 return Some(false)
             }
         }
@@ -1161,7 +1190,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let x = self.ctx.inst(x, locals.as_slice());
         let y = self.ctx.inst(y, locals.as_slice());
         let r = self.def_eq(x, y);
-        self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
+        // VERUS-REWRITE(unchecked-unwrap): same narrowing as above, on the
+        // normal exit path.
+        let opened = match u16::try_from(locals.len()) {
+            Ok(n) => n,
+            Err(_) => return None,
+        };
+        self.ctx.dbj_level_counter -= opened;
         Some(r)
     }
 
@@ -1491,7 +1526,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // equal to the number of parameters in the recursor when we have
         // nested inductive types.
         let num_extra_params_to_major =
-            major_ctor_args.len().checked_sub(rec_rule.ctor_telescope_size_wo_params as usize).unwrap();
+            // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()` on the
+            // `checked_sub`, which underflows when a constructor supplies
+            // fewer arguments than its telescope claims. `?` declines instead.
+            major_ctor_args.len().checked_sub(rec_rule.ctor_telescope_size_wo_params as usize)?;
         let major_ctor_args_wo_params = major_ctor_args.into_iter().skip(num_extra_params_to_major).collect::<Vec<_>>();
         let r = self.ctx.subst_expr_levels(rec_rule.val, info.uparams, const_levels);
         let r = self.ctx.foldl_apps(r, args.iter().copied().take((num_params + num_motives + num_minors) as usize));
