@@ -66,14 +66,48 @@ method through `Arc`'s `Deref` — and vstd's `smart_ptrs.rs` specifies only
 So `ls.iter()`'s `remaining()` is never tied to `ls@`, and the chain is broken
 at its first step rather than its last.
 
-That is a precise, standalone upstream item: a `Deref` specification for
-`Arc<T>` (and the unsized `Arc<[T]>` case), which is small, general, and
-unblocks any kernel code reaching through an `Arc`. `read_levels`,
-`read_name`, `read_expr` and the constructor lists all return `Arc`s, so this
-is not a one-site fix.
+### Done: the `Arc` `Deref` specification
 
-Until it exists, the index loops stay. They are correct and verified; they are
-just larger than the kernel's original lines.
+Written and landed on the fork (`487753530`), two changes to vstd:
+
+- `View`/`DeepView for Arc<A>` gain `?Sized`, matching `Box<A>` directly above
+  them — without it the impls cover only sized contents and an `Arc<[T]>` has
+  no `@` at all. (`Rc` has the identical gap; left alone to keep the change to
+  one type.)
+- A `Deref` specification. Its bounds must match std's
+  `impl<T: ?Sized, A: Allocator> Deref for Arc<T, A>` **exactly**, so no `View`
+  bound can be added and the result cannot be described with `@` directly.
+  Stated the way `ManuallyDrop`'s deref already is: an uninterpreted
+  `arc_contents` for determinism, plus a broadcast axiom relating it to the
+  view for types that have one.
+
+vstd verifies 2059 / 0; nanoda 739 / 0 against it.
+
+### It closed the first blocker but not the last
+
+Retried the `all_uparams_defined` revert with the spec in place. The bridging
+assertions that used to fail now **pass** — the iterator's sequence really is
+`ls@`:
+
+```ignore
+assert(IteratorSpec::remaining(&it0).len() == ls@.len());
+assert forall |k: int| 0 <= k < ls@.len() implies
+    IteratorSpec::remaining(&it0)[k] == ls@[k] by {}
+```
+
+so `Arc` → slice → `iter` → `copied` is now a connected chain, which it was
+not before. What remains is one link, and it is a different problem: getting
+from `any`'s postcondition — which names the index it stopped at as
+`old.remaining().len() - final.remaining().len() - 1` and asserts
+`f.ensures((remaining[idx],), true)` — to `ls@[idx] == level`. That needs the
+CLOSURE's own postcondition (`|x| x == level`) to reach the use site, and
+inferring it there did not work across six attempts.
+
+So the honest state: the `Arc` gap was real and is fixed, and it was necessary
+but not sufficient. The next thing to try for these four rewrites is an
+explicitly annotated closure rather than an inferred one. The index loops stay
+meanwhile — correct and verified, just larger than the kernel's original
+lines.
 
 ## Closed: `Option::eq`
 
