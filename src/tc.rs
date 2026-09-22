@@ -1797,8 +1797,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let major_ty = self.infer_then_whnf(major, InferOnly);
         let f = self.ctx.unfold_apps_fun(major_ty);
+        // VERUS-REWRITE(guarded-arm): the guard moves into the arm body; a
+        // guarded arm whose body calls `&mut self` makes the frame
+        // postcondition unprovable. Same condition, same order -- the guard's
+        // false case was the arm below it.
         match (self.ctx.read_expr(f), self.ctx.get_major_induct(rec)) {
-            (Const { name, .. }, Some(n)) if name == n => {
+            (Const { name, .. }, Some(n)) => {
+                if name != n {
+                    return None
+                }
                 let new_ctor_app = self.mk_nullary_ctor(major_ty, rec.num_params as usize)?;
                 // This sometimes has free variables.
                 let new_type = self.infer(new_ctor_app, InferOnly);
@@ -1823,10 +1830,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         } else {
             let e_type = self.infer_then_whnf(e, InferOnly);
             let e_type_f = self.ctx.unfold_apps_fun(e_type);
+            // VERUS-REWRITE(guarded-arm): as above.
             match self.ctx.read_expr(e_type_f) {
-                Const { name, .. } if name == ind_name => {
-                    // If it's a prop, return the original `e`
-                    if self.may_be_prop(e_type).0 {
+                Const { name, .. } => {
+                    if name != ind_name {
+                        e
+                    } else if self.may_be_prop(e_type).0 {
+                        // If it's a prop, return the original `e`
                         e
                     } else {
                         // if it's not a prop, try to eta expand
@@ -1904,8 +1914,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
         {
             let (qmk_const, qmk_args) = self.ctx.unfold_apps(qmk);
+            // VERUS-REWRITE(guarded-arm): as above. The `?` keeps its meaning --
+            // a missing `quot_mk` still declines from this function.
             match self.ctx.read_expr(qmk_const) {
-                Const { name, .. } if name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3 => (),
+                Const { name, .. } => {
+                    if !(name == self.ctx.export_file.name_cache.quot_mk?
+                        && qmk_args.len() == 3) {
+                        return None
+                    }
+                }
                 _ => return None,
             };
         }
