@@ -753,6 +753,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
 verus! {
+broadcast use crate::expr_arena_bridge::axiom_arena_depth_bounded;
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -1001,7 +1003,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_proj(&mut self, _ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(structure)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let structure_ty = self.infer_then_whnf(structure, flag);
@@ -1115,7 +1116,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
@@ -1123,6 +1123,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         fun = self.infer(fun, flag);
         while !args.is_empty()
             invariant tc_wf(*self),
+                ctx@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun)) < 60000,
         {
             match self.ctx.read_expr(fun) {
                 Pi { binder_type, body, .. } => {
@@ -1141,6 +1142,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.ctx.eager_mode = outer_scope_eager_setting;
                     }
                     ctx.push(arg);
+                    proof {
+                        assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body))
+                            < crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun)));
+                    }
                     fun = body;
                 }
                 _ => {
@@ -1163,13 +1168,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
         while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
         {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             if let Check = flag {
@@ -1178,6 +1183,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
             locals.push(local);
+            proof {
+                // `read_expr` gave `to_model(e) == Bind(_, to_model(body))`, and
+                // `depth` of a `Bind` is one more than its widest child -- so the
+                // push is paid for by the binder this iteration peeled off.
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body))
+                    < crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)));
+            }
             e = body;
         }
 
@@ -1202,7 +1214,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut universes = Vec::new();
@@ -1210,11 +1221,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let c0 = self.ctx.dbj_level_counter;
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
         {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             let dom_univ = self.infer_sort_of(binder_type, flag);
             universes.push(dom_univ);
             locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
+            proof {
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)));
+            }
             e = body;
         }
         let instd = self.ctx.inst(e, locals.as_slice());
@@ -1255,7 +1270,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
@@ -1404,12 +1418,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut locals = Vec::new();
         loop
             invariant tc_wf(*self),
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) < 60000,
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)) < 60000,
+            // A bare `loop` carries no exit reason: without these the `break`
+            // arrives with nothing known, and the two `inst` calls below it
+            // have no bound to discharge.
+            ensures tc_wf(*self),
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) < 60000,
+                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)) < 60000,
         {
             let (binder_name, binder_style, t1, body1, t2, body2) =
                 match self.ctx.read_expr_pair(x, y) {
@@ -1427,6 +1448,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let t2 = self.ctx.inst(t2, locals.as_slice());
             if self.def_eq(t1, t2) {
                 locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, t1));
+                proof {
+                    assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body1)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)));
+                    assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body2)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)));
+                }
                 x = body1;
                 y = body2;
             } else {

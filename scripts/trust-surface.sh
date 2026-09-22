@@ -43,7 +43,7 @@ for f in files:
                 if re.search(r';\s*$', c[j]): break
             if claims: spec_claim += 1
             else:      spec_free  += 1
-        if re.match(r'\s*(pub )?proof fn', L) and i > 0 and 'external_body' in c[i-1]:
+        if re.match(r'\s*(pub )?(broadcast )?proof fn', L) and i > 0 and 'external_body' in c[i-1]:
             proof_claim += 1
         # external_body EXEC fns. One with a contract is exactly as much of an
         # assumption as the other two forms -- `kernel_fail`'s `ensures false`
@@ -74,4 +74,21 @@ print(f"  CLAIMING    {claiming:3}   (assume_specification with ensures={spec_cl
 print(f"  claim-free  {free:3}   (callable, promises nothing: "
       f"assume_specification={spec_free}, external_body exec fn={exec_free})")
 print(f"  TOTAL       {claiming + free:3}")
+
+# `admit()` and `assume()` are claims too, and neither is an
+# `assume_specification` nor an `external_body` fn -- so every category above
+# steps straight past them. This script once reported a clean 90/49 for a tree
+# whose newest axiom was a bare `admit()` in a `broadcast proof fn`, counted
+# nowhere. Report them separately rather than folding them in: they are a
+# different kind of claim (an unproved step *inside* a proof, not a contract on
+# a boundary), and the right number for them is zero.
+loose = []
+for f in files:
+    if not f.endswith('.rs'): continue
+    for i, line in enumerate(read(f)):
+        if re.search(r'\b(admit|assume)\s*\(', line) and not line.strip().startswith('//'):
+            loose.append(f"{f}:{i+1}: {line.strip()}")
+if loose:
+    print(f"  UNCOUNTED   {len(loose):3}   (admit()/assume() -- claims in no category above)")
+    for l in loose: print(f"                  {l}")
 PY
