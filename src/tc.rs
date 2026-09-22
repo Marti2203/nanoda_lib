@@ -1001,6 +1001,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_proj(&mut self, _ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(structure)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let structure_ty = self.infer_then_whnf(structure, flag);
@@ -1114,6 +1115,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
@@ -1161,6 +1163,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut locals = Vec::new();
@@ -1199,6 +1202,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut universes = Vec::new();
@@ -1233,7 +1237,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         val: ExprPtr<'t>,
         body: ExprPtr<'t>,
         flag: InferFlag,
-    ) -> ExprPtr<'t> {
+    ) -> ExprPtr<'t>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if flag == Check {
             // The binder type has to be a type
             self.infer_sort_of(binder_type, flag);
@@ -1248,6 +1255,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
@@ -1396,6 +1404,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) <= 60000,
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut locals = Vec::new();
@@ -1635,7 +1644,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         &mut self,
         major: ExprPtr<'t>,
         rec: &RecursorData<'t>,
-    ) -> Option<ExprPtr<'t>> {
+    ) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if !rec.is_k {
             return None
         }
@@ -1687,7 +1699,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         const_name: NamePtr<'t>,
         const_levels: LevelsPtr<'t>,
         args: &[ExprPtr<'t>],
-    ) -> Option<ExprPtr<'t>> {
+    ) -> Option<ExprPtr<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         let rec @ RecursorData { info, rec_rules, num_params, num_motives, num_minors, .. } =
             self.env.get_recursor(&const_name)?;
         let major = args.get(rec.major_idx()).copied()?;
@@ -1791,7 +1806,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         y: ExprPtr<'t>,
         y_defname: NamePtr<'t>,
         y_hint: ReducibilityHint,
-    ) -> Option<DeltaResult<'t>> {
+    ) -> Option<DeltaResult<'t>>
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+    {
         if x_defname != y_defname {
             return None
         }
