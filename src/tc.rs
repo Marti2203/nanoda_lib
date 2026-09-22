@@ -1148,13 +1148,35 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             all_ctor_names.len() > 0,
             "infer_proj: the structure has no constructor",
         );
-        let ConstructorData { info: ctor_info, .. } = match self.env.get_constructor(
-            &all_ctor_names[0],
-        ) {
-            Some(d) => d,
+        // Unchanged: a name that is not a CONSTRUCTOR is still rejected here.
+        match self.env.get_constructor(&all_ctor_names[0]) {
+            Some(_) => {},
             None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
         };
-        let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
+        // VERUS-REWRITE(accessor-swap): the same `DeclarInfo`, reached through
+        // the accessor that carries the environment's claim about it -- every
+        // uparam is a `Param`, and the stored type is closed in both the loose
+        // de Bruijn and the free-variable senses. `Env::get_constructor` is
+        // literally `get_declar` filtered to `Declar::Constructor`, so this is
+        // the same `info`; the filter stays above so the rejection is unchanged.
+        let (ctor_uparams, ctor_ty0) = match crate::env_model::get_declar_info_ty(
+            self.env,
+            &all_ctor_names[0],
+        ) {
+            Some(t) => t,
+            None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
+        };
+        // VERUS-REWRITE(hoisted-arity-check): the kernel panics on an arity
+        // mismatch INSIDE `subst_expr_levels`; hoisting the same check here
+        // re-establishes it one frame earlier, exactly as `infer_const` does.
+        if self.ctx.read_levels(ctor_uparams).len() != self.ctx.read_levels(
+            struct_ty_levels,
+        ).len() {
+            return crate::util::kernel_fail(
+                "infer_proj: the constructor's universe arity does not match the structure's",
+            );
+        }
+        let mut ctor_ty = self.ctx.subst_expr_levels(ctor_ty0, ctor_uparams, struct_ty_levels);
         // VERUS-REWRITE(unchecked-index): `struct_ty_args[i]` below walks to
         // `num_params`, which nothing relates to the number of arguments the
         // structure's type was actually applied to. The original panics on the
@@ -1166,6 +1188,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         for i in 0..(*num_params)
             invariant
                 tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 (*self).env == old(self).env,
                 (*num_params as usize) <= struct_ty_args.len(),
         {
@@ -1180,6 +1203,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         for i in 0..idx
             invariant
                 tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 (*self).env == old(self).env,
         {
             ctor_ty = self.whnf(ctor_ty);
@@ -1510,6 +1534,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         loop
             invariant
                 tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 (*self).env == old(self).env,
         {
             let whnfd = self.whnf_no_unfolding(cursor);
@@ -1592,6 +1617,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 loop
                     invariant
                         tc_wf(*self),
+                        self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                         (*self).env == old(self).env,
                         n_args <= args.len(),
                         n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
