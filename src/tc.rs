@@ -959,44 +959,44 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Const { name, .. } => {
                 if args.len() == 1
                     && Some(name) == self.ctx.export_file.name_cache.nat_succ {
-                let arg = args[0];
-                let v_expr = self.whnf(arg);
-                self.ctx.get_bignum_succ_from_expr(v_expr)
+                    let arg = args[0];
+                    let v_expr = self.whnf(arg);
+                    self.ctx.get_bignum_succ_from_expr(v_expr)
                 } else if args.len() == 2 {
-                let arg1 = args[0];
-                let arg2 = args[1];
-                let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
-                    NatBinOp::Add
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
-                    NatBinOp::Sub
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
-                    NatBinOp::Mul
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
-                    NatBinOp::Pow
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
-                    NatBinOp::Mod
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
-                    NatBinOp::Div
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
-                    NatBinOp::Beq
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
-                    NatBinOp::Ble
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
-                    NatBinOp::LAnd
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
-                    NatBinOp::LOr
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
-                    NatBinOp::XOr
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
-                    NatBinOp::Gcd
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
-                    NatBinOp::Shl
-                } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
-                    NatBinOp::Shr
-                } else {
-                    return None
-                };
-                self.do_nat_bin(arg1, arg2, op)
+                    let arg1 = args[0];
+                    let arg2 = args[1];
+                    let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
+                        NatBinOp::Add
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
+                        NatBinOp::Sub
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
+                        NatBinOp::Mul
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
+                        NatBinOp::Pow
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
+                        NatBinOp::Mod
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
+                        NatBinOp::Div
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
+                        NatBinOp::Beq
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
+                        NatBinOp::Ble
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
+                        NatBinOp::LAnd
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
+                        NatBinOp::LOr
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
+                        NatBinOp::XOr
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
+                        NatBinOp::Gcd
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
+                        NatBinOp::Shl
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
+                        NatBinOp::Shr
+                    } else {
+                        return None
+                    };
+                    self.do_nat_bin(arg1, arg2, op)
                 } else {
                     None
                 }
@@ -1478,7 +1478,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         _ => break,
                     }
                 }
-                e = self.ctx.inst(e, &args[..n_args]);
+                // The full `[0..n]` form rather than `[..n]`: verusfmt cannot
+                // parse the RangeTo shorthand.
+                e = self.ctx.inst(e, &args[0..n_args]);
                 e = self.ctx.foldl_apps(e, args.into_iter().skip(n_args));
                 (true, self.whnf_no_unfolding_aux(e, cheap_proj))
             }
