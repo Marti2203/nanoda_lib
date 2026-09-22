@@ -5,7 +5,8 @@ use std::hash::Hash;
 #[derive(Debug)]
 pub(crate) struct UnionFind<A>
 where
-    A: PartialEq + Eq + Hash, {
+    A: PartialEq + Eq + Hash,
+{
     node_map: FxIndexMap<A, UFNode>,
 }
 
@@ -20,9 +21,13 @@ impl<A> UnionFind<A>
 where
     A: PartialEq + Eq + Hash,
 {
-    pub(crate) fn new() -> Self { UnionFind { node_map: new_fx_index_map() } }
+    pub(crate) fn new() -> Self {
+        UnionFind { node_map: new_fx_index_map() }
+    }
 
-    pub(crate) fn clear(&mut self) { self.node_map.clear() }
+    pub(crate) fn clear(&mut self) {
+        self.node_map.clear()
+    }
 
     /// If `e` is in the UF data structure already, return
     /// the index it's located at.

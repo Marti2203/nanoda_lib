@@ -1,6 +1,5 @@
 //! Construction of quotient types
-
-use crate::env::{ConstructorData, Declar, DeclarInfo, InductiveData, EnvLimit};
+use crate::env::{ConstructorData, Declar, DeclarInfo, EnvLimit, InductiveData};
 use crate::expr::{BinderStyle, BinderStyle::*};
 use crate::tc::TypeChecker;
 use crate::util::TcCtx;
@@ -91,10 +90,16 @@ pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<
             // def_eq shadow. Never affects a verdict.
             if crate::tc::route_stats::shadow_enabled() {
                 let anon = ctx.anonymous();
-                let u = match ctx.read_levels(info.uparams).as_ref() { &[u] => u, _ => unreachable!() };
-                let certified = crate::quot_model::verified_check_eq_type_shape(ctx, u, alpha_name, anon, Implicit, Default);
+                let u = match ctx.read_levels(info.uparams).as_ref() {
+                    &[u] => u,
+                    _ => unreachable!(),
+                };
+                let certified =
+                    crate::quot_model::verified_check_eq_type_shape(ctx, u, alpha_name, anon, Implicit, Default);
                 crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_TOTAL);
-                if certified == expected { crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT); }
+                if certified == expected {
+                    crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT);
+                }
             }
             let mut tc = TypeChecker::new(ctx, &env, Some(info));
             tc.assert_def_eq(info.ty, expected);
@@ -216,9 +221,13 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     if declar.info().name == ctx.str1("Quot") {
         if crate::tc::route_stats::shadow_enabled() {
             let anon = ctx.anonymous();
-            let certified = crate::quot_model::verified_check_quot_type_shape(ctx, u_level, A_name, r_name, anon, Implicit, Default, Default);
+            let certified = crate::quot_model::verified_check_quot_type_shape(
+                ctx, u_level, A_name, r_name, anon, Implicit, Default, Default,
+            );
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_TOTAL);
-            if certified == expected_quot.info().ty { crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT); }
+            if certified == expected_quot.info().ty {
+                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_QUOT_CERT);
+            }
         }
         let env = ctx.export_file.new_env(EnvLimit::ByName(quot_name));
         let mut tc = TypeChecker::new(ctx, &env, Some(*declar.info()));
@@ -253,7 +262,7 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
         let env = ctx.export_file.new_env(EnvLimit::ByName(declar.info().name));
         let mut tc = TypeChecker::new(ctx, &env, Some(*declar.info()));
         tc.assert_def_eq(declar.info().ty, expected_quot_lift.info().ty);
-        return
+        return;
     } else if declar.info().name == ctx.str2("Quot", "ind") {
         // {B : @Quot A r → Prop}
         let quot_A_r_prop = arrow!(in ctx; quot_A_r, prop);
@@ -284,7 +293,7 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
         let env = ctx.export_file.new_env(EnvLimit::ByName(declar.info().name));
         let mut tc = TypeChecker::new(ctx, &env, Some(*declar.info()));
         tc.assert_def_eq(declar.info().ty, expected_quot_ind.info().ty);
-        return
+        return;
     } else {
         panic!("invalid quotient declaration {:?}", ctx.debug_print(declar.info().name))
     }

@@ -1,7 +1,7 @@
 use crate::util::{ExprPtr, FxHashMap, FxIndexMap, LevelsPtr, NamePtr};
-use std::sync::Arc;
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Reducibility hints accompany definitions; used to determine how
 /// to unfold expressions in order to most efficiently proceed.
@@ -16,6 +16,7 @@ pub enum ReducibilityHint {
 }
 
 ::vstd::prelude::verus! {
+
 impl ReducibilityHint {
     /// Check whether `self` is "less than" `other` in terms of reducibility; during
     /// delta reduction in equality checking, we want to unfold the greater of the two
@@ -25,8 +26,11 @@ impl ReducibilityHint {
     /// the real five-arm match is checked against the model's own five-arm
     /// `is_lt` rather than related to it by assumption.
     pub(crate) fn is_lt(&self, other: &Self) -> (result: bool)
-        ensures result == crate::env_model::is_lt(
-            crate::env_model::to_model(*self), crate::env_model::to_model(*other))
+        ensures
+            result == crate::env_model::is_lt(
+                crate::env_model::to_model(*self),
+                crate::env_model::to_model(*other),
+            ),
     {
         use ReducibilityHint::*;
         match (self, other) {
@@ -38,8 +42,8 @@ impl ReducibilityHint {
         }
     }
 }
-}
 
+} // verus!
 /// Convenience declaration for the elements common across all kinds
 /// of declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,16 +100,20 @@ pub struct InductiveData<'a> {
 
 impl<'a> InductiveData<'a> {
     pub fn aux_data_ck(&self, temp: &Self) -> bool {
-        self.info.name == temp.info.name &&
-        self.num_params == temp.num_params &&
-        self.num_indices == temp.num_indices &&
-        self.is_nested == temp.is_nested &&
-        (self.all_ctor_names.iter().collect::<HashSet<_>>() == temp.all_ctor_names.iter().collect::<HashSet<_>>()) &&
-        if temp.is_nested {
-            self.all_ind_names.iter().collect::<HashSet<_>>().is_subset(&temp.all_ind_names.iter().collect::<HashSet<_>>())
-        } else {
-            self.all_ind_names.iter().collect::<HashSet<_>>() == temp.all_ind_names.iter().collect::<HashSet<_>>()
-        }
+        self.info.name == temp.info.name
+            && self.num_params == temp.num_params
+            && self.num_indices == temp.num_indices
+            && self.is_nested == temp.is_nested
+            && (self.all_ctor_names.iter().collect::<HashSet<_>>()
+                == temp.all_ctor_names.iter().collect::<HashSet<_>>())
+            && if temp.is_nested {
+                self.all_ind_names
+                    .iter()
+                    .collect::<HashSet<_>>()
+                    .is_subset(&temp.all_ind_names.iter().collect::<HashSet<_>>())
+            } else {
+                self.all_ind_names.iter().collect::<HashSet<_>>() == temp.all_ind_names.iter().collect::<HashSet<_>>()
+            }
     }
 }
 /// `inductive_name` is the name of the type this constructs. e.g. `Prod` for `Prod.mk`
@@ -135,11 +143,11 @@ pub struct ConstructorData<'a> {
 
 impl<'a> ConstructorData<'a> {
     pub fn aux_data_ck(&self, other: &Self) -> bool {
-        self.info.name == other.info.name &&
-        self.inductive_name == other.inductive_name &&
-        self.ctor_idx == other.ctor_idx &&
-        self.num_params == other.num_params &&
-        self.num_fields == other.num_fields
+        self.info.name == other.info.name
+            && self.inductive_name == other.inductive_name
+            && self.ctor_idx == other.ctor_idx
+            && self.num_params == other.num_params
+            && self.num_fields == other.num_fields
     }
 }
 
@@ -157,19 +165,20 @@ pub struct RecursorData<'a> {
 }
 
 impl<'a> RecursorData<'a> {
-    /// Compute the index in the recursor's type (in the telescope) where the major premise is located. 
+    /// Compute the index in the recursor's type (in the telescope) where the major premise is located.
     pub fn major_idx(&self) -> usize {
         (self.num_params + self.num_motives + self.num_minors + self.num_indices) as usize
     }
-    
+
     pub fn aux_data_ck(&self, other: &Self) -> bool {
-        self.num_params == other.num_params &&
-        self.num_indices == other.num_indices &&
-        self.num_motives == other.num_motives &&
-        self.num_minors == other.num_minors &&
-        self.is_k == other.is_k &&
-        self.info.name == other.info.name &&
-        (self.all_inductives.iter().collect::<HashSet<_>>() == other.all_inductives.iter().collect::<HashSet<_>>())
+        self.num_params == other.num_params
+            && self.num_indices == other.num_indices
+            && self.num_motives == other.num_motives
+            && self.num_minors == other.num_minors
+            && self.is_k == other.is_k
+            && self.info.name == other.info.name
+            && (self.all_inductives.iter().collect::<HashSet<_>>()
+                == other.all_inductives.iter().collect::<HashSet<_>>())
     }
 }
 
@@ -215,7 +224,7 @@ pub enum EnvLimit<'a> {
     Empty,
     ByIndex(usize),
     ByName(NamePtr<'a>),
-    PpUnlimited
+    PpUnlimited,
 }
 
 /// A Lean environment, which consists of a set of declarations that my have a temporary
@@ -251,7 +260,7 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         declars: &'a DeclarMap<'a>,
         temp_declars: Option<&'x DeclarMap<'a>>,
         notation: &'a NotationMap<'a>,
-        limit: EnvLimit<'a>
+        limit: EnvLimit<'a>,
     ) -> Self {
         let cutoff = match limit {
             EnvLimit::Empty => 0,
@@ -295,7 +304,7 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
 
     /// Get a declaration, bypassing the temporary extension, only searching in
     /// the persistent set of declarations.
-    pub fn get_old_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> { 
+    pub fn get_old_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> {
         let (idx, _, v) = self.declars.get_full(n)?;
         if idx < self.cutoff {
             Some(v)
@@ -331,18 +340,21 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// constructor, and (3) the type is declared with no indices.
     pub(crate) fn can_be_struct(&self, n: &NamePtr<'a>) -> bool {
         match self.get_inductive(n) {
-            Some(InductiveData { is_recursive, num_indices, all_ctor_names, .. }) =>
-                (!is_recursive) && (all_ctor_names.len() == 1) && (*num_indices == 0),
+            Some(InductiveData { is_recursive, num_indices, all_ctor_names, .. }) => {
+                (!is_recursive) && (all_ctor_names.len() == 1) && (*num_indices == 0)
+            }
             _ => false,
         }
     }
 
     pub fn get_structure(&self, n: &NamePtr<'a>, rec_ok: bool) -> Option<&InductiveData<'a>> {
         match self.get_inductive(n) {
-            Some(i @ InductiveData { is_recursive, num_indices, all_ctor_names, .. }) 
-                if (all_ctor_names.len() == 1) && (*num_indices == 0) && (rec_ok || !is_recursive)=> Some(i),
+            Some(i @ InductiveData { is_recursive, num_indices, all_ctor_names, .. })
+                if (all_ctor_names.len() == 1) && (*num_indices == 0) && (rec_ok || !is_recursive) =>
+            {
+                Some(i)
+            }
             _ => None,
-
         }
     }
 

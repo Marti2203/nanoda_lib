@@ -28,13 +28,10 @@
 //! `BigUint`'s documented operator semantics (ordinary arbitrary-precision
 //! natural number arithmetic) via small wrapper accessors, and verifies
 //! only the *branching logic* `nat_sub`/`nat_div`/`nat_mod` add on top.
-
+use num_bigint::BigUint;
+use num_traits::identities::{One, Zero};
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use num_bigint::BigUint;
-use num_traits::identities::{Zero, One};
-
-
 
 /// `tc.rs::do_nat_bin`'s `Beq` case (`arg1 == arg2`).
 #[allow(dead_code)]
@@ -63,15 +60,6 @@ pub(crate) fn biguint_rem(x: BigUint, y: BigUint) -> BigUint {
     x % y
 }
 
-
-
-
-
-
-
-
-
-
 pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
     x + y
 }
@@ -95,8 +83,10 @@ pub struct ExBigUint(BigUint);
 /// wrapper accessors below.
 pub uninterp spec fn to_nat(x: BigUint) -> nat;
 
-pub assume_specification [<BigUint as num_traits::Zero>::zero] () -> (result: BigUint)
-    ensures to_nat(result) == 0;
+pub assume_specification[ <BigUint as num_traits::Zero>::zero ]() -> (result: BigUint)
+    ensures
+        to_nat(result) == 0,
+;
 
 /// These seven were `assume_specification`s, each a SECOND axiom over a value
 /// that already had one: the bodies are one-line delegations to
@@ -106,69 +96,93 @@ pub assume_specification [<BigUint as num_traits::Zero>::zero] () -> (result: Bi
 /// which prove that rather than leaving it assumed.
 #[allow(dead_code)]
 pub(crate) fn biguint_pow(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_pow(to_nat(x), to_nat(y))
+    ensures
+        to_nat(result) == crate::beta_model::nat_pow(to_nat(x), to_nat(y)),
 {
-    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let ghost a = to_nat(x);
+    let ghost b = to_nat(y);
     let r = num_traits::Pow::pow(x, y);
-    proof { crate::tc_model::nat_pow_agrees(a, b); }
+    proof {
+        crate::tc_model::nat_pow_agrees(a, b);
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_gcd(x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y))
+    ensures
+        to_nat(result) == crate::beta_model::nat_gcd(to_nat(*x), to_nat(*y)),
 {
     let r = crate::util::nat_gcd(x, y);
-    proof { crate::tc_model::nat_gcd_spec_agrees(to_nat(*x), to_nat(*y)); }
+    proof {
+        crate::tc_model::nat_gcd_spec_agrees(to_nat(*x), to_nat(*y));
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_land(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_land(to_nat(x), to_nat(y))
+    ensures
+        to_nat(result) == crate::beta_model::nat_land(to_nat(x), to_nat(y)),
 {
-    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let ghost a = to_nat(x);
+    let ghost b = to_nat(y);
     let r = crate::util::nat_land(x, y);
-    proof { crate::tc_model::nat_land_spec_agrees(a, b); }
+    proof {
+        crate::tc_model::nat_land_spec_agrees(a, b);
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_lor(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_lor(to_nat(x), to_nat(y))
+    ensures
+        to_nat(result) == crate::beta_model::nat_lor(to_nat(x), to_nat(y)),
 {
-    let ghost a = to_nat(x); let ghost b = to_nat(y);
+    let ghost a = to_nat(x);
+    let ghost b = to_nat(y);
     let r = crate::util::nat_lor(x, y);
-    proof { crate::tc_model::nat_lor_spec_agrees(a, b); }
+    proof {
+        crate::tc_model::nat_lor_spec_agrees(a, b);
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_xor(x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == crate::beta_model::nat_xor(to_nat(*x), to_nat(*y))
+    ensures
+        to_nat(result) == crate::beta_model::nat_xor(to_nat(*x), to_nat(*y)),
 {
     let r = crate::util::nat_xor(x, y);
-    proof { crate::tc_model::nat_xor_spec_agrees(to_nat(*x), to_nat(*y)); }
+    proof {
+        crate::tc_model::nat_xor_spec_agrees(to_nat(*x), to_nat(*y));
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_shl(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) * crate::beta_model::nat_pow(2, to_nat(y))
+    ensures
+        to_nat(result) == to_nat(x) * crate::beta_model::nat_pow(2, to_nat(y)),
 {
     let ghost b = to_nat(y);
     let r = crate::util::nat_shl(x, y);
-    proof { crate::tc_model::nat_pow_agrees(2, b); }
+    proof {
+        crate::tc_model::nat_pow_agrees(2, b);
+    }
     r
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_shr(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) / crate::beta_model::nat_pow(2, to_nat(y))
+    ensures
+        to_nat(result) == to_nat(x) / crate::beta_model::nat_pow(2, to_nat(y)),
 {
     let ghost b = to_nat(y);
     let r = crate::util::nat_shr(x, y);
-    proof { crate::tc_model::nat_pow_agrees(2, b); }
+    proof {
+        crate::tc_model::nat_pow_agrees(2, b);
+    }
     r
 }
 
@@ -178,7 +192,8 @@ pub(crate) fn biguint_shr(x: BigUint, y: BigUint) -> (result: BigUint)
 /// four bridges to `num_bigint` become one constant.
 #[allow(dead_code)]
 pub(crate) fn biguint_is_zero(x: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) == 0)
+    ensures
+        result == (to_nat(*x) == 0),
 {
     let z = <BigUint as Zero>::zero();
     biguint_eq(x, &z)
@@ -186,22 +201,26 @@ pub(crate) fn biguint_is_zero(x: &BigUint) -> (result: bool)
 
 #[allow(dead_code)]
 pub(crate) fn biguint_gt(x: &BigUint, y: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) > to_nat(*y))
+    ensures
+        result == (to_nat(*x) > to_nat(*y)),
 {
     !biguint_le(x, y)
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_succ(x: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) + 1
+    ensures
+        to_nat(result) == to_nat(x) + 1,
 {
     biguint_add(x, <BigUint as One>::one())
 }
 
 #[allow(dead_code)]
 pub(crate) fn biguint_pred(x: BigUint) -> (result: BigUint)
-    requires to_nat(x) > 0
-    ensures to_nat(result) == (to_nat(x) - 1) as nat
+    requires
+        to_nat(x) > 0,
+    ensures
+        to_nat(result) == (to_nat(x) - 1) as nat,
 {
     biguint_sub(x, <BigUint as One>::one())
 }
@@ -209,53 +228,68 @@ pub(crate) fn biguint_pred(x: BigUint) -> (result: BigUint)
 /// The other numeric constant. Added so that `succ` and `pred` can be BUILT
 /// from `add`/`sub` rather than each needing its own bridge: one constant
 /// replaces two operations.
-pub assume_specification [<BigUint as num_traits::One>::one] () -> (result: BigUint)
-    ensures to_nat(result) == 1;
+pub assume_specification[ <BigUint as num_traits::One>::one ]() -> (result: BigUint)
+    ensures
+        to_nat(result) == 1,
+;
 
-pub assume_specification [biguint_eq] (x: &BigUint, y: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) == to_nat(*y));
+pub assume_specification[ biguint_eq ](x: &BigUint, y: &BigUint) -> (result: bool)
+    ensures
+        result == (to_nat(*x) == to_nat(*y)),
+;
 
-pub assume_specification [biguint_le] (x: &BigUint, y: &BigUint) -> (result: bool)
-    ensures result == (to_nat(*x) <= to_nat(*y));
+pub assume_specification[ biguint_le ](x: &BigUint, y: &BigUint) -> (result: bool)
+    ensures
+        result == (to_nat(*x) <= to_nat(*y)),
+;
 
-pub assume_specification [biguint_sub] (x: BigUint, y: BigUint) -> (result: BigUint)
-    requires to_nat(y) <= to_nat(x)
-    ensures to_nat(result) == to_nat(x) - to_nat(y);
+pub assume_specification[ biguint_sub ](x: BigUint, y: BigUint) -> (result: BigUint)
+    requires
+        to_nat(y) <= to_nat(x),
+    ensures
+        to_nat(result) == to_nat(x) - to_nat(y),
+;
 
-pub assume_specification [biguint_div] (x: BigUint, y: BigUint) -> (result: BigUint)
-    requires to_nat(y) > 0
-    ensures to_nat(result) == to_nat(x) / to_nat(y);
+pub assume_specification[ biguint_div ](x: BigUint, y: BigUint) -> (result: BigUint)
+    requires
+        to_nat(y) > 0,
+    ensures
+        to_nat(result) == to_nat(x) / to_nat(y),
+;
 
-pub assume_specification [biguint_rem] (x: BigUint, y: BigUint) -> (result: BigUint)
-    requires to_nat(y) > 0
-    ensures to_nat(result) == to_nat(x) % to_nat(y);
-
-
+pub assume_specification[ biguint_rem ](x: BigUint, y: BigUint) -> (result: BigUint)
+    requires
+        to_nat(y) > 0,
+    ensures
+        to_nat(result) == to_nat(x) % to_nat(y),
+;
 
 /// `pow`/`gcd` bridges (rec-iota P3): the kernel's `arg1.pow(arg2)` and
 /// `util::nat_gcd`, axiomatized against the model's `nat_pow`/`nat_gcd`.
-
-
 /// Bitwise/shift bridges (2026-09-08): `num_bigint`'s `&`/`|`/`^` and the
 /// kernel's own `nat_shl`/`nat_shr` (`x * 2^y`, `x / 2^y`) against the
 /// model's binary-recursion specs -- the same disclosed trust as the
 /// arithmetic bridges above.
+pub assume_specification[ biguint_add ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) + to_nat(y),
+;
 
-
-
-
-
-pub assume_specification [biguint_add] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) + to_nat(y);
-
-pub assume_specification [biguint_mul] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) * to_nat(y);
+pub assume_specification[ biguint_mul ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) * to_nat(y),
+;
 
 /// Real-code counterpart to `util.rs::nat_sub`, built only from the
 /// axiomatized wrappers above, proving Lean's saturating-subtraction
 /// convention is implemented correctly.
 pub fn verified_nat_sub(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) > to_nat(x) { 0 } else { (to_nat(x) - to_nat(y)) as nat }
+    ensures
+        to_nat(result) == if to_nat(y) > to_nat(x) {
+            0
+        } else {
+            (to_nat(x) - to_nat(y)) as nat
+        },
 {
     if biguint_gt(&y, &x) {
         BigUint::zero()
@@ -267,7 +301,12 @@ pub fn verified_nat_sub(x: BigUint, y: BigUint) -> (result: BigUint)
 /// Real-code counterpart to `util.rs::nat_div`, proving Lean's
 /// division-by-zero-is-zero convention is implemented correctly.
 pub fn verified_nat_div(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) == 0 { 0 } else { (to_nat(x) / to_nat(y)) as nat }
+    ensures
+        to_nat(result) == if to_nat(y) == 0 {
+            0
+        } else {
+            (to_nat(x) / to_nat(y)) as nat
+        },
 {
     if biguint_is_zero(&y) {
         BigUint::zero()
@@ -279,7 +318,12 @@ pub fn verified_nat_div(x: BigUint, y: BigUint) -> (result: BigUint)
 /// Real-code counterpart to `util.rs::nat_mod`, proving Lean's
 /// mod-by-zero-is-the-dividend convention is implemented correctly.
 pub fn verified_nat_mod(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) == 0 { to_nat(x) } else { (to_nat(x) % to_nat(y)) as nat }
+    ensures
+        to_nat(result) == if to_nat(y) == 0 {
+            to_nat(x)
+        } else {
+            (to_nat(x) % to_nat(y)) as nat
+        },
 {
     if biguint_is_zero(&y) {
         x
@@ -291,21 +335,38 @@ pub fn verified_nat_mod(x: BigUint, y: BigUint) -> (result: BigUint)
 /// Trusted directly, same spirit as `env_model.rs::ReducibilityHint::is_lt`:
 /// `nat_sub`'s real body is `if y > x { zero() } else { x - y }`, a trivial
 /// composition of exactly the primitives already trusted above.
-pub assume_specification [crate::util::nat_sub] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) > to_nat(x) { 0 } else { (to_nat(x) - to_nat(y)) as nat };
+pub assume_specification[ crate::util::nat_sub ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == if to_nat(y) > to_nat(x) {
+            0
+        } else {
+            (to_nat(x) - to_nat(y)) as nat
+        },
+;
 
-pub assume_specification [crate::util::nat_div] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) == 0 { 0 } else { (to_nat(x) / to_nat(y)) as nat };
+pub assume_specification[ crate::util::nat_div ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == if to_nat(y) == 0 {
+            0
+        } else {
+            (to_nat(x) / to_nat(y)) as nat
+        },
+;
 
-pub assume_specification [crate::util::nat_mod] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == if to_nat(y) == 0 { to_nat(x) } else { (to_nat(x) % to_nat(y)) as nat };
+pub assume_specification[ crate::util::nat_mod ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == if to_nat(y) == 0 {
+            to_nat(x)
+        } else {
+            (to_nat(x) % to_nat(y)) as nat
+        },
+;
 
-}
-
+} // verus!
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::{nat_sub, nat_div, nat_mod};
+    use crate::util::{nat_div, nat_mod, nat_sub};
 
     #[test]
     fn sub_saturates_at_zero() {

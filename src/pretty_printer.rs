@@ -27,8 +27,12 @@ const LETTERLIKE_SYMBOL: std::ops::Range<char> = '℀'..'\u{214f}';
 const SUBSCRIPT0: std::ops::Range<char> = '₀'..'₉';
 const SUBSCRIPT1: std::ops::Range<char> = 'ₐ'..'ₜ';
 const SUBSCRIPT2: std::ops::Range<char> = 'ᵢ'..'ᵪ';
-const fn default_width() -> usize { 120 }
-const fn default_indent() -> usize { 2 }
+const fn default_width() -> usize {
+    120
+}
+const fn default_indent() -> usize {
+    2
+}
 const MAX_LEVEL: usize = 1024;
 
 fn is_letterlike_start(c: char) -> bool {
@@ -65,43 +69,69 @@ enum Doc {
 }
 
 impl std::convert::AsRef<Doc> for DocPtr {
-    fn as_ref(&self) -> &Doc { self.0.as_ref() }
+    fn as_ref(&self) -> &Doc {
+        self.0.as_ref()
+    }
 }
 
 impl From<Doc> for DocPtr {
-    fn from(d: Doc) -> DocPtr { DocPtr(Rc::new(d)) }
+    fn from(d: Doc) -> DocPtr {
+        DocPtr(Rc::new(d))
+    }
 }
 
 impl From<&str> for DocPtr {
-    fn from(s: &str) -> DocPtr { DocPtr(Rc::new(Doc::Text(Rc::from(s)))) }
+    fn from(s: &str) -> DocPtr {
+        DocPtr(Rc::new(Doc::Text(Rc::from(s))))
+    }
 }
 
 impl From<String> for DocPtr {
-    fn from(s: String) -> DocPtr { DocPtr(Rc::new(Doc::Text(Rc::from(s)))) }
+    fn from(s: String) -> DocPtr {
+        DocPtr(Rc::new(Doc::Text(Rc::from(s))))
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct DocPtr(Rc<Doc>);
 
-fn line() -> DocPtr { Line(" ").into() }
+fn line() -> DocPtr {
+    Line(" ").into()
+}
 
-fn zero_width_line() -> DocPtr { Line("").into() }
+fn zero_width_line() -> DocPtr {
+    Line("").into()
+}
 
 impl DocPtr {
     /// Create a `Parenable` that cannot be parenthesized
-    fn as_unparenable(&self) -> Parenable { self.as_parenable(MAX_LEVEL) }
+    fn as_unparenable(&self) -> Parenable {
+        self.as_parenable(MAX_LEVEL)
+    }
 
-    fn as_parenable(&self, inner_level: usize) -> Parenable { Parenable { doc: self.clone(), inner_level } }
+    fn as_parenable(&self, inner_level: usize) -> Parenable {
+        Parenable { doc: self.clone(), inner_level }
+    }
 
-    fn concat(&self, r: impl Into<Self>) -> Self { Doc::Concat(self.clone(), r.into()).into() }
+    fn concat(&self, r: impl Into<Self>) -> Self {
+        Doc::Concat(self.clone(), r.into()).into()
+    }
 
-    fn mk_nest(&self, idx: usize) -> Self { Nest(idx, self.clone()).into() }
+    fn mk_nest(&self, idx: usize) -> Self {
+        Nest(idx, self.clone()).into()
+    }
 
-    fn nest_group(&self, idx: usize) -> Self { self.group().mk_nest(idx) }
+    fn nest_group(&self, idx: usize) -> Self {
+        self.group().mk_nest(idx)
+    }
 
-    fn concat_line(&self, other: impl Into<Self>) -> Self { self.concat(line()).concat(other) }
+    fn concat_line(&self, other: impl Into<Self>) -> Self {
+        self.concat(line()).concat(other)
+    }
 
-    fn concat_w_space(self, rhs: impl Into<Self>) -> Self { self.concat(DocPtr::from(" ")).concat(rhs) }
+    fn concat_w_space(self, rhs: impl Into<Self>) -> Self {
+        self.concat(DocPtr::from(" ")).concat(rhs)
+    }
 
     fn contains_line(&self) -> bool {
         match self.as_ref() {
@@ -131,7 +161,9 @@ impl DocPtr {
         }
     }
 
-    fn group(&self) -> Self { Group(self.clone()).into() }
+    fn group(&self) -> Self {
+        Group(self.clone()).into()
+    }
 
     fn flat_size(&self) -> usize {
         match self.as_ref() {
@@ -180,6 +212,7 @@ impl DocPtr {
             // that everything left can fit on this line, then just push the alt text
             // to be used when there's no line break; for example a space instead of a
             // line break.
+            {
                 if flatmode {
                     acc.push_str(x.as_ref());
                 } else {
@@ -189,7 +222,8 @@ impl DocPtr {
                     for _ in 0..nest {
                         acc.push(' ');
                     }
-                },
+                }
+            }
             Group(a) => a.render_aux(
                 nest,
                 flatmode || acc.len() + a.flat_size() + dist_to_next_line <= *eol,
@@ -209,7 +243,9 @@ struct Parenable {
 }
 
 impl Parenable {
-    fn new(doc: DocPtr, inner_level: usize) -> Self { Self { doc, inner_level } }
+    fn new(doc: DocPtr, inner_level: usize) -> Self {
+        Self { doc, inner_level }
+    }
 
     /// Given a `Parenable` which has an inner priority value, and a new `outer_priority` value,
     /// if the `outer_priority` is greater than the inner priority, add parentheses around
@@ -270,7 +306,9 @@ pub struct PpOptions {
 }
 
 impl std::default::Default for PpOptions {
-    fn default() -> Self { Self::new_default() }
+    fn default() -> Self {
+        Self::new_default()
+    }
 }
 
 impl PpOptions {
@@ -316,7 +354,9 @@ struct ParsedBinder<'a> {
 }
 
 impl<'a> ParsedBinder<'a> {
-    fn is_named_pi(&self) -> bool { self.is_pi && !self.is_arrow() }
+    fn is_named_pi(&self) -> bool {
+        self.is_pi && !self.is_arrow()
+    }
 
     /// Whether a binder can be "factored out" by putting it to the left
     /// of the colon;
@@ -328,7 +368,7 @@ impl<'a> ParsedBinder<'a> {
     fn can_factor_out(&self) -> bool {
         self.is_pi
         && !self.is_anon
-        //&& !self.has_macro_scopes 
+        //&& !self.has_macro_scopes
         && matches!(self.binder_style, BinderStyle::Default)
     }
 
@@ -339,7 +379,9 @@ impl<'a> ParsedBinder<'a> {
             && (!self.occurs_in_body || self.is_anon || self.has_macro_scopes)
     }
 
-    fn is_lambda(&self) -> bool { !self.is_pi }
+    fn is_lambda(&self) -> bool {
+        !self.is_pi
+    }
 }
 
 use crate::util::PpDestination;
@@ -358,16 +400,18 @@ impl<'p> ExportFile<'p> {
                 }
                 if self.config.print_axioms {
                     for (declar_name, declar) in self.declars.iter() {
-                        if let Declar::Axiom {..} = declar {
+                        if let Declar::Axiom { .. } = declar {
                             let as_str = format!("{:?}", ctx.debug_print(*declar_name));
                             pp_declars.push((as_str, *declar_name));
                         }
                     }
-    
                 }
                 for (ss, pp_declar) in pp_declars {
                     if let Some(s) = ctx.with_pp(|pp| pp.pp_declar(pp_declar)) {
-                        if let Err(e) = pp_destination.write_line(s, self.config.pp_options.declar_sep.as_ref().map(|x| x.as_str()).unwrap_or("\n\n")) {
+                        if let Err(e) = pp_destination.write_line(
+                            s,
+                            self.config.pp_options.declar_sep.as_ref().map(|x| x.as_str()).unwrap_or("\n\n"),
+                        ) {
                             errs.push(e)
                         }
                     } else {
@@ -377,7 +421,6 @@ impl<'p> ExportFile<'p> {
                         )));
                     }
                 }
- 
             });
         } else {
             if self.config.print_axioms {
@@ -393,9 +436,13 @@ pub struct PrettyPrinter<'x, 't, 'p> {
 }
 
 impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
-    pub(crate) fn new(ctx: &'x mut TcCtx<'t, 'p>) -> Self { Self { ctx } }
+    pub(crate) fn new(ctx: &'x mut TcCtx<'t, 'p>) -> Self {
+        Self { ctx }
+    }
 
-    pub(crate) fn options(&self) -> &PpOptions { &self.ctx.export_file.config.pp_options }
+    pub(crate) fn options(&self) -> &PpOptions {
+        &self.ctx.export_file.config.pp_options
+    }
 
     /// Returns `true` if this string segment of a name can be displayed
     /// without needing to escape; if the characters are lexically correct,
@@ -405,7 +452,9 @@ impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
         (s.chars().take(1).all(is_letterlike_start) && s.chars().skip(1).all(is_letterlike_rest)) || s == "_@"
     }
 
-    fn should_be_escaped(&self, n: NamePtr<'t>) -> bool { n == self.ctx.anonymous() || self.should_be_escaped_aux(n) }
+    fn should_be_escaped(&self, n: NamePtr<'t>) -> bool {
+        n == self.ctx.anonymous() || self.should_be_escaped_aux(n)
+    }
 
     fn should_be_escaped_aux(&self, n: NamePtr<'t>) -> bool {
         match self.ctx.read_name(n) {
@@ -545,9 +594,9 @@ impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
     }
 
     /// `safe` in the sense that the name will be escaped if it doesn't follow the
-    /// usual convention for identifiers. 
+    /// usual convention for identifiers.
     ///
-    /// FIXME: We need to come back and update this when we have more "official" information 
+    /// FIXME: We need to come back and update this when we have more "official" information
     /// from upstream about how quoting interacts with elements like hygienic identifiers
     fn pp_name_safe(&self, n: NamePtr<'t>) -> DocPtr {
         let doc = self.name_to_string(n).as_str().into();
@@ -557,7 +606,7 @@ impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
             doc
         }
     }
-    
+
     /// Create a string from a name `n`, leaving the dot-separator in the output string.\
     ///
     /// Example: name_to_string(`Foo.Bar.Baz`) == "Foo.Bar.Baz"
@@ -759,12 +808,10 @@ impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
                         .as_unparenable()
                 }
                 NatLit { ptr, .. } => DocPtr::from(self.ctx.read_bignum(ptr).unwrap().to_string()).as_unparenable(),
-                StringLit { ptr, .. } => {
-                    DocPtr::from("\"")
+                StringLit { ptr, .. } => DocPtr::from("\"")
                     .concat(DocPtr::from(self.ctx.read_string(ptr).as_ref()))
                     .concat(DocPtr::from("\""))
-                    .as_unparenable()
-                },
+                    .as_unparenable(),
             }
         }
     }
@@ -881,8 +928,9 @@ impl<'x, 't, 'p> PrettyPrinter<'x, 't, 'p> {
     pub fn pp_declar(&mut self, declar_name: NamePtr<'t>) -> Option<String> {
         self.ctx.export_file.declars.get(&declar_name).cloned().map(|declar| {
             let doc = match declar {
-                Declar::Definition { val, .. } | Declar::Theorem { val, .. } | Declar::Opaque { val, .. } =>
-                    self.main_def(&declar, val),
+                Declar::Definition { val, .. } | Declar::Theorem { val, .. } | Declar::Opaque { val, .. } => {
+                    self.main_def(&declar, val)
+                }
                 _ => self.main_axiom(&declar),
             };
             doc.group().render(self.options().width)
@@ -899,15 +947,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Does `e` contain a bound variable with deBruijn index `i`.
     fn has_var(&self, e: ExprPtr<'t>, i: u16) -> bool {
         if self.num_loose_bvars(e) <= i {
-            return false
+            return false;
         }
         match self.read_expr(e) {
             Var { dbj_idx, .. } => dbj_idx == i,
             App { fun: a, arg: b, .. } => self.has_var(a, i) || self.has_var(b, i),
-            Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } =>
-                self.has_var(binder_type, i) || self.has_var(body, i + 1),
-            Let { binder_type, val, body, .. } =>
-                self.has_var(binder_type, i) || self.has_var(val, i) || self.has_var(body, i + 1),
+            Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                self.has_var(binder_type, i) || self.has_var(body, i + 1)
+            }
+            Let { binder_type, val, body, .. } => {
+                self.has_var(binder_type, i) || self.has_var(val, i) || self.has_var(body, i + 1)
+            }
             Proj { structure, .. } => self.has_var(structure, i),
             Sort { .. } | Const { .. } | NatLit { .. } | StringLit { .. } => false,
             Local { .. } => panic!(),

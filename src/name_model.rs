@@ -9,7 +9,6 @@
 //! hole. `Str`'s string suffix content doesn't matter for any of these
 //! functions' correctness (they only ever move it around structurally, never
 //! inspect it), so it's modeled as an opaque id.
-
 use vstd::prelude::*;
 
 verus! {
@@ -26,8 +25,9 @@ pub enum NameSpec {
 /// `Box`-based enum with "cyclic self-reference". Hand-written structural
 /// copy instead.
 pub fn dup(n: &NameSpec) -> (result: NameSpec)
-    ensures result == *n
-    decreases n
+    ensures
+        result == *n,
+    decreases n,
 {
     match n {
         NameSpec::Anon => NameSpec::Anon,
@@ -35,12 +35,12 @@ pub fn dup(n: &NameSpec) -> (result: NameSpec)
             let p = dup(pfx);
             assert(p == **pfx);
             NameSpec::Str(Box::new(p), *sfx)
-        }
+        },
         NameSpec::Num(pfx, sfx) => {
             let p = dup(pfx);
             assert(p == **pfx);
             NameSpec::Num(Box::new(p), *sfx)
-        }
+        },
     }
 }
 
@@ -49,7 +49,7 @@ pub fn dup(n: &NameSpec) -> (result: NameSpec)
 /// is "`n1` followed by `n2`'s path", e.g. `concat_full(A, Foo.bar) =
 /// A.Foo.bar`.
 pub open spec fn concat_full(n1: NameSpec, n2: NameSpec) -> NameSpec
-    decreases n2
+    decreases n2,
 {
     match n2 {
         NameSpec::Anon => n1,
@@ -59,19 +59,20 @@ pub open spec fn concat_full(n1: NameSpec, n2: NameSpec) -> NameSpec
 }
 
 pub fn concat_model(n1: NameSpec, n2: &NameSpec) -> (result: NameSpec)
-    ensures result == concat_full(n1, *n2)
-    decreases n2
+    ensures
+        result == concat_full(n1, *n2),
+    decreases n2,
 {
     match n2 {
         NameSpec::Anon => n1,
         NameSpec::Str(pfx, sfx) => {
             let p = concat_model(n1, pfx);
             NameSpec::Str(Box::new(p), *sfx)
-        }
+        },
         NameSpec::Num(pfx, sfx) => {
             let p = concat_model(n1, pfx);
             NameSpec::Num(Box::new(p), *sfx)
-        }
+        },
     }
 }
 
@@ -88,8 +89,9 @@ pub fn concat_model(n1: NameSpec, n2: &NameSpec) -> (result: NameSpec)
 /// The fix, as with `dup`, is to hand-write and separately prove the
 /// operation instead of trusting the derive.
 pub fn name_eq(a: &NameSpec, b: &NameSpec) -> (result: bool)
-    ensures result == (*a == *b)
-    decreases a
+    ensures
+        result == (*a == *b),
+    decreases a,
 {
     match (a, b) {
         (NameSpec::Anon, NameSpec::Anon) => true,
@@ -107,22 +109,30 @@ pub fn name_eq(a: &NameSpec, b: &NameSpec) -> (result: bool)
 /// `incoming`); otherwise `n = Anon` maps to `Anon` regardless (there's
 /// nothing to replace and no deeper prefix to recurse into).
 pub open spec fn replace_pfx_full(n: NameSpec, outgoing: NameSpec, incoming: NameSpec) -> NameSpec
-    decreases n
+    decreases n,
 {
     if n == outgoing {
         incoming
     } else {
         match n {
             NameSpec::Anon => NameSpec::Anon,
-            NameSpec::Str(pfx, sfx) => NameSpec::Str(Box::new(replace_pfx_full(*pfx, outgoing, incoming)), sfx),
-            NameSpec::Num(pfx, sfx) => NameSpec::Num(Box::new(replace_pfx_full(*pfx, outgoing, incoming)), sfx),
+            NameSpec::Str(pfx, sfx) => NameSpec::Str(
+                Box::new(replace_pfx_full(*pfx, outgoing, incoming)),
+                sfx,
+            ),
+            NameSpec::Num(pfx, sfx) => NameSpec::Num(
+                Box::new(replace_pfx_full(*pfx, outgoing, incoming)),
+                sfx,
+            ),
         }
     }
 }
 
-pub fn replace_pfx_model(n: &NameSpec, outgoing: &NameSpec, incoming: NameSpec) -> (result: NameSpec)
-    ensures result == replace_pfx_full(*n, *outgoing, incoming)
-    decreases n
+pub fn replace_pfx_model(n: &NameSpec, outgoing: &NameSpec, incoming: NameSpec) -> (result:
+    NameSpec)
+    ensures
+        result == replace_pfx_full(*n, *outgoing, incoming),
+    decreases n,
 {
     if name_eq(n, outgoing) {
         incoming
@@ -134,34 +144,42 @@ pub fn replace_pfx_model(n: &NameSpec, outgoing: &NameSpec, incoming: NameSpec) 
                 assert(p == replace_pfx_full(**pfx, *outgoing, incoming));
                 assert(*n != *outgoing);
                 assert(*n == NameSpec::Str(Box::new(**pfx), *sfx));
-                assert(replace_pfx_full(*n, *outgoing, incoming)
-                    == replace_pfx_full(NameSpec::Str(Box::new(**pfx), *sfx), *outgoing, incoming));
+                assert(replace_pfx_full(*n, *outgoing, incoming) == replace_pfx_full(
+                    NameSpec::Str(Box::new(**pfx), *sfx),
+                    *outgoing,
+                    incoming,
+                ));
                 assert(replace_pfx_full(NameSpec::Str(Box::new(**pfx), *sfx), *outgoing, incoming)
                     == NameSpec::Str(Box::new(replace_pfx_full(**pfx, *outgoing, incoming)), *sfx))
-                    by { reveal_with_fuel(replace_pfx_full, 2); }
+                    by {
+                    reveal_with_fuel(replace_pfx_full, 2);
+                }
                 let result = NameSpec::Str(Box::new(p), *sfx);
                 assert(result == replace_pfx_full(*n, *outgoing, incoming));
                 result
-            }
+            },
             NameSpec::Num(pfx, sfx) => {
                 let p = replace_pfx_model(pfx, outgoing, incoming);
                 assert(p == replace_pfx_full(**pfx, *outgoing, incoming));
                 assert(*n != *outgoing);
                 assert(*n == NameSpec::Num(Box::new(**pfx), *sfx));
-                assert(replace_pfx_full(*n, *outgoing, incoming)
-                    == replace_pfx_full(NameSpec::Num(Box::new(**pfx), *sfx), *outgoing, incoming));
+                assert(replace_pfx_full(*n, *outgoing, incoming) == replace_pfx_full(
+                    NameSpec::Num(Box::new(**pfx), *sfx),
+                    *outgoing,
+                    incoming,
+                ));
                 assert(replace_pfx_full(NameSpec::Num(Box::new(**pfx), *sfx), *outgoing, incoming)
                     == NameSpec::Num(Box::new(replace_pfx_full(**pfx, *outgoing, incoming)), *sfx))
-                    by { reveal_with_fuel(replace_pfx_full, 2); }
+                    by {
+                    reveal_with_fuel(replace_pfx_full, 2);
+                }
                 let result = NameSpec::Num(Box::new(p), *sfx);
                 assert(result == replace_pfx_full(*n, *outgoing, incoming));
                 result
-            }
+            },
         }
     }
 }
-
-
 
 /// Mirrors `TcCtx::get_pfx`: walk `n`'s prefix chain until reaching the
 /// single-segment name whose own prefix is `Anon` (i.e. the topmost
@@ -173,16 +191,24 @@ pub fn replace_pfx_model(n: &NameSpec, outgoing: &NameSpec, incoming: NameSpec) 
 /// `level_arena_bridge.rs`: pointer equality between interned names implies
 /// structural equality, so it corresponds to `*pfx == NameSpec::Anon`.
 pub open spec fn root_of(n: NameSpec) -> NameSpec
-    decreases n
+    decreases n,
 {
     match n {
         NameSpec::Anon => NameSpec::Anon,
         NameSpec::Str(pfx, sfx) => {
-            if *pfx == NameSpec::Anon { NameSpec::Str(pfx, sfx) } else { root_of(*pfx) }
-        }
+            if *pfx == NameSpec::Anon {
+                NameSpec::Str(pfx, sfx)
+            } else {
+                root_of(*pfx)
+            }
+        },
         NameSpec::Num(pfx, sfx) => {
-            if *pfx == NameSpec::Anon { NameSpec::Num(pfx, sfx) } else { root_of(*pfx) }
-        }
+            if *pfx == NameSpec::Anon {
+                NameSpec::Num(pfx, sfx)
+            } else {
+                root_of(*pfx)
+            }
+        },
     }
 }
 
@@ -190,7 +216,8 @@ pub open spec fn root_of(n: NameSpec) -> NameSpec
 /// another module cannot unfold it at a nested constructor even with
 /// `reveal_with_fuel`.
 pub proof fn root_of_peel(p: NameSpec, s: u32, num: u64, is_str: bool)
-    requires p != NameSpec::Anon
+    requires
+        p != NameSpec::Anon,
     ensures
         is_str ==> root_of(NameSpec::Str(Box::new(p), s)) == root_of(p),
         !is_str ==> root_of(NameSpec::Num(Box::new(p), num)) == root_of(p),
@@ -198,8 +225,9 @@ pub proof fn root_of_peel(p: NameSpec, s: u32, num: u64, is_str: bool)
 }
 
 pub fn get_pfx_model(n: &NameSpec) -> (result: NameSpec)
-    ensures result == root_of(*n)
-    decreases n
+    ensures
+        result == root_of(*n),
+    decreases n,
 {
     match n {
         NameSpec::Anon => NameSpec::Anon,
@@ -214,7 +242,7 @@ pub fn get_pfx_model(n: &NameSpec) -> (result: NameSpec)
                 assert(root_of(*n) == root_of(**pfx));
                 result
             }
-        }
+        },
         NameSpec::Num(pfx, _sfx) => {
             if name_eq(pfx, &NameSpec::Anon) {
                 assert(**pfx == NameSpec::Anon);
@@ -226,18 +254,21 @@ pub fn get_pfx_model(n: &NameSpec) -> (result: NameSpec)
                 assert(root_of(*n) == root_of(**pfx));
                 result
             }
-        }
+        },
     }
 }
 
-}
-
+} // verus!
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn str_(pfx: NameSpec, sfx: u32) -> NameSpec { NameSpec::Str(Box::new(pfx), sfx) }
-    fn num_(pfx: NameSpec, sfx: u64) -> NameSpec { NameSpec::Num(Box::new(pfx), sfx) }
+    fn str_(pfx: NameSpec, sfx: u32) -> NameSpec {
+        NameSpec::Str(Box::new(pfx), sfx)
+    }
+    fn num_(pfx: NameSpec, sfx: u64) -> NameSpec {
+        NameSpec::Num(Box::new(pfx), sfx)
+    }
 
     // Sanity checks that concat_model/replace_pfx_model are real
     // (non-vacuous) implementations matching the informal descriptions of

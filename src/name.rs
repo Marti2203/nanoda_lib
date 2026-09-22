@@ -5,11 +5,14 @@ use Name::*;
 // Inside `verus!` only so the `hash64!` calls in util.rs's constructors are
 // expressible there; values unchanged and no spec reads them.
 ::vstd::prelude::verus! {
-pub(crate) const ANON_HASH: u64 = 43;
-pub(crate) const STR_HASH: u64 = 911;
-pub(crate) const NUM_HASH: u64 = 103;
-}
 
+pub(crate) const ANON_HASH: u64 = 43;
+
+pub(crate) const STR_HASH: u64 = 911;
+
+pub(crate) const NUM_HASH: u64 = 103;
+
+} // verus!
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Name<'a> {
     Anon,
@@ -18,7 +21,9 @@ pub enum Name<'a> {
 }
 
 impl<'a> std::hash::Hash for Name<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { state.write_u64(self.get_hash()) }
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.get_hash())
+    }
 }
 
 impl<'a> Name<'a> {
@@ -31,8 +36,6 @@ impl<'a> Name<'a> {
 }
 
 impl<'x, 't: 'x, 'p: 't> TcCtx<'t, 'p> {
-
-
     pub(crate) fn append_index_after(&mut self, n: NamePtr<'t>, idx: u64) -> NamePtr<'t> {
         match self.read_name(n) {
             Str(pfx, sfx, ..) => {
@@ -46,18 +49,20 @@ impl<'x, 't: 'x, 'p: 't> TcCtx<'t, 'p> {
             }
         }
     }
-
 }
 
 ::vstd::prelude::verus! {
-impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. The loop compares POINTERS (`pfx == anonymous`) where
     /// `root_of` compares STRUCTURE; `to_model_name_injective` is what bridges
     /// them, and this function is one of its two non-degeneracy witnesses.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn get_pfx(&self, n0: NamePtr<'t>) -> (result: NamePtr<'t>)
-        ensures crate::name_arena_bridge::to_model_name(result) == crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n0))
+        ensures
+            crate::name_arena_bridge::to_model_name(result) == crate::name_model::root_of(
+                crate::name_arena_bridge::to_model_name(n0),
+            ),
     {
         let anonymous = self.anonymous();
         let mut n = n0;
@@ -65,8 +70,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         // no `ensures`; the postcondition is discharged at each return instead.
         loop
             invariant
-                crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n)) == crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n0)),
-                crate::name_arena_bridge::to_model_name(anonymous) == crate::name_model::NameSpec::Anon,
+                crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n))
+                    == crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n0)),
+                crate::name_arena_bridge::to_model_name(anonymous)
+                    == crate::name_model::NameSpec::Anon,
         {
             match self.read_name(n) {
                 Anon => return n,
@@ -77,16 +84,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Str(pfx, sfx, ..) => {
                     proof {
                         crate::name_arena_bridge::to_model_name_injective(pfx, anonymous);
-                        assert(crate::name_arena_bridge::to_model_name(n) == crate::name_model::NameSpec::Str(
-                            Box::new(crate::name_arena_bridge::to_model_name(pfx)), crate::name_arena_bridge::string_id(sfx)));
+                        assert(crate::name_arena_bridge::to_model_name(n)
+                            == crate::name_model::NameSpec::Str(
+                            Box::new(crate::name_arena_bridge::to_model_name(pfx)),
+                            crate::name_arena_bridge::string_id(sfx),
+                        ));
                     }
                     if pfx == anonymous {
                         return n
                     } else {
                         proof {
-                            assert(crate::name_arena_bridge::to_model_name(pfx) != crate::name_model::NameSpec::Anon);
-                            crate::name_model::root_of_peel(crate::name_arena_bridge::to_model_name(pfx),
-                                crate::name_arena_bridge::string_id(sfx), 0, true);
+                            assert(crate::name_arena_bridge::to_model_name(pfx)
+                                != crate::name_model::NameSpec::Anon);
+                            crate::name_model::root_of_peel(
+                                crate::name_arena_bridge::to_model_name(pfx),
+                                crate::name_arena_bridge::string_id(sfx),
+                                0,
+                                true,
+                            );
                         }
                         n = pfx
                     }
@@ -94,15 +109,21 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Num(pfx, sfx, ..) => {
                     proof {
                         crate::name_arena_bridge::to_model_name_injective(pfx, anonymous);
-                        assert(crate::name_arena_bridge::to_model_name(n) == crate::name_model::NameSpec::Num(
-                            Box::new(crate::name_arena_bridge::to_model_name(pfx)), sfx));
+                        assert(crate::name_arena_bridge::to_model_name(n)
+                            == crate::name_model::NameSpec::Num(
+                            Box::new(crate::name_arena_bridge::to_model_name(pfx)),
+                            sfx,
+                        ));
                     }
                     if pfx == anonymous {
                         return n
                     } else {
                         proof {
-                            assert(crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n))
-                                == crate::name_model::root_of(crate::name_arena_bridge::to_model_name(pfx))) by {
+                            assert(crate::name_model::root_of(
+                                crate::name_arena_bridge::to_model_name(n),
+                            ) == crate::name_model::root_of(
+                                crate::name_arena_bridge::to_model_name(pfx),
+                            )) by {
                                 reveal_with_fuel(crate::name_model::root_of, 2);
                             }
                         }
@@ -117,11 +138,22 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// the guard `n == outgoing` is a pointer test, `replace_pfx_full`'s is on
     /// models.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn replace_pfx(&mut self, n: NamePtr<'t>, outgoing: NamePtr<'t>, incoming: NamePtr<'t>) -> (result: NamePtr<'t>)
-        ensures crate::name_arena_bridge::to_model_name(result) == crate::name_model::replace_pfx_full(
-            crate::name_arena_bridge::to_model_name(n), crate::name_arena_bridge::to_model_name(outgoing), crate::name_arena_bridge::to_model_name(incoming))
+    pub(crate) fn replace_pfx(
+        &mut self,
+        n: NamePtr<'t>,
+        outgoing: NamePtr<'t>,
+        incoming: NamePtr<'t>,
+    ) -> (result: NamePtr<'t>)
+        ensures
+            crate::name_arena_bridge::to_model_name(result) == crate::name_model::replace_pfx_full(
+                crate::name_arena_bridge::to_model_name(n),
+                crate::name_arena_bridge::to_model_name(outgoing),
+                crate::name_arena_bridge::to_model_name(incoming),
+            ),
     {
-        proof { crate::name_arena_bridge::to_model_name_injective(n, outgoing); }
+        proof {
+            crate::name_arena_bridge::to_model_name_injective(n, outgoing);
+        }
         match self.read_name(n) {
             Anon => match self.read_name(outgoing) {
                 Anon => incoming,
@@ -136,11 +168,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Str(pfx, sfx, ..) => {
                 let pfx = self.replace_pfx(pfx, outgoing, incoming);
                 self.str(pfx, sfx)
-            }
+            },
             Num(pfx, sfx, ..) => {
                 let pfx = self.replace_pfx(pfx, outgoing, incoming);
                 self.num(pfx, sfx)
-            }
+            },
         }
     }
 
@@ -151,20 +183,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// verifiable without one; see the commit message.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn concat_name(&mut self, n1: NamePtr<'t>, n2: NamePtr<'t>) -> (result: NamePtr<'t>)
-        ensures crate::name_arena_bridge::to_model_name(result)
-            == crate::name_model::concat_full(crate::name_arena_bridge::to_model_name(n1), crate::name_arena_bridge::to_model_name(n2))
+        ensures
+            crate::name_arena_bridge::to_model_name(result) == crate::name_model::concat_full(
+                crate::name_arena_bridge::to_model_name(n1),
+                crate::name_arena_bridge::to_model_name(n2),
+            ),
     {
         match self.read_name(n2) {
             Anon => n1,
             Str(pfx, sfx, ..) => {
                 let pfx = self.concat_name(n1, pfx);
                 self.str(pfx, sfx)
-            }
+            },
             Num(pfx, sfx, ..) => {
                 let pfx = self.concat_name(n1, pfx);
                 self.num(pfx, sfx)
-            }
+            },
         }
     }
 }
-}
+
+} // verus!

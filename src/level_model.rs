@@ -13,7 +13,6 @@
 //! these theorems back to the real arena-based code requires showing the
 //! arena's `read_level`/interning maintains a simulation with `LevelSpec`,
 //! which is future work.
-
 use vstd::prelude::*;
 
 verus! {
@@ -33,7 +32,11 @@ pub enum LevelSpec {
 }
 
 pub open spec fn max_nat(a: nat, b: nat) -> nat {
-    if a >= b { a } else { b }
+    if a >= b {
+        a
+    } else {
+        b
+    }
 }
 
 /// `lw` deliberately ignores `Succ`: `lw(Succ a) == lw(a)`. Those arms are
@@ -103,7 +106,7 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
 /// Giving `subst_level` a trusted `assume_specification` would unblock it at
 /// the cost of an assumption on the very function the measure rests on.
 pub open spec fn lw(l: LevelSpec) -> nat
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => 0,
@@ -117,10 +120,12 @@ pub open spec fn lw(l: LevelSpec) -> nat
 /// `IMax(a, IMax(x, y))  ->  Max(IMax(a, y), IMax(x, y))` strictly decreases.
 pub proof fn lw_decreases_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        lw(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-        )) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))),
+        lw(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ),
+        ) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))),
 {
     let n1 = LevelSpec::IMax(Box::new(a), Box::new(y));
     let n2 = LevelSpec::IMax(Box::new(x), Box::new(y));
@@ -137,10 +142,12 @@ pub proof fn lw_decreases_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
 /// fails on.
 pub proof fn lw_decreases_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        lw(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        )) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y))))),
+        lw(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+        ) < lw(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y))))),
 {
     let m1 = LevelSpec::IMax(Box::new(a), Box::new(x));
     let m2 = LevelSpec::IMax(Box::new(a), Box::new(y));
@@ -160,15 +167,19 @@ pub proof fn lw_decreases_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
 /// then collapses the `IMax` away (its `IMax` arm returns `r_simp` for a
 /// `Zero` second argument, and folds through `combining` for a `Succ` one).
 pub open spec fn params_in_imax(l: LevelSpec) -> nat
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => 0,
         LevelSpec::Param(_) => 0,
         LevelSpec::Succ(a) => params_in_imax(*a),
         LevelSpec::Max(a, b) => params_in_imax(*a) + params_in_imax(*b),
-        LevelSpec::IMax(a, b) => params_in_imax(*a) + params_in_imax(*b)
-            + (if matches!(*b, LevelSpec::Param(_)) { 1nat } else { 0nat }),
+        LevelSpec::IMax(a, b) => params_in_imax(*a) + params_in_imax(*b) + (
+        if matches!(*b, LevelSpec::Param(_)) {
+            1nat
+        } else {
+            0nat
+        }),
     }
 }
 
@@ -185,37 +196,32 @@ pub open spec fn params_in_imax(l: LevelSpec) -> nat
 /// relation between the two components, not assumed.
 pub proof fn params_in_imax_not_monotone_under_simplify()
     ensures
-        params_in_imax(LevelSpec::IMax(
-            Box::new(LevelSpec::Zero),
-            Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
-        )) == 0,
-        params_in_imax(LevelSpec::IMax(
-            Box::new(LevelSpec::Zero),
-            Box::new(LevelSpec::Param(0)),
-        )) == 1,
+        params_in_imax(
+            LevelSpec::IMax(
+                Box::new(LevelSpec::Zero),
+                Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
+            ),
+        ) == 0,
+        params_in_imax(LevelSpec::IMax(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0))))
+            == 1,
         // and the weight moves the other way, which is the saving grace
-        lw(LevelSpec::IMax(
-            Box::new(LevelSpec::Zero),
-            Box::new(LevelSpec::Param(0)),
-        )) < lw(LevelSpec::IMax(
-            Box::new(LevelSpec::Zero),
-            Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
-        )),
+        lw(LevelSpec::IMax(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) < lw(
+            LevelSpec::IMax(
+                Box::new(LevelSpec::Zero),
+                Box::new(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))),
+            ),
+        ),
 {
     assert(params_in_imax(LevelSpec::Zero) == 0);
     assert(params_in_imax(LevelSpec::Param(0)) == 0);
-    assert(params_in_imax(LevelSpec::Max(
-        Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) == 0) by {
+    assert(params_in_imax(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0))))
+        == 0) by {
         reveal_with_fuel(params_in_imax, 3);
     }
-    assert(lw(LevelSpec::Max(
-        Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) == 1) by {
+    assert(lw(LevelSpec::Max(Box::new(LevelSpec::Zero), Box::new(LevelSpec::Param(0)))) == 1) by {
         reveal_with_fuel(lw, 3);
     }
 }
-
-
-
 
 /// The parameters appearing DIRECTLY as an `IMax`'s second argument.
 ///
@@ -233,8 +239,10 @@ pub proof fn params_in_imax_not_monotone_under_simplify()
 /// turn the subset facts proven above into the `len` facts the `decreases`
 /// clauses will need, once, instead of at all seventeen edges.
 pub proof fn undet_len_mono(a: Set<u64>, b: Set<u64>)
-    requires a.subset_of(b)
-    ensures a.len() <= b.len()
+    requires
+        a.subset_of(b),
+    ensures
+        a.len() <= b.len(),
 {
     vstd::set_lib::lemma_len_subset(a, b);
 }
@@ -243,11 +251,15 @@ pub proof fn undet_len_mono(a: Set<u64>, b: Set<u64>)
 /// a STRICT drop in cardinality. This is the step that makes the measure's
 /// first component actually decrease rather than merely not grow.
 pub proof fn undet_len_strict(a: Set<u64>, b: Set<u64>, x: u64)
-    requires a.subset_of(b), b.contains(x), !a.contains(x)
-    ensures a.len() < b.len()
+    requires
+        a.subset_of(b),
+        b.contains(x),
+        !a.contains(x),
+    ensures
+        a.len() < b.len(),
 {
     assert(a.subset_of(b.remove(x))) by {
-        assert forall |n: u64| a.contains(n) implies b.remove(x).contains(n) by {
+        assert forall|n: u64| a.contains(n) implies b.remove(x).contains(n) by {
             assert(n != x);
         }
     }
@@ -273,9 +285,9 @@ pub proof fn undet_len_strict(a: Set<u64>, b: Set<u64>, x: u64)
 /// Nothing grows by more than one per side, which is `level_depth` being a
 /// `max` rather than a sum.
 pub open spec fn leq_measure(l: LevelSpec, r: LevelSpec) -> nat {
-    3 * undet_imax_params(l).union(undet_imax_params(r)).len()
-        + 2 * (lw(l) + lw(r))
-        + level_depth(l) + level_depth(r)
+    3 * undet_imax_params(l).union(undet_imax_params(r)).len() + 2 * (lw(l) + lw(r)) + level_depth(
+        l,
+    ) + level_depth(r)
 }
 
 /// Peeling a `Succ` off the left drops the measure by EXACTLY one -- `undet`
@@ -283,7 +295,8 @@ pub open spec fn leq_measure(l: LevelSpec, r: LevelSpec) -> nat {
 /// arm where `diff` moves, so the exact figure is what makes `|diff| + M`
 /// non-increasing rather than merely bounded.
 pub proof fn leq_measure_succ_left(sub: LevelSpec, r: LevelSpec)
-    ensures leq_measure(LevelSpec::Succ(Box::new(sub)), r) == leq_measure(sub, r) + 1
+    ensures
+        leq_measure(LevelSpec::Succ(Box::new(sub)), r) == leq_measure(sub, r) + 1,
 {
     undet_imax_params_succ(sub);
     assert(undet_imax_params(LevelSpec::Succ(Box::new(sub))).union(undet_imax_params(r))
@@ -292,39 +305,47 @@ pub proof fn leq_measure_succ_left(sub: LevelSpec, r: LevelSpec)
 
 /// The mirror image, for the arm that moves `diff` the other way.
 pub proof fn leq_measure_succ_right(l: LevelSpec, sub: LevelSpec)
-    ensures leq_measure(l, LevelSpec::Succ(Box::new(sub))) == leq_measure(l, sub) + 1
+    ensures
+        leq_measure(l, LevelSpec::Succ(Box::new(sub))) == leq_measure(l, sub) + 1,
 {
     undet_imax_params_succ(sub);
     assert(undet_imax_params(l).union(undet_imax_params(LevelSpec::Succ(Box::new(sub))))
         =~= undet_imax_params(l).union(undet_imax_params(sub)));
 }
 
-
 /// The `Max` arms: `leq_core` recurses into one side at a time, and `lw` alone
 /// pays for it (`lw(Max(a,b)) = 1 + max(..)` is strictly above either branch).
 pub proof fn leq_measure_max_left(a: LevelSpec, b: LevelSpec, r: LevelSpec)
-    ensures leq_measure(a, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r)
+    ensures
+        leq_measure(a, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r),
 {
     let mx = LevelSpec::Max(Box::new(a), Box::new(b));
     undet_imax_params_max_sub(a, b);
-    undet_len_mono(undet_imax_params(a).union(undet_imax_params(r)),
-                   undet_imax_params(mx).union(undet_imax_params(r)));
-    assert(undet_imax_params(a).union(undet_imax_params(r))
-        .subset_of(undet_imax_params(mx).union(undet_imax_params(r))));
+    undet_len_mono(
+        undet_imax_params(a).union(undet_imax_params(r)),
+        undet_imax_params(mx).union(undet_imax_params(r)),
+    );
+    assert(undet_imax_params(a).union(undet_imax_params(r)).subset_of(
+        undet_imax_params(mx).union(undet_imax_params(r)),
+    ));
     lw_max_gt(a, b);
 }
 
 /// The mirror of `leq_measure_max_left`, for the arms that recurse into the
 /// RIGHT side's `Max` branches.
 pub proof fn leq_measure_max_right(l: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures leq_measure(l, x) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y)))
+    ensures
+        leq_measure(l, x) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y))),
 {
     let mx = LevelSpec::Max(Box::new(x), Box::new(y));
     undet_imax_params_max_sub(x, y);
-    undet_len_mono(undet_imax_params(l).union(undet_imax_params(x)),
-                   undet_imax_params(l).union(undet_imax_params(mx)));
-    assert(undet_imax_params(l).union(undet_imax_params(x))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(mx))));
+    undet_len_mono(
+        undet_imax_params(l).union(undet_imax_params(x)),
+        undet_imax_params(l).union(undet_imax_params(mx)),
+    );
+    assert(undet_imax_params(l).union(undet_imax_params(x)).subset_of(
+        undet_imax_params(l).union(undet_imax_params(mx)),
+    ));
     lw_max_gt(x, y);
 }
 
@@ -333,33 +354,46 @@ pub proof fn leq_measure_max_right(l: LevelSpec, x: LevelSpec, y: LevelSpec)
 /// nested `IMax`, so both directions are needed.
 pub proof fn leq_measure_imax_imax_right(l: LevelSpec, a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        leq_measure(l, LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
-        < leq_measure(l, LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
+        leq_measure(
+            l,
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ),
+        ) < leq_measure(
+            l,
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+        ),
 {
     let lhs = LevelSpec::Max(
         Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
-    let rhs = LevelSpec::IMax(
-        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+    );
+    let rhs = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
     undet_imax_params_imax_imax(a, x, y);
-    undet_len_mono(undet_imax_params(l).union(undet_imax_params(lhs)),
-                   undet_imax_params(l).union(undet_imax_params(rhs)));
-    assert(undet_imax_params(l).union(undet_imax_params(lhs))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(rhs))));
+    undet_len_mono(
+        undet_imax_params(l).union(undet_imax_params(lhs)),
+        undet_imax_params(l).union(undet_imax_params(rhs)),
+    );
+    assert(undet_imax_params(l).union(undet_imax_params(lhs)).subset_of(
+        undet_imax_params(l).union(undet_imax_params(rhs)),
+    ));
     lw_decreases_imax_imax(a, x, y);
     level_depth_imax_imax_le(a, x, y);
 }
 
 pub proof fn leq_measure_imax_max_right(l: LevelSpec, a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        leq_measure(l, LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
-        < leq_measure(l, LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))))
+        leq_measure(
+            l,
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+        ) < leq_measure(
+            l,
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+        ),
 {
     undet_imax_params_imax_max(a, x, y);
     lw_decreases_imax_max(a, x, y);
@@ -371,12 +405,16 @@ pub proof fn leq_measure_mono_right(l: LevelSpec, r: LevelSpec, r2: LevelSpec)
         undet_imax_params(r2).subset_of(undet_imax_params(r)),
         lw(r2) <= lw(r),
         level_depth(r2) <= level_depth(r),
-    ensures leq_measure(l, r2) <= leq_measure(l, r)
+    ensures
+        leq_measure(l, r2) <= leq_measure(l, r),
 {
-    assert(undet_imax_params(l).union(undet_imax_params(r2))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
-    undet_len_mono(undet_imax_params(l).union(undet_imax_params(r2)),
-                   undet_imax_params(l).union(undet_imax_params(r)));
+    assert(undet_imax_params(l).union(undet_imax_params(r2)).subset_of(
+        undet_imax_params(l).union(undet_imax_params(r)),
+    ));
+    undet_len_mono(
+        undet_imax_params(l).union(undet_imax_params(r2)),
+        undet_imax_params(l).union(undet_imax_params(r)),
+    );
 }
 
 /// `leq_measure` is monotone in a left-hand replacement that does not grow any
@@ -387,38 +425,50 @@ pub proof fn leq_measure_mono_left(l: LevelSpec, l2: LevelSpec, r: LevelSpec)
         undet_imax_params(l2).subset_of(undet_imax_params(l)),
         lw(l2) <= lw(l),
         level_depth(l2) <= level_depth(l),
-    ensures leq_measure(l2, r) <= leq_measure(l, r)
+    ensures
+        leq_measure(l2, r) <= leq_measure(l, r),
 {
-    assert(undet_imax_params(l2).union(undet_imax_params(r))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(r))));
-    undet_len_mono(undet_imax_params(l2).union(undet_imax_params(r)),
-                   undet_imax_params(l).union(undet_imax_params(r)));
+    assert(undet_imax_params(l2).union(undet_imax_params(r)).subset_of(
+        undet_imax_params(l).union(undet_imax_params(r)),
+    ));
+    undet_len_mono(
+        undet_imax_params(l2).union(undet_imax_params(r)),
+        undet_imax_params(l).union(undet_imax_params(r)),
+    );
 }
 
 /// The SECOND branch of a left `Max` -- `Max(a,b)` is not `Max(b,a)` as a
 /// `LevelSpec`, so the first lemma does not cover it.
 pub proof fn leq_measure_max_left2(a: LevelSpec, b: LevelSpec, r: LevelSpec)
-    ensures leq_measure(b, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r)
+    ensures
+        leq_measure(b, r) < leq_measure(LevelSpec::Max(Box::new(a), Box::new(b)), r),
 {
     let mx = LevelSpec::Max(Box::new(a), Box::new(b));
     undet_imax_params_max_sub(a, b);
-    undet_len_mono(undet_imax_params(b).union(undet_imax_params(r)),
-                   undet_imax_params(mx).union(undet_imax_params(r)));
-    assert(undet_imax_params(b).union(undet_imax_params(r))
-        .subset_of(undet_imax_params(mx).union(undet_imax_params(r))));
+    undet_len_mono(
+        undet_imax_params(b).union(undet_imax_params(r)),
+        undet_imax_params(mx).union(undet_imax_params(r)),
+    );
+    assert(undet_imax_params(b).union(undet_imax_params(r)).subset_of(
+        undet_imax_params(mx).union(undet_imax_params(r)),
+    ));
     lw_max_gt(a, b);
 }
 
 /// The second branch of a right `Max`.
 pub proof fn leq_measure_max_right2(l: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures leq_measure(l, y) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y)))
+    ensures
+        leq_measure(l, y) < leq_measure(l, LevelSpec::Max(Box::new(x), Box::new(y))),
 {
     let mx = LevelSpec::Max(Box::new(x), Box::new(y));
     undet_imax_params_max_sub(x, y);
-    undet_len_mono(undet_imax_params(l).union(undet_imax_params(y)),
-                   undet_imax_params(l).union(undet_imax_params(mx)));
-    assert(undet_imax_params(l).union(undet_imax_params(y))
-        .subset_of(undet_imax_params(l).union(undet_imax_params(mx))));
+    undet_len_mono(
+        undet_imax_params(l).union(undet_imax_params(y)),
+        undet_imax_params(l).union(undet_imax_params(mx)),
+    );
+    assert(undet_imax_params(l).union(undet_imax_params(y)).subset_of(
+        undet_imax_params(l).union(undet_imax_params(mx)),
+    ));
     lw_max_gt(x, y);
 }
 
@@ -426,22 +476,30 @@ pub proof fn leq_measure_max_right2(l: LevelSpec, x: LevelSpec, y: LevelSpec)
 /// `level_depth` growth of at most one. Net at most -1.
 pub proof fn leq_measure_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: LevelSpec)
     ensures
-        leq_measure(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), r)
-        < leq_measure(LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), r)
+        leq_measure(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ),
+            r,
+        ) < leq_measure(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+            r,
+        ),
 {
     let lhs = LevelSpec::Max(
         Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
-    let rhs = LevelSpec::IMax(
-        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
+        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+    );
+    let rhs = LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))));
     undet_imax_params_imax_imax(a, x, y);
-    undet_len_mono(undet_imax_params(lhs).union(undet_imax_params(r)),
-                   undet_imax_params(rhs).union(undet_imax_params(r)));
-    assert(undet_imax_params(lhs).union(undet_imax_params(r))
-        .subset_of(undet_imax_params(rhs).union(undet_imax_params(r))));
+    undet_len_mono(
+        undet_imax_params(lhs).union(undet_imax_params(r)),
+        undet_imax_params(rhs).union(undet_imax_params(r)),
+    );
+    assert(undet_imax_params(lhs).union(undet_imax_params(r)).subset_of(
+        undet_imax_params(rhs).union(undet_imax_params(r)),
+    ));
     lw_decreases_imax_imax(a, x, y);
     level_depth_imax_imax_le(a, x, y);
 }
@@ -450,11 +508,16 @@ pub proof fn leq_measure_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: 
 /// rather than merely non-increasing.
 pub proof fn leq_measure_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: LevelSpec)
     ensures
-        leq_measure(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))), r)
-        < leq_measure(LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), r)
+        leq_measure(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+            r,
+        ) < leq_measure(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+            r,
+        ),
 {
     undet_imax_params_imax_max(a, x, y);
     lw_decreases_imax_max(a, x, y);
@@ -484,19 +547,16 @@ pub proof fn leq_measure_bounded(l: LevelSpec, r: LevelSpec)
 /// and that parameter IS in the set. Without this the departure proven above
 /// would be a no-op rather than a decrease.
 pub proof fn undet_imax_params_contains_imax_param(a: LevelSpec, p: u64)
-    ensures undet_imax_params(
-        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)))).contains(p)
+    ensures
+        undet_imax_params(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Param(p)))).contains(p),
 {
 }
-
 
 // PROBE, run and removed: two mutually recursive EXEC functions, one keeping
 // its argument and dropping a phase constant, the other raising the phase and
 // dropping the argument -- exactly the clique measure's shape. It VERIFIES, so
 // the phase component is sound machinery and not wishful thinking. Recorded
 // here rather than left in the tree, like the contradiction detectors.
-
-
 /// The `subst_simp -> simplify` edge's `lw` column. Substituting a parameter by
 /// a WEIGHTLESS value leaves `lw` exactly unchanged -- and both of `by_cases`'
 /// values are weightless (`lw(Zero) == 0`, and `lw(Succ(Param p)) ==
@@ -506,31 +566,35 @@ pub proof fn undet_imax_params_contains_imax_param(a: LevelSpec, p: u64)
 /// fall through to `level_depth`, which GROWS there -- see the ordering note in
 /// docs/LEQ_CORE_TERMINATION.md.
 pub proof fn lw_subst_preserved(l: LevelSpec, p: u64, v: LevelSpec)
-    requires lw(v) == 0
-    ensures lw(subst_level_spec(l, seq![p], seq![v])) == lw(l)
-    decreases l
+    requires
+        lw(v) == 0,
+    ensures
+        lw(subst_level_spec(l, seq![p], seq![v])) == lw(l),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
+        LevelSpec::Zero => {},
         LevelSpec::Param(q) => {
             if q == p {
                 assert(find_level_idx(seq![p], q) == Some(0nat));
             } else {
-                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                assert forall|j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
                     assert(seq![p][j] == p);
                 }
                 find_level_idx_no_match(seq![p], q);
             }
-        }
-        LevelSpec::Succ(a) => { lw_subst_preserved(*a, p, v); }
+        },
+        LevelSpec::Succ(a) => {
+            lw_subst_preserved(*a, p, v);
+        },
         LevelSpec::Max(a, b) => {
             lw_subst_preserved(*a, p, v);
             lw_subst_preserved(*b, p, v);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             lw_subst_preserved(*a, p, v);
             lw_subst_preserved(*b, p, v);
-        }
+        },
     }
 }
 
@@ -540,7 +604,7 @@ pub proof fn lw_subst_preserved(l: LevelSpec, p: u64, v: LevelSpec)
 /// `simplify`'s own `Succ` arm. (`lw` deliberately ignores `Succ`, which is
 /// exactly why those edges need something else.)
 pub open spec fn level_depth(l: LevelSpec) -> nat
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => 0,
@@ -556,31 +620,35 @@ pub open spec fn level_depth(l: LevelSpec) -> nat
 /// whole point, and it is what makes a SCALAR measure possible with no
 /// term-size ceiling.
 pub proof fn level_depth_subst_le(l: LevelSpec, p: u64, v: LevelSpec)
-    requires level_depth(v) <= 1
-    ensures level_depth(subst_level_spec(l, seq![p], seq![v])) <= level_depth(l) + 1
-    decreases l
+    requires
+        level_depth(v) <= 1,
+    ensures
+        level_depth(subst_level_spec(l, seq![p], seq![v])) <= level_depth(l) + 1,
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
+        LevelSpec::Zero => {},
         LevelSpec::Param(q) => {
             if q == p {
                 assert(find_level_idx(seq![p], q) == Some(0nat));
             } else {
-                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                assert forall|j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
                     assert(seq![p][j] == p);
                 }
                 find_level_idx_no_match(seq![p], q);
             }
-        }
-        LevelSpec::Succ(a) => { level_depth_subst_le(*a, p, v); }
+        },
+        LevelSpec::Succ(a) => {
+            level_depth_subst_le(*a, p, v);
+        },
         LevelSpec::Max(a, b) => {
             level_depth_subst_le(*a, p, v);
             level_depth_subst_le(*b, p, v);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             level_depth_subst_le(*a, p, v);
             level_depth_subst_le(*b, p, v);
-        }
+        },
     }
 }
 
@@ -588,47 +656,62 @@ pub proof fn level_depth_subst_le(l: LevelSpec, p: u64, v: LevelSpec)
 /// most one -- again because `level_depth` maxes rather than sums, so
 /// duplicating `y` costs nothing.
 pub proof fn level_depth_imax_imax_le(a: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures level_depth(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
-        <= level_depth(LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))))) + 1
+    ensures
+        level_depth(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ),
+        ) <= level_depth(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+        ) + 1,
 {
-    let da = level_depth(a); let dx = level_depth(x); let dy = level_depth(y);
+    let da = level_depth(a);
+    let dx = level_depth(x);
+    let dy = level_depth(y);
     reveal_with_fuel(level_depth, 3);
     assert(level_depth(LevelSpec::IMax(Box::new(x), Box::new(y))) == 1 + max_nat(dx, dy));
     assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(y))) == 1 + max_nat(da, dy));
-    assert(level_depth(LevelSpec::Max(
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
-        == 1 + max_nat(1 + max_nat(da, dy), 1 + max_nat(dx, dy)));
-    assert(level_depth(LevelSpec::IMax(
-        Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))))
-        == 1 + max_nat(da, 1 + max_nat(dx, dy)));
+    assert(level_depth(
+        LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        ),
+    ) == 1 + max_nat(1 + max_nat(da, dy), 1 + max_nat(dx, dy)));
+    assert(level_depth(
+        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+    ) == 1 + max_nat(da, 1 + max_nat(dx, dy)));
 }
 
 /// `IMax(a, Max(x,y)) -> Max(IMax(a,x), IMax(a,y))`, same bound, same reason.
 pub proof fn level_depth_imax_max_le(a: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures level_depth(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
-        <= level_depth(LevelSpec::IMax(
-            Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y))))) + 1
+    ensures
+        level_depth(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+        ) <= level_depth(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+        ) + 1,
 {
-    let da = level_depth(a); let dx = level_depth(x); let dy = level_depth(y);
+    let da = level_depth(a);
+    let dx = level_depth(x);
+    let dy = level_depth(y);
     reveal_with_fuel(level_depth, 3);
     assert(level_depth(LevelSpec::Max(Box::new(x), Box::new(y))) == 1 + max_nat(dx, dy));
     assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(x))) == 1 + max_nat(da, dx));
     assert(level_depth(LevelSpec::IMax(Box::new(a), Box::new(y))) == 1 + max_nat(da, dy));
-    assert(level_depth(LevelSpec::Max(
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y)))))
-        == 1 + max_nat(1 + max_nat(da, dx), 1 + max_nat(da, dy)));
-    assert(level_depth(LevelSpec::IMax(
-        Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))))
-        == 1 + max_nat(da, 1 + max_nat(dx, dy)));
+    assert(level_depth(
+        LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        ),
+    ) == 1 + max_nat(1 + max_nat(da, dx), 1 + max_nat(da, dy)));
+    assert(level_depth(
+        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+    ) == 1 + max_nat(da, 1 + max_nat(dx, dy)));
 }
-
 
 /// `lw` strictly drops into either `Max` branch -- `leq_core`'s `Max` arms and
 /// `simplify`'s `Max` arm.
@@ -639,13 +722,11 @@ pub proof fn lw_max_gt(a: LevelSpec, b: LevelSpec)
 {
 }
 
-
-
 /// Parameters occurring at a position NOT underneath any `Succ`. A `Succ`
 /// wrapper is the syntactic marker for "known nonzero", so everything beneath
 /// one is decided and does not count.
 pub open spec fn params_outside_succ(l: LevelSpec) -> Set<u64>
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => Set::empty(),
@@ -672,23 +753,23 @@ pub open spec fn params_outside_succ(l: LevelSpec) -> Set<u64>
 /// NOT yet proven to be a measure -- see the note for what remains, of which
 /// the `simplify` non-growth lemma is the real work.
 pub open spec fn undet_imax_params(l: LevelSpec) -> Set<u64>
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => Set::empty(),
         LevelSpec::Param(_) => Set::empty(),
         LevelSpec::Succ(a) => undet_imax_params(*a),
         LevelSpec::Max(a, b) => undet_imax_params(*a).union(undet_imax_params(*b)),
-        LevelSpec::IMax(a, b) =>
-            undet_imax_params(*a)
-                .union(undet_imax_params(*b))
-                .union(params_outside_succ(*b)),
+        LevelSpec::IMax(a, b) => undet_imax_params(*a).union(undet_imax_params(*b)).union(
+            params_outside_succ(*b),
+        ),
     }
 }
 
 /// Peeling an outer `Succ` changes nothing: it hides no `IMax`.
 pub proof fn undet_imax_params_succ(a: LevelSpec)
-    ensures undet_imax_params(LevelSpec::Succ(Box::new(a))) == undet_imax_params(a)
+    ensures
+        undet_imax_params(LevelSpec::Succ(Box::new(a))) == undet_imax_params(a),
 {
 }
 
@@ -706,15 +787,16 @@ pub proof fn undet_imax_params_max_sub(a: LevelSpec, b: LevelSpec)
 /// second position into first.
 pub proof fn undet_imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        undet_imax_params(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-        )).subset_of(
-            undet_imax_params(LevelSpec::IMax(
-                Box::new(a),
+        undet_imax_params(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
                 Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-            ))
-        )
+            ),
+        ).subset_of(
+            undet_imax_params(
+                LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+            ),
+        ),
 {
     reveal_with_fuel(undet_imax_params, 3);
     // Both sides unfold to unions of the same five pieces; the right has one
@@ -725,17 +807,18 @@ pub proof fn undet_imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpe
     let uy = undet_imax_params(y);
     let px = params_outside_succ(x);
     let py = params_outside_succ(y);
-    let lhs = undet_imax_params(LevelSpec::Max(
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-    ));
-    let rhs = undet_imax_params(LevelSpec::IMax(
-        Box::new(a),
-        Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-    ));
+    let lhs = undet_imax_params(
+        LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+        ),
+    );
+    let rhs = undet_imax_params(
+        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+    );
     assert(lhs =~= ua.union(uy).union(py).union(ux.union(uy).union(py)));
     assert(rhs =~= ua.union(ux.union(uy).union(py)).union(px.union(py)));
-    assert forall |n: u64| lhs.contains(n) implies rhs.contains(n) by {
+    assert forall|n: u64| lhs.contains(n) implies rhs.contains(n) by {
         assert(ua.contains(n) || ux.contains(n) || uy.contains(n) || py.contains(n));
     }
 }
@@ -745,13 +828,14 @@ pub proof fn undet_imax_params_imax_imax(a: LevelSpec, x: LevelSpec, y: LevelSpe
 /// order here where `imax_params` could not.
 pub proof fn undet_imax_params_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec)
     ensures
-        undet_imax_params(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        )) =~= undet_imax_params(LevelSpec::IMax(
-            Box::new(a),
-            Box::new(LevelSpec::Max(Box::new(x), Box::new(y))),
-        ))
+        undet_imax_params(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+        ) =~= undet_imax_params(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+        ),
 {
     reveal_with_fuel(undet_imax_params, 3);
     let ua = undet_imax_params(a);
@@ -759,48 +843,51 @@ pub proof fn undet_imax_params_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec
     let uy = undet_imax_params(y);
     let px = params_outside_succ(x);
     let py = params_outside_succ(y);
-    let lhs = undet_imax_params(LevelSpec::Max(
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-        Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-    ));
-    let rhs = undet_imax_params(LevelSpec::IMax(
-        Box::new(a),
-        Box::new(LevelSpec::Max(Box::new(x), Box::new(y))),
-    ));
+    let lhs = undet_imax_params(
+        LevelSpec::Max(
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+        ),
+    );
+    let rhs = undet_imax_params(
+        LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+    );
     assert(lhs =~= ua.union(ux).union(px).union(ua.union(uy).union(py)));
     assert(rhs =~= ua.union(ux.union(uy)).union(px.union(py)));
-    assert forall |n: u64| lhs.contains(n) == rhs.contains(n) by { }
+    assert forall|n: u64| lhs.contains(n) == rhs.contains(n) by {}
     assert(lhs =~= rhs);
 }
 
 /// THE `by_cases` STEP, first half. Substituting `p := v` throughout, where `v`
 /// itself has no `p` outside a `Succ`, leaves no `p` outside a `Succ`.
 pub proof fn params_outside_succ_subst_single(l: LevelSpec, p: u64, v: LevelSpec)
-    requires !params_outside_succ(v).contains(p)
-    ensures !params_outside_succ(subst_level_spec(l, seq![p], seq![v])).contains(p)
-    decreases l
+    requires
+        !params_outside_succ(v).contains(p),
+    ensures
+        !params_outside_succ(subst_level_spec(l, seq![p], seq![v])).contains(p),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
-        LevelSpec::Succ(_) => {}
+        LevelSpec::Zero => {},
+        LevelSpec::Succ(_) => {},
         LevelSpec::Param(q) => {
             if q == p {
                 assert(find_level_idx(seq![p], q) == Some(0nat));
             } else {
-                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                assert forall|j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
                     assert(seq![p][j] == p);
                 }
                 find_level_idx_no_match(seq![p], q);
             }
-        }
+        },
         LevelSpec::Max(a, b) => {
             params_outside_succ_subst_single(*a, p, v);
             params_outside_succ_subst_single(*b, p, v);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             params_outside_succ_subst_single(*a, p, v);
             params_outside_succ_subst_single(*b, p, v);
-        }
+        },
     }
 }
 
@@ -819,33 +906,36 @@ pub proof fn undet_imax_params_subst_single(l: LevelSpec, p: u64, v: LevelSpec)
     requires
         !params_outside_succ(v).contains(p),
         !undet_imax_params(v).contains(p),
-    ensures !undet_imax_params(subst_level_spec(l, seq![p], seq![v])).contains(p)
-    decreases l
+    ensures
+        !undet_imax_params(subst_level_spec(l, seq![p], seq![v])).contains(p),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
+        LevelSpec::Zero => {},
         LevelSpec::Param(q) => {
             if q == p {
                 assert(find_level_idx(seq![p], q) == Some(0nat));
             } else {
-                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                assert forall|j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
                     assert(seq![p][j] == p);
                 }
                 find_level_idx_no_match(seq![p], q);
             }
-        }
-        LevelSpec::Succ(a) => { undet_imax_params_subst_single(*a, p, v); }
+        },
+        LevelSpec::Succ(a) => {
+            undet_imax_params_subst_single(*a, p, v);
+        },
         LevelSpec::Max(a, b) => {
             undet_imax_params_subst_single(*a, p, v);
             undet_imax_params_subst_single(*b, p, v);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             undet_imax_params_subst_single(*a, p, v);
             undet_imax_params_subst_single(*b, p, v);
             // the third union member, which is where `params_outside_succ` --
             // and therefore the whole candidate -- does its work
             params_outside_succ_subst_single(*b, p, v);
-        }
+        },
     }
 }
 
@@ -857,43 +947,44 @@ pub proof fn undet_imax_params_subst_no_growth(l: LevelSpec, p: u64, v: LevelSpe
         params_outside_succ(v) =~= Set::<u64>::empty(),
         undet_imax_params(v) =~= Set::<u64>::empty(),
     ensures
-        undet_imax_params(subst_level_spec(l, seq![p], seq![v]))
-            .subset_of(undet_imax_params(l)),
-        params_outside_succ(subst_level_spec(l, seq![p], seq![v]))
-            .subset_of(params_outside_succ(l)),
-    decreases l
+        undet_imax_params(subst_level_spec(l, seq![p], seq![v])).subset_of(undet_imax_params(l)),
+        params_outside_succ(subst_level_spec(l, seq![p], seq![v])).subset_of(
+            params_outside_succ(l),
+        ),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
+        LevelSpec::Zero => {},
         LevelSpec::Param(q) => {
             if q == p {
                 assert(find_level_idx(seq![p], q) == Some(0nat));
             } else {
-                assert forall |j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
+                assert forall|j: int| 0 <= j < seq![p].len() implies seq![p][j] != q by {
                     assert(seq![p][j] == p);
                 }
                 find_level_idx_no_match(seq![p], q);
             }
-        }
-        LevelSpec::Succ(a) => { undet_imax_params_subst_no_growth(*a, p, v); }
+        },
+        LevelSpec::Succ(a) => {
+            undet_imax_params_subst_no_growth(*a, p, v);
+        },
         LevelSpec::Max(a, b) => {
             undet_imax_params_subst_no_growth(*a, p, v);
             undet_imax_params_subst_no_growth(*b, p, v);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             undet_imax_params_subst_no_growth(*a, p, v);
             undet_imax_params_subst_no_growth(*b, p, v);
-        }
+        },
     }
 }
-
 
 /// Every parameter name occurring anywhere in a level. Distinct from
 /// `imax_params` below, which counts only those in an `IMax`'s SECOND
 /// position -- that one exists for a termination measure, this one for
 /// `all_uparams_defined`'s "every parameter is declared" property.
 pub open spec fn param_names(l: LevelSpec) -> Set<u64>
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => Set::empty(),
@@ -905,7 +996,7 @@ pub open spec fn param_names(l: LevelSpec) -> Set<u64>
 }
 
 pub open spec fn imax_params(l: LevelSpec) -> Set<u64>
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => Set::empty(),
@@ -918,29 +1009,35 @@ pub open spec fn imax_params(l: LevelSpec) -> Set<u64>
                 _ => Set::empty(),
             };
             imax_params(*a).union(imax_params(*b)).union(here)
-        }
+        },
     }
 }
 
 /// The set is finite, so `.len()` is meaningful -- needed before it can be a
 /// measure component at all.
 pub proof fn imax_params_finite(l: LevelSpec)
-    ensures imax_params(l).finite()
-    decreases l
+    ensures
+        imax_params(l).finite(),
+    decreases l,
 {
     match l {
-        LevelSpec::Succ(a) => { imax_params_finite(*a); }
-        LevelSpec::Max(a, b) => { imax_params_finite(*a); imax_params_finite(*b); }
-        LevelSpec::IMax(a, b) => { imax_params_finite(*a); imax_params_finite(*b); }
-        _ => {}
+        LevelSpec::Succ(a) => {
+            imax_params_finite(*a);
+        },
+        LevelSpec::Max(a, b) => {
+            imax_params_finite(*a);
+            imax_params_finite(*b);
+        },
+        LevelSpec::IMax(a, b) => {
+            imax_params_finite(*a);
+            imax_params_finite(*b);
+        },
+        _ => {},
     }
 }
 
-
-
-
 pub open spec fn imax_normal(l: LevelSpec) -> bool
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => true,
@@ -955,15 +1052,36 @@ pub open spec fn imax_normal(l: LevelSpec) -> bool
     }
 }
 
-pub open spec fn ls_is_zero(l: LevelSpec) -> bool { matches!(l, LevelSpec::Zero) }
-pub open spec fn ls_is_param(l: LevelSpec) -> bool { matches!(l, LevelSpec::Param(_)) }
-pub open spec fn ls_is_succ(l: LevelSpec) -> bool { matches!(l, LevelSpec::Succ(_)) }
-pub open spec fn ls_is_max(l: LevelSpec) -> bool { matches!(l, LevelSpec::Max(_, _)) }
-pub open spec fn ls_is_imax(l: LevelSpec) -> bool { matches!(l, LevelSpec::IMax(_, _)) }
-pub open spec fn ls_is_any_max(l: LevelSpec) -> bool { matches!(l, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) }
+pub open spec fn ls_is_zero(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::Zero)
+}
+
+pub open spec fn ls_is_param(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::Param(_))
+}
+
+pub open spec fn ls_is_succ(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::Succ(_))
+}
+
+pub open spec fn ls_is_max(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::Max(_, _))
+}
+
+pub open spec fn ls_is_imax(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::IMax(_, _))
+}
+
+pub open spec fn ls_is_any_max(l: LevelSpec) -> bool {
+    matches!(l, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _))
+}
+
 /// The second argument of an `IMax` (`Zero` elsewhere -- never consulted).
 pub open spec fn ls_imax_snd(l: LevelSpec) -> LevelSpec {
-    match l { LevelSpec::IMax(_, b) => *b, _ => LevelSpec::Zero }
+    match l {
+        LevelSpec::IMax(_, b) => *b,
+        _ => LevelSpec::Zero,
+    }
 }
 
 /// The disjunction of `leq_core`'s arm guards, in the order the function
@@ -986,7 +1104,6 @@ pub open spec fn leq_core_covered(l: LevelSpec, r: LevelSpec, diff: int) -> bool
     ||| (ls_is_imax(r) && ls_is_any_max(ls_imax_snd(r)))
 }
 
-
 /// Non-vacuity check for the lemma above (a conditional lemma that happens
 /// to have an always-true conclusion would prove nothing). `IMax(p, 0)`
 /// against `Zero` at `diff = 0` falls through every one of `leq_core`'s
@@ -995,34 +1112,49 @@ pub open spec fn leq_core_covered(l: LevelSpec, r: LevelSpec, diff: int) -> bool
 /// rather than decorative.
 pub proof fn leq_core_covered_is_not_vacuous()
     ensures
-        !leq_core_covered(LevelSpec::IMax(Box::new(LevelSpec::Param(0)), Box::new(LevelSpec::Zero)), LevelSpec::Zero, 0),
+        !leq_core_covered(
+            LevelSpec::IMax(Box::new(LevelSpec::Param(0)), Box::new(LevelSpec::Zero)),
+            LevelSpec::Zero,
+            0,
+        ),
         !imax_normal(LevelSpec::IMax(Box::new(LevelSpec::Param(0)), Box::new(LevelSpec::Zero))),
 {
 }
 
 pub open spec fn interp(l: LevelSpec, rho: Map<nat, nat>) -> nat
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => 0,
         LevelSpec::Succ(a) => interp(*a, rho) + 1,
         LevelSpec::Max(a, b) => max_nat(interp(*a, rho), interp(*b, rho)),
         LevelSpec::IMax(a, b) => {
-            if interp(*b, rho) == 0 { 0 } else { max_nat(interp(*a, rho), interp(*b, rho)) }
-        }
-        LevelSpec::Param(p) => if rho.contains_key(p as nat) { rho[p as nat] } else { 0 },
+            if interp(*b, rho) == 0 {
+                0
+            } else {
+                max_nat(interp(*a, rho), interp(*b, rho))
+            }
+        },
+        LevelSpec::Param(p) => if rho.contains_key(p as nat) {
+            rho[p as nat]
+        } else {
+            0
+        },
     }
 }
 
 pub open spec fn is_succ(l: LevelSpec) -> bool {
-    match l { LevelSpec::Succ(_) => true, _ => false }
+    match l {
+        LevelSpec::Succ(_) => true,
+        _ => false,
+    }
 }
 
-
-
-
 pub open spec fn is_imax(l: LevelSpec) -> bool {
-    match l { LevelSpec::IMax(_, _) => true, _ => false }
+    match l {
+        LevelSpec::IMax(_, _) => true,
+        _ => false,
+    }
 }
 
 /// Mirrors `TcCtx::combining` (the worker behind `simplify`'s `Max` case):
@@ -1038,9 +1170,10 @@ pub open spec fn is_imax(l: LevelSpec) -> bool {
 /// which `is_succ(r)` rules out.)
 pub fn combining(l: LevelSpec, r: LevelSpec) -> (result: LevelSpec)
     ensures
-        forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(l, rho), interp(r, rho)),
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(result, rho) == max_nat(interp(l, rho), interp(r, rho)),
         is_succ(r) ==> !is_imax(result),
-    decreases l
+    decreases l,
 {
     match (l, r) {
         (LevelSpec::Zero, r) => r,
@@ -1051,16 +1184,17 @@ pub fn combining(l: LevelSpec, r: LevelSpec) -> (result: LevelSpec)
             // postcondition through `interp`'s own recursion on its own; restating
             // these three facts (the IH, and how `interp` unfolds on the result and
             // on the two original scrutinees) is what it takes to close the goal.
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == max_nat(interp(*l2, rho), interp(*r2, rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*l2, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(r, rho) == interp(*r2, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sub, rho) == max_nat(interp(*l2, rho), interp(*r2, rho)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*l2, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(r, rho) == interp(*r2, rho) + 1);
             LevelSpec::Succ(Box::new(sub))
-        }
+        },
         (l, r) => LevelSpec::Max(Box::new(l), Box::new(r)),
     }
 }
-
 
 /// A conservative, structural-only fragment of `TcCtx::leq_core`
 /// (`level.rs`'s decision procedure for "is `l + diff <= r` valid for every
@@ -1089,9 +1223,10 @@ pub fn combining(l: LevelSpec, r: LevelSpec) -> (result: LevelSpec)
 /// `subst`+`simplify` actually has that "no more case-split shapes for
 /// `p`" property, which is real work for a follow-up.
 pub fn leq_core_partial(l: &LevelSpec, r: &LevelSpec, diff: i64) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>|
-        #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
-    decreases l, r
+    ensures
+        result ==> forall|rho: Map<nat, nat>| #[trigger]
+            interp(*l, rho) as int <= interp(*r, rho) as int + diff as int,
+    decreases l, r,
 {
     match (l, r) {
         (LevelSpec::Zero, _) if diff >= 0 => true,
@@ -1103,53 +1238,68 @@ pub fn leq_core_partial(l: &LevelSpec, r: &LevelSpec, diff: i64) -> (result: boo
             match diff.checked_sub(1) {
                 Some(d) => {
                     let sub = leq_core_partial(&**s, r, d);
-                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(**s, rho) as int <= interp(*r, rho) as int + d as int);
-                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == interp(**s, rho) + 1);
+                    assert(sub ==> forall|rho: Map<nat, nat>| #[trigger]
+                        interp(**s, rho) as int <= interp(*r, rho) as int + d as int);
+                    assert(forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*l, rho) == interp(**s, rho) + 1);
                     sub
                 }
                 // `diff - 1` would overflow `i64`: astronomically unreachable in
                 // practice (it needs ~2^63 nested `Succ`s), but since we only need
                 // to return a sound answer, not a complete one, `false` is free.
+                ,
                 None => false,
             }
-        }
+        },
         (_, LevelSpec::Succ(s)) => {
             match diff.checked_add(1) {
                 Some(d) => {
                     let sub = leq_core_partial(l, &**s, d);
-                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**s, rho) as int + d as int);
-                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == interp(**s, rho) + 1);
+                    assert(sub ==> forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*l, rho) as int <= interp(**s, rho) as int + d as int);
+                    assert(forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*r, rho) == interp(**s, rho) + 1);
                     sub
-                }
+                },
                 None => false,
             }
-        }
+        },
         (LevelSpec::Max(a, b), _) => {
             let ra = leq_core_partial(&**a, r, diff);
             let rb = leq_core_partial(&**b, r, diff);
-            assert(ra ==> forall |rho: Map<nat, nat>| #[trigger] interp(**a, rho) as int <= interp(*r, rho) as int + diff as int);
-            assert(rb ==> forall |rho: Map<nat, nat>| #[trigger] interp(**b, rho) as int <= interp(*r, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == max_nat(interp(**a, rho), interp(**b, rho)));
+            assert(ra ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(**a, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(rb ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(**b, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) == max_nat(interp(**a, rho), interp(**b, rho)));
             ra && rb
-        }
+        },
         (LevelSpec::Param(_), LevelSpec::Max(x, y)) => {
             let rx = leq_core_partial(l, &**x, diff);
             let ry = leq_core_partial(l, &**y, diff);
-            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
-            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            assert(rx ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
             rx || ry
-        }
+        },
         (LevelSpec::Zero, LevelSpec::Max(x, y)) => {
             let rx = leq_core_partial(l, &**x, diff);
             let ry = leq_core_partial(l, &**y, diff);
-            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
-            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            assert(rx ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
             rx || ry
         }
         // Any pair involving `IMax` that isn't caught above: not attempted (see
         // doc comment). Returning `false` unconditionally keeps this sound.
+        ,
         _ => false,
     }
 }
@@ -1162,8 +1312,9 @@ pub fn leq_core_partial(l: &LevelSpec, r: &LevelSpec, diff: i64) -> (result: boo
 /// "cyclic self-reference" on a recursive `Box` enum, so this is written out
 /// by hand.
 pub fn dup(l: &LevelSpec) -> (result: LevelSpec)
-    ensures result == *l
-    decreases l
+    ensures
+        result == *l,
+    decreases l,
 {
     match l {
         LevelSpec::Zero => LevelSpec::Zero,
@@ -1172,21 +1323,21 @@ pub fn dup(l: &LevelSpec) -> (result: LevelSpec)
             let sub = dup(a);
             assert(sub == **a);
             LevelSpec::Succ(Box::new(sub))
-        }
+        },
         LevelSpec::Max(a, b) => {
             let sa = dup(a);
             let sb = dup(b);
             assert(sa == **a);
             assert(sb == **b);
             LevelSpec::Max(Box::new(sa), Box::new(sb))
-        }
+        },
         LevelSpec::IMax(a, b) => {
             let sa = dup(a);
             let sb = dup(b);
             assert(sa == **a);
             assert(sb == **b);
             LevelSpec::IMax(Box::new(sa), Box::new(sb))
-        }
+        },
     }
 }
 
@@ -1197,52 +1348,81 @@ pub fn dup(l: &LevelSpec) -> (result: LevelSpec)
 /// interpreting the original term under `rho` with `p`'s assignment
 /// overridden to whatever `v` denotes under `rho`.
 pub fn subst1(l: LevelSpec, p: u64, v: &LevelSpec) -> (result: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, rho.insert(p as nat, interp(*v, rho)))
-    decreases l
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(result, rho) == interp(l, rho.insert(p as nat, interp(*v, rho))),
+    decreases l,
 {
     match l {
         LevelSpec::Zero => LevelSpec::Zero,
         LevelSpec::Param(q) => {
             if q == p {
                 let result = dup(v);
-                assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(*v, rho));
+                assert(forall|rho: Map<nat, nat>| #[trigger]
+                    interp(result, rho) == interp(*v, rho));
                 result
             } else {
                 LevelSpec::Param(q)
             }
-        }
+        },
         LevelSpec::Succ(a) => {
             let sub = subst1(*a, p, v);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
-                == interp(*a, rho.insert(p as nat, interp(*v, rho))) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sub, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, rho.insert(p as nat, interp(*v, rho))) == interp(
+                    *a,
+                    rho.insert(p as nat, interp(*v, rho)),
+                ) + 1);
             LevelSpec::Succ(Box::new(sub))
-        }
+        },
         LevelSpec::Max(a, b) => {
             let sa = subst1(*a, p, v);
             let sb = subst1(*b, p, v);
             let result = combining(sa, sb);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
-                == max_nat(interp(*a, rho.insert(p as nat, interp(*v, rho))), interp(*b, rho.insert(p as nat, interp(*v, rho)))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, rho.insert(p as nat, interp(*v, rho))) == max_nat(
+                    interp(*a, rho.insert(p as nat, interp(*v, rho))),
+                    interp(*b, rho.insert(p as nat, interp(*v, rho))),
+                ));
             result
-        }
+        },
         LevelSpec::IMax(a, b) => {
             let sa = subst1(*a, p, v);
             let sb = subst1(*b, p, v);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho)
-                == if interp(sb, rho) == 0 { 0 } else { max_nat(interp(sa, rho), interp(sb, rho)) });
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho.insert(p as nat, interp(*v, rho)))
-                == if interp(*b, rho.insert(p as nat, interp(*v, rho))) == 0 { 0 } else {
-                    max_nat(interp(*a, rho.insert(p as nat, interp(*v, rho))), interp(*b, rho.insert(p as nat, interp(*v, rho))))
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sa, rho) == interp(*a, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sb, rho) == interp(*b, rho.insert(p as nat, interp(*v, rho))));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho) == if interp(sb, rho)
+                    == 0 {
+                    0
+                } else {
+                    max_nat(interp(sa, rho), interp(sb, rho))
+                });
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, rho.insert(p as nat, interp(*v, rho))) == if interp(
+                    *b,
+                    rho.insert(p as nat, interp(*v, rho)),
+                ) == 0 {
+                    0
+                } else {
+                    max_nat(
+                        interp(*a, rho.insert(p as nat, interp(*v, rho))),
+                        interp(*b, rho.insert(p as nat, interp(*v, rho))),
+                    )
                 });
             LevelSpec::IMax(Box::new(sa), Box::new(sb))
-        }
+        },
     }
 }
 
@@ -1252,7 +1432,7 @@ pub fn subst1(l: LevelSpec, p: u64, v: &LevelSpec) -> (result: LevelSpec)
 /// -- scanning from the front, unlike `find_from_end` in `expr_model.rs`
 /// (which scans backward for a different real-code loop).
 pub open spec fn find_level_idx(ks: Seq<u64>, q: u64) -> Option<nat>
-    decreases ks.len()
+    decreases ks.len(),
 {
     if ks.len() == 0 {
         None
@@ -1271,11 +1451,12 @@ pub open spec fn find_level_idx(ks: Seq<u64>, q: u64) -> Option<nat>
 /// bundles this fact directly into an `pub fn`'s contract -- `find_level_idx`
 /// is a `spec fn`, so the same fact needs a companion `proof fn` instead).
 pub proof fn find_level_idx_bound(ks: Seq<u64>, q: u64)
-    ensures match find_level_idx(ks, q) {
-        Some(i) => i < ks.len(),
-        None => true,
-    }
-    decreases ks.len()
+    ensures
+        match find_level_idx(ks, q) {
+            Some(i) => i < ks.len(),
+            None => true,
+        },
+    decreases ks.len(),
 {
     if ks.len() == 0 || ks[0] == q {
     } else {
@@ -1294,9 +1475,10 @@ pub proof fn find_level_idx_first_match(ks: Seq<u64>, q: u64, i: nat)
     requires
         i < ks.len(),
         ks[i as int] == q,
-        forall |j: int| 0 <= j < i ==> ks[j] != q,
-    ensures find_level_idx(ks, q) == Some(i)
-    decreases i
+        forall|j: int| 0 <= j < i ==> ks[j] != q,
+    ensures
+        find_level_idx(ks, q) == Some(i),
+    decreases i,
 {
     if i == 0 {
     } else {
@@ -1309,9 +1491,11 @@ pub proof fn find_level_idx_first_match(ks: Seq<u64>, q: u64, i: nat)
 /// reports `None`. Needed by `verified_subst_level` for the "scanned the
 /// whole list, no pointer match" case.
 pub proof fn find_level_idx_no_match(ks: Seq<u64>, q: u64)
-    requires forall |j: int| 0 <= j < ks.len() ==> ks[j] != q
-    ensures find_level_idx(ks, q) is None
-    decreases ks.len()
+    requires
+        forall|j: int| 0 <= j < ks.len() ==> ks[j] != q,
+    ensures
+        find_level_idx(ks, q) is None,
+    decreases ks.len(),
 {
     if ks.len() == 0 {
     } else {
@@ -1336,7 +1520,10 @@ pub proof fn find_level_idx_no_match(ks: Seq<u64>, q: u64)
 /// builds the map via plain `insert` instead of `Map::new` with a
 /// predicate-defined domain.)
 pub open spec fn level_spec_param_name(l: LevelSpec) -> u64 {
-    match l { LevelSpec::Param(q) => q, _ => 0 }
+    match l {
+        LevelSpec::Param(q) => q,
+        _ => 0,
+    }
 }
 
 /// Extracts the parameter name of every (assumed-`Param`-shaped) element of
@@ -1351,13 +1538,15 @@ pub open spec fn level_names(ls: Seq<LevelSpec>) -> Seq<u64> {
 }
 
 pub open spec fn subst_env(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Map<nat, nat>
-    decreases ks.len()
+    decreases ks.len(),
 {
     if ks.len() == 0 {
         rho
     } else {
-        subst_env(rho, ks.subrange(1, ks.len() as int), vs.subrange(1, vs.len() as int))
-            .insert(ks[0] as nat, interp(vs[0], rho))
+        subst_env(rho, ks.subrange(1, ks.len() as int), vs.subrange(1, vs.len() as int)).insert(
+            ks[0] as nat,
+            interp(vs[0], rho),
+        )
     }
 }
 
@@ -1369,29 +1558,42 @@ pub open spec fn subst_env(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>)
 /// delta-lift arc): `subst_env` below is the SEMANTIC view of the same
 /// operation, and `subst_level_spec_interp` ties the two.
 pub open spec fn subst_level_spec(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>) -> LevelSpec
-    decreases l
+    decreases l,
 {
     match l {
         LevelSpec::Zero => LevelSpec::Zero,
         LevelSpec::Succ(a) => LevelSpec::Succ(Box::new(subst_level_spec(*a, ks, vs))),
-        LevelSpec::Max(a, b) => LevelSpec::Max(Box::new(subst_level_spec(*a, ks, vs)), Box::new(subst_level_spec(*b, ks, vs))),
-        LevelSpec::IMax(a, b) => LevelSpec::IMax(Box::new(subst_level_spec(*a, ks, vs)), Box::new(subst_level_spec(*b, ks, vs))),
+        LevelSpec::Max(a, b) => LevelSpec::Max(
+            Box::new(subst_level_spec(*a, ks, vs)),
+            Box::new(subst_level_spec(*b, ks, vs)),
+        ),
+        LevelSpec::IMax(a, b) => LevelSpec::IMax(
+            Box::new(subst_level_spec(*a, ks, vs)),
+            Box::new(subst_level_spec(*b, ks, vs)),
+        ),
         LevelSpec::Param(q) => match find_level_idx(ks, q) {
-            Some(i) => if i < vs.len() { vs[i as int] } else { l },
+            Some(i) => if i < vs.len() {
+                vs[i as int]
+            } else {
+                l
+            },
             None => l,
         },
     }
 }
 
 /// Elementwise `subst_level_spec` over a level list.
-pub open spec fn subst_levels_spec(ls: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Seq<LevelSpec> {
+pub open spec fn subst_levels_spec(ls: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Seq<
+    LevelSpec,
+> {
     Seq::new(ls.len(), |i: int| subst_level_spec(ls[i], ks, vs))
 }
 
 /// `find_level_idx` never indexes past `ks`.
 pub proof fn find_level_idx_in_range(ks: Seq<u64>, q: u64)
-    ensures find_level_idx(ks, q) matches Some(i) ==> i < ks.len()
-    decreases ks.len()
+    ensures
+        find_level_idx(ks, q) matches Some(i) ==> i < ks.len(),
+    decreases ks.len(),
 {
     if ks.len() == 0 {
     } else if ks[0] == q {
@@ -1408,53 +1610,76 @@ pub proof fn find_level_idx_in_range(ks: Seq<u64>, q: u64)
 /// `leq_imax_by_cases` needs this: its two branches evaluate under
 /// `rho.insert(p, ..)`, and the case analysis has to get back to `rho` itself.
 pub proof fn interp_congr(l: LevelSpec, rho1: Map<nat, nat>, rho2: Map<nat, nat>)
-    requires forall |q: u64| #[trigger] interp(LevelSpec::Param(q), rho1)
-        == interp(LevelSpec::Param(q), rho2)
-    ensures interp(l, rho1) == interp(l, rho2)
-    decreases l
+    requires
+        forall|q: u64| #[trigger]
+            interp(LevelSpec::Param(q), rho1) == interp(LevelSpec::Param(q), rho2),
+    ensures
+        interp(l, rho1) == interp(l, rho2),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
-        LevelSpec::Param(q) => { assert(interp(LevelSpec::Param(q), rho1) == interp(LevelSpec::Param(q), rho2)); }
-        LevelSpec::Succ(a) => { interp_congr(*a, rho1, rho2); }
-        LevelSpec::Max(a, b) => { interp_congr(*a, rho1, rho2); interp_congr(*b, rho1, rho2); }
-        LevelSpec::IMax(a, b) => { interp_congr(*a, rho1, rho2); interp_congr(*b, rho1, rho2); }
+        LevelSpec::Zero => {},
+        LevelSpec::Param(q) => {
+            assert(interp(LevelSpec::Param(q), rho1) == interp(LevelSpec::Param(q), rho2));
+        },
+        LevelSpec::Succ(a) => {
+            interp_congr(*a, rho1, rho2);
+        },
+        LevelSpec::Max(a, b) => {
+            interp_congr(*a, rho1, rho2);
+            interp_congr(*b, rho1, rho2);
+        },
+        LevelSpec::IMax(a, b) => {
+            interp_congr(*a, rho1, rho2);
+            interp_congr(*b, rho1, rho2);
+        },
     }
 }
 
 /// The `forall rho` form, which is the shape `subst_expr_levels_rel`'s `Sort`
 /// arm is written in.
 pub proof fn subst_level_spec_interp_forall(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
-    requires ks.len() == vs.len()
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(subst_level_spec(l, ks, vs), rho)
-        == interp(l, subst_env(rho, ks, vs))
+    requires
+        ks.len() == vs.len(),
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs)),
 {
-    assert forall |rho: Map<nat, nat>| #[trigger] interp(subst_level_spec(l, ks, vs), rho)
-        == interp(l, subst_env(rho, ks, vs)) by {
+    assert forall|rho: Map<nat, nat>| #[trigger]
+        interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs)) by {
         subst_level_spec_interp(l, ks, vs, rho);
     }
 }
 
-pub proof fn subst_level_spec_interp(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, rho: Map<nat, nat>)
-    requires ks.len() == vs.len()
-    ensures interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs))
-    decreases l
+pub proof fn subst_level_spec_interp(
+    l: LevelSpec,
+    ks: Seq<u64>,
+    vs: Seq<LevelSpec>,
+    rho: Map<nat, nat>,
+)
+    requires
+        ks.len() == vs.len(),
+    ensures
+        interp(subst_level_spec(l, ks, vs), rho) == interp(l, subst_env(rho, ks, vs)),
+    decreases l,
 {
     match l {
-        LevelSpec::Zero => {}
-        LevelSpec::Succ(a) => { subst_level_spec_interp(*a, ks, vs, rho); }
+        LevelSpec::Zero => {},
+        LevelSpec::Succ(a) => {
+            subst_level_spec_interp(*a, ks, vs, rho);
+        },
         LevelSpec::Max(a, b) => {
             subst_level_spec_interp(*a, ks, vs, rho);
             subst_level_spec_interp(*b, ks, vs, rho);
-        }
+        },
         LevelSpec::IMax(a, b) => {
             subst_level_spec_interp(*a, ks, vs, rho);
             subst_level_spec_interp(*b, ks, vs, rho);
-        }
+        },
         LevelSpec::Param(q) => {
             subst_env_param(rho, ks, vs, q);
             find_level_idx_in_range(ks, q);
-        }
+        },
     }
 }
 
@@ -1464,19 +1689,23 @@ pub proof fn subst_level_spec_interp(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSp
 /// (interpreted under the ORIGINAL `rho`); every other param denotes
 /// exactly what it denoted under `rho` before the substitution.
 pub proof fn subst_env_param(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec>, q: u64)
-    requires ks.len() == vs.len()
+    requires
+        ks.len() == vs.len(),
     ensures
         interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == match find_level_idx(ks, q) {
             Some(i) => interp(vs[i as int], rho),
             None => interp(LevelSpec::Param(q), rho),
         },
-    decreases ks.len()
+    decreases ks.len(),
 {
     find_level_idx_bound(ks, q);
     if ks.len() == 0 {
         assert(subst_env(rho, ks, vs) == rho);
         assert(find_level_idx(ks, q) is None);
-        assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), rho));
+        assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(
+            LevelSpec::Param(q),
+            rho,
+        ));
     } else {
         let tail_ks = ks.subrange(1, ks.len() as int);
         let tail_vs = vs.subrange(1, vs.len() as int);
@@ -1493,15 +1722,23 @@ pub proof fn subst_env_param(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec
             assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == v0);
             assert(find_level_idx(ks, q) == Some(0nat));
         } else {
-            assert(subst_env(rho, ks, vs).contains_key(q as nat) == tail_env.contains_key(q as nat));
+            assert(subst_env(rho, ks, vs).contains_key(q as nat) == tail_env.contains_key(
+                q as nat,
+            ));
             if tail_env.contains_key(q as nat) {
                 vstd::map::axiom_map_insert_different(tail_env, q as nat, ks[0] as nat, v0);
                 assert(subst_env(rho, ks, vs)[q as nat] == tail_env[q as nat]);
-                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), tail_env));
+                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(
+                    LevelSpec::Param(q),
+                    tail_env,
+                ));
             } else {
                 assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == 0);
                 assert(interp(LevelSpec::Param(q), tail_env) == 0);
-                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(LevelSpec::Param(q), tail_env));
+                assert(interp(LevelSpec::Param(q), subst_env(rho, ks, vs)) == interp(
+                    LevelSpec::Param(q),
+                    tail_env,
+                ));
             }
             assert(find_level_idx(ks, q) == match find_level_idx(tail_ks, q) {
                 Some(p) => Some((p + 1) as nat),
@@ -1516,13 +1753,14 @@ pub proof fn subst_env_param(rho: Map<nat, nat>, ks: Seq<u64>, vs: Seq<LevelSpec
 /// matching this file's existing `find_pos_from_end`-style convention in
 /// `expr_model.rs`).
 pub fn find_level(ks: &[u64], q: u64) -> (result: Option<usize>)
-    requires ks.len() <= 1_000_000_000
+    requires
+        ks.len() <= 1_000_000_000,
     ensures
         match result {
             Some(i) => find_level_idx(ks@, q) == Some(i as nat) && (i as nat) < ks.len(),
             None => find_level_idx(ks@, q) is None,
-        }
-    decreases ks.len()
+        },
+    decreases ks.len(),
 {
     if ks.len() == 0 {
         None
@@ -1545,9 +1783,13 @@ pub fn find_level(ks: &[u64], q: u64) -> (result: Option<usize>)
 /// difference is the `Param` case, which does a linear scan (`find_level`)
 /// instead of a single equality check.
 pub fn subst_levels(l: LevelSpec, ks: &[u64], vs: &[LevelSpec]) -> (result: LevelSpec)
-    requires ks.len() == vs.len(), ks.len() <= 1_000_000_000
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@))
-    decreases l
+    requires
+        ks.len() == vs.len(),
+        ks.len() <= 1_000_000_000,
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)),
+    decreases l,
 {
     match l {
         LevelSpec::Zero => LevelSpec::Zero,
@@ -1556,60 +1798,96 @@ pub fn subst_levels(l: LevelSpec, ks: &[u64], vs: &[LevelSpec]) -> (result: Leve
                 Some(i) => {
                     let result = dup(&vs[i]);
                     assert(result == vs@[i as int]);
-                    assert forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(LevelSpec::Param(q), subst_env(rho, ks@, vs@)) by {
+                    assert forall|rho: Map<nat, nat>| #[trigger]
+                        interp(result, rho) == interp(
+                            LevelSpec::Param(q),
+                            subst_env(rho, ks@, vs@),
+                        ) by {
                         subst_env_param(rho, ks@, vs@, q);
                     }
                     result
-                }
+                },
                 None => {
-                    assert forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Param(q), rho) == interp(LevelSpec::Param(q), subst_env(rho, ks@, vs@)) by {
+                    assert forall|rho: Map<nat, nat>| #[trigger]
+                        interp(LevelSpec::Param(q), rho) == interp(
+                            LevelSpec::Param(q),
+                            subst_env(rho, ks@, vs@),
+                        ) by {
                         subst_env_param(rho, ks@, vs@, q);
                     }
                     LevelSpec::Param(q)
-                }
+                },
             }
-        }
+        },
         LevelSpec::Succ(a) => {
             let sub = subst_levels(*a, ks, vs);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sub, rho) == interp(*a, subst_env(rho, ks@, vs@)));
             let result = LevelSpec::Succ(Box::new(sub));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(sub, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@)) == interp(*a, subst_env(rho, ks@, vs@)) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == interp(sub, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, subst_env(rho, ks@, vs@)) == interp(*a, subst_env(rho, ks@, vs@)) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
             result
-        }
+        },
         LevelSpec::Max(a, b) => {
             let sa = subst_levels(*a, ks, vs);
             let sb = subst_levels(*b, ks, vs);
             let result = combining(sa, sb);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@))
-                == max_nat(interp(*a, subst_env(rho, ks@, vs@)), interp(*b, subst_env(rho, ks@, vs@))));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, subst_env(rho, ks@, vs@)) == max_nat(
+                    interp(*a, subst_env(rho, ks@, vs@)),
+                    interp(*b, subst_env(rho, ks@, vs@)),
+                ));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
             result
-        }
+        },
         LevelSpec::IMax(a, b) => {
             let sa = subst_levels(*a, ks, vs);
             let sb = subst_levels(*b, ks, vs);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sa, rho) == interp(*a, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(sb, rho) == interp(*b, subst_env(rho, ks@, vs@)));
             let result = LevelSpec::IMax(Box::new(sa), Box::new(sb));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho)
-                == if interp(sb, rho) == 0 { 0 } else { max_nat(interp(sa, rho), interp(sb, rho)) });
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, subst_env(rho, ks@, vs@))
-                == if interp(*b, subst_env(rho, ks@, vs@)) == 0 { 0 } else {
-                    max_nat(interp(*a, subst_env(rho, ks@, vs@)), interp(*b, subst_env(rho, ks@, vs@)))
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == if interp(sb, rho) == 0 {
+                    0
+                } else {
+                    max_nat(interp(sa, rho), interp(sb, rho))
                 });
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, subst_env(rho, ks@, vs@)) == if interp(*b, subst_env(rho, ks@, vs@))
+                    == 0 {
+                    0
+                } else {
+                    max_nat(
+                        interp(*a, subst_env(rho, ks@, vs@)),
+                        interp(*b, subst_env(rho, ks@, vs@)),
+                    )
+                });
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == interp(l, subst_env(rho, ks@, vs@)));
             result
-        }
+        },
     }
 }
 
 pub open spec fn is_zero_or_succ(l: LevelSpec) -> bool {
-    match l { LevelSpec::Zero => true, LevelSpec::Succ(_) => true, _ => false }
+    match l {
+        LevelSpec::Zero => true,
+        LevelSpec::Succ(_) => true,
+        _ => false,
+    }
 }
 
 /// Mirrors the body of `TcCtx::simplify`'s `IMax` case, given already-
@@ -1624,8 +1902,10 @@ pub open spec fn is_zero_or_succ(l: LevelSpec) -> bool {
 /// `flag` as a parameter rather than computing it lets us prove that fact
 /// now, without waiting on the harder mutual-recursion work.
 pub fn simplify_imax_step(l_simp: LevelSpec, r_simp: LevelSpec, flag: bool) -> (result: LevelSpec)
-    requires is_zero_or_succ(r_simp)
-    ensures !is_imax(result)
+    requires
+        is_zero_or_succ(r_simp),
+    ensures
+        !is_imax(result),
 {
     if flag {
         r_simp
@@ -1653,8 +1933,10 @@ pub fn simplify_imax_step(l_simp: LevelSpec, r_simp: LevelSpec, flag: bool) -> (
 /// needing a separate structural — as opposed to semantic — correctness
 /// lemma about `subst1` in general.)
 pub fn case_split_resolves(a: LevelSpec, p: u64, v: &LevelSpec, flag: bool) -> (result: LevelSpec)
-    requires is_zero_or_succ(*v)
-    ensures !is_imax(result)
+    requires
+        is_zero_or_succ(*v),
+    ensures
+        !is_imax(result),
 {
     let l_child = subst1(a, p, v);
     let r_child = dup(v);
@@ -1664,7 +1946,8 @@ pub fn case_split_resolves(a: LevelSpec, p: u64, v: &LevelSpec, flag: bool) -> (
 
 /// `leq_imax_by_cases`'s first substitution target: `p := Zero`.
 pub fn case_split_resolves_zero(a: LevelSpec, p: u64, flag: bool) -> (result: LevelSpec)
-    ensures !is_imax(result)
+    ensures
+        !is_imax(result),
 {
     case_split_resolves(a, p, &LevelSpec::Zero, flag)
 }
@@ -1674,14 +1957,19 @@ pub fn case_split_resolves_zero(a: LevelSpec, p: u64, flag: bool) -> (result: Le
 /// `p` from the term, it only erases this specific `IMax(_, p)` shape (see
 /// the module-level discussion in `leq_core_partial`'s doc comment).
 pub fn case_split_resolves_succ(a: LevelSpec, p: u64, flag: bool) -> (result: LevelSpec)
-    ensures !is_imax(result)
+    ensures
+        !is_imax(result),
 {
     let v = LevelSpec::Succ(Box::new(LevelSpec::Param(p)));
     case_split_resolves(a, p, &v, flag)
 }
 
 pub open spec fn eff(rho: Map<nat, nat>, p: nat) -> nat {
-    if rho.contains_key(p) { rho[p] } else { 0 }
+    if rho.contains_key(p) {
+        rho[p]
+    } else {
+        0
+    }
 }
 
 /// Inserting `p`'s own current effective value back into `rho` never changes
@@ -1691,24 +1979,35 @@ pub open spec fn eff(rho: Map<nat, nat>, p: nat) -> nat {
 /// holds for a given `rho`, substituting that case's witness for `p` and
 /// re-evaluating under `rho` gives back exactly `interp(t, rho)`.
 pub proof fn noop_insert(t: LevelSpec, rho: Map<nat, nat>, p: nat)
-    ensures interp(t, rho.insert(p, eff(rho, p))) == interp(t, rho)
-    decreases t
+    ensures
+        interp(t, rho.insert(p, eff(rho, p))) == interp(t, rho),
+    decreases t,
 {
     match t {
-        LevelSpec::Zero => {}
+        LevelSpec::Zero => {},
         LevelSpec::Param(q) => {
-            assert(interp(LevelSpec::Param(q), rho.insert(p, eff(rho, p)))
-                == eff(rho.insert(p, eff(rho, p)), q as nat));
+            assert(interp(LevelSpec::Param(q), rho.insert(p, eff(rho, p))) == eff(
+                rho.insert(p, eff(rho, p)),
+                q as nat,
+            ));
             assert(interp(LevelSpec::Param(q), rho) == eff(rho, q as nat));
             if q as nat == p {
                 assert(eff(rho.insert(p, eff(rho, p)), q as nat) == eff(rho, q as nat));
             } else {
                 assert(eff(rho.insert(p, eff(rho, p)), q as nat) == eff(rho, q as nat));
             }
-        }
-        LevelSpec::Succ(a) => { noop_insert(*a, rho, p); }
-        LevelSpec::Max(a, b) => { noop_insert(*a, rho, p); noop_insert(*b, rho, p); }
-        LevelSpec::IMax(a, b) => { noop_insert(*a, rho, p); noop_insert(*b, rho, p); }
+        },
+        LevelSpec::Succ(a) => {
+            noop_insert(*a, rho, p);
+        },
+        LevelSpec::Max(a, b) => {
+            noop_insert(*a, rho, p);
+            noop_insert(*b, rho, p);
+        },
+        LevelSpec::IMax(a, b) => {
+            noop_insert(*a, rho, p);
+            noop_insert(*b, rho, p);
+        },
     }
 }
 
@@ -1724,20 +2023,32 @@ pub proof fn noop_insert(t: LevelSpec, rho: Map<nat, nat>, p: nat)
 /// real substituted terms (from calling `subst1`) and this lemma's
 /// conclusion available.
 pub proof fn case_split_sound(
-    l: LevelSpec, r: LevelSpec, p: u64, diff: int,
-    lhs_0: LevelSpec, rhs_0: LevelSpec, lhs_s: LevelSpec, rhs_s: LevelSpec,
+    l: LevelSpec,
+    r: LevelSpec,
+    p: u64,
+    diff: int,
+    lhs_0: LevelSpec,
+    rhs_0: LevelSpec,
+    lhs_s: LevelSpec,
+    rhs_s: LevelSpec,
 )
     requires
-        forall |rho: Map<nat, nat>| #[trigger] interp(lhs_0, rho) == interp(l, rho.insert(p as nat, 0nat)),
-        forall |rho: Map<nat, nat>| #[trigger] interp(rhs_0, rho) == interp(r, rho.insert(p as nat, 0nat)),
-        forall |rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) == interp(l, rho.insert(p as nat, eff(rho, p as nat) + 1)),
-        forall |rho: Map<nat, nat>| #[trigger] interp(rhs_s, rho) == interp(r, rho.insert(p as nat, eff(rho, p as nat) + 1)),
-        forall |rho: Map<nat, nat>| #[trigger] interp(lhs_0, rho) as int <= interp(rhs_0, rho) as int + diff,
-        forall |rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) as int <= interp(rhs_s, rho) as int + diff,
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(lhs_0, rho) == interp(l, rho.insert(p as nat, 0nat)),
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(rhs_0, rho) == interp(r, rho.insert(p as nat, 0nat)),
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(lhs_s, rho) == interp(l, rho.insert(p as nat, eff(rho, p as nat) + 1)),
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(rhs_s, rho) == interp(r, rho.insert(p as nat, eff(rho, p as nat) + 1)),
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(lhs_0, rho) as int <= interp(rhs_0, rho) as int + diff,
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(lhs_s, rho) as int <= interp(rhs_s, rho) as int + diff,
     ensures
-        forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) as int <= interp(r, rho) as int + diff
+        forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) as int <= interp(r, rho) as int + diff,
 {
-    assert forall |rho: Map<nat, nat>| interp(l, rho) as int <= interp(r, rho) as int + diff by {
+    assert forall|rho: Map<nat, nat>| interp(l, rho) as int <= interp(r, rho) as int + diff by {
         let x = eff(rho, p as nat);
         if x == 0 {
             noop_insert(l, rho, p as nat);
@@ -1753,13 +2064,18 @@ pub proof fn case_split_sound(
             assert(rho2.insert(p as nat, eff(rho2, p as nat) + 1) =~= rho.insert(p as nat, x));
             noop_insert(l, rho, p as nat);
             noop_insert(r, rho, p as nat);
-            assert(interp(lhs_s, rho2) == interp(l, rho2.insert(p as nat, eff(rho2, p as nat) + 1)));
-            assert(interp(rhs_s, rho2) == interp(r, rho2.insert(p as nat, eff(rho2, p as nat) + 1)));
+            assert(interp(lhs_s, rho2) == interp(
+                l,
+                rho2.insert(p as nat, eff(rho2, p as nat) + 1),
+            ));
+            assert(interp(rhs_s, rho2) == interp(
+                r,
+                rho2.insert(p as nat, eff(rho2, p as nat) + 1),
+            ));
             assert(interp(lhs_s, rho2) as int <= interp(rhs_s, rho2) as int + diff);
         }
     }
 }
-
 
 /// Fuel-threaded, mutually-recursive counterpart to `leq_core_partial` +
 /// `leq_imax_by_cases_via_partial`: instead of leaning on the (still
@@ -1773,8 +2089,10 @@ pub proof fn case_split_sound(
 /// (e.g. `imax(a, imax(x,y)) == max(imax(a,y), imax(x,y))`) that haven't
 /// been proven yet.
 pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
-    decreases fuel
+    ensures
+        result ==> forall|rho: Map<nat, nat>| #[trigger]
+            interp(*l, rho) as int <= interp(*r, rho) as int + diff as int,
+    decreases fuel,
 {
     if fuel == 0 {
         return false;
@@ -1790,46 +2108,59 @@ pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (r
             match diff.checked_sub(1) {
                 Some(d) => {
                     let sub = leq_core_fueled(&**s, r, d, fuel1);
-                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(**s, rho) as int <= interp(*r, rho) as int + d as int);
-                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == interp(**s, rho) + 1);
+                    assert(sub ==> forall|rho: Map<nat, nat>| #[trigger]
+                        interp(**s, rho) as int <= interp(*r, rho) as int + d as int);
+                    assert(forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*l, rho) == interp(**s, rho) + 1);
                     sub
-                }
+                },
                 None => false,
             }
-        }
+        },
         (_, LevelSpec::Succ(s)) => {
             match diff.checked_add(1) {
                 Some(d) => {
                     let sub = leq_core_fueled(l, &**s, d, fuel1);
-                    assert(sub ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**s, rho) as int + d as int);
-                    assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == interp(**s, rho) + 1);
+                    assert(sub ==> forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*l, rho) as int <= interp(**s, rho) as int + d as int);
+                    assert(forall|rho: Map<nat, nat>| #[trigger]
+                        interp(*r, rho) == interp(**s, rho) + 1);
                     sub
-                }
+                },
                 None => false,
             }
-        }
+        },
         (LevelSpec::Max(a, b), _) => {
             let ra = leq_core_fueled(&**a, r, diff, fuel1);
             let rb = leq_core_fueled(&**b, r, diff, fuel1);
-            assert(ra ==> forall |rho: Map<nat, nat>| #[trigger] interp(**a, rho) as int <= interp(*r, rho) as int + diff as int);
-            assert(rb ==> forall |rho: Map<nat, nat>| #[trigger] interp(**b, rho) as int <= interp(*r, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) == max_nat(interp(**a, rho), interp(**b, rho)));
+            assert(ra ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(**a, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(rb ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(**b, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) == max_nat(interp(**a, rho), interp(**b, rho)));
             ra && rb
-        }
+        },
         (LevelSpec::Param(_), LevelSpec::Max(x, y)) => {
             let rx = leq_core_fueled(l, &**x, diff, fuel1);
             let ry = leq_core_fueled(l, &**y, diff, fuel1);
-            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
-            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            assert(rx ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
             rx || ry
-        }
+        },
         (LevelSpec::Zero, LevelSpec::Max(x, y)) => {
             let rx = leq_core_fueled(l, &**x, diff, fuel1);
             let ry = leq_core_fueled(l, &**y, diff, fuel1);
-            assert(rx ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
-            assert(ry ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
+            assert(rx ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**x, rho) as int + diff as int);
+            assert(ry ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(**y, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(*r, rho) == max_nat(interp(**x, rho), interp(**y, rho)));
             rx || ry
         }
         // Real `leq_core` has a reflexivity fast-path here
@@ -1843,26 +2174,33 @@ pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (r
         // (recursing further rather than short-circuiting), just with more
         // fuel consumed. `verified_leq_core` (the real-arena version) does
         // implement this fast-path, using real `LevelPtr` equality.
+        ,
         (LevelSpec::IMax(_, b), _) if matches!(**b, LevelSpec::Param(_)) => {
             match **b {
                 LevelSpec::Param(p) => leq_imax_by_cases_fueled(dup(l), dup(r), p, diff, fuel1),
-                _ => false, // unreachable given the match guard above
+                _ => false,  // unreachable given the match guard above
             }
-        }
+        },
         (_, LevelSpec::IMax(_, y)) if matches!(**y, LevelSpec::Param(_)) => {
             match **y {
                 LevelSpec::Param(p) => leq_imax_by_cases_fueled(dup(l), dup(r), p, diff, fuel1),
-                _ => false, // unreachable given the match guard above
+                _ => false,  // unreachable given the match guard above
             }
-        }
-        (LevelSpec::IMax(a, b), _) if matches!(**b, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
+        },
+        (
+            LevelSpec::IMax(a, b),
+            _,
+        ) if matches!(**b, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
             assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(**b)));
             leq_core_imax_rewrite_left(a, b, l, r, diff, fuel1)
-        }
-        (_, LevelSpec::IMax(x, y)) if matches!(**y, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
+        },
+        (
+            _,
+            LevelSpec::IMax(x, y),
+        ) if matches!(**y, LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)) => {
             assert(*r == LevelSpec::IMax(Box::new(**x), Box::new(**y)));
             leq_core_imax_rewrite_right(x, y, l, r, diff, fuel1)
-        }
+        },
         _ => false,
     }
 }
@@ -1888,10 +2226,20 @@ pub fn leq_core_fueled(l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (r
 /// referenced inside `assert`s, which are ghost/spec and erased under plain
 /// (non-Verus) compilation, so plain `cargo build` sees them as unused.
 #[allow(unused_variables)]
-fn leq_core_imax_rewrite_left(a: &Box<LevelSpec>, b: &Box<LevelSpec>, l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (result: bool)
-    requires *l == LevelSpec::IMax(Box::new(**a), Box::new(**b))
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
-    decreases fuel
+fn leq_core_imax_rewrite_left(
+    a: &Box<LevelSpec>,
+    b: &Box<LevelSpec>,
+    l: &LevelSpec,
+    r: &LevelSpec,
+    diff: i64,
+    fuel: u32,
+) -> (result: bool)
+    requires
+        *l == LevelSpec::IMax(Box::new(**a), Box::new(**b)),
+    ensures
+        result ==> forall|rho: Map<nat, nat>| #[trigger]
+            interp(*l, rho) as int <= interp(*r, rho) as int + diff as int,
+    decreases fuel,
 {
     if fuel == 0 {
         return false;
@@ -1901,47 +2249,81 @@ fn leq_core_imax_rewrite_left(a: &Box<LevelSpec>, b: &Box<LevelSpec>, l: &LevelS
     match &**b {
         LevelSpec::IMax(x, y) => {
             assert(**b == LevelSpec::IMax(Box::new(**x), Box::new(**y)));
-            assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y)))));
+            assert(*l == LevelSpec::IMax(
+                Box::new(**a),
+                Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y))),
+            ));
             let a1 = dup(a);
             let y1 = dup(y);
             let x1 = dup(x);
             let y2 = dup(y);
-            let new_max = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(a1), Box::new(y1))), Box::new(LevelSpec::IMax(Box::new(x1), Box::new(y2))));
-            proof { imax_imax_distrib(**a, **x, **y); }
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho)
-                == interp(LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y)))), rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*l, rho));
+            let new_max = LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a1), Box::new(y1))),
+                Box::new(LevelSpec::IMax(Box::new(x1), Box::new(y2))),
+            );
+            proof {
+                imax_imax_distrib(**a, **x, **y);
+            }
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max, rho) == interp(
+                    LevelSpec::IMax(
+                        Box::new(**a),
+                        Box::new(LevelSpec::IMax(Box::new(**x), Box::new(**y))),
+                    ),
+                    rho,
+                ));
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*l, rho));
             let result = leq_core_fueled(&new_max, &r1, diff, fuel1);
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
             result
-        }
+        },
         LevelSpec::Max(x, y) => {
             assert(**b == LevelSpec::Max(Box::new(**x), Box::new(**y)));
-            assert(*l == LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y)))));
+            assert(*l == LevelSpec::IMax(
+                Box::new(**a),
+                Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y))),
+            ));
             let a1 = dup(a);
             let x1 = dup(x);
             let a2 = dup(a);
             let y1 = dup(y);
-            let new_max_raw = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(a1), Box::new(x1))), Box::new(LevelSpec::IMax(Box::new(a2), Box::new(y1))));
-            proof { imax_max_distrib(**a, **x, **y); }
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho)
-                == interp(LevelSpec::IMax(Box::new(**a), Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y)))), rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho) == interp(*l, rho));
+            let new_max_raw = LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a1), Box::new(x1))),
+                Box::new(LevelSpec::IMax(Box::new(a2), Box::new(y1))),
+            );
+            proof {
+                imax_max_distrib(**a, **x, **y);
+            }
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max_raw, rho) == interp(
+                    LevelSpec::IMax(
+                        Box::new(**a),
+                        Box::new(LevelSpec::Max(Box::new(**x), Box::new(**y))),
+                    ),
+                    rho,
+                ));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max_raw, rho) == interp(*l, rho));
             let new_max = simplify_full(new_max_raw);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(new_max_raw, rho));
-            assert forall |rho: Map<nat, nat>| interp(new_max, rho) == interp(*l, rho) by {
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max, rho) == interp(new_max_raw, rho));
+            assert forall|rho: Map<nat, nat>| interp(new_max, rho) == interp(*l, rho) by {
                 assert(interp(new_max, rho) == interp(new_max_raw, rho));
                 assert(interp(new_max_raw, rho) == interp(*l, rho));
             }
             let result = leq_core_fueled(&new_max, &r1, diff, fuel1);
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max, rho) as int <= interp(r1, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(r1, rho) == interp(*r, rho));
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(*l, rho) as int <= interp(*r, rho) as int + diff as int);
             result
-        }
-        _ => false, // unreachable given the caller's match guard
+        },
+        _ => false,  // unreachable given the caller's match guard
     }
 }
 
@@ -1949,10 +2331,20 @@ fn leq_core_imax_rewrite_left(a: &Box<LevelSpec>, b: &Box<LevelSpec>, l: &LevelS
 /// `is_any_max` rewrite arm: `r = IMax(x, y)` where `y` is `Max`- or
 /// `IMax`-shaped.
 #[allow(unused_variables)]
-fn leq_core_imax_rewrite_right(x: &Box<LevelSpec>, y: &Box<LevelSpec>, l: &LevelSpec, r: &LevelSpec, diff: i64, fuel: u32) -> (result: bool)
-    requires *r == LevelSpec::IMax(Box::new(**x), Box::new(**y))
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(*l, rho) as int <= interp(*r, rho) as int + diff as int
-    decreases fuel
+fn leq_core_imax_rewrite_right(
+    x: &Box<LevelSpec>,
+    y: &Box<LevelSpec>,
+    l: &LevelSpec,
+    r: &LevelSpec,
+    diff: i64,
+    fuel: u32,
+) -> (result: bool)
+    requires
+        *r == LevelSpec::IMax(Box::new(**x), Box::new(**y)),
+    ensures
+        result ==> forall|rho: Map<nat, nat>| #[trigger]
+            interp(*l, rho) as int <= interp(*r, rho) as int + diff as int,
+    decreases fuel,
 {
     if fuel == 0 {
         return false;
@@ -1965,30 +2357,44 @@ fn leq_core_imax_rewrite_right(x: &Box<LevelSpec>, y: &Box<LevelSpec>, l: &Level
             let k1 = dup(k);
             let j1 = dup(j);
             let k2 = dup(k);
-            let new_max = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(x1), Box::new(k1))), Box::new(LevelSpec::IMax(Box::new(j1), Box::new(k2))));
-            proof { imax_imax_distrib(**x, **j, **k); }
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*r, rho));
+            let new_max = LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(x1), Box::new(k1))),
+                Box::new(LevelSpec::IMax(Box::new(j1), Box::new(k2))),
+            );
+            proof {
+                imax_imax_distrib(**x, **j, **k);
+            }
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(*r, rho));
             let result = leq_core_fueled(&l1, &new_max, diff, fuel1);
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
             result
-        }
+        },
         LevelSpec::Max(j, k) => {
             let x1 = dup(x);
             let j1 = dup(j);
             let x2 = dup(x);
             let k1 = dup(k);
-            let new_max_raw = LevelSpec::Max(Box::new(LevelSpec::IMax(Box::new(x1), Box::new(j1))), Box::new(LevelSpec::IMax(Box::new(x2), Box::new(k1))));
-            proof { imax_max_distrib(**x, **j, **k); }
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max_raw, rho) == interp(*r, rho));
+            let new_max_raw = LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(x1), Box::new(j1))),
+                Box::new(LevelSpec::IMax(Box::new(x2), Box::new(k1))),
+            );
+            proof {
+                imax_max_distrib(**x, **j, **k);
+            }
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max_raw, rho) == interp(*r, rho));
             let new_max = simplify_full(new_max_raw);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(new_max, rho) == interp(new_max_raw, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(new_max, rho) == interp(new_max_raw, rho));
             let result = leq_core_fueled(&l1, &new_max, diff, fuel1);
-            assert(result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
+            assert(result ==> forall|rho: Map<nat, nat>| #[trigger]
+                interp(l1, rho) as int <= interp(new_max, rho) as int + diff as int);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(*l, rho));
             result
-        }
-        _ => false, // unreachable given the caller's match guard
+        },
+        _ => false,  // unreachable given the caller's match guard
     }
 }
 
@@ -1997,9 +2403,17 @@ fn leq_core_imax_rewrite_right(x: &Box<LevelSpec>, y: &Box<LevelSpec>, l: &Level
 /// structurally-bounded `leq_core_partial`. Reuses `case_split_sound`
 /// unchanged — that lemma only needs *some* sound facts about the two
 /// subgoals, not anything about how they were decided.
-pub fn leq_imax_by_cases_fueled(l_in: LevelSpec, r_in: LevelSpec, p: u64, diff: i64, fuel: u32) -> (result: bool)
-    ensures result ==> forall |rho: Map<nat, nat>| #[trigger] interp(l_in, rho) as int <= interp(r_in, rho) as int + diff as int
-    decreases fuel
+pub fn leq_imax_by_cases_fueled(
+    l_in: LevelSpec,
+    r_in: LevelSpec,
+    p: u64,
+    diff: i64,
+    fuel: u32,
+) -> (result: bool)
+    ensures
+        result ==> forall|rho: Map<nat, nat>| #[trigger]
+            interp(l_in, rho) as int <= interp(r_in, rho) as int + diff as int,
+    decreases fuel,
 {
     if fuel == 0 {
         return false;
@@ -2027,17 +2441,23 @@ pub fn leq_imax_by_cases_fueled(l_in: LevelSpec, r_in: LevelSpec, p: u64, diff: 
     let ok0 = leq_core_fueled(&lhs_0, &rhs_0, diff, fuel1);
     let oks = leq_core_fueled(&lhs_s, &rhs_s, diff, fuel1);
 
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(succ_p, rho) == interp(LevelSpec::Param(p), rho) + 1);
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Param(p), rho) == eff(rho, p as nat));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(succ_p, rho) == eff(rho, p as nat) + 1);
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(lhs_0, rho) == interp(lhs_0_raw, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(rhs_0, rho) == interp(rhs_0_raw, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) == interp(lhs_s_raw, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(rhs_s, rho) == interp(rhs_s_raw, rho));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(lhs_0, rho) == interp(l_in, rho.insert(p as nat, 0nat)));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(rhs_0, rho) == interp(r_in, rho.insert(p as nat, 0nat)));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) == interp(l_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
-    assert(forall |rho: Map<nat, nat>| #[trigger] interp(rhs_s, rho) == interp(r_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(succ_p, rho) == interp(LevelSpec::Param(p), rho) + 1);
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(LevelSpec::Param(p), rho) == eff(rho, p as nat));
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(succ_p, rho) == eff(rho, p as nat) + 1);
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(lhs_0, rho) == interp(lhs_0_raw, rho));
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(rhs_0, rho) == interp(rhs_0_raw, rho));
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(lhs_s, rho) == interp(lhs_s_raw, rho));
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(rhs_s, rho) == interp(rhs_s_raw, rho));
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(lhs_0, rho) == interp(l_in, rho.insert(p as nat, 0nat)));
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(rhs_0, rho) == interp(r_in, rho.insert(p as nat, 0nat)));
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(lhs_s, rho) == interp(l_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
+    assert(forall|rho: Map<nat, nat>| #[trigger]
+        interp(rhs_s, rho) == interp(r_in, rho.insert(p as nat, eff(rho, p as nat) + 1)));
 
     if ok0 && oks {
         proof {
@@ -2062,8 +2482,9 @@ pub fn leq_imax_by_cases_fueled(l_in: LevelSpec, r_in: LevelSpec, p: u64, diff: 
 /// form, or as a plain `IMax` when neither applies) never claims anything
 /// false.
 pub fn simplify_imax_step_general(l_simp: LevelSpec, r_simp: LevelSpec) -> (result: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho)
-        == interp(LevelSpec::IMax(Box::new(l_simp), Box::new(r_simp)), rho)
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(result, rho) == interp(LevelSpec::IMax(Box::new(l_simp), Box::new(r_simp)), rho),
 {
     match r_simp {
         LevelSpec::Zero => LevelSpec::Zero,
@@ -2080,43 +2501,56 @@ pub fn simplify_imax_step_general(l_simp: LevelSpec, r_simp: LevelSpec) -> (resu
 /// Purely structural, no fuel needed: unlike `leq_core`, `simplify` doesn't
 /// case-split or substitute, so it terminates the ordinary way.
 pub fn simplify_full(l: LevelSpec) -> (result: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, rho)
-    decreases l
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger] interp(result, rho) == interp(l, rho),
+    decreases l,
 {
     match l {
         LevelSpec::Zero => LevelSpec::Zero,
         LevelSpec::Param(p) => LevelSpec::Param(p),
         LevelSpec::Succ(a) => {
             let sub = simplify_full(*a);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*a, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(sub, rho) == interp(*a, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(LevelSpec::Succ(Box::new(sub)), rho) == interp(sub, rho) + 1);
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) == interp(*a, rho) + 1);
             LevelSpec::Succ(Box::new(sub))
-        }
+        },
         LevelSpec::Max(a, b) => {
             let sa = simplify_full(*a);
             let sb = simplify_full(*b);
             let result = combining(sa, sb);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) == max_nat(interp(*a, rho), interp(*b, rho)));
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == max_nat(interp(sa, rho), interp(sb, rho)));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, rho) == max_nat(interp(*a, rho), interp(*b, rho)));
             result
-        }
+        },
         LevelSpec::IMax(a, b) => {
             let sa = simplify_full(*a);
             let sb = simplify_full(*b);
             let result = simplify_imax_step_general(sa, sb);
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(result, rho)
-                == interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho));
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho)
-                == if interp(sb, rho) == 0 { 0 } else { max_nat(interp(sa, rho), interp(sb, rho)) });
-            assert(forall |rho: Map<nat, nat>| #[trigger] interp(l, rho)
-                == if interp(*b, rho) == 0 { 0 } else { max_nat(interp(*a, rho), interp(*b, rho)) });
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(sa, rho) == interp(*a, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger] interp(sb, rho) == interp(*b, rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(result, rho) == interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho));
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(LevelSpec::IMax(Box::new(sa), Box::new(sb)), rho) == if interp(sb, rho)
+                    == 0 {
+                    0
+                } else {
+                    max_nat(interp(sa, rho), interp(sb, rho))
+                });
+            assert(forall|rho: Map<nat, nat>| #[trigger]
+                interp(l, rho) == if interp(*b, rho) == 0 {
+                    0
+                } else {
+                    max_nat(interp(*a, rho), interp(*b, rho))
+                });
             result
-        }
+        },
     }
 }
 
@@ -2125,72 +2559,134 @@ pub fn simplify_full(l: LevelSpec) -> (result: LevelSpec)
 /// comments): `imax` distributes over a nested `imax` on its right. Holds
 /// unconditionally, no side conditions on `a`, `x`, or `y`.
 pub proof fn imax_imax_distrib(a: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
-        == interp(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-        ), rho)
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(
+                LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+                rho,
+            ) == interp(
+                LevelSpec::Max(
+                    Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                    Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+                ),
+                rho,
+            ),
 {
-    assert forall |rho: Map<nat, nat>| interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
-        == interp(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-        ), rho) by {
-        assert(interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho)
-            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(x, rho), interp(y, rho)) });
-        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)
-            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(y, rho)) });
-        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))), rho)
-            == if interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho) == 0 { 0 } else {
-                max_nat(interp(a, rho), interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho))
-            });
-        assert(interp(LevelSpec::Max(
+    assert forall|rho: Map<nat, nat>|
+        interp(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+            rho,
+        ) == interp(
+            LevelSpec::Max(
                 Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
                 Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
-            ), rho)
-            == max_nat(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho), interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho)));
+            ),
+            rho,
+        ) by {
+        assert(interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho) == if interp(y, rho) == 0 {
+            0
+        } else {
+            max_nat(interp(x, rho), interp(y, rho))
+        });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho) == if interp(y, rho) == 0 {
+            0
+        } else {
+            max_nat(interp(a, rho), interp(y, rho))
+        });
+        assert(interp(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::IMax(Box::new(x), Box::new(y)))),
+            rho,
+        ) == if interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho) == 0 {
+            0
+        } else {
+            max_nat(interp(a, rho), interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho))
+        });
+        assert(interp(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                Box::new(LevelSpec::IMax(Box::new(x), Box::new(y))),
+            ),
+            rho,
+        ) == max_nat(
+            interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho),
+            interp(LevelSpec::IMax(Box::new(x), Box::new(y)), rho),
+        ));
     }
 }
 
 /// The identity behind `leq_core`'s second `is_any_max` rewrite arm: `imax`
 /// distributes over a `max` on its right. Also holds unconditionally.
 pub proof fn imax_max_distrib(a: LevelSpec, x: LevelSpec, y: LevelSpec)
-    ensures forall |rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
-        == interp(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        ), rho)
+    ensures
+        forall|rho: Map<nat, nat>| #[trigger]
+            interp(
+                LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+                rho,
+            ) == interp(
+                LevelSpec::Max(
+                    Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                    Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+                ),
+                rho,
+            ),
 {
-    assert forall |rho: Map<nat, nat>| interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
-        == interp(LevelSpec::Max(
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
-            Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-        ), rho) by {
-        assert(interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == max_nat(interp(x, rho), interp(y, rho)));
-        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho)
-            == if interp(x, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(x, rho)) });
-        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)
-            == if interp(y, rho) == 0 { 0 } else { max_nat(interp(a, rho), interp(y, rho)) });
-        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))), rho)
-            == if interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == 0 { 0 } else {
-                max_nat(interp(a, rho), interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho))
-            });
-        assert(interp(LevelSpec::Max(
+    assert forall|rho: Map<nat, nat>|
+        interp(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+            rho,
+        ) == interp(
+            LevelSpec::Max(
                 Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
                 Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
-            ), rho)
-            == max_nat(interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho), interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho)));
+            ),
+            rho,
+        ) by {
+        assert(interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == max_nat(
+            interp(x, rho),
+            interp(y, rho),
+        ));
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho) == if interp(x, rho) == 0 {
+            0
+        } else {
+            max_nat(interp(a, rho), interp(x, rho))
+        });
+        assert(interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho) == if interp(y, rho) == 0 {
+            0
+        } else {
+            max_nat(interp(a, rho), interp(y, rho))
+        });
+        assert(interp(
+            LevelSpec::IMax(Box::new(a), Box::new(LevelSpec::Max(Box::new(x), Box::new(y)))),
+            rho,
+        ) == if interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho) == 0 {
+            0
+        } else {
+            max_nat(interp(a, rho), interp(LevelSpec::Max(Box::new(x), Box::new(y)), rho))
+        });
+        assert(interp(
+            LevelSpec::Max(
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(x))),
+                Box::new(LevelSpec::IMax(Box::new(a), Box::new(y))),
+            ),
+            rho,
+        ) == max_nat(
+            interp(LevelSpec::IMax(Box::new(a), Box::new(x)), rho),
+            interp(LevelSpec::IMax(Box::new(a), Box::new(y)), rho),
+        ));
     }
 }
 
 } // verus!
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn succ(l: LevelSpec) -> LevelSpec { LevelSpec::Succ(Box::new(l)) }
-    fn max(l: LevelSpec, r: LevelSpec) -> LevelSpec { LevelSpec::Max(Box::new(l), Box::new(r)) }
+    fn succ(l: LevelSpec) -> LevelSpec {
+        LevelSpec::Succ(Box::new(l))
+    }
+    fn max(l: LevelSpec, r: LevelSpec) -> LevelSpec {
+        LevelSpec::Max(Box::new(l), Box::new(r))
+    }
 
     // Sanity checks that `leq_core_partial` is a real (non-vacuous) decision
     // procedure on the fragment it covers, not just a stub that always
@@ -2263,7 +2759,9 @@ mod tests {
         }
     }
 
-    fn imax(l: LevelSpec, r: LevelSpec) -> LevelSpec { LevelSpec::IMax(Box::new(l), Box::new(r)) }
+    fn imax(l: LevelSpec, r: LevelSpec) -> LevelSpec {
+        LevelSpec::IMax(Box::new(l), Box::new(r))
+    }
 
     // `leq_core_fueled` is the payoff: it actually decides real `IMax`
     // inequalities (given enough fuel) that `leq_core_partial` always
@@ -2303,10 +2801,7 @@ mod tests {
     fn fueled_handles_imax_imax_rewrite() {
         // imax(a, imax(x,y)) == max(imax(a,y), imax(x,y))
         let l = imax(LevelSpec::Param(0), imax(LevelSpec::Param(1), LevelSpec::Param(2)));
-        let r = max(
-            imax(LevelSpec::Param(0), LevelSpec::Param(2)),
-            imax(LevelSpec::Param(1), LevelSpec::Param(2)),
-        );
+        let r = max(imax(LevelSpec::Param(0), LevelSpec::Param(2)), imax(LevelSpec::Param(1), LevelSpec::Param(2)));
         assert!(leq_core_fueled(&l, &r, 0, 20));
         assert!(leq_core_fueled(&r, &l, 0, 20));
     }
@@ -2315,10 +2810,7 @@ mod tests {
     fn fueled_handles_imax_max_rewrite() {
         // imax(a, max(x,y)) == max(imax(a,x), imax(a,y))
         let l = imax(LevelSpec::Param(0), max(LevelSpec::Param(1), LevelSpec::Param(2)));
-        let r = max(
-            imax(LevelSpec::Param(0), LevelSpec::Param(1)),
-            imax(LevelSpec::Param(0), LevelSpec::Param(2)),
-        );
+        let r = max(imax(LevelSpec::Param(0), LevelSpec::Param(1)), imax(LevelSpec::Param(0), LevelSpec::Param(2)));
         assert!(leq_core_fueled(&l, &r, 0, 20));
         assert!(leq_core_fueled(&r, &l, 0, 20));
     }

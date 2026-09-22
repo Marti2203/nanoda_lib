@@ -1,33 +1,30 @@
 use crate::env::{ConstructorData, Declar, DeclarInfo, DeclarMap, InductiveData, RecRule, RecursorData};
 use crate::expr::{BinderStyle, Expr::*};
 use crate::tc::{InferFlag, TypeChecker};
-use crate::util::{FxHashSet, ExportFile, ExprPtr, FxIndexMap, LevelPtr, LevelsPtr, NamePtr, TcCtx, new_fx_hash_set};
+use crate::util::{new_fx_hash_set, ExportFile, ExprPtr, FxHashSet, FxIndexMap, LevelPtr, LevelsPtr, NamePtr, TcCtx};
 use std::sync::Arc;
 
 impl<'t, 'p: 't> ExportFile<'p> {
     pub(crate) fn is_recursive(&self, ind_name: &NamePtr<'t>) -> bool {
         match self.declars.get(ind_name).unwrap() {
-            Declar::Inductive(ind) => {
-                self.with_ctx(|ctx| {
-                    for ctor_name in ind.all_ctor_names.iter() {
-                        match self.declars.get(ctor_name).unwrap() {
-                            Declar::Constructor(ctor_data @ ConstructorData {..}) => {
-                                let mut ctor_ty = ctor_data.info.ty;
-                                while let Pi {binder_type, body, ..} = ctx.read_expr(ctor_ty) {
-                                    if ctx.find_const(binder_type, |n| ind.all_ind_names.iter().any(|nn| n == *nn)) {
-                                        return true
-                                    }
-                                    ctor_ty = body;
+            Declar::Inductive(ind) => self.with_ctx(|ctx| {
+                for ctor_name in ind.all_ctor_names.iter() {
+                    match self.declars.get(ctor_name).unwrap() {
+                        Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
+                            let mut ctor_ty = ctor_data.info.ty;
+                            while let Pi { binder_type, body, .. } = ctx.read_expr(ctor_ty) {
+                                if ctx.find_const(binder_type, |n| ind.all_ind_names.iter().any(|nn| n == *nn)) {
+                                    return true;
                                 }
-                            },
-                            _ => panic!("expected constructor")
+                                ctor_ty = body;
+                            }
                         }
+                        _ => panic!("expected constructor"),
                     }
-                    false
-                })
-
-            },
-            _ => panic!("Not an inductive declaration")
+                }
+                false
+            }),
+            _ => panic!("Not an inductive declaration"),
         }
     }
 
@@ -43,19 +40,18 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     assert!(!ctx.has_nested_pfx(ind.info.ty, nested_pfx));
                     for ind_name in ind.all_ind_names.iter() {
                         match self.declars.get(ind_name).unwrap() {
-                            Declar::Inductive(ind_data @ InductiveData {..}) => {
+                            Declar::Inductive(ind_data @ InductiveData { .. }) => {
                                 assert!(!ctx.has_nested_pfx(ind_data.info.ty, nested_pfx))
-                            },
-                            _ => panic!("expected inductive declar")
+                            }
+                            _ => panic!("expected inductive declar"),
                         }
-                        
                     }
                     for ctor_name in ind.all_ctor_names.iter() {
                         match self.declars.get(ctor_name).unwrap() {
-                            Declar::Constructor(ctor_data @ ConstructorData {..}) => {
+                            Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
                                 assert!(!ctx.has_nested_pfx(ctor_data.info.ty, nested_pfx))
-                            },
-                            _ => panic!("expected constructor")
+                            }
+                            _ => panic!("expected constructor"),
                         }
                     }
                 });
@@ -63,7 +59,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 let (start, size) = self.mutual_block_sizes.get(&ind.info.name).unwrap();
                 (ind, crate::env::EnvLimit::ByIndex(start + size))
             }
-            _ => panic!("expected inductive")
+            _ => panic!("expected inductive"),
         };
         self.with_ctx(|ctx| {
             // The **unmodified** types and constructors for all of the types in this mutual block.
@@ -118,7 +114,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
             ctx.with_tc_and_env_ext(&recursor_extension, env_limit, |tc| {
                 if st.is_nested() {
                     let base_rec_names = tc.ctx.mk_base_rec_names(ind.all_ind_names.as_ref());
-                    let specialized_to_unspecialized_rec_names = tc.mk_specialized_rec_to_unspecialized_map(&unmodified_tys_ctors);
+                    let specialized_to_unspecialized_rec_names =
+                        tc.mk_specialized_rec_to_unspecialized_map(&unmodified_tys_ctors);
                     // Just unions the unspecialized nested recursor names with the base ind type recursor names.
                     let all_rec_names = {
                         let mut base = base_rec_names.clone();
@@ -128,7 +125,13 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         base
                     };
                     tc.ctx.ck_recursor_names_simple(&d.info().name, all_rec_names);
-                    tc.restore_and_check(&st, &unmodified_tys_ctors, &ind.all_ind_names, &base_rec_names, &specialized_to_unspecialized_rec_names);
+                    tc.restore_and_check(
+                        &st,
+                        &unmodified_tys_ctors,
+                        &ind.all_ind_names,
+                        &base_rec_names,
+                        &specialized_to_unspecialized_rec_names,
+                    );
                 } else {
                     tc.ctx.ck_recursor_names_simple(&d.info().name, recursors.iter().map(|x| x.info().name).collect());
                     // Do the definitional equality assertions of new/old here.
@@ -154,7 +157,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Require that the set of un-specialized names for the derived recursors matches the set
-    /// of recursor names that appeared in the export file. Prevents addition to the environment 
+    /// of recursor names that appeared in the export file. Prevents addition to the environment
     /// of new recursors that don't belong.
     fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>) {
         let from_parser = self.export_file.ind_name_to_recursor_names.get(ind_name).unwrap();
@@ -168,7 +171,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
         if &derived == from_parser {
-            return
+            return;
         } else {
             panic!(
                 "for inductive type {:?},\nexpected recursors {:?},\nwhile export file contained recursors {:?}",
@@ -231,7 +234,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 pub(crate) struct InductiveCheckState<'a> {
     /// Maps the specialized type's fresh name to its "actual"/unspecialized type,
     /// where the unspecialized type retains free variables.
-    ///   
+    ///
     /// Example contents for `Sexpr`:\
     /// ```ignore
     /// (_nested.List_1, (List.[u] (Sexpr.[u] #(α, Unique(0) : Sort(u + 1)))))
@@ -313,7 +316,9 @@ impl<'a> InductiveCheckState<'a> {
             minors: Vec::new(),
         }
     }
-    fn is_nested(&self) -> bool { !self.nested_to_unspecialized_ty_nofvars.is_empty() }
+    fn is_nested(&self) -> bool {
+        !self.nested_to_unspecialized_ty_nofvars.is_empty()
+    }
 }
 
 /// Fields `pub` so `ExIndTyHeader` can be a TRANSPARENT
@@ -335,7 +340,6 @@ pub struct CtorHeader<'a> {
     pub name: NamePtr<'a>,
     pub ty: ExprPtr<'a>,
 }
-
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn specialize_nested(
@@ -529,13 +533,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if !crate::tc::route_stats::shadow_enabled() {
             return;
         }
-        let codom = match st.block_codom { Some(c) => c, None => return };
+        let codom = match st.block_codom {
+            Some(c) => c,
+            None => return,
+        };
         for i in 0..st.all_inductives_incl_specialized.len() {
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_TOTAL);
             let ty = st.all_inductives_incl_specialized[i].ty;
             let nb = st.local_params.len() + st.local_indices[i].len();
             let mut memo = crate::tc_model::WhnfMemo::new(self.env);
-            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, &mut memo, nb, codom, ty, 64) == Some(true) {
+            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, &mut memo, nb, codom, ty, 64)
+                == Some(true)
+            {
                 crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_CERT);
             }
         }
@@ -543,13 +552,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> Option<InductiveData<'t>> {
         if !(matches!(self.ctx.read_expr(e), App { .. })) {
-            return None
+            return None;
         }
         let (_f, name, _levels, args) = self.ctx.unfold_const_apps(e)?;
         // If this is an application of an inductive, like `Array A`
         let ind_ty_declar @ InductiveData { num_params, .. } = self.env.get_inductive(&name)?;
         if (*num_params as usize) > args.len() {
-            return None
+            return None;
         }
         let mut loose_bvars = false;
         let mut is_nested = false;
@@ -566,7 +575,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         if !is_nested {
-            return None
+            return None;
         }
         if loose_bvars {
             panic!("nested types cannot contain locals (loose bvars found)")
@@ -606,7 +615,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let tester = self.ctx.append_index_after(n, idx);
             if !self.env.get_old_declar(&tester).is_some() {
                 st.next_ngen_idx = idx + 1;
-                return tester
+                return tester;
             }
         }
         panic!("Unable to generate unique name, u64 exhausted")
@@ -818,29 +827,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             })
             .unwrap();
         match self.ctx.read_expr(st.ind_consts[ind_name_pos]) {
-            Const {levels, ..} => {
+            Const { levels, .. } => {
                 let (lhs, rhs) = (self.ctx.read_levels(appd_levels), self.ctx.read_levels(levels));
                 if lhs.len() != rhs.len() {
-                    return false
+                    return false;
                 }
                 for i in 0..lhs.len() {
                     if !self.ctx.eq_antisymm(lhs[i], rhs[i]) {
-                        return false
+                        return false;
                     }
                 }
-            },
-            _ => return false
+            }
+            _ => return false,
         };
         let ind_name_num_indices = st.local_indices[ind_name_pos].len();
 
         if ctor_apps.len() != (st.local_params.len() + ind_name_num_indices) {
-            return false
+            return false;
         }
         // Require that no args in an index position have an instance of an inductive
         // currently being declared.
         for index_app in &ctor_apps[st.local_params.len()..] {
             if self.has_ind_occ(*index_app, &st.ind_consts) {
-                return false
+                return false;
             }
         }
         ctor_app_params_ok(ctor_apps.as_slice(), st.local_params.as_slice())
@@ -888,7 +897,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 _ => panic!(),
             };
             if self.is_valid_ind_app(st, ind_name, u_i_ty) {
-                return Some(i)
+                return Some(i);
             }
         }
         None
@@ -898,18 +907,45 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// (`delta_bound_model::verified_ctor_ok`) on the same inputs the original
     /// `check_ctor` just accepted, and count whether it certifies the same
     /// verdict. Never affects a verdict.
-    pub(crate) fn shadow_check_ctor(&mut self, st: &InductiveCheckState<'t>, parent_ind_name: NamePtr<'t>, ctor_ty: ExprPtr<'t>) {
+    pub(crate) fn shadow_check_ctor(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        parent_ind_name: NamePtr<'t>,
+        ctor_ty: ExprPtr<'t>,
+    ) {
         if !crate::tc::route_stats::shadow_enabled() {
             return;
         }
         crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_CTOR_TOTAL);
         let arities: Vec<usize> = st.local_indices.iter().map(|ix| st.local_params.len() + ix.len()).collect();
-        let parent_pos = st.ind_consts.iter().position(|c| match self.ctx.read_expr(*c) { Const { name, .. } => name == parent_ind_name, _ => false });
-        let parent_arity = match parent_pos { Some(p) => arities[p], None => return };
+        let parent_pos = st.ind_consts.iter().position(|c| match self.ctx.read_expr(*c) {
+            Const { name, .. } => name == parent_ind_name,
+            _ => false,
+        });
+        let parent_arity = match parent_pos {
+            Some(p) => arities[p],
+            None => return,
+        };
         let is_prop = st.is_zero.unwrap_or(false);
-        let codom = match st.block_codom { Some(c) => c, None => return };
+        let codom = match st.block_codom {
+            Some(c) => c,
+            None => return,
+        };
         let mut memo = crate::tc_model::WhnfMemo::new(self.env);
-        let r = crate::delta_bound_model::verified_ctor_ok(self.ctx, self.env, &mut memo, st.ind_consts.as_ref(), &arities, st.local_params.len(), parent_ind_name, parent_arity, is_prop, codom, ctor_ty, 64);
+        let r = crate::delta_bound_model::verified_ctor_ok(
+            self.ctx,
+            self.env,
+            &mut memo,
+            st.ind_consts.as_ref(),
+            &arities,
+            st.local_params.len(),
+            parent_ind_name,
+            parent_arity,
+            is_prop,
+            codom,
+            ctor_ty,
+            64,
+        );
         if r == Some(true) {
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_CTOR_CERT);
         }
@@ -1009,7 +1045,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn large_elim_test(&mut self, st: &InductiveCheckState<'t>) -> bool {
         if st.is_nonzero.unwrap() {
             // If our inductive is in `Type <n>`, it's large eliminating
-            return true
+            return true;
         }
 
         match st.all_inductives_incl_specialized.as_slice() {
@@ -1031,7 +1067,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-
     /// Shadow-only (NANODA_SHADOW=1): run the certified elimination-level
     /// test (`inductive_model::verified_large_elim_ok`) on the same inductive
     /// block the original `large_elim_test` is about to decide, and count
@@ -1042,7 +1077,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return;
         }
         crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_TOTAL);
-        let is_nonzero = match st.is_nonzero { Some(b) => b, None => return };
+        let is_nonzero = match st.is_nonzero {
+            Some(b) => b,
+            None => return,
+        };
         let n_ind = st.all_inductives_incl_specialized.len();
         let (n_ctors, only_ctor_ty) = if n_ind == 1 {
             let ctors = &st.all_inductives_incl_specialized[0].ctors;
@@ -1060,8 +1098,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // boolean but the elimination universe it leads to: fresh when large-
         // eliminating, exactly `Prop` when not.
         let verified = crate::inductive_model::verified_mk_elim_level(
-            self.ctx, self.env, &mut memo, is_nonzero, n_ind, n_ctors, only_ctor_ty,
-            st.local_params.len(), st.uparams, 256);
+            self.ctx,
+            self.env,
+            &mut memo,
+            is_nonzero,
+            n_ind,
+            n_ctors,
+            only_ctor_ty,
+            st.local_params.len(),
+            st.uparams,
+            256,
+        );
         let kernel = self.large_elim_test(st);
         match verified {
             Some((_, _, v)) if v == kernel => crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_CERT),
@@ -1093,12 +1140,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
     }
 
-
-
     fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> ExprPtr<'t> {
         let elim_sort = self.ctx.mk_sort(st.elim_level.unwrap());
         let w_major = self.ctx.abstr_pi(major, elim_sort);
-        let motive_type = self.ctx.abstr_pi_telescope(&st.local_indices[usize::try_from(ind_type_idx).unwrap()], w_major);
+        let motive_type =
+            self.ctx.abstr_pi_telescope(&st.local_indices[usize::try_from(ind_type_idx).unwrap()], w_major);
         let motive_name_base = self.ctx.str1("motive");
         let motive_name = if st.all_inductives_incl_specialized.len() > 1 {
             // Lean uses 1-based indexing for these, so we try to match for the pretty printer output.
@@ -1297,8 +1343,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let args_v: Vec<ExprPtr<'t>> = all_ctor_args.to_vec();
         let rec_args_v: Vec<ExprPtr<'t>> = handled_rec_args.to_vec();
         let verified_val = crate::inductive_model::verified_mk_rec_rule_val(
-            self.ctx, params.as_slice(), motives.as_slice(), minors_v.as_slice(),
-            args_v.as_slice(), rec_args_v.as_slice(), this_minor);
+            self.ctx,
+            params.as_slice(),
+            motives.as_slice(),
+            minors_v.as_slice(),
+            args_v.as_slice(),
+            rec_args_v.as_slice(),
+            this_minor,
+        );
         // This counts BIND nodes; the kernel's `num_fields` below counts PI
         // nodes (`ctx.pi_telescope_size`). The model conflates `Pi` and
         // `Lambda` into `ExprSpec::Bind`, so the shadow cannot tell them apart.
@@ -1341,8 +1393,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // PI count, not the shadow's BIND count -- see the note at the
         // `verified_pi_telescope_size` call above.
         let num_fields = self.ctx.pi_telescope_size(ctor.ty) as usize - st.local_params.len();
-        self.shadow_check_rec_rule(st, ctor, flat_mapped_minors, this_minor,
-            all_ctor_args.as_slice(), handled_rec_args.as_slice(), comp_rhs, num_fields);
+        self.shadow_check_rec_rule(
+            st,
+            ctor,
+            flat_mapped_minors,
+            this_minor,
+            all_ctor_args.as_slice(),
+            handled_rec_args.as_slice(),
+            comp_rhs,
+            num_fields,
+        );
         RecRule {
             ctor_name: ctor.name,
             ctor_telescope_size_wo_params: u16::try_from(num_fields).unwrap(),
@@ -1425,14 +1485,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             match (self.env.get_old_declar(&new_rec.info().name), new_rec) {
                 (
                     Some(old @ Declar::Recursor(old_r @ RecursorData { rec_rules: old_rec_rules, .. })),
-                    new @ Declar::Recursor(new_r @ RecursorData { rec_rules: new_rec_rules, .. })
+                    new @ Declar::Recursor(new_r @ RecursorData { rec_rules: new_rec_rules, .. }),
                 ) => {
                     self.tc_cache.clear();
                     assert!(old_r.aux_data_ck(new_r));
                     assert!(!std::ptr::eq(old, new));
                     // Should be structurally != because they come from different envs.
                     assert_ne!(old, new);
-                    let imported_w_new_uparams = self.ctx.subst_expr_levels(old.info().ty, old.info().uparams, st.rec_uparams.unwrap());
+                    let imported_w_new_uparams =
+                        self.ctx.subst_expr_levels(old.info().ty, old.info().uparams, st.rec_uparams.unwrap());
                     self.assert_def_eq(imported_w_new_uparams, new.info().ty);
                     assert_eq!(old_rec_rules.len(), new_rec_rules.len());
                     for (r_old, r_new) in old_rec_rules.iter().zip(new_rec_rules.iter()) {
@@ -1474,8 +1535,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let indices: Vec<ExprPtr<'t>> = local_indices.to_vec();
         let minors_v: Vec<ExprPtr<'t>> = minors.to_vec();
         let verified_ty = crate::inductive_model::verified_mk_recursor_ty(
-            self.ctx, params.as_slice(), motives.as_slice(), minors_v.as_slice(),
-            indices.as_slice(), motive, major);
+            self.ctx,
+            params.as_slice(),
+            motives.as_slice(),
+            minors_v.as_slice(),
+            indices.as_slice(),
+            motive,
+            major,
+        );
         if verified_ty == kernel_ty {
             crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_REC_CERT);
         } else {
@@ -1707,7 +1774,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if let Const { name, levels, .. } = self.ctx.read_expr(e) {
             // If e was `Const(_nested.Array_1.rec)`, return `Const(Lean.Syntax.rec_1)`
             if let Some(rec_name) = specialized_rec_names_to_unspecialized_rec_names.get(&name) {
-                return Some(self.ctx.mk_const(*rec_name, levels))
+                return Some(self.ctx.mk_const(*rec_name, levels));
             }
         }
         let (_, c_name, _, e_args) = self.ctx.unfold_const_apps(e)?;
@@ -1724,7 +1791,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             debug_assert!(e_args.len() >= st.num_params as usize);
             let inner = self.ctx.inst(*nested, local_params);
             let outer = self.ctx.foldl_apps(inner, e_args.iter().copied().skip(st.num_params as usize));
-            return Some(outer)
+            return Some(outer);
         }
         let (nested_no_inst, aux_i_name) = self.get_nested_if_aux_ctor(st, c_name)?;
 
@@ -1848,7 +1915,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         specialized_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
         ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
         // e.g. `Lean.Syntax.Node.rec`, `SExpr.rec`
-        base_rec_names: &FxHashSet<NamePtr<'t>>
+        base_rec_names: &FxHashSet<NamePtr<'t>>,
     ) {
         // Check the recursors for the base inductives (NOT the specialized types)
         for rec_name in base_rec_names.iter().copied() {
@@ -1914,26 +1981,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 }
 
-
 // ===========================================================================
 // VERIFIED KERNEL CODE (see the same banner in `level.rs`, `util.rs`, `tc.rs`).
 // The kernel's own inductive-checking functions with contracts attached.
 // `inductive.rs` had no `verus!` block before this.
 // ===========================================================================
-use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
+use vstd::prelude::*;
 
 verus! {
 
-    /// To be a target for k-like reduction, a type cannot be mutual or nested, must be an inductive
-    /// prop, must have only one constructor, and the constructor can take only the type's parameters
-    /// as arguments.///
-
-
-
+/// To be a target for k-like reduction, a type cannot be mutual or nested, must be an inductive
+/// prop, must have only one constructor, and the constructor can take only the type's parameters
+/// as arguments.///
 /// Condition 3:
 ///     assert that the first arguments being applied to the base `Const(..)`
 ///     in any given constructor are exactly the parameters required by the block.
@@ -1951,9 +2014,8 @@ verus! {
 /// the zip desugars to. Same pairs, same order, same early exit.
 fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>]) -> (result: bool)
     ensures
-        result == (ctor_apps@.len() >= local_params@.len()
-            && forall |i: int| 0 <= i < local_params@.len()
-                ==> #[trigger] ctor_apps@[i] == local_params@[i]),
+        result == (ctor_apps@.len() >= local_params@.len() && forall|i: int|
+            0 <= i < local_params@.len() ==> #[trigger] ctor_apps@[i] == local_params@[i]),
 {
     if ctor_apps.len() < local_params.len() {
         return false
@@ -1965,7 +2027,7 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
             0 <= i <= n,
             n == local_params@.len(),
             n <= ctor_apps@.len(),
-            forall |k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k] == local_params@[k],
+            forall|k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k] == local_params@[k],
         decreases n - i,
     {
         if ctor_apps[i] != local_params[i] {
@@ -1975,8 +2037,6 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
     }
     true
 }
-
-
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// VERUS-REWRITE(slice-pattern): the original matches
@@ -1993,24 +2053,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn init_k_target(&mut self, st: &mut InductiveCheckState<'t>)
         requires
             old(st).is_zero is Some,
-            old(st).all_inductives_incl_specialized@.len() == 1
-                && old(st).all_inductives_incl_specialized@[0].ctors@.len() == 1
-                ==> crate::expr_model::depth(crate::expr_arena_bridge::to_model(
-                        old(st).all_inductives_incl_specialized@[0].ctors@[0].ty)) <= 60000,
+            old(st).all_inductives_incl_specialized@.len() == 1 && old(
+                st,
+            ).all_inductives_incl_specialized@[0].ctors@.len() == 1 ==> crate::expr_model::depth(
+                crate::expr_arena_bridge::to_model(
+                    old(st).all_inductives_incl_specialized@[0].ctors@[0].ty,
+                ),
+            ) <= 60000,
         ensures
             final(st).k_target is Some,
             final(st).all_inductives_incl_specialized == old(st).all_inductives_incl_specialized,
             final(st).local_params == old(st).local_params,
             final(st).is_zero == old(st).is_zero,
     {
-        let is_k_target = st.is_zero.unwrap()
-            && st.all_inductives_incl_specialized.len() == 1
-            && st.all_inductives_incl_specialized[0].ctors.len() == 1
-            && self.ctx.pi_telescope_size(st.all_inductives_incl_specialized[0].ctors[0].ty) as usize
-                == st.local_params.len();
+        let is_k_target = st.is_zero.unwrap() && st.all_inductives_incl_specialized.len() == 1
+            && st.all_inductives_incl_specialized[0].ctors.len() == 1 && self.ctx.pi_telescope_size(
+            st.all_inductives_incl_specialized[0].ctors[0].ty,
+        ) as usize == st.local_params.len();
         st.k_target = Some(is_k_target);
     }
-
 
     /// Generate an elimination universe name that does not clash with the
     /// block's own universe parameters.
@@ -2027,38 +2088,46 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// silently in release.
     #[verifier::exec_allows_no_decreases_clause]
     fn gen_elim_level(&mut self, st: &InductiveCheckState<'t>) -> (result: NamePtr<'t>)
-        ensures !(exists |i: int| 0 <= i < to_model_of_levels(st.uparams).len()
-            && #[trigger] to_model_of_levels(st.uparams)[i]
-                == LevelSpec::Param(crate::level_arena_bridge::name_id(result))),
+        ensures
+            !(exists|i: int|
+                0 <= i < to_model_of_levels(st.uparams).len() && #[trigger] to_model_of_levels(
+                    st.uparams,
+                )[i] == LevelSpec::Param(crate::level_arena_bridge::name_id(result))),
     {
         let p = self.ctx.str1("u");
         let hit_p = self.ctx.contains_param(st.uparams, p);
         if !hit_p {
             proof {
-                assert(!(exists |i: int| 0 <= i < to_model_of_levels(st.uparams).len()
-                    && #[trigger] to_model_of_levels(st.uparams)[i]
-                        == LevelSpec::Param(crate::level_arena_bridge::name_id(p))));
+                assert(!(exists|i: int|
+                    0 <= i < to_model_of_levels(st.uparams).len() && #[trigger] to_model_of_levels(
+                        st.uparams,
+                    )[i] == LevelSpec::Param(crate::level_arena_bridge::name_id(p))));
             }
             return p
         }
         // Lean's pretty printer starts at 1 for universes.
+
         let mut i = 1u64;
         loop
-            invariant true,
+            invariant
+                true,
         {
             let candidate = self.ctx.append_index_after(p, i);
             let hit = self.ctx.contains_param(st.uparams, candidate);
             if hit {
                 if i == u64::MAX {
                     return crate::util::kernel_fail(
-                        "gen_elim_level: u64 exhausted generating a fresh universe name");
+                        "gen_elim_level: u64 exhausted generating a fresh universe name",
+                    );
                 }
                 i += 1;
             } else {
                 proof {
-                    assert(!(exists |i2: int| 0 <= i2 < to_model_of_levels(st.uparams).len()
-                        && #[trigger] to_model_of_levels(st.uparams)[i2]
-                            == LevelSpec::Param(crate::level_arena_bridge::name_id(candidate))));
+                    assert(!(exists|i2: int|
+                        0 <= i2 < to_model_of_levels(st.uparams).len()
+                            && #[trigger] to_model_of_levels(st.uparams)[i2] == LevelSpec::Param(
+                            crate::level_arena_bridge::name_id(candidate),
+                        )));
                 }
                 return candidate
             }
@@ -2074,8 +2143,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn mk_majors(&mut self, st: &mut InductiveCheckState<'t>) {
         let n = st.ind_consts.len();
         if st.local_indices.len() < n {
-            crate::util::kernel_check(false,
-                "mk_majors: local_indices is shorter than ind_consts");
+            crate::util::kernel_check(false, "mk_majors: local_indices is shorter than ind_consts");
             return
         }
         let mut idx: usize = 0;
@@ -2084,7 +2152,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 n == st.ind_consts@.len(),
                 n <= st.local_indices@.len(),
                 idx <= n,
-            decreases n - idx
+            decreases n - idx,
         {
             let ind_const = st.ind_consts[idx];
             let mut ty = self.ctx.foldl_apps(ind_const, st.local_params.iter().copied());
@@ -2096,4 +2164,4 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 }
 
-}
+} // verus!

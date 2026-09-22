@@ -2,58 +2,91 @@
 use crate::util::{BigUintPtr, ExprPtr, FxHashMap, LevelPtr, LevelsPtr, NamePtr, StringPtr, TcCtx};
 use num_bigint::BigUint;
 use num_traits::identities::Zero;
-use Expr::*;
 use serde::Deserialize;
+use Expr::*;
 
 // Inside `verus!` only so the `hash64!` calls in `util.rs`'s constructors are
 // expressible there; the values are unchanged and no spec reads them.
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
-        ensures match result {
-            Some(kind) => crate::expr_arena_bridge::quot_kind_of(
-                crate::level_arena_bridge::name_id(name)) == Some(kind),
-            None => true,
-        },
+        ensures
+            match result {
+                Some(kind) => crate::expr_arena_bridge::quot_kind_of(
+                    crate::level_arena_bridge::name_id(name),
+                ) == Some(kind),
+                None => true,
+            },
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let nc = &self.export_file.name_cache;
-        if Some(name) == nc.quot_lift { Some(0) }
-        else if Some(name) == nc.quot_ind { Some(1) }
-        else if Some(name) == nc.quot_mk { Some(2) }
-        else { None }
+        if Some(name) == nc.quot_lift {
+            Some(0)
+        } else if Some(name) == nc.quot_ind {
+            Some(1)
+        } else if Some(name) == nc.quot_mk {
+            Some(2)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn nat_bin_op_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)
-        ensures match result {
-            Some(op) => crate::expr_arena_bridge::nat_bin_op_of(
-                crate::level_arena_bridge::name_id(name)) == Some(op),
-            None => true,
-        },
+        ensures
+            match result {
+                Some(op) => crate::expr_arena_bridge::nat_bin_op_of(
+                    crate::level_arena_bridge::name_id(name),
+                ) == Some(op),
+                None => true,
+            },
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let nc = &self.export_file.name_cache;
-        if !self.export_file.config.nat_extension_on() { return None }
-        if Some(name) == nc.nat_add { Some(0) }
-        else if Some(name) == nc.nat_sub { Some(1) }
-        else if Some(name) == nc.nat_mul { Some(2) }
-        else if Some(name) == nc.nat_div { Some(3) }
-        else if Some(name) == nc.nat_mod { Some(4) }
-        else if Some(name) == nc.nat_pow { Some(5) }
-        else if Some(name) == nc.nat_gcd { Some(6) }
-        else if Some(name) == nc.nat_beq { Some(7) }
-        else if Some(name) == nc.nat_ble { Some(8) }
-        else if Some(name) == nc.nat_land { Some(9) }
-        else if Some(name) == nc.nat_lor { Some(10) }
-        else if Some(name) == nc.nat_xor { Some(11) }
-        else if Some(name) == nc.nat_shl { Some(12) }
-        else if Some(name) == nc.nat_shr { Some(13) }
-        else { None }
+        if !self.export_file.config.nat_extension_on() {
+            return None
+        }
+        if Some(name) == nc.nat_add {
+            Some(0)
+        } else if Some(name) == nc.nat_sub {
+            Some(1)
+        } else if Some(name) == nc.nat_mul {
+            Some(2)
+        } else if Some(name) == nc.nat_div {
+            Some(3)
+        } else if Some(name) == nc.nat_mod {
+            Some(4)
+        } else if Some(name) == nc.nat_pow {
+            Some(5)
+        } else if Some(name) == nc.nat_gcd {
+            Some(6)
+        } else if Some(name) == nc.nat_beq {
+            Some(7)
+        } else if Some(name) == nc.nat_ble {
+            Some(8)
+        } else if Some(name) == nc.nat_land {
+            Some(9)
+        } else if Some(name) == nc.nat_lor {
+            Some(10)
+        } else if Some(name) == nc.nat_xor {
+            Some(11)
+        } else if Some(name) == nc.nat_shl {
+            Some(12)
+        } else if Some(name) == nc.nat_shr {
+            Some(13)
+        } else {
+            None
+        }
     }
 }
-}
 
+} // verus!
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Return `true` iff `e` is an application of `@eagerReduce A a`
     ///
@@ -65,14 +98,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// speed, never soundness -- so the weaker claim is the honest one and
     /// costs no trust.
     pub(crate) fn is_eager_reduce_app(&self, e: ExprPtr<'t>) -> (result: bool)
-        ensures result ==> {
-            &&& crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) is Const
-            &&& crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).len() == 2
-        },
+        ensures
+            result ==> {
+                &&& crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) is Const
+                &&& crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).len() == 2
+            },
     {
-        if let App {fun, arg, ..} = self.read_expr(e) {
-            if let App {fun: fun2, arg: arg2, ..} = self.read_expr(fun) {
-                if let Const {name, ..} = self.read_expr(fun2) {
+        if let App { fun, arg, .. } = self.read_expr(e) {
+            if let App { fun: fun2, arg: arg2, .. } = self.read_expr(fun) {
+                if let Const { name, .. } = self.read_expr(fun2) {
                     proof {
                         // Each `read_expr` links the node to its pointer's
                         // denotation; peeling two `App`s lands on the `Const`,
@@ -80,10 +114,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         let m2 = crate::expr_arena_bridge::to_model(fun2);
                         let m1 = crate::expr_arena_bridge::to_model(fun);
                         let m0 = crate::expr_arena_bridge::to_model(e);
-                        assert(m1 == crate::expr_model::ExprSpec::App(Box::new(m2),
-                            Box::new(crate::expr_arena_bridge::to_model(arg2))));
-                        assert(m0 == crate::expr_model::ExprSpec::App(Box::new(m1),
-                            Box::new(crate::expr_arena_bridge::to_model(arg))));
+                        assert(m1 == crate::expr_model::ExprSpec::App(
+                            Box::new(m2),
+                            Box::new(crate::expr_arena_bridge::to_model(arg2)),
+                        ));
+                        assert(m0 == crate::expr_model::ExprSpec::App(
+                            Box::new(m1),
+                            Box::new(crate::expr_arena_bridge::to_model(arg)),
+                        ));
                         // both are recursive over the App nesting, so they
                         // need fuel to reach the `Const` two levels down
                         assert(crate::beta_model::spine_head(m0) == m2) by {
@@ -108,12 +146,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_false_id(),
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::bool_false_id(),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.bool_false?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
@@ -126,12 +167,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_true_id(),
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::bool_true_id(),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.bool_true?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
@@ -144,13 +188,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_zero_id()
-            && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::nat_zero_id()
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.nat_zero?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
@@ -163,13 +210,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_succ_id()
-            && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::nat_succ_id()
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.nat_succ?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
@@ -182,12 +232,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_type_id(),
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::nat_type_id(),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.nat?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
@@ -200,33 +253,47 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
-                    && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::string_type_id(),
+                    && crate::expr_arena_bridge::const_id(e)
+                    == crate::expr_arena_bridge::string_type_id(),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        proof { crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache); }
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
+        }
         let n = self.export_file.name_cache.string?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
 }
-}
 
+} // verus!
 ::vstd::prelude::verus! {
-pub(crate) const VAR_HASH: u64 = 281;
-pub(crate) const SORT_HASH: u64 = 563;
-pub(crate) const CONST_HASH: u64 = 1129;
-pub(crate) const PROJ_HASH: u64 = 17;
-pub(crate) const LAMBDA_HASH: u64 = 431;
-pub(crate) const LET_HASH: u64 = 241;
-pub(crate) const PI_HASH: u64 = 719;
-pub(crate) const APP_HASH: u64 = 233;
-pub(crate) const LOCAL_HASH: u64 = 211;
-pub(crate) const STRING_LIT_HASH: u64 = 1493;
-pub(crate) const NAT_LIT_HASH: u64 = 1583;
-}
 
+pub(crate) const VAR_HASH: u64 = 281;
+
+pub(crate) const SORT_HASH: u64 = 563;
+
+pub(crate) const CONST_HASH: u64 = 1129;
+
+pub(crate) const PROJ_HASH: u64 = 17;
+
+pub(crate) const LAMBDA_HASH: u64 = 431;
+
+pub(crate) const LET_HASH: u64 = 241;
+
+pub(crate) const PI_HASH: u64 = 719;
+
+pub(crate) const APP_HASH: u64 = 233;
+
+pub(crate) const LOCAL_HASH: u64 = 211;
+
+pub(crate) const STRING_LIT_HASH: u64 = 1493;
+
+pub(crate) const NAT_LIT_HASH: u64 = 1583;
+
+} // verus!
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expr<'a> {
     /// A string literal with a pointer to a utf-8 string.
@@ -299,7 +366,7 @@ pub enum Expr<'a> {
         body: ExprPtr<'a>,
         num_loose_bvars: u16,
         has_fvars: bool,
-        nondep: bool
+        nondep: bool,
     },
     /// A free variable with binder information, and either a unique
     /// identifier, or a deBruijn level.
@@ -338,7 +405,9 @@ impl<'a> Expr<'a> {
     }
 }
 impl<'a> std::hash::Hash for Expr<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { state.write_u64(self.get_hash()) }
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.get_hash())
+    }
 }
 
 /// The style of this binder (in Lean's vernacular, the brackets used to write it).
@@ -373,35 +442,22 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Instantiate `e` with the substitutions in `substs`
 
-
-
     /// Abstraction with deBruijn levels instead of unique identifiers.
 
-
-
-
-
-
-
     /// From `f a_0 .. a_N`, return `(f, [a_0, ..a_N])`
-    
+
     /// If this is a const application, return (Const {..}, name, levels, args)
-
-
 
     pub(crate) fn abstr_pis<I>(&mut self, mut binders: I, mut body: ExprPtr<'t>) -> ExprPtr<'t>
     where
-        I: Iterator<Item = ExprPtr<'t>> + DoubleEndedIterator, {
+        I: Iterator<Item = ExprPtr<'t>> + DoubleEndedIterator,
+    {
         while let Some(local) = binders.next_back() {
             body = self.abstr_pi(local, body)
         }
         body
     }
 
-
-
-
-    
     /// The `nat_extension` binary-op code of a constant name (the same
     /// name-cache dispatch `tc.rs::try_reduce_nat` performs), or `None`:
     /// 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq, 8 ble.
@@ -409,7 +465,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The quotient primitive a constant name denotes (the same name-cache
     /// dispatch `tc.rs::reduce_quot` performs): 0 `Quot.lift`, 1 `Quot.ind`,
     /// 2 `Quot.mk`. Bridged to `expr_arena_bridge::quot_kind_of`.
-
 
     pub(crate) fn is_nat_zero(&mut self, e: ExprPtr<'t>) -> bool {
         match self.read_expr(e) {
@@ -449,12 +504,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Some(self.mk_app(succ_c, pred))
         }
     }
-    
 
     /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
     pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> Option<ExprPtr<'t>> {
         if (!self.export_file.config.string_extension) || (!self.export_file.config.nat_extension) {
-            return None
+            return None;
         }
         let zero = self.zero();
         let empty_levels = self.alloc_levels_slice(&[]);
@@ -518,10 +572,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-
-
-
-
     /// Make `Const("Nat", [])`
 
     /// Make `Const("String", [])`
@@ -538,37 +588,39 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub(crate) fn has_nested_pfx(&self, e: ExprPtr<'t>, nested_pfx: NamePtr<'t>) -> bool {
         debug_assert_eq!("_nested", format!("{:?}", self.debug_print(nested_pfx)));
-        self.find_e(e, |eprime| {
-            match self.read_expr(eprime) {
-                Const {name, ..} | Proj {ty_name: name, ..} => self.get_pfx(name) == nested_pfx,
-                _ => false
-            }
+        self.find_e(e, |eprime| match self.read_expr(eprime) {
+            Const { name, .. } | Proj { ty_name: name, .. } => self.get_pfx(name) == nested_pfx,
+            _ => false,
         })
     }
 
     pub(crate) fn find_e<F>(&self, e: ExprPtr<'t>, pred: F) -> bool
     where
-        F: FnOnce(ExprPtr<'t>) -> bool + Copy, {
+        F: FnOnce(ExprPtr<'t>) -> bool + Copy,
+    {
         let mut cache = crate::util::new_fx_hash_map();
         self.find_aux(e, pred, &mut cache)
     }
 
     fn find_aux<F>(&self, e: ExprPtr<'t>, pred: F, cache: &mut FxHashMap<ExprPtr<'t>, bool>) -> bool
     where
-        F: FnOnce(ExprPtr<'t>) -> bool + Copy, {
+        F: FnOnce(ExprPtr<'t>) -> bool + Copy,
+    {
         if let Some(cached) = cache.get(&e) {
             *cached
         } else {
             let r = match self.read_expr(e) {
                 Var { .. } | Sort { .. } | NatLit { .. } | StringLit { .. } | Const { .. } => pred(e),
                 App { fun, arg, .. } => pred(e) || self.find_aux(fun, pred, cache) || self.find_aux(arg, pred, cache),
-                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } =>
-                    pred(e) || self.find_aux(binder_type, pred, cache) || self.find_aux(body, pred, cache),
-                Let { binder_type, val, body, .. } =>
-                    pred(e) 
+                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                    pred(e) || self.find_aux(binder_type, pred, cache) || self.find_aux(body, pred, cache)
+                }
+                Let { binder_type, val, body, .. } => {
+                    pred(e)
                         || self.find_aux(binder_type, pred, cache)
                         || self.find_aux(val, pred, cache)
-                        || self.find_aux(body, pred, cache),
+                        || self.find_aux(body, pred, cache)
+                }
                 Local { binder_type, .. } => pred(e) || self.find_aux(binder_type, pred, cache),
                 Proj { structure, .. } => pred(e) || self.find_aux(structure, pred, cache),
             };
@@ -579,14 +631,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub(crate) fn find_const<F>(&self, e: ExprPtr<'t>, pred: F) -> bool
     where
-        F: FnOnce(NamePtr<'t>) -> bool + Copy, {
+        F: FnOnce(NamePtr<'t>) -> bool + Copy,
+    {
         let mut cache = crate::util::new_fx_hash_map();
         self.find_const_aux(e, pred, &mut cache)
     }
 
     fn find_const_aux<F>(&self, e: ExprPtr<'t>, pred: F, cache: &mut FxHashMap<ExprPtr<'t>, bool>) -> bool
     where
-        F: FnOnce(NamePtr<'t>) -> bool + Copy, {
+        F: FnOnce(NamePtr<'t>) -> bool + Copy,
+    {
         if let Some(cached) = cache.get(&e) {
             *cached
         } else {
@@ -594,12 +648,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Var { .. } | Sort { .. } | NatLit { .. } | StringLit { .. } => false,
                 Const { name, .. } => pred(name),
                 App { fun, arg, .. } => self.find_const_aux(fun, pred, cache) || self.find_const_aux(arg, pred, cache),
-                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } =>
-                    self.find_const_aux(binder_type, pred, cache) || self.find_const_aux(body, pred, cache),
-                Let { binder_type, val, body, .. } =>
+                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                    self.find_const_aux(binder_type, pred, cache) || self.find_const_aux(body, pred, cache)
+                }
+                Let { binder_type, val, body, .. } => {
                     self.find_const_aux(binder_type, pred, cache)
                         || self.find_const_aux(val, pred, cache)
-                        || self.find_const_aux(body, pred, cache),
+                        || self.find_const_aux(body, pred, cache)
+                }
                 Local { binder_type, .. } => self.find_const_aux(binder_type, pred, cache),
                 Proj { structure, .. } => self.find_const_aux(structure, pred, cache),
             };
@@ -612,34 +668,39 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Is this expression `Sort(Level::Zero)`?
 
-
     /// Get the name of the inductive type which is the major premise for this recursor
     /// by finding the correct binder in the recursor's type.
     pub fn get_major_induct(&self, rec: &crate::env::RecursorData<'t>) -> Option<NamePtr<'t>> {
         match self.get_nth_pi_binder(rec.info.ty, rec.major_idx()).map(|x| self.read_expr(self.unfold_apps_fun(x))) {
-            Some(Const {name, ..}) => Some(name),
-            _ => None
+            Some(Const { name, .. }) => Some(name),
+            _ => None,
         }
     }
 }
 
-
 ::vstd::prelude::verus! {
+
 impl<'a> Expr<'a> {
     /// Verified in place, body unchanged. The cached arms are discharged by
     /// `node_cache_ok`, which the caller gets from `read_expr`; the `Var` and
     /// leaf arms need no assumption at all -- `nlbv(Var(i)) == i + 1` and the
     /// leaves' zeros follow from `nlbv`'s own definition.
     pub(crate) fn num_loose_bvars(&self) -> (result: u16)
-        requires crate::expr_arena_bridge::node_cache_ok(*self)
-        ensures result as nat == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model_of_expr(*self))
+        requires
+            crate::expr_arena_bridge::node_cache_ok(*self),
+        ensures
+            result as nat == crate::expr_model::nlbv(
+                crate::expr_arena_bridge::to_model_of_expr(*self),
+            ),
     {
         match self {
             Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => 0,
             Var { dbj_idx, .. } => {
                 // `node_cache_ok` bounds this away from `u16::MAX`; the fact
                 // has to be asked for inside the arm, where the shape is known.
-                proof { assert(*dbj_idx < u16::MAX); }
+                proof {
+                    assert(*dbj_idx < u16::MAX);
+                }
                 dbj_idx + 1
             },
             App { num_loose_bvars, .. }
@@ -651,8 +712,10 @@ impl<'a> Expr<'a> {
     }
 
     pub(crate) fn has_fvars(&self) -> (result: bool)
-        requires crate::expr_arena_bridge::node_cache_ok(*self)
-        ensures result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model_of_expr(*self))
+        requires
+            crate::expr_arena_bridge::node_cache_ok(*self),
+        ensures
+            result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model_of_expr(*self)),
     {
         match self {
             Local { .. } => true,
@@ -665,22 +728,25 @@ impl<'a> Expr<'a> {
         }
     }
 }
-}
 
+} // verus!
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, bodies unchanged. Both used to be
     /// `assume_specification`s in `expr_arena_bridge.rs`; they are now proved
     /// from `read_expr`'s `node_cache_ok`, which states the arena's
     /// cached-field invariant once at the read boundary instead of twice here.
     pub(crate) fn num_loose_bvars(&self, e: ExprPtr<'t>) -> (result: u16)
-        ensures result as nat == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e))
+        ensures
+            result as nat == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)),
     {
         self.read_expr(e).num_loose_bvars()
     }
 
     pub(crate) fn has_fvars(&self, e: ExprPtr<'t>) -> (result: bool)
-        ensures result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))
+        ensures
+            result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
     {
         self.read_expr(e).has_fvars()
     }
@@ -698,15 +764,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         outgoing: &[ExprPtr<'t>],
     ) -> (result: ExprPtr<'t>)
         requires
-            outgoing@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            outgoing@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                <= 60000,
             ingoing@.len() < 60000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
                 crate::expr_model::abstr_full(
                     crate::expr_arena_bridge::to_model(e),
-                    crate::expr_arena_bridge::local_ids(outgoing@), 0),
-                crate::expr_arena_bridge::ptr_models(ingoing@), 0),
+                    crate::expr_arena_bridge::local_ids(outgoing@),
+                    0,
+                ),
+                crate::expr_arena_bridge::ptr_models(ingoing@),
+                0,
+            ),
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         // `let e = ..` below SHADOWS the parameter, so the depth lemma has to
@@ -715,7 +786,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let e = self.abstr(e, outgoing);
         proof {
             crate::expr_model::abstr_full_depth(
-                e0, crate::expr_arena_bridge::local_ids(outgoing@), 0);
+                e0,
+                crate::expr_arena_bridge::local_ids(outgoing@),
+                0,
+            );
         }
         self.inst(e, ingoing)
     }
@@ -728,16 +802,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
-            crate::expr_arena_bridge::to_model(result)
-            == crate::expr_model::ExprSpec::Sort(crate::level_model::LevelSpec::Zero),
-    { self.mk_sort(self.zero()) }
-}
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Sort(
+                crate::level_model::LevelSpec::Zero,
+            ),
+    {
+        self.mk_sort(self.zero())
+    }
 }
 
+} // verus!
 #[cfg(verus_only)]
 use vstd::prelude::*;
 
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// VERUS-REWRITE(while-let-exit): `loop` + `match` rather than the
     /// kernel's `while let`, because the wildcard arm carries a `proof`
@@ -750,19 +828,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `spine_app_peel_front`.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn unfold_apps(&self, e0: ExprPtr<'t>) -> (result: (ExprPtr<'t>, Vec<ExprPtr<'t>>))
-        ensures crate::expr_arena_bridge::to_model(e0)
-            == crate::beta_model::spine_app(
+        ensures
+            crate::expr_arena_bridge::to_model(e0) == crate::beta_model::spine_app(
                 crate::expr_arena_bridge::to_model(result.0),
-                crate::expr_arena_bridge::ptr_models(result.1@)),
+                crate::expr_arena_bridge::ptr_models(result.1@),
+            ),
     {
         let mut e = e0;
         let mut args = Vec::new();
         loop
             invariant
-                crate::expr_arena_bridge::to_model(e0)
-                    == crate::beta_model::spine_app(
-                        crate::expr_arena_bridge::to_model(e),
-                        crate::expr_arena_bridge::ptr_models(args@.reverse())),
+                crate::expr_arena_bridge::to_model(e0) == crate::beta_model::spine_app(
+                    crate::expr_arena_bridge::to_model(e),
+                    crate::expr_arena_bridge::ptr_models(args@.reverse()),
+                ),
         {
             match self.read_expr(e) {
                 App { fun, arg, .. } => {
@@ -771,35 +850,38 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         crate::beta_model::spine_app_peel_front(
                             crate::expr_arena_bridge::to_model(fun),
                             crate::expr_arena_bridge::to_model(arg),
-                            tail);
+                            tail,
+                        );
                         // pushing then reversing puts the new argument in front
-                        assert(args@.push(arg).reverse()
-                            =~= ::vstd::seq![arg] + args@.reverse());
+                        assert(args@.push(arg).reverse() =~= ::vstd::seq![arg] + args@.reverse());
                         crate::expr_arena_bridge::ptr_models_add(
-                            ::vstd::seq![arg], args@.reverse());
+                            ::vstd::seq![arg],
+                            args@.reverse(),
+                        );
                         assert(crate::expr_arena_bridge::ptr_models(::vstd::seq![arg])
                             =~= ::vstd::seq![crate::expr_arena_bridge::to_model(arg)]);
                     }
                     e = fun;
                     args.push(arg);
                 },
-                _ => break
+                _ => break,
             }
         }
-        proof { crate::expr_arena_bridge::ptr_models_reverse(args@); }
+        proof {
+            crate::expr_arena_bridge::ptr_models_reverse(args@);
+        }
         args.reverse();
         (e, args)
     }
 }
-}
 
+} // verus!
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN, body unchanged. The dual of `unfold_apps`: this
     /// BUILDS a spine where that one decomposes it, so the invariant carries
     /// the consumed PREFIX rather than a reversal.
-
-
     /// If this is an application of `Const(name, levels)`, return `(name, levels)`
     ///
     /// Verified AS WRITTEN, and now the only route to a `Const` node's payload:
@@ -813,18 +895,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// maps to a non-`Const` model, which is a case analysis over
     /// `to_model_of_expr`, not a converse shape axiom.
     pub fn try_const_info(&self, e: ExprPtr<'t>) -> (result: Option<(NamePtr<'t>, LevelsPtr<'t>)>)
-        ensures match result {
-            Some((n, l)) => crate::expr_arena_bridge::is_const_shape(e)
-                && crate::expr_arena_bridge::const_name_of(e) == n
-                && crate::expr_arena_bridge::const_levels_of(e) == l,
-            None => !crate::expr_arena_bridge::is_const_shape(e),
-        }
+        ensures
+            match result {
+                Some((n, l)) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_name_of(e) == n
+                    && crate::expr_arena_bridge::const_levels_of(e) == l,
+                None => !crate::expr_arena_bridge::is_const_shape(e),
+            },
     {
         match self.read_expr(e) {
             Const { name, levels, .. } => Some((name, levels)),
             _ => None,
         }
     }
+
     /// Abstraction of unique identifiers; replaces free variables with the appropriate
     /// bound variable, if the free variable is in `locals`.
     ///
@@ -833,16 +917,25 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// bounds the spine, so `num_args + 1` could overflow.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn num_args(&self, e0: ExprPtr<'t>) -> (result: usize)
-        requires crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
-        ensures result == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len()
+        requires
+            crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
+        ensures
+            result == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
     {
         let (mut cursor, mut num_args) = (e0, 0);
         while let App { fun, .. } = self.read_expr(cursor)
             invariant
-                num_args + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(cursor)).len()
-                    == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
-                crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len() <= 60000,
-            ensures num_args == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len(),
+                num_args + crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(cursor),
+                ).len() == crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(e0),
+                ).len(),
+                crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).len()
+                    <= 60000,
+            ensures
+                num_args == crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(e0),
+                ).len(),
         {
             cursor = fun;
             num_args += 1;
@@ -854,39 +947,60 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `spine_args`' order -- the contract says so rather than papering over it.
     /// Same `VERUS-REWRITE(while-let-exit)` as the two above.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn unfold_apps_stack(&self, e0: ExprPtr<'t>) -> (result: (ExprPtr<'t>, Vec<ExprPtr<'t>>))
+    pub(crate) fn unfold_apps_stack(&self, e0: ExprPtr<'t>) -> (result: (
+        ExprPtr<'t>,
+        Vec<ExprPtr<'t>>,
+    ))
         ensures
-            crate::expr_arena_bridge::to_model(result.0) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-            crate::expr_arena_bridge::ptr_models(result.1@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+            crate::expr_arena_bridge::to_model(result.0) == crate::beta_model::spine_head(
+                crate::expr_arena_bridge::to_model(e0),
+            ),
+            crate::expr_arena_bridge::ptr_models(result.1@) =~= crate::beta_model::spine_args(
+                crate::expr_arena_bridge::to_model(e0),
+            ).reverse(),
     {
         let mut e = e0;
         let mut args = Vec::new();
         loop
             invariant
-                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-                crate::expr_arena_bridge::ptr_models(args@) + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse()
-                    =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e))
+                    == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+                crate::expr_arena_bridge::ptr_models(args@) + crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(e),
+                ).reverse() =~= crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(e0),
+                ).reverse(),
             ensures
-                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
-                crate::expr_arena_bridge::ptr_models(args@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e0)).reverse(),
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e))
+                    == crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::ptr_models(args@) =~= crate::beta_model::spine_args(
+                    crate::expr_arena_bridge::to_model(e0),
+                ).reverse(),
         {
             match self.read_expr(e) {
                 App { fun, arg, .. } => {
                     proof {
                         crate::expr_arena_bridge::ptr_models_push(args@, arg);
-                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse()
-                            =~= seq![crate::expr_arena_bridge::to_model(arg)] + crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(fun)).reverse());
+                        assert(crate::beta_model::spine_args(
+                            crate::expr_arena_bridge::to_model(e),
+                        ).reverse() =~= seq![crate::expr_arena_bridge::to_model(arg)]
+                            + crate::beta_model::spine_args(
+                            crate::expr_arena_bridge::to_model(fun),
+                        ).reverse());
                     }
                     args.push(arg);
                     e = fun;
-                }
+                },
                 other => {
                     proof {
-                        assert(crate::expr_arena_bridge::to_model_of_expr(other) == crate::expr_arena_bridge::to_model(e));
-                        assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(e)).reverse() =~= Seq::<crate::expr_model::ExprSpec>::empty());
+                        assert(crate::expr_arena_bridge::to_model_of_expr(other)
+                            == crate::expr_arena_bridge::to_model(e));
+                        assert(crate::beta_model::spine_args(
+                            crate::expr_arena_bridge::to_model(e),
+                        ).reverse() =~= Seq::<crate::expr_model::ExprSpec>::empty());
                     }
                     break
-                }
+                },
             }
         }
         (e, args)
@@ -899,25 +1013,38 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     #[verifier::exec_allows_no_decreases_clause]
     pub fn get_nth_pi_binder(&self, e0: ExprPtr<'t>, n: usize) -> (result: Option<ExprPtr<'t>>)
-        ensures result matches Some(t) ==> {
-            &&& crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), n as nat) is Some
-            &&& crate::expr_model::bind_dom(crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), n as nat).unwrap())
-                    == crate::expr_arena_bridge::to_model(t)
-        },
+        ensures
+            result matches Some(t) ==> {
+                &&& crate::beta_model::spine_bind(
+                    crate::expr_arena_bridge::to_model(e0),
+                    n as nat,
+                ) is Some
+                &&& crate::expr_model::bind_dom(
+                    crate::beta_model::spine_bind(
+                        crate::expr_arena_bridge::to_model(e0),
+                        n as nat,
+                    ).unwrap(),
+                ) == crate::expr_arena_bridge::to_model(t)
+            },
     {
         let mut e = e0;
         for i in 0..n
             invariant
-                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), i as nat) == Some(crate::expr_arena_bridge::to_model(e)),
+                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), i as nat)
+                    == Some(crate::expr_arena_bridge::to_model(e)),
         {
             match self.read_expr(e) {
                 Pi { binder_type, body, .. } => {
                     proof {
-                        crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), i as nat,
-                            crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
+                        crate::beta_model::spine_bind_step(
+                            crate::expr_arena_bridge::to_model(e0),
+                            i as nat,
+                            crate::expr_arena_bridge::to_model(binder_type),
+                            crate::expr_arena_bridge::to_model(body),
+                        );
                     }
                     e = body;
-                }
+                },
                 _ => return None,
             }
         }
@@ -944,20 +1071,31 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
-        requires crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
-        ensures crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), result as nat) is Some,
+        requires
+            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+        ensures
+            crate::beta_model::spine_bind(
+                crate::expr_arena_bridge::to_model(e0),
+                result as nat,
+            ) is Some,
     {
         let mut e = e0;
         let mut size = 0u16;
         while let Pi { binder_type, body, .. } = self.read_expr(e)
             invariant
-                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat) == Some(crate::expr_arena_bridge::to_model(e)),
-                size as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)),
+                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat)
+                    == Some(crate::expr_arena_bridge::to_model(e)),
+                size as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)),
                 crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         {
             proof {
-                crate::beta_model::spine_bind_step(crate::expr_arena_bridge::to_model(e0), size as nat,
-                    crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(body));
+                crate::beta_model::spine_bind_step(
+                    crate::expr_arena_bridge::to_model(e0),
+                    size as nat,
+                    crate::expr_arena_bridge::to_model(binder_type),
+                    crate::expr_arena_bridge::to_model(body),
+                );
             }
             size += 1;
             e = body;
@@ -972,18 +1110,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     #[verifier::exec_allows_no_decreases_clause]
     pub fn unfold_apps_fun(&self, e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
-        ensures crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0))
+        ensures
+            crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_head(
+                crate::expr_arena_bridge::to_model(e0),
+            ),
     {
         let mut e = e0;
         while let App { fun, .. } = self.read_expr(e)
-            invariant crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
-            ensures crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e)) == crate::expr_arena_bridge::to_model(e),
+            invariant
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e))
+                    == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e0)),
+            ensures
+                crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(e))
+                    == crate::expr_arena_bridge::to_model(e),
         {
             e = fun;
         }
         e
     }
-
 
     /// Verified in place; the only body changes are proof annotations and
     /// renaming the local that shadowed the `ensures` parameter.
@@ -994,7 +1138,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// deep, but the kernel does not check, so the limit is stated here rather
     /// than assumed away.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_pi(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    pub(crate) fn abstr_pi(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<
+        't,
+    >)
         requires
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
@@ -1002,9 +1148,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
-            Box::new(crate::quot_model::local_type(binder)),
-            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
-        ),
+                Box::new(crate::quot_model::local_type(binder)),
+                Box::new(
+                    crate::expr_model::abstr_full(
+                        crate::expr_arena_bridge::to_model(body),
+                        seq![crate::expr_arena_bridge::expr_id(binder)],
+                        0,
+                    ),
+                ),
+            ),
     {
         match self.read_expr(binder) {
             Local { binder_name, binder_style, binder_type, .. } => {
@@ -1013,27 +1165,40 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let body_abstr = self.abstr(body, &locals);
                 proof {
                     assert(locals@ =~= seq![binder]);
-                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![crate::expr_arena_bridge::expr_id(binder)]);
+                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![
+                        crate::expr_arena_bridge::expr_id(binder),
+                    ]);
                 }
                 let res = self.mk_pi(binder_name, binder_style, binder_type, body_abstr);
                 proof {
-                    assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::ExprSpec::Bind(
+                    assert(crate::expr_arena_bridge::to_model(res)
+                        == crate::expr_model::ExprSpec::Bind(
                         Box::new(crate::quot_model::local_type(binder)),
-                        Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0))));
+                        Box::new(
+                            crate::expr_model::abstr_full(
+                                crate::expr_arena_bridge::to_model(body),
+                                seq![crate::expr_arena_bridge::expr_id(binder)],
+                                0,
+                            ),
+                        ),
+                    ));
                 }
                 res
-            }
+            },
             _ => {
-                proof { assert(false); }
+                proof {
+                    assert(false);
+                }
                 unreachable!("Cannot apply pi with non-local domain type")
-            }
+            },
         }
     }
 
     /// Verified in place. crate::expr_model::ExprSpec::tructurally identical to `abstr_pi` -- the model does
     /// not distinguish `Lambda` from `Pi`, both being `Exprcrate::expr_model::ExprSpec::pec::Bind`.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn apply_lambda(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    pub(crate) fn apply_lambda(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result:
+        ExprPtr<'t>)
         requires
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
@@ -1041,9 +1206,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
-            Box::new(crate::quot_model::local_type(binder)),
-            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0)),
-        ),
+                Box::new(crate::quot_model::local_type(binder)),
+                Box::new(
+                    crate::expr_model::abstr_full(
+                        crate::expr_arena_bridge::to_model(body),
+                        seq![crate::expr_arena_bridge::expr_id(binder)],
+                        0,
+                    ),
+                ),
+            ),
     {
         match self.read_expr(binder) {
             Local { binder_name, binder_style, binder_type, .. } => {
@@ -1051,23 +1222,34 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let body_abstr = self.abstr(body, &locals);
                 proof {
                     assert(locals@ =~= seq![binder]);
-                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![crate::expr_arena_bridge::expr_id(binder)]);
+                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![
+                        crate::expr_arena_bridge::expr_id(binder),
+                    ]);
                 }
                 let res = self.mk_lambda(binder_name, binder_style, binder_type, body_abstr);
                 proof {
-                    assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::ExprSpec::Bind(
+                    assert(crate::expr_arena_bridge::to_model(res)
+                        == crate::expr_model::ExprSpec::Bind(
                         Box::new(crate::quot_model::local_type(binder)),
-                        Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), seq![crate::expr_arena_bridge::expr_id(binder)], 0))));
+                        Box::new(
+                            crate::expr_model::abstr_full(
+                                crate::expr_arena_bridge::to_model(body),
+                                seq![crate::expr_arena_bridge::expr_id(binder)],
+                                0,
+                            ),
+                        ),
+                    ));
                 }
                 res
-            }
+            },
             _ => {
-                proof { assert(false); }
+                proof {
+                    assert(false);
+                }
                 unreachable!("Cannot apply lambda with non-local domain type")
-            }
+            },
         }
     }
-
 
     /// Verified in place.
     ///
@@ -1079,18 +1261,26 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The ceiling is the one `abstr_pi` carries, summed over the telescope --
     /// each step adds a `Bind` whose domain is that binder's TYPE.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_pi_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    pub(crate) fn abstr_pi_telescope(
+        &mut self,
+        binders: &[ExprPtr<'t>],
+        e0: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
         requires
-            (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
-                ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
-            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+            (forall|i: int|
+                #![trigger binders@[i]]
+                0 <= i < binders@.len() ==> {
+                    let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                    matches!(m, crate::expr_model::ExprSpec::Free(_))
+                }),
+            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap())
+                + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
-           
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
-                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
+                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
+                * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1099,29 +1289,51 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
-                (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
-                    ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+                (forall|i: int|
+                    #![trigger binders@[i]]
+                    0 <= i < binders@.len() ==> {
+                        let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                        matches!(m, crate::expr_model::ExprSpec::Free(_))
+                    }),
                 crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0))
-                        + (binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
-                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
-            decreases n
+                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + (
+                binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
+                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(
+                    crate::expr_arena_bridge::to_model(e),
+                ) <= 60000,
+            decreases n,
         {
             let ghost e_old = e;
             let b = binders[n - 1];
-            proof { crate::expr_model::mul_ge_one(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat); }
+            proof {
+                crate::expr_model::mul_ge_one(
+                    n as nat,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
+            }
             e = self.abstr_pi(b, e);
             proof {
                 // `abstr_pi` gives the SHAPE; the depth has to be read off it,
                 // and the domain is the binder's type, hence `local_type_wf`.
                 crate::expr_arena_bridge::local_type_wf(b);
-                crate::expr_model::abstr_full_depth(crate::expr_arena_bridge::to_model(e_old), seq![crate::expr_arena_bridge::expr_id(b)], 0);
-                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= 1 + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e_old)));
-                crate::expr_model::mul_pred_step(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
-                crate::expr_model::mul_add_distrib((binders@.len() - n) as nat, 1,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+                crate::expr_model::abstr_full_depth(
+                    crate::expr_arena_bridge::to_model(e_old),
+                    seq![crate::expr_arena_bridge::expr_id(b)],
+                    0,
+                );
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 1
+                    + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(
+                    crate::expr_arena_bridge::to_model(e_old),
+                ));
+                crate::expr_model::mul_pred_step(
+                    n as nat,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
+                crate::expr_model::mul_add_distrib(
+                    (binders@.len() - n) as nat,
+                    1,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
             }
             n = n - 1;
         }
@@ -1133,18 +1345,26 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// VERUS-REWRITE(slice-pattern): same as above.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_lambda_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    pub(crate) fn abstr_lambda_telescope(
+        &mut self,
+        binders: &[ExprPtr<'t>],
+        e0: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
         requires
-            (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
-                ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
-            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
+            (forall|i: int|
+                #![trigger binders@[i]]
+                0 <= i < binders@.len() ==> {
+                    let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                    matches!(m, crate::expr_model::ExprSpec::Free(_))
+                }),
+            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap())
+                + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
-           
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
-                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()),
+                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
+                * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1153,36 +1373,56 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
-                (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
-                    ==> { let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                      matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
+                (forall|i: int|
+                    #![trigger binders@[i]]
+                    0 <= i < binders@.len() ==> {
+                        let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                        matches!(m, crate::expr_model::ExprSpec::Free(_))
+                    }),
                 crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0))
-                        + (binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
-                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
-            decreases n
+                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + (
+                binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
+                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(
+                    crate::expr_arena_bridge::to_model(e),
+                ) <= 60000,
+            decreases n,
         {
             let ghost e_old = e;
             let b = binders[n - 1];
-            proof { crate::expr_model::mul_ge_one(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat); }
+            proof {
+                crate::expr_model::mul_ge_one(
+                    n as nat,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
+            }
             e = self.apply_lambda(b, e);
             proof {
                 // `abstr_pi` gives the SHAPE; the depth has to be read off it,
                 // and the domain is the binder's type, hence `local_type_wf`.
                 crate::expr_arena_bridge::local_type_wf(b);
-                crate::expr_model::abstr_full_depth(crate::expr_arena_bridge::to_model(e_old), seq![crate::expr_arena_bridge::expr_id(b)], 0);
-                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= 1 + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e_old)));
-                crate::expr_model::mul_pred_step(n as nat, (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
-                crate::expr_model::mul_add_distrib((binders@.len() - n) as nat, 1,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat);
+                crate::expr_model::abstr_full_depth(
+                    crate::expr_arena_bridge::to_model(e_old),
+                    seq![crate::expr_arena_bridge::expr_id(b)],
+                    0,
+                );
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 1
+                    + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(
+                    crate::expr_arena_bridge::to_model(e_old),
+                ));
+                crate::expr_model::mul_pred_step(
+                    n as nat,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
+                crate::expr_model::mul_add_distrib(
+                    (binders@.len() - n) as nat,
+                    1,
+                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
+                );
             }
             n = n - 1;
         }
         e
     }
-
-
 
     /// Verified in place. Like `inst` and `abstr`, it RESETS its cache, so it
     /// establishes the soundness invariant itself and demands nothing of
@@ -1190,11 +1430,19 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn abstr_levels(&mut self, e: ExprPtr<'t>, start_pos: u16) -> (result: ExprPtr<'t>)
         requires
-            crate::expr_model::dbj_serials_below(crate::expr_arena_bridge::to_model(e), old(self).dbj_level_counter),
-            old(self).dbj_level_counter as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+            crate::expr_model::dbj_serials_below(
+                crate::expr_arena_bridge::to_model(e),
+                old(self).dbj_level_counter,
+            ),
+            old(self).dbj_level_counter as nat + crate::expr_model::depth(
+                crate::expr_arena_bridge::to_model(e),
+            ) < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
-                crate::expr_arena_bridge::to_model(e), start_pos, old(self).dbj_level_counter),
+                crate::expr_arena_bridge::to_model(e),
+                start_pos,
+                old(self).dbj_level_counter,
+            ),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
@@ -1223,18 +1471,31 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Both `panic!()` arms are discharged from the `has_fvars` guard above them,
     /// exactly as in `abstr_aux`.
     #[verifier::exec_allows_no_decreases_clause]
-    fn abstr_aux_levels(&mut self, e: ExprPtr<'t>, start_pos: u16, num_open_binders: u16) -> (result: ExprPtr<'t>)
+    fn abstr_aux_levels(
+        &mut self,
+        e: ExprPtr<'t>,
+        start_pos: u16,
+        num_open_binders: u16,
+    ) -> (result: ExprPtr<'t>)
         requires
             crate::expr_arena_bridge::abstr_levels_cache_sound(*old(self)),
-            crate::expr_model::dbj_serials_below(crate::expr_arena_bridge::to_model(e), num_open_binders),
+            crate::expr_model::dbj_serials_below(
+                crate::expr_arena_bridge::to_model(e),
+                num_open_binders,
+            ),
             // Paired with depth, for the same reason `abstr_aux`'s offset is:
             // `num_open_binders` grows by one per binder descended, and no
             // interval is closed under that on its own. Depth falls by at least
             // one at each `Bind`, so the SUM is what stays under.
-            num_open_binders as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+            num_open_binders as nat + crate::expr_model::depth(
+                crate::expr_arena_bridge::to_model(e),
+            ) < 60000,
         ensures
-            crate::expr_arena_bridge::to_model(result)
-                == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
+                crate::expr_arena_bridge::to_model(e),
+                start_pos,
+                num_open_binders,
+            ),
             crate::expr_arena_bridge::abstr_levels_cache_sound(*final(self)),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1247,9 +1508,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::ptr_u16_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
         }
         if !self.has_fvars(e) {
-            proof { crate::expr_model::abstr_levels_full_noop(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders); }
+            proof {
+                crate::expr_model::abstr_levels_full_noop(
+                    crate::expr_arena_bridge::to_model(e),
+                    start_pos,
+                    num_open_binders,
+                );
+            }
             e
-        } else if let Some(cached) = self.expr_cache.abstr_cache_levels.get(&(e, start_pos, num_open_binders)) {
+        } else if let Some(cached) = self.expr_cache.abstr_cache_levels.get(
+            &(e, start_pos, num_open_binders),
+        ) {
             proof {
                 let k = (e, start_pos, num_open_binders);
                 assert(self.expr_cache.abstr_cache_levels@.contains_key(k));
@@ -1260,7 +1529,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let calcd = match self.read_expr(e) {
                 Local { id: FVarId::DbjLevel(serial), .. } => {
                     proof {
-                        assert(crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(e)) == Some(serial));
+                        assert(crate::expr_arena_bridge::dbj_serial(
+                            crate::expr_arena_bridge::expr_id(e),
+                        ) == Some(serial));
                         assert(serial < num_open_binders);
                     }
                     if serial < start_pos {
@@ -1269,91 +1540,146 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         let res = self.fvar_to_bvar(num_open_binders, serial);
                         proof {
                             assert(crate::expr_arena_bridge::to_model(res)
-                                == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                                == crate::expr_model::abstr_levels_full(
+                                crate::expr_arena_bridge::to_model(e),
+                                start_pos,
+                                num_open_binders,
+                            ));
                         }
                         res
                     }
-                }
+                },
                 Local { id: FVarId::Unique(..), .. } => {
-                    proof { assert(crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(e)) is None); }
+                    proof {
+                        assert(crate::expr_arena_bridge::dbj_serial(
+                            crate::expr_arena_bridge::expr_id(e),
+                        ) is None);
+                    }
                     e
-                }
+                },
                 App { fun, arg, .. } => {
                     let fun2 = self.abstr_aux_levels(fun, start_pos, num_open_binders);
                     let arg2 = self.abstr_aux_levels(arg, start_pos, num_open_binders);
                     let res = self.mk_app(fun2, arg2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                            == crate::expr_model::abstr_levels_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            start_pos,
+                            num_open_binders,
+                        ));
                     }
                     res
-                }
+                },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
-                            num_open_binders, (num_open_binders + 1) as u16);
+                        crate::expr_model::dbj_serials_below_mono(
+                            crate::expr_arena_bridge::to_model(body),
+                            num_open_binders,
+                            (num_open_binders + 1) as u16,
+                        );
                     }
-                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let binder_type2 = self.abstr_aux_levels(
+                        binder_type,
+                        start_pos,
+                        num_open_binders,
+                    );
                     let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                            == crate::expr_model::abstr_levels_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            start_pos,
+                            num_open_binders,
+                        ));
                     }
                     res
-                }
+                },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
-                            num_open_binders, (num_open_binders + 1) as u16);
+                        crate::expr_model::dbj_serials_below_mono(
+                            crate::expr_arena_bridge::to_model(body),
+                            num_open_binders,
+                            (num_open_binders + 1) as u16,
+                        );
                     }
-                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let binder_type2 = self.abstr_aux_levels(
+                        binder_type,
+                        start_pos,
+                        num_open_binders,
+                    );
                     let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                            == crate::expr_model::abstr_levels_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            start_pos,
+                            num_open_binders,
+                        ));
                     }
                     res
-                }
+                },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(crate::expr_arena_bridge::to_model(body),
-                            num_open_binders, (num_open_binders + 1) as u16);
+                        crate::expr_model::dbj_serials_below_mono(
+                            crate::expr_arena_bridge::to_model(body),
+                            num_open_binders,
+                            (num_open_binders + 1) as u16,
+                        );
                     }
-                    let binder_type2 = self.abstr_aux_levels(binder_type, start_pos, num_open_binders);
+                    let binder_type2 = self.abstr_aux_levels(
+                        binder_type,
+                        start_pos,
+                        num_open_binders,
+                    );
                     let val2 = self.abstr_aux_levels(val, start_pos, num_open_binders);
                     let body2 = self.abstr_aux_levels(body, start_pos, num_open_binders + 1);
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                            == crate::expr_model::abstr_levels_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            start_pos,
+                            num_open_binders,
+                        ));
                     }
                     res
-                }
+                },
                 StringLit { .. } | NatLit { .. } => {
-                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)));
+                    }
                     panic!()
-                }
+                },
                 Proj { ty_name, idx, structure, .. } => {
                     let structure2 = self.abstr_aux_levels(structure, start_pos, num_open_binders);
                     let res = self.mk_proj(ty_name, idx, structure2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(crate::expr_arena_bridge::to_model(e), start_pos, num_open_binders));
+                            == crate::expr_model::abstr_levels_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            start_pos,
+                            num_open_binders,
+                        ));
                     }
                     res
-                }
+                },
                 Var { .. } | Sort { .. } | Const { .. } => {
-                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)));
+                    }
                     panic!("should flag as no locals")
-                }
+                },
             };
             let ghost before = self.expr_cache.abstr_cache_levels@;
             self.expr_cache.abstr_cache_levels.insert((e, start_pos, num_open_binders), calcd);
             proof {
-                assert(self.expr_cache.abstr_cache_levels@
-                    =~= before.insert((e, start_pos, num_open_binders), calcd));
+                assert(self.expr_cache.abstr_cache_levels@ =~= before.insert(
+                    (e, start_pos, num_open_binders),
+                    calcd,
+                ));
             }
             calcd
         }
@@ -1364,10 +1690,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// callers.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn abstr(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
-        requires locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+        requires
+            locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                <= 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
-                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::local_ids(locals@), 0),
+                crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::local_ids(locals@),
+                0,
+            ),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
@@ -1401,13 +1732,19 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// as the `match` it stands for: that closure captures `&mut self`, which
     /// Verus rejects outright.
     #[verifier::exec_allows_no_decreases_clause]
-    fn abstr_aux(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
+    fn abstr_aux(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16) -> (result:
+        ExprPtr<'t>)
         requires
             crate::expr_arena_bridge::abstr_cache_sound(*old(self), locals@),
-            locals@.len() + offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            locals@.len() + offset as nat + crate::expr_model::depth(
+                crate::expr_arena_bridge::to_model(e),
+            ) <= 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
-                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::local_ids(locals@), offset as nat),
+                crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::local_ids(locals@),
+                offset as nat,
+            ),
             crate::expr_arena_bridge::abstr_cache_sound(*final(self), locals@),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1421,7 +1758,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         if !self.has_fvars(e) {
             proof {
-                crate::expr_model::abstr_full_noop(crate::expr_arena_bridge::to_model(e), ids, offset as nat);
+                crate::expr_model::abstr_full_noop(
+                    crate::expr_arena_bridge::to_model(e),
+                    ids,
+                    offset as nat,
+                );
             }
             e
         } else if let Some(cached) = self.expr_cache.abstr_cache.get(&(e, offset)) {
@@ -1434,124 +1775,277 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         } else {
             let calcd = match self.read_expr(e) {
                 Local { .. } => {
-                    proof { assert(crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(e))); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(e)
+                            == crate::expr_model::ExprSpec::Free(
+                            crate::expr_arena_bridge::expr_id(e),
+                        ));
+                    }
                     let n = locals.len();
                     let ghost lv = locals@;
                     let mut it = locals.iter().rev();
                     let ghost it0 = it;
                     let found = it.position(
                         |x: &ExprPtr<'t>| -> (r: bool)
-                            ensures r == (*x == e)
-                        { *x == e });
+                            ensures
+                                r == (*x == e),
+                            { *x == e },
+                    );
                     proof {
                         broadcast use vstd::std_specs::iter::group_iter_axioms;
+
                     }
-                    let pos = match found { Some(k) => k, None => n };
+                    let pos = match found {
+                        Some(k) => k,
+                        None => n,
+                    };
                     proof {
-                        assert forall |j: int| 0 <= j < pos implies
-                            #[trigger] ids[(ids.len() - 1 - j) as int] != crate::expr_arena_bridge::expr_id(e) by {
+                        assert forall|j: int| 0 <= j < pos implies #[trigger] ids[(ids.len() - 1
+                            - j) as int] != crate::expr_arena_bridge::expr_id(e) by {
                             // `position`'s "everything before it failed" clause
                             // is triggered on `old(self).remaining()[j]`, and
                             // `.rev()` makes that the slice read backwards.
-                            assert(*vstd::std_specs::iter::IteratorSpec::remaining(&it0)[j]
-                                == lv[(n - 1 - j) as int]);
+                            assert(*vstd::std_specs::iter::IteratorSpec::remaining(&it0)[j] == lv[(n
+                                - 1 - j) as int]);
                             crate::expr_arena_bridge::expr_id_injective(lv[(n - 1 - j) as int], e);
                         }
                     }
                     if pos < n {
-                        proof { assert(ids[(ids.len() - 1 - pos) as int] == crate::expr_arena_bridge::expr_id(e)); }
                         proof {
-                            crate::expr_model::find_from_end_first_match(ids, crate::expr_arena_bridge::expr_id(e), pos as nat);
+                            assert(ids[(ids.len() - 1 - pos) as int]
+                                == crate::expr_arena_bridge::expr_id(e));
+                        }
+                        proof {
+                            crate::expr_model::find_from_end_first_match(
+                                ids,
+                                crate::expr_arena_bridge::expr_id(e),
+                                pos as nat,
+                            );
                         }
                         let res = self.mk_var((pos as u16) + offset);
                         proof {
                             assert(crate::expr_arena_bridge::to_model(res)
-                                == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat));
+                                == crate::expr_model::abstr_full(
+                                crate::expr_arena_bridge::to_model(e),
+                                ids,
+                                offset as nat,
+                            ));
                         }
                         res
                     } else {
                         proof {
-                            assert forall |j: int| 0 <= j < ids.len() implies
-                                ids[j] != crate::expr_arena_bridge::expr_id(e) by {
-                                assert(ids[(ids.len() - 1 - (ids.len() - 1 - j)) as int] != crate::expr_arena_bridge::expr_id(e));
+                            assert forall|j: int| 0 <= j < ids.len() implies ids[j]
+                                != crate::expr_arena_bridge::expr_id(e) by {
+                                assert(ids[(ids.len() - 1 - (ids.len() - 1 - j)) as int]
+                                    != crate::expr_arena_bridge::expr_id(e));
                             }
-                            crate::expr_model::find_from_end_no_match(ids, crate::expr_arena_bridge::expr_id(e));
+                            crate::expr_model::find_from_end_no_match(
+                                ids,
+                                crate::expr_arena_bridge::expr_id(e),
+                            );
                         }
                         e
                     }
-                }
+                },
                 App { fun, arg, .. } => {
                     proof {
-                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::App(
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(fun), ids, offset as nat)),
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(arg), ids, offset as nat))));
+                        assert(crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::App(
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(fun),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(arg),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                        ));
                     }
                     let fun2 = self.abstr_aux(fun, locals, offset);
                     let arg2 = self.abstr_aux(arg, locals, offset);
                     let res = self.mk_app(fun2, arg2);
-                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ));
+                    }
                     res
-                }
+                },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                        assert(crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    ids,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
-                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ));
+                    }
                     res
-                }
+                },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                        assert(crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    ids,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
-                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ));
+                    }
                     res
-                }
+                },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
                     proof {
-                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat) == crate::expr_model::ExprSpec::Let(
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(binder_type), ids, offset as nat)),
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(val), ids, offset as nat)),
-                            Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(body), ids, offset as nat + 1))));
+                        assert(crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Let(
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(val),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    ids,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     let val2 = self.abstr_aux(val, locals, offset);
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
-                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ));
+                    }
                     res
-                }
+                },
                 StringLit { .. } | NatLit { .. } => {
-                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)));
+                    }
                     panic!()
-                }
+                },
                 Proj { ty_name, idx, structure, .. } => {
                     proof {
-                        assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)
-                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(structure), ids, offset as nat))));
+                        assert(crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Proj(
+                            idx,
+                            Box::new(
+                                crate::expr_model::abstr_full(
+                                    crate::expr_arena_bridge::to_model(structure),
+                                    ids,
+                                    offset as nat,
+                                ),
+                            ),
+                        ));
                     }
                     let structure2 = self.abstr_aux(structure, locals, offset);
                     let res = self.mk_proj(ty_name, idx, structure2);
-                    proof { assert(crate::expr_arena_bridge::to_model(res) == crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(e), ids, offset as nat)); }
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(res)
+                            == crate::expr_model::abstr_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            ids,
+                            offset as nat,
+                        ));
+                    }
                     res
-                }
+                },
                 Var { .. } | Sort { .. } | Const { .. } => {
-                    proof { assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e))); }
+                    proof {
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)));
+                    }
                     panic!("should flag as no locals")
-                }
+                },
             };
             let ghost before = self.expr_cache.abstr_cache@;
             self.expr_cache.abstr_cache.insert((e, offset), calcd);
-            proof { assert(self.expr_cache.abstr_cache@ =~= before.insert((e, offset), calcd)); }
+            proof {
+                assert(self.expr_cache.abstr_cache@ =~= before.insert((e, offset), calcd));
+            }
             calcd
         }
     }
@@ -1569,7 +2063,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             substs@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
-                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::ptr_models(substs@), 0),
+                crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::ptr_models(substs@),
+                0,
+            ),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
@@ -1603,14 +2100,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// so a zero-`nlbv` shape is a contradiction.
     ///
     #[verifier::exec_allows_no_decreases_clause]
-    fn inst_aux(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
+    fn inst_aux(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<
+        't,
+    >)
         requires
             crate::expr_arena_bridge::inst_cache_sound(*old(self), substs@),
-            offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
+            offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
+                <= 60000,
             substs@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
-                crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::ptr_models(substs@), offset as nat),
+                crate::expr_arena_bridge::to_model(e),
+                crate::expr_arena_bridge::ptr_models(substs@),
+                offset as nat,
+            ),
             crate::expr_arena_bridge::inst_cache_sound(*final(self), substs@),
             final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1624,7 +2127,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         if self.num_loose_bvars(e) <= offset {
             proof {
-                crate::expr_model::subst_full_noop(crate::expr_arena_bridge::to_model(e), sm, offset as nat);
+                crate::expr_model::subst_full_noop(
+                    crate::expr_arena_bridge::to_model(e),
+                    sm,
+                    offset as nat,
+                );
             }
             e
         } else if let Some(cached) = self.expr_cache.inst_cache.get(&(e, offset)) {
@@ -1638,78 +2145,175 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let calcd = match self.read_expr(e) {
                 // These expressions should be unreachable since they return `n_loose_bvars() == 0`
                 Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => {
-                    proof { assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == 0); }
+                    proof {
+                        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == 0);
+                    }
                     panic!()
-                }
+                },
                 Var { dbj_idx, .. } => {
                     debug_assert!(dbj_idx >= offset);
                     proof {
-                        assert(crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::Var(dbj_idx as u32));
-                        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == dbj_idx as nat + 1);
+                        assert(crate::expr_arena_bridge::to_model(e)
+                            == crate::expr_model::ExprSpec::Var(dbj_idx as u32));
+                        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e))
+                            == dbj_idx as nat + 1);
                     }
                     let k = (dbj_idx - offset) as usize;
                     let ghost sv = substs@;
                     let mut it = substs.iter().rev();
                     let ghost it0 = it;
-                    proof { broadcast use vstd::std_specs::iter::group_iter_axioms; }
+                    proof {
+                        broadcast use vstd::std_specs::iter::group_iter_axioms;
+
+                    }
                     let res = it.nth(k).copied().unwrap_or(e);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
                 App { fun, arg, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::App(
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(fun), sm, offset as nat)),
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(arg), sm, offset as nat))));
+                        assert(crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::App(
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(fun),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(arg),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                        ));
                     }
                     let fun2 = self.inst_aux(fun, substs, offset);
                     let arg2 = self.inst_aux(arg, substs, offset);
                     let res = self.mk_app(fun2, arg2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                        assert(crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    sm,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.inst_aux(binder_type, substs, offset);
                     let body2 = self.inst_aux(body, substs, offset + 1);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                        assert(crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    sm,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.inst_aux(binder_type, substs, offset);
                     let body2 = self.inst_aux(body, substs, offset + 1);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat) == crate::expr_model::ExprSpec::Let(
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(binder_type), sm, offset as nat)),
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(val), sm, offset as nat)),
-                            Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), sm, offset as nat + 1))));
+                        assert(crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Let(
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(val),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    sm,
+                                    offset as nat + 1,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.inst_aux(binder_type, substs, offset);
                     let val2 = self.inst_aux(val, substs, offset);
@@ -1717,23 +2321,43 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
                 Proj { ty_name, idx, structure, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat)
-                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(structure), sm, offset as nat))));
+                        assert(crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ) == crate::expr_model::ExprSpec::Proj(
+                            idx,
+                            Box::new(
+                                crate::expr_model::subst_full(
+                                    crate::expr_arena_bridge::to_model(structure),
+                                    sm,
+                                    offset as nat,
+                                ),
+                            ),
+                        ));
                     }
                     let structure2 = self.inst_aux(structure, substs, offset);
                     let res = self.mk_proj(ty_name, idx, structure2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
+                            == crate::expr_model::subst_full(
+                            crate::expr_arena_bridge::to_model(e),
+                            sm,
+                            offset as nat,
+                        ));
                     }
                     res
-                }
+                },
             };
             let ghost before = self.expr_cache.inst_cache@;
             self.expr_cache.inst_cache.insert((e, offset), calcd);
@@ -1752,17 +2376,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         in_vals: LevelsPtr<'t>,
     ) -> (result: ExprPtr<'t>)
         requires
-            crate::level_arena_bridge::to_model_of_levels(info.uparams).len() == crate::level_arena_bridge::to_model_of_levels(in_vals).len(),
-            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(info.uparams).len()
-                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(info.uparams)[j] is Param,
+            crate::level_arena_bridge::to_model_of_levels(info.uparams).len()
+                == crate::level_arena_bridge::to_model_of_levels(in_vals).len(),
+            forall|j: int|
+                0 <= j < crate::level_arena_bridge::to_model_of_levels(info.uparams).len()
+                    ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(
+                    info.uparams,
+                )[j] is Param,
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self)),
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(info.ty)),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(info.ty),
-                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(info.uparams)),
-                crate::level_arena_bridge::to_model_of_levels(in_vals)),
+                crate::level_model::level_names(
+                    crate::level_arena_bridge::to_model_of_levels(info.uparams),
+                ),
+                crate::level_arena_bridge::to_model_of_levels(in_vals),
+            ),
             crate::expr_arena_bridge::dsubst_cache_sound(*final(self)),
     {
         self.subst_expr_levels(info.ty, info.uparams, in_vals)
@@ -1772,20 +2403,27 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// beneath it uses its own scratch cache, which this function resets first.
     ///
     #[verifier::exec_allows_no_decreases_clause]
-    pub fn subst_expr_levels(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+    pub fn subst_expr_levels(
+        &mut self,
+        e: ExprPtr<'t>,
+        ks: LevelsPtr<'t>,
+        vs: LevelsPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
         requires
-            crate::level_arena_bridge::to_model_of_levels(ks).len() == crate::level_arena_bridge::to_model_of_levels(vs).len(),
-            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
-                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
+            crate::level_arena_bridge::to_model_of_levels(ks).len()
+                == crate::level_arena_bridge::to_model_of_levels(vs).len(),
+            forall|j: int|
+                0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
+                    ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self)),
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
-           
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(e),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
-                crate::level_arena_bridge::to_model_of_levels(vs)),
+                crate::level_arena_bridge::to_model_of_levels(vs),
+            ),
             crate::expr_arena_bridge::dsubst_cache_sound(*final(self)),
     {
         proof {
@@ -1793,7 +2431,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::ptr_triple_obeys_key_model::<
                 &'t crate::expr::Expr<'t>,
                 &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>>();
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
+            >();
         }
         if let Some(cached) = self.expr_cache.dsubst_cache.get(&(e, ks, vs)).copied() {
             proof {
@@ -1837,32 +2476,39 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// "expressions that were just pulled out of the environment, so they
     /// should have no locals". It is what discharges the `panic!`.
     #[verifier::exec_allows_no_decreases_clause]
-    fn subst_aux(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+    fn subst_aux(&mut self, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result:
+        ExprPtr<'t>)
         requires
-            crate::level_arena_bridge::to_model_of_levels(ks).len() == crate::level_arena_bridge::to_model_of_levels(vs).len(),
-            forall |j: int| 0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
-                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
+            crate::level_arena_bridge::to_model_of_levels(ks).len()
+                == crate::level_arena_bridge::to_model_of_levels(vs).len(),
+            forall|j: int|
+                0 <= j < crate::level_arena_bridge::to_model_of_levels(ks).len()
+                    ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(ks)[j] is Param,
             crate::expr_arena_bridge::subst_cache_sound(*old(self)),
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(e),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
-                crate::level_arena_bridge::to_model_of_levels(vs)),
+                crate::level_arena_bridge::to_model_of_levels(vs),
+            ),
             crate::expr_arena_bridge::subst_cache_sound(*final(self)),
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        let ghost names = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks));
+        let ghost names = crate::level_model::level_names(
+            crate::level_arena_bridge::to_model_of_levels(ks),
+        );
         let ghost vals = crate::level_arena_bridge::to_model_of_levels(vs);
         proof {
             crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
             crate::util_model::ptr_triple_obeys_key_model::<
                 &'t crate::expr::Expr<'t>,
                 &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>>();
+                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
+            >();
         }
         if let Some(cached) = self.expr_cache.subst_cache.get(&(e, ks, vs)) {
             proof {
@@ -1876,28 +2522,54 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let r = match self.read_expr(e) {
                 Var { .. } | NatLit { .. } | StringLit { .. } => {
                     proof {
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_arena_bridge::to_model(e));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_arena_bridge::to_model(e));
                     }
                     e
-                }
+                },
                 Sort { level, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
-                            == crate::expr_model::ExprSpec::Sort(crate::level_model::subst_level_spec(crate::level_arena_bridge::to_model(level), names, vals)));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Sort(
+                            crate::level_model::subst_level_spec(
+                                crate::level_arena_bridge::to_model(level),
+                                names,
+                                vals,
+                            ),
+                        ));
                     }
                     let level2 = self.subst_level(level, ks, vs);
                     let res = self.mk_sort(level2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
                 Const { name, levels, .. } => {
                     proof {
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
-                            == crate::expr_model::ExprSpec::Const(crate::level_arena_bridge::name_id(name),
-                                crate::level_model::subst_levels_spec(crate::level_arena_bridge::to_model_of_levels(levels), names, vals)));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Const(
+                            crate::level_arena_bridge::name_id(name),
+                            crate::level_model::subst_levels_spec(
+                                crate::level_arena_bridge::to_model_of_levels(levels),
+                                names,
+                                vals,
+                            ),
+                        ));
                     }
                     let levels2 = self.subst_levels(levels, ks, vs);
                     let res = self.mk_const(name, levels2);
@@ -1905,67 +2577,165 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         crate::expr_arena_bridge::is_const_shape_model(res);
                         crate::expr_arena_bridge::const_levels_vec_model(res);
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
                 App { fun, arg, .. } => {
                     proof {
-                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(fun)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(arg)));
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::App(
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(fun), names, vals)),
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(arg), names, vals))));
+                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(fun))
+                            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(arg)));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::App(
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(fun),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(arg),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                        ));
                     }
                     let fun2 = self.subst_aux(fun, ks, vs);
                     let arg2 = self.subst_aux(arg, ks, vs);
                     let res = self.mk_app(fun2, arg2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                        assert(!crate::expr_model::has_fv(
+                            crate::expr_arena_bridge::to_model(binder_type),
+                        ) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.subst_aux(binder_type, ks, vs);
                     let body2 = self.subst_aux(body, ks, vs);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
                     proof {
-                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type)) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Bind(
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                        assert(!crate::expr_model::has_fv(
+                            crate::expr_arena_bridge::to_model(binder_type),
+                        ) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Bind(
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.subst_aux(binder_type, ks, vs);
                     let body2 = self.subst_aux(body, ks, vs);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
                     proof {
-                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(binder_type))
-                            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(val))
-                            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(body)));
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals) == crate::expr_model::ExprSpec::Let(
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(binder_type), names, vals)),
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(val), names, vals)),
-                            Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(body), names, vals))));
+                        assert(!crate::expr_model::has_fv(
+                            crate::expr_arena_bridge::to_model(binder_type),
+                        ) && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(val))
+                            && !crate::expr_model::has_fv(
+                            crate::expr_arena_bridge::to_model(body),
+                        ));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Let(
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(binder_type),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(val),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(body),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                        ));
                     }
                     let binder_type2 = self.subst_aux(binder_type, ks, vs);
                     let val2 = self.subst_aux(val, ks, vs);
@@ -1973,28 +2743,51 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
                 }
                 // Level subst is only used in const inference, and when unfolding definitions;
                 // in both cases you're substituting in expressions that were just pulled out of the
                 // environment, so they should have no locals.
+                ,
                 Local { .. } => panic!("level substitution should not find locals"),
                 Proj { ty_name, idx, structure, .. } => {
                     proof {
-                        assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(structure)));
-                        assert(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals)
-                            == crate::expr_model::ExprSpec::Proj(idx, Box::new(crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(structure), names, vals))));
+                        assert(!crate::expr_model::has_fv(
+                            crate::expr_arena_bridge::to_model(structure),
+                        ));
+                        assert(crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ) == crate::expr_model::ExprSpec::Proj(
+                            idx,
+                            Box::new(
+                                crate::expr_model::subst_expr_levels(
+                                    crate::expr_arena_bridge::to_model(structure),
+                                    names,
+                                    vals,
+                                ),
+                            ),
+                        ));
                     }
                     let structure2 = self.subst_aux(structure, ks, vs);
                     let res = self.mk_proj(ty_name, idx, structure2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(e), names, vals));
+                            == crate::expr_model::subst_expr_levels(
+                            crate::expr_arena_bridge::to_model(e),
+                            names,
+                            vals,
+                        ));
                     }
                     res
-                }
+                },
             };
             let ghost before = self.expr_cache.subst_cache@;
             self.expr_cache.subst_cache.insert((e, ks, vs), r);
@@ -2016,21 +2809,20 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// of them need to know WHY the head was not a `Const`, and claiming
     /// `!is_const_shape(f)` here would buy nothing while forcing a converse
     /// direction the shape flags do not have.
-    pub fn unfold_const_apps(
-        &self,
-        e: ExprPtr<'t>,
-    ) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>)>)
-        ensures match result {
-            Some((f, c_name, c_levels, args)) =>
-                crate::expr_arena_bridge::to_model(e)
+    pub fn unfold_const_apps(&self, e: ExprPtr<'t>) -> (result: Option<
+        (ExprPtr<'t>, NamePtr<'t>, LevelsPtr<'t>, Vec<ExprPtr<'t>>),
+    >)
+        ensures
+            match result {
+                Some((f, c_name, c_levels, args)) => crate::expr_arena_bridge::to_model(e)
                     == crate::beta_model::spine_app(
-                        crate::expr_arena_bridge::to_model(f),
-                        crate::expr_arena_bridge::ptr_models(args@))
-                && crate::expr_arena_bridge::is_const_shape(f)
-                && crate::expr_arena_bridge::const_name_of(f) == c_name
-                && crate::expr_arena_bridge::const_levels_of(f) == c_levels,
-            None => true,
-        }
+                    crate::expr_arena_bridge::to_model(f),
+                    crate::expr_arena_bridge::ptr_models(args@),
+                ) && crate::expr_arena_bridge::is_const_shape(f)
+                    && crate::expr_arena_bridge::const_name_of(f) == c_name
+                    && crate::expr_arena_bridge::const_levels_of(f) == c_levels,
+                None => true,
+            },
     {
         let (f, args) = self.unfold_apps(e);
         match self.read_expr(f) {
@@ -2038,20 +2830,22 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => None,
         }
     }
+
     #[verifier::exec_allows_no_decreases_clause]
     pub fn foldl_apps<I: Iterator<Item = ExprPtr<'t>> + crate::util::IterSpec>(
         &mut self,
         fun0: ExprPtr<'t>,
         args: I,
     ) -> (result: ExprPtr<'t>)
-        requires args.obeys_prophetic_iter_laws(),
+        requires
+            args.obeys_prophetic_iter_laws(),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-            crate::expr_arena_bridge::to_model(result)
-            == crate::beta_model::spine_app(
+            crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_app(
                 crate::expr_arena_bridge::to_model(fun0),
-                crate::expr_arena_bridge::ptr_models(args.remaining())),
+                crate::expr_arena_bridge::ptr_models(args.remaining()),
+            ),
     {
         let mut fun = fun0;
         for arg in it: args
@@ -2063,17 +2857,18 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 // explicitly; without it the postcondition cannot be stated
                 // at loop exit.
                 it.seq() == args.remaining(),
-                crate::expr_arena_bridge::to_model(fun)
-                    == crate::beta_model::spine_app(
-                        crate::expr_arena_bridge::to_model(fun0),
-                        crate::expr_arena_bridge::ptr_models(it.seq().take(it.index()))),
+                crate::expr_arena_bridge::to_model(fun) == crate::beta_model::spine_app(
+                    crate::expr_arena_bridge::to_model(fun0),
+                    crate::expr_arena_bridge::ptr_models(it.seq().take(it.index())),
+                ),
         {
             proof {
                 let consumed = it.seq().take(it.index());
                 crate::beta_model::spine_app_compose_last(
                     crate::expr_arena_bridge::to_model(fun0),
                     crate::expr_arena_bridge::ptr_models(consumed),
-                    crate::expr_arena_bridge::to_model(arg));
+                    crate::expr_arena_bridge::to_model(arg),
+                );
                 assert(it.seq().take(it.index() + 1) =~= consumed.push(arg));
                 crate::expr_arena_bridge::ptr_models_push(consumed, arg);
             }
@@ -2085,4 +2880,5 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         fun
     }
 }
-}
+
+} // verus!

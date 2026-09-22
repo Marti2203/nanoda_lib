@@ -30,98 +30,125 @@
 //! the capstone connecting real delta reduction to a genuine `pstep_star`
 //! step, the way `expr_arena_bridge.rs`'s `verified_whnf_beta_step`/
 //! `verified_whnf_zeta_step` already do for beta/zeta.
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
-use crate::env::{RecRule, Env};
-use crate::util::{ExprPtr, NamePtr, LevelsPtr, TcCtx};
-use crate::expr::{Expr, BinderStyle};
-use crate::level_arena_bridge::name_ptr_eq;
-use crate::util::LevelPtr;
-#[cfg(verus_only)]
-use crate::level_arena_bridge::to_model as level_to_model;
-#[cfg(verus_only)]
-use crate::level_model::interp;
-use crate::expr_arena_bridge::{expr_as_app, expr_as_sort, expr_as_local, expr_as_proj, fvar_id_eq, expr_ptr_eq, expr_as_pi, expr_as_lambda, verified_inst, verified_whnf_no_unfolding_step_plain};
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_local_shape, local_id_of, local_binder_type_of};
-use crate::expr_arena_bridge::get_dbj_level_counter;
-#[allow(unused_imports)]
-use crate::expr_model::ExprSpec;
-use crate::expr_model::NatLitPayload;
-#[cfg(verus_only)]
-use crate::level_model::LevelSpec;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_const_shape, const_name_of, const_levels_of, const_id, const_levels_vec, is_const_shape_model, const_levels_vec_model};
-#[cfg(verus_only)]
-use crate::util_model::find_index;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::to_model;
-use crate::expr_arena_bridge::{verified_subst_expr_levels, verified_foldl_apps, verified_whnf_no_unfolding_step, expr_as_nat_lit, read_bignum_value, verified_nat_lit_to_constructor};
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{is_nat_lit_shape, nat_lit_value, is_nat_lit_shape_model};
-use crate::nat_lit_model::{biguint_succ, biguint_add, biguint_mul, biguint_eq, biguint_le};
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{bool_true_id, bool_false_id, nat_zero_id, nat_succ_id, nat_repr_is_zero, nat_repr_pred};
-use crate::util::{nat_sub, nat_div, nat_mod, nat_gcd, nat_shl, nat_shr, nat_land, nat_lor, nat_xor};
-#[allow(unused_imports)]
-use num_traits::Pow;
-use num_bigint::BigUint;
-#[cfg(verus_only)]
-use crate::nat_lit_model::to_nat;
-#[cfg(verus_only)]
-use crate::level_arena_bridge::{name_id, to_model_of_levels};
-use crate::level_arena_bridge::read_levels_vec;
-#[cfg(verus_only)]
-use crate::level_model::level_names;
-#[cfg(verus_only)]
-use crate::env_model::to_model_of_env;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::arena_lctx;
-#[cfg(verus_only)]
-use crate::env_model::{env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors, rec_data_of_agrees};
-#[cfg(verus_only)]
-use crate::beta_model::{find_rule, rec_ready, rec_result, rec_prefix, pstep_rec_intro, pstep_star_spine_update, spine_destruct_app, spine_app_compose_last, spine_app_nlbv_decompose, pstep_star_proj_congr, nat_value, nat_fold_ready, nat_fold_result, nat_bin_op_eval, pstep_fold_intro, nat_fold_result_bounds, spine_head, spine_args, subst_full_compose, subst_full_empty, subst_full_nlbv_bound};
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{rec_data_of, RecRuleSpec, RecDataSpec};
-#[cfg(verus_only)]
-use crate::level_arena_bridge::name_id_injective;
 #[cfg(verus_only)]
 use crate::beta_model::pstep_env_weaken;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::bignum_ptr_value;
-#[cfg(verus_only)]
 use crate::beta_model::size;
-#[cfg(verus_only)]
-use crate::expr_model::has_fv;
-#[cfg(verus_only)]
-use crate::expr_model::{subst_expr_levels_empty, subst_expr_levels_rel_empty, subst_expr_levels};
-use crate::env_model::{get_constructor_num_params, get_recursor_data, get_declar_hint, reducibility_hint_as_regular, get_declar_info_ty};
-#[cfg(verus_only)]
-use crate::env_model::ctor_num_params_of_agrees;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_params_of, struct_ctor_of, ctor_num_fields_of, quot_kind_of};
 #[cfg(verus_only)]
 use crate::beta_model::spine_app_concat;
 #[cfg(verus_only)]
-use crate::env_model::{env_global_wf_ty, env_global_cap};
+use crate::beta_model::{
+    const_expr_no_levels, const_expr_no_levels_canonical, defeq, defeq_of_pstep_star, defeq_refl, defeq_symm,
+    depth_le_size, max_var_below, max_var_below_mono, nlbv_bound_implies_max_var_below, nlbv_shift_noop, pstep,
+    pstep_spine_app_star, pstep_star, pstep_star_app_arg_congr, pstep_star_env_weaken, pstep_star_iota, pstep_star_one,
+    pstep_star_refl, pstep_star_trans, shift, spine_app, spine_app_bounds, spine_app_decompose, spine_app_nlbv,
+    spine_bind, spine_bind_depth, spine_bind_nlbv, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv,
+    subst_full_depth_bound_n, subst_full_nlbv_bound_n,
+};
 #[cfg(verus_only)]
-use crate::env_model::to_model_of_declar_ty;
+use crate::beta_model::{
+    find_rule, nat_bin_op_eval, nat_fold_ready, nat_fold_result, nat_fold_result_bounds, nat_value, pstep_fold_intro,
+    pstep_rec_intro, pstep_star_proj_congr, pstep_star_spine_update, rec_prefix, rec_ready, rec_result,
+    spine_app_compose_last, spine_app_nlbv_decompose, spine_args, spine_destruct_app, spine_head, subst_full_compose,
+    subst_full_empty, subst_full_nlbv_bound,
+};
+use crate::env::ReducibilityHint;
+use crate::env::{Env, RecRule};
+#[cfg(verus_only)]
+use crate::env_model::ctor_num_params_of_agrees;
+#[cfg(verus_only)]
+use crate::env_model::to_model as reducibility_hint_to_model;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_declar_hint;
 #[cfg(verus_only)]
-use crate::env_model::to_model as reducibility_hint_to_model;
-use crate::env::ReducibilityHint;
+use crate::env_model::to_model_of_declar_ty;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, pstep_star, pstep_star_one, pstep_star_refl, pstep_spine_app_star, spine_app, max_var_below, pstep_star_env_weaken, pstep_star_trans, subst_full_depth_bound_n, subst_full_nlbv_bound_n, spine_bind, spine_bind_depth, spine_bind_nlbv, spine_app_decompose, spine_app_bounds, spine_app_nlbv, max_var_below_mono, nlbv_bound_implies_max_var_below, pstep_star_iota, subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv, defeq, defeq_refl, defeq_symm, defeq_of_pstep_star, pstep_star_app_arg_congr, const_expr_no_levels, const_expr_no_levels_canonical, shift, nlbv_shift_noop, depth_le_size};
+use crate::env_model::to_model_of_env;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{nat_zero_arity_is_zero, nat_succ_arity_is_zero, nat_type_id, string_type_id, bool_true_arity_is_zero_any};
+use crate::env_model::{env_global_cap, env_global_wf_ty};
+#[cfg(verus_only)]
+use crate::env_model::{
+    env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_data_of_agrees, rec_rules_model, to_model_of_recursors,
+};
+use crate::env_model::{
+    get_constructor_num_params, get_declar_hint, get_declar_info_ty, get_recursor_data, reducibility_hint_as_regular,
+};
+use crate::expr::{BinderStyle, Expr};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::arena_lctx;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::bignum_ptr_value;
+use crate::expr_arena_bridge::get_dbj_level_counter;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::to_model;
 use crate::expr_arena_bridge::verified_size;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_full, fv_absent};
-
+use crate::expr_arena_bridge::{
+    bool_false_id, bool_true_id, nat_repr_is_zero, nat_repr_pred, nat_succ_id, nat_zero_id,
+};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{
+    bool_true_arity_is_zero_any, nat_succ_arity_is_zero, nat_type_id, nat_zero_arity_is_zero, string_type_id,
+};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{
+    const_id, const_levels_of, const_levels_vec, const_levels_vec_model, const_name_of, is_const_shape,
+    is_const_shape_model,
+};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{ctor_num_fields_of, ctor_num_params_of, quot_kind_of, struct_ctor_of};
+use crate::expr_arena_bridge::{
+    expr_as_app, expr_as_lambda, expr_as_local, expr_as_pi, expr_as_proj, expr_as_sort, expr_ptr_eq, fvar_id_eq,
+    verified_inst, verified_whnf_no_unfolding_step_plain,
+};
+use crate::expr_arena_bridge::{
+    expr_as_nat_lit, read_bignum_value, verified_foldl_apps, verified_nat_lit_to_constructor,
+    verified_subst_expr_levels, verified_whnf_no_unfolding_step,
+};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, local_id_of};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{is_nat_lit_shape, is_nat_lit_shape_model, nat_lit_value};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::{rec_data_of, RecDataSpec, RecRuleSpec};
+#[cfg(verus_only)]
+use crate::expr_model::has_fv;
+#[allow(unused_imports)]
+use crate::expr_model::ExprSpec;
+use crate::expr_model::NatLitPayload;
+#[cfg(verus_only)]
+use crate::expr_model::{abstr_full, depth, fv_absent, nlbv, subst_expr_levels_rel, subst_full};
+#[cfg(verus_only)]
+use crate::expr_model::{subst_expr_levels, subst_expr_levels_empty, subst_expr_levels_rel_empty};
+#[cfg(verus_only)]
+use crate::level_arena_bridge::name_id_injective;
+use crate::level_arena_bridge::name_ptr_eq;
+use crate::level_arena_bridge::read_levels_vec;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::to_model as level_to_model;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{name_id, to_model_of_levels};
+#[cfg(verus_only)]
+use crate::level_model::interp;
+#[cfg(verus_only)]
+use crate::level_model::level_names;
+#[cfg(verus_only)]
+use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use crate::nat_lit_model::to_nat;
+use crate::nat_lit_model::{biguint_add, biguint_eq, biguint_le, biguint_mul, biguint_succ};
+use crate::util::LevelPtr;
+use crate::util::{nat_div, nat_gcd, nat_land, nat_lor, nat_mod, nat_shl, nat_shr, nat_sub, nat_xor};
+use crate::util::{ExprPtr, LevelsPtr, NamePtr, TcCtx};
+#[cfg(verus_only)]
+use crate::util_model::find_index;
+use num_bigint::BigUint;
+#[allow(unused_imports)]
+use num_traits::Pow;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// First rule's constructor name (exec-only gate for the K-like leaf; its
 /// correctness is certified downstream by proof irrelevance + iota).
@@ -129,9 +156,6 @@ use crate::expr_model::{nlbv, depth, subst_expr_levels_rel, subst_full, abstr_fu
 pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) -> Option<NamePtr<'t>> {
     rules.get(0).map(|r| r.ctor_name)
 }
-
-
-
 
 verus! {
 
@@ -150,12 +174,16 @@ pub open spec fn rec_rule_ctor_name_of<'a>(r: RecRule<'a>) -> NamePtr<'a> {
 
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> (result: NamePtr<'t>)
-    ensures result == rec_rule_ctor_name_of(*r)
+    ensures
+        result == rec_rule_ctor_name_of(*r),
 {
     r.ctor_name
 }
 
-pub assume_specification<'t> [first_rule_ctor_name] (rules: &std::sync::Arc<[RecRule<'t>]>) -> (result: Option<NamePtr<'t>>);
+pub assume_specification<'t>[ first_rule_ctor_name ](
+    rules: &std::sync::Arc<[RecRule<'t>]>,
+) -> (result: Option<NamePtr<'t>>)
+;
 
 /// Small helper so `verified_reduce_rec_step`'s `ensures` can use `.
 /// subrange(...)` (a valid quantifier trigger) instead of a fresh
@@ -167,9 +195,11 @@ pub open spec fn args_model_of<'t>(xs: Seq<ExprPtr<'t>>) -> Seq<ExprSpec> {
 pub open spec fn rec_rule_ctor_telescope_size_wo_params_of<'a>(r: RecRule<'a>) -> u16 {
     r.ctor_telescope_size_wo_params
 }
+
 #[allow(dead_code)]
 pub(crate) fn rec_rule_ctor_telescope_size_wo_params<'t>(r: &RecRule<'t>) -> (result: u16)
-    ensures result == rec_rule_ctor_telescope_size_wo_params_of(*r)
+    ensures
+        result == rec_rule_ctor_telescope_size_wo_params_of(*r),
 {
     r.ctor_telescope_size_wo_params
 }
@@ -177,9 +207,11 @@ pub(crate) fn rec_rule_ctor_telescope_size_wo_params<'t>(r: &RecRule<'t>) -> (re
 pub open spec fn rec_rule_val_of<'a>(r: RecRule<'a>) -> ExprPtr<'a> {
     r.val
 }
+
 #[allow(dead_code)]
 pub(crate) fn rec_rule_val<'t>(r: &RecRule<'t>) -> (result: ExprPtr<'t>)
-    ensures result == rec_rule_val_of(*r)
+    ensures
+        result == rec_rule_val_of(*r),
 {
     r.val
 }
@@ -193,12 +225,16 @@ pub open spec fn rec_rule_ctor_names<'a>(rec_rules: Seq<RecRule<'a>>) -> Seq<Nam
 /// Recursion instead of a loop (matching `find_index`'s own recursive
 /// shape directly, same trick `verified_find_pos_from_end` used in
 /// `expr_arena_bridge.rs`) sidesteps needing a hand-rolled loop invariant.
-pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: NamePtr<'t>) -> (result: Option<RecRule<'t>>)
-    ensures match find_index(rec_rule_ctor_names(rec_rules@), major_ctor_name) {
-        Some(i) => result == Some(rec_rules@[i as int]),
-        None => result is None,
-    }
-    decreases rec_rules.len()
+pub fn verified_find_rec_rule<'t>(
+    rec_rules: &[RecRule<'t>],
+    major_ctor_name: NamePtr<'t>,
+) -> (result: Option<RecRule<'t>>)
+    ensures
+        match find_index(rec_rule_ctor_names(rec_rules@), major_ctor_name) {
+            Some(i) => result == Some(rec_rules@[i as int]),
+            None => result is None,
+        },
+    decreases rec_rules.len(),
 {
     let ghost names = rec_rule_ctor_names(rec_rules@);
     if rec_rules.len() == 0 {
@@ -219,7 +255,10 @@ pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: Na
             assert(sub@ =~= rec_rules@.subrange(1, rec_rules@.len() as int));
             let ghost sub_names = rec_rule_ctor_names(sub@);
             assert(sub_names =~= names.subrange(1, names.len() as int));
-            assert(find_index(names, major_ctor_name) == match find_index(sub_names, major_ctor_name) {
+            assert(find_index(names, major_ctor_name) == match find_index(
+                sub_names,
+                major_ctor_name,
+            ) {
                 Some(i) => Some((i + 1) as nat),
                 None => None,
             });
@@ -233,8 +272,12 @@ pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: Na
                     crate::util_model::find_index_correct(sub_names, major_ctor_name);
                     assert(i < sub_names.len());
                     assert(i < sub@.len());
-                    assert(sub@[i as int] == rec_rules@.subrange(1, rec_rules@.len() as int)[i as int]);
-                    assert(rec_rules@.subrange(1, rec_rules@.len() as int)[i as int] == rec_rules@[(i + 1) as int]);
+                    assert(sub@[i as int] == rec_rules@.subrange(
+                        1,
+                        rec_rules@.len() as int,
+                    )[i as int]);
+                    assert(rec_rules@.subrange(1, rec_rules@.len() as int)[i as int] == rec_rules@[(
+                    i + 1) as int]);
                 }
             }
             result
@@ -242,30 +285,34 @@ pub fn verified_find_rec_rule<'t>(rec_rules: &[RecRule<'t>], major_ctor_name: Na
     }
 }
 
-
-
-
-
 /// CAP-FREE delta step. `verified_unfold_def_step_capped` with the `k` ceiling,
 /// the `bound`/`d` ghost parameters and the depth half of its contract removed
 /// -- what is left is the kernel's own `unfold_def`: if the head is a constant
 /// with a definition whose value has no free variables, substitute the
 /// universe parameters and re-apply the arguments.
-pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => {
-            &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
-            &&& nlbv(to_model(r)) <= 0
+            Some(r) => {
+                &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
+                &&& nlbv(to_model(r)) <= 0
+            },
+            None => true,
         },
-        None => true,
-    }
 {
     let (fun, args) = ctx.unfold_apps(e);
-    assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+    assert(to_model(e) == spine_app(
+        to_model(fun),
+        Seq::new(args@.len(), |i: int| to_model(args@[i])),
+    ));
     proof {
         // the arguments inherit `e`'s own closedness
         spine_app_nlbv_decompose(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])));
@@ -302,8 +349,17 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
             assert(to_model_of_levels(levels) =~= Seq::<LevelSpec>::empty());
             subst_expr_levels_empty(to_model(def_value));
             subst_expr_levels_rel_empty(to_model(def_value));
-            assert(subst_expr_levels(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels)) == to_model(def_value));
-            assert(subst_expr_levels_rel(to_model(def_value), level_names(to_model_of_levels(def_uparams)), to_model_of_levels(levels), to_model(def_value)));
+            assert(subst_expr_levels(
+                to_model(def_value),
+                level_names(to_model_of_levels(def_uparams)),
+                to_model_of_levels(levels),
+            ) == to_model(def_value));
+            assert(subst_expr_levels_rel(
+                to_model(def_value),
+                level_names(to_model_of_levels(def_uparams)),
+                to_model_of_levels(levels),
+                to_model(def_value),
+            ));
         }
         Some(def_value)
     } else {
@@ -330,25 +386,38 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
                 assert(cm.contains_key(id) && cm[id] == (ks, val));
                 assert(pstep(cm, to_model(fun), to_model(def_val)));
                 pstep_star_one(cm, to_model(fun), to_model(def_val));
-                pstep_spine_app_star(cm, to_model(fun), to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+                pstep_spine_app_star(
+                    cm,
+                    to_model(fun),
+                    to_model(def_val),
+                    Seq::new(args@.len(), |i: int| to_model(args@[i])),
+                );
             }
             proof {
                 subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(levels), to_model(def_val));
             }
             assert(nlbv(to_model(def_val)) == 0);
             let result = verified_foldl_apps(ctx, def_val, &args);
-            assert(to_model(e) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
-            assert(to_model(result) == spine_app(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i]))));
+            assert(to_model(e) == spine_app(
+                to_model(fun),
+                Seq::new(args@.len(), |i: int| to_model(args@[i])),
+            ));
+            assert(to_model(result) == spine_app(
+                to_model(def_val),
+                Seq::new(args@.len(), |i: int| to_model(args@[i])),
+            ));
             proof {
-                spine_app_nlbv(to_model(def_val), Seq::new(args@.len(), |i: int| to_model(args@[i])));
+                spine_app_nlbv(
+                    to_model(def_val),
+                    Seq::new(args@.len(), |i: int| to_model(args@[i])),
+                );
             }
             assert(nlbv(to_model(result)) <= 0);
             Some(result)
-        }
+        },
         None => None,
     }
 }
-
 
 // ===========================================================================
 // FUEL-FREE, CAP-FREE WHNF (2026-09-13).
@@ -367,32 +436,58 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 // over `env_model_nofv` -- every definition whose value is closed -- and no
 // number of ours appears in it.
 // ===========================================================================
-
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         match result {
-        Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
+            Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(
+                to_model(r),
+            ) <= 0,
+            None => true,
+        },
 {
     let ghost cm = env_model_nofv(*env);
     let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
-    let (rname, rlevels) = match ctx.try_const_info(fun) { Some(p) => p, None => { rec_stat(41); return None; } };
-    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) { Some(p) => p, None => { rec_stat(42); return None; } };
+    let (rname, rlevels) = match ctx.try_const_info(fun) {
+        Some(p) => p,
+        None => {
+            rec_stat(41);
+            return None;
+        },
+    };
+    let (np, nm, nmin, major_idx, uparams, rules) = match get_recursor_data(env, &rname) {
+        Some(p) => p,
+        None => {
+            rec_stat(42);
+            return None;
+        },
+    };
     if args.len() > 64 || major_idx >= args.len() {
-        { rec_stat(49); return None; }
+        {
+            rec_stat(49);
+            return None;
+        }
     }
     let nprefix: usize = (np as usize) + (nm as usize) + (nmin as usize);
     if nprefix > major_idx {
-        { rec_stat(50); return None; }
+        {
+            rec_stat(50);
+            return None;
+        }
     }
     let major = args[major_idx];
     proof {
@@ -409,17 +504,29 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             Some(c) => {
                 proof {
                     is_nat_lit_shape_model(majw0);
-                    assert(to_model(majw0) == ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(nptr)))));
-                    assert forall |j: u64| #[trigger] Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j) implies
-                        cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == cm[j]
-                    by {}
-                    pstep_env_weaken(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), cm, to_model(majw0), to_model(c));
+                    assert(to_model(majw0) == ExprSpec::NatLit(
+                        NatLitPayload(Ghost(bignum_ptr_value(nptr))),
+                    ));
+                    assert forall|j: u64| #[trigger]
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(
+                            j,
+                        ) implies cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j]
+                        == cm[j] by {}
+                    pstep_env_weaken(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        cm,
+                        to_model(majw0),
+                        to_model(c),
+                    );
                     pstep_star_one(cm, to_model(majw0), to_model(c));
                     pstep_star_trans(cm, to_model(major), to_model(majw0), to_model(c));
                 }
                 c
-            }
-            None => { rec_stat(43); return None; },
+            },
+            None => {
+                rec_stat(43);
+                return None;
+            },
         },
         None => majw0,
     };
@@ -428,45 +535,84 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
     let (cname, _clevels) = match ctx.try_const_info(chead) {
         Some(p) => p,
         None => {
-            if expr_as_local(ctx, chead).is_some() { rec_stat(45); }
-            else if expr_as_lambda(&chead_el).is_some() { rec_stat(56); }
-            else if expr_as_proj(&chead_el).is_some() { rec_stat(57); }
-            else if expr_as_nat_lit(ctx, chead).is_some() { rec_stat(58); }
-            else { rec_stat(59); }
+            if expr_as_local(ctx, chead).is_some() {
+                rec_stat(45);
+            } else if expr_as_lambda(&chead_el).is_some() {
+                rec_stat(56);
+            } else if expr_as_proj(&chead_el).is_some() {
+                rec_stat(57);
+            } else if expr_as_nat_lit(ctx, chead).is_some() {
+                rec_stat(58);
+            } else {
+                rec_stat(59);
+            }
             return None;
-        }
+        },
     };
     if cargs.len() > 64 {
-        { rec_stat(52); return None; }
+        {
+            rec_stat(52);
+            return None;
+        }
     }
     let rule = match verified_find_rec_rule(&rules, cname) {
         Some(rr) => rr,
         None => {
             match env.get_declar_val(&cname) {
-                Some(_) => { rec_stat(60); }
+                Some(_) => {
+                    rec_stat(60);
+                },
                 None => {
-                    match get_recursor_data(env, &cname) { Some(_) => { rec_stat(61); } None => { rec_stat(46); } }
-                }
+                    match get_recursor_data(env, &cname) {
+                        Some(_) => {
+                            rec_stat(61);
+                        },
+                        None => {
+                            rec_stat(46);
+                        },
+                    }
+                },
             }
             return None;
-        }
+        },
     };
     let nf: usize = rec_rule_ctor_telescope_size_wo_params(&rule) as usize;
     if nf > cargs.len() {
-        { rec_stat(53); return None; }
+        {
+            rec_stat(53);
+            return None;
+        }
     }
     let rhs = rec_rule_val(&rule);
-    let sz = match verified_size(ctx, rhs, 100000) { Some(v) => v, None => { rec_stat(47); return None; } };
+    let sz = match verified_size(ctx, rhs, 100000) {
+        Some(v) => v,
+        None => {
+            rec_stat(47);
+            return None;
+        },
+    };
     if sz > 500 {
-        { rec_stat(54); return None; }
+        {
+            rec_stat(54);
+            return None;
+        }
     }
     let uv = read_levels_vec(ctx, uparams);
     let lvv = read_levels_vec(ctx, rlevels);
     if uv.len() != lvv.len() {
-        { rec_stat(55); return None; }
+        {
+            rec_stat(55);
+            return None;
+        }
     }
     assert(to_model_of_levels(uparams).len() == to_model_of_levels(rlevels).len());
-    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) { Some(b) => b, None => { rec_stat(48); return None; } };
+    let body = match verified_subst_expr_levels(ctx, rhs, uparams, rlevels, 100000) {
+        Some(b) => b,
+        None => {
+            rec_stat(48);
+            return None;
+        },
+    };
     let prefix_args = &args[0..nprefix];
     let field_args = &cargs[(cargs.len() - nf)..cargs.len()];
     let post_args = &args[(major_idx + 1)..args.len()];
@@ -522,7 +668,11 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
             nfields: rec_rule_ctor_telescope_size_wo_params_of(rules@[ri]) as nat,
             rhs: to_model(rec_rule_val_of(rules@[ri])),
         });
-        assert(rd.rules[ri] == RecRuleSpec { ctor_id: cid, nfields: nf as nat, rhs: to_model(rhs) });
+        assert(rd.rules[ri] == RecRuleSpec {
+            ctor_id: cid,
+            nfields: nf as nat,
+            rhs: to_model(rhs),
+        });
         // Spine shapes.
         spine_destruct_app(head, am2);
         let cam = args_model_of(cargs@);
@@ -535,7 +685,10 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         let bm = crate::expr_model::subst_expr_levels(to_model(rhs), rd.uparams, lv);
         assert(to_model(body) == bm);
         assert(args_model_of(prefix_args@) =~= am2.subrange(0, nprefix as int));
-        assert(args_model_of(field_args@) =~= cam.subrange((cam.len() - nf) as int, cam.len() as int));
+        assert(args_model_of(field_args@) =~= cam.subrange(
+            (cam.len() - nf) as int,
+            cam.len() as int,
+        ));
         assert(args_model_of(post_args@) =~= am2.subrange(mi + 1, am2.len() as int));
         assert(to_model(r) == rec_result(sp2));
         // One recursor step at the outermost application node.
@@ -551,7 +704,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
         pstep_star_one(cm, sp2, to_model(r));
         pstep_star_trans(cm, to_model(e), sp2, to_model(r));
         // The result is closed: every argument of the stepped spine is.
-        assert forall |i: int| 0 <= i < am2.len() implies nlbv(#[trigger] am2[i]) <= 0 by {
+        assert forall|i: int| 0 <= i < am2.len() implies nlbv(#[trigger] am2[i]) <= 0 by {
             if i == mi {
             } else {
                 assert(am2[i] == am[i]);
@@ -566,22 +719,34 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env
 
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         match result {
-        Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
+            Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(
+                to_model(r),
+            ) <= 0,
+            None => true,
+        },
 {
     let ghost cm = env_model_nofv(*env);
     let (head, args) = ctx.unfold_apps(e);
     let head_el = ctx.read_expr(head);
-    let (_, idx, structure) = match expr_as_proj(&head_el) { Some(p) => p, None => return None };
+    let (_, idx, structure) = match expr_as_proj(&head_el) {
+        Some(p) => p,
+        None => return None,
+    };
     if idx > 0xFFFF_0000 {
         return None;
     }
@@ -595,8 +760,14 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
     let s2 = verified_whnf_free(ctx, env, memo, structure);
     let (fun, cargs) = ctx.unfold_apps(s2);
     let fun_el = ctx.read_expr(fun);
-    let (name, _levels) = match ctx.try_const_info(fun) { Some(p) => p, None => return None };
-    let num_params = match get_constructor_num_params(env, &name) { Some(np) => np, None => return None };
+    let (name, _levels) = match ctx.try_const_info(fun) {
+        Some(p) => p,
+        None => return None,
+    };
+    let num_params = match get_constructor_num_params(env, &name) {
+        Some(np) => np,
+        None => return None,
+    };
     let i = num_params as usize + idx;
     if i >= cargs.len() {
         return None;
@@ -612,7 +783,15 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         assert(const_id(fun) == name_id(name));
         assert(cargs_model[i as int] == to_model(field));
         ctor_num_params_of_agrees(*env, name_id(name));
-        pstep_star_iota(cm, idx, to_model(structure), const_id(fun), const_levels_vec(fun), cargs_model, num_params);
+        pstep_star_iota(
+            cm,
+            idx,
+            to_model(structure),
+            const_id(fun),
+            const_levels_vec(fun),
+            cargs_model,
+            num_params,
+        );
         assert(pstep_star(cm, to_model(head), to_model(field)));
         assert(to_model(e) == spine_app(to_model(head), args_model));
         assert(to_model(r) == spine_app(to_model(field), args_model));
@@ -620,7 +799,8 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
         // nlbv: the field is a sub-spine element of the (nlbv <= 0) reduct
         spine_app_nlbv_decompose(to_model(fun), cargs_model);
         assert(nlbv(to_model(field)) <= 0);
-        assert forall |j: int| 0 <= j < args_model.len() implies nlbv(#[trigger] args_model[j]) <= 0 by {}
+        assert forall|j: int| 0 <= j < args_model.len() implies nlbv(#[trigger] args_model[j])
+            <= 0 by {}
         spine_app_nlbv(to_model(field), args_model);
     }
     Some(r)
@@ -628,19 +808,28 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, en
 
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
 {
     let ghost cm = env_model_nofv(*env);
     let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
-    proof { pstep_star_refl(cm, to_model(e)); }
+    proof {
+        pstep_star_refl(cm, to_model(e));
+    }
     let mut cur = e;
     // ITERATIVE, not tail-recursive. `tc.rs`'s `whnf_no_unfolding_aux` fires
     // one step and tail-calls itself; written that way here it costs one stack
@@ -651,7 +840,8 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     loop
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
-            memo.wf(), memo.spec_env() == *env,
+            memo.wf(),
+            memo.spec_env() == *env,
             cm == env_model_nofv(*env),
             mt == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
             nlbv(to_model(cur)) <= 0,
@@ -659,44 +849,55 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
     {
         // depth ceiling for the arena primitives (the kernel needs none; our
         // `verified_inst`/`verified_peel_lambdas` carry an arena-wide bound)
-        let sz = match verified_size(ctx, cur, 100000) { Some(v) => v, None => return cur };
-        proof { depth_le_size(to_model(cur)); }
+        let sz = match verified_size(ctx, cur, 100000) {
+            Some(v) => v,
+            None => return cur,
+        };
+        proof {
+            depth_le_size(to_model(cur));
+        }
         // --- beta / zeta ---
         match verified_whnf_no_unfolding_step_plain(ctx, cur, 100000) {
             Some(r) => {
                 if !expr_ptr_eq(r, cur) {
                     proof {
-                        assert forall |j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(j) && mt[j] == cm[j] by {}
+                        assert forall|j: u64| #[trigger] mt.contains_key(j) implies cm.contains_key(
+                            j,
+                        ) && mt[j] == cm[j] by {}
                         pstep_star_env_weaken(mt, cm, to_model(cur), to_model(r));
                         pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r));
                     }
                     cur = r;
                     continue;
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
         // --- projection iota (delta on the structure, as `reduce_proj` does) ---
         match verified_proj_delta_step_free(ctx, env, memo, cur) {
             Some(r) => {
                 if !expr_ptr_eq(r, cur) {
-                    proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r)); }
+                    proof {
+                        pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r));
+                    }
                     cur = r;
                     continue;
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
         // --- recursor iota ---
         match verified_rec_step_free(ctx, env, memo, cur) {
             Some(r) => {
                 if !expr_ptr_eq(r, cur) {
-                    proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r)); }
+                    proof {
+                        pstep_star_trans(cm, to_model(e), to_model(cur), to_model(r));
+                    }
                     cur = r;
                     continue;
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
         return cur;
     }
@@ -709,13 +910,20 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, 
 /// key, not two -- the claim no longer mentions a cap.
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::exec_allows_no_decreases_clause]
-pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
 {
@@ -725,24 +933,33 @@ pub fn verified_whnf_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x,
             let out = verified_whnf_free_uncached(ctx, env, memo, e);
             memo.put(WhnfCert::make(e, out, env));
             out
-        }
+        },
     }
 }
 
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
         nlbv(to_model(result)) <= 0,
 {
     let ghost cm = env_model_nofv(*env);
-    proof { pstep_star_refl(cm, to_model(e)); }
+    proof {
+        pstep_star_refl(cm, to_model(e));
+    }
     whnf_seen_note(e, 0);
     let mut cur = e;
     // Iterative for the same reason as `verified_whnf_no_unfolding_free`:
@@ -751,24 +968,32 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     loop
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
-            memo.wf(), memo.spec_env() == *env,
+            memo.wf(),
+            memo.spec_env() == *env,
             cm == env_model_nofv(*env),
             nlbv(to_model(cur)) <= 0,
             pstep_star(cm, to_model(e), to_model(cur)),
     {
         let w = verified_whnf_no_unfolding_free(ctx, env, memo, cur);
-        proof { pstep_star_trans(cm, to_model(e), to_model(cur), to_model(w)); }
+        proof {
+            pstep_star_trans(cm, to_model(e), to_model(cur), to_model(w));
+        }
         // --- nat-literal fold (the kernel's `try_reduce_nat`, before delta) ---
         match verified_nat_fold_step_free(ctx, env, memo, w) {
             Some(r) => {
-                proof { pstep_star_trans(cm, to_model(e), to_model(w), to_model(r)); }
+                proof {
+                    pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
+                }
                 cur = r;
                 continue;
-            }
-            None => {}
+            },
+            None => {},
         }
         // --- delta ---
-        let szw = match verified_size(ctx, w, 100000) { Some(v) => v, None => return w };
+        let szw = match verified_size(ctx, w, 100000) {
+            Some(v) => v,
+            None => return w,
+        };
         proof {
             depth_le_size(to_model(w));
             nlbv_bound_implies_max_var_below(to_model(w), 0);
@@ -777,12 +1002,14 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         match verified_unfold_def_step_free(ctx, env, w, 100000) {
             Some(r) => {
                 if !expr_ptr_eq(r, w) {
-                    proof { pstep_star_trans(cm, to_model(e), to_model(w), to_model(r)); }
+                    proof {
+                        pstep_star_trans(cm, to_model(e), to_model(w), to_model(r));
+                    }
                     cur = r;
                     continue;
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
         return w;
     }
@@ -790,23 +1017,38 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
 
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    e: ExprPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         match result {
-        Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0 && depth(to_model(r)) == 0,
-        None => true,
-    }
+            Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(
+                to_model(r),
+            ) <= 0 && depth(to_model(r)) == 0,
+            None => true,
+        },
 {
     let ghost cm = env_model_nofv(*env);
     let (fun, args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
-    let (name, levels) = match ctx.try_const_info(fun) { Some(p) => p, None => return None };
-    let op = match ctx.nat_bin_op_code(name) { Some(o) => o, None => return None };
+    let (name, levels) = match ctx.try_const_info(fun) {
+        Some(p) => p,
+        None => return None,
+    };
+    let op = match ctx.nat_bin_op_code(name) {
+        Some(o) => o,
+        None => return None,
+    };
     if args.len() != 2 {
         return None;
     }
@@ -822,8 +1064,14 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         assert(args_model[0] == to_model(x));
         assert(args_model[1] == to_model(y));
     }
-    let (vx, bx) = match verified_nat_operand_reduce_free(ctx, env, memo, x) { Some(p) => p, None => return None };
-    let (vy, by) = match verified_nat_operand_reduce_free(ctx, env, memo, y) { Some(p) => p, None => return None };
+    let (vx, bx) = match verified_nat_operand_reduce_free(ctx, env, memo, x) {
+        Some(p) => p,
+        None => return None,
+    };
+    let (vy, by) = match verified_nat_operand_reduce_free(ctx, env, memo, y) {
+        Some(p) => p,
+        None => return None,
+    };
     let ghost a = crate::nat_lit_model::to_nat(bx);
     let ghost b = crate::nat_lit_model::to_nat(by);
     let r_opt = if op == 0 {
@@ -857,7 +1105,10 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
     } else {
         return None;
     };
-    let r = match r_opt { Some(r) => r, None => return None };
+    let r = match r_opt {
+        Some(r) => r,
+        None => return None,
+    };
     proof {
         // the spine after both operand reductions
         is_const_shape_model(fun);
@@ -899,7 +1150,14 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
         // one parallel fold step
         assert(pstep(cm, inner, inner));
         assert(pstep(cm, to_model(vy), to_model(vy)));
-        pstep_fold_intro(cm, Box::new(inner), Box::new(to_model(vy)), inner, to_model(vy), to_model(r));
+        pstep_fold_intro(
+            cm,
+            Box::new(inner),
+            Box::new(to_model(vy)),
+            inner,
+            to_model(vy),
+            to_model(r),
+        );
         pstep_star_one(cm, sp, to_model(r));
         pstep_star_trans(cm, to_model(e), sp, to_model(r));
         nat_fold_result_bounds(sp, 0, 0, 0);
@@ -909,20 +1167,26 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env:
 
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
-pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, memo: &mut WhnfMemo<'x, 't>, v: ExprPtr<'t>) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
+pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    v: ExprPtr<'t>,
+) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
     requires
-        memo.wf(), memo.spec_env() == *env,
+        memo.wf(),
+        memo.spec_env() == *env,
         nlbv(to_model(v)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        final(memo).wf(), final(memo).spec_env() == *env,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
         match result {
-        Some((r, b)) =>
-            pstep_star(env_model_nofv(*env), to_model(v), to_model(r))
-            && nlbv(to_model(r)) <= 0
-            && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
-        None => true,
-    }
+            Some((r, b)) => pstep_star(env_model_nofv(*env), to_model(v), to_model(r)) && nlbv(
+                to_model(r),
+            ) <= 0 && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
+            None => true,
+        },
 {
     let ghost cm = env_model_nofv(*env);
     let w = verified_whnf_free(ctx, env, memo, v);
@@ -930,9 +1194,11 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     if let Some(pn) = expr_as_nat_lit(ctx, w) {
         match read_bignum_value(ctx, pn) {
             Some(b) => {
-                proof { is_nat_lit_shape_model(w); }
+                proof {
+                    is_nat_lit_shape_model(w);
+                }
                 return Some((w, b));
-            }
+            },
             None => return None,
         }
     }
@@ -948,39 +1214,49 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
     }
     match ctx.pred_of_nat_succ(w) {
         Some(p) => {
-            let ghost fun = choose |fun: ExprPtr<'t>|
+            let ghost fun = choose|fun: ExprPtr<'t>|
                 to_model(w) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+                    && is_const_shape(fun) && const_id(fun) == nat_succ_id();
             proof {
                 assert(nlbv(to_model(p)) <= nlbv(to_model(w)));
             }
             match verified_nat_operand_reduce_free(ctx, env, memo, p) {
                 Some((rp, bp)) => {
-                    let (f_exec, _) = match expr_as_app(&el) { Some(pr) => pr, None => return None };
+                    let (f_exec, _) = match expr_as_app(&el) {
+                        Some(pr) => pr,
+                        None => return None,
+                    };
                     let r = ctx.mk_app(f_exec, rp);
                     proof {
-                        assert(to_model(w) == ExprSpec::App(Box::new(to_model(f_exec)), Box::new(to_model(p))));
+                        assert(to_model(w) == ExprSpec::App(
+                            Box::new(to_model(f_exec)),
+                            Box::new(to_model(p)),
+                        ));
                         assert(to_model(f_exec) == to_model(fun));
                         is_const_shape_model(fun);
                         const_levels_vec_model(fun);
                         nat_succ_arity_is_zero(fun);
-                        assert(to_model(fun) == ExprSpec::Const(nat_succ_id(), const_levels_vec(fun)));
+                        assert(to_model(fun) == ExprSpec::Const(
+                            nat_succ_id(),
+                            const_levels_vec(fun),
+                        ));
                         assert(const_levels_vec(fun).len() == 0);
                         pstep_star_app_arg_congr(cm, to_model(f_exec), to_model(p), to_model(rp));
                         pstep_star_trans(cm, to_model(v), to_model(w), to_model(r));
-                        assert(nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(bp) + 1));
+                        assert(nat_value(to_model(r)) == Some(
+                            crate::nat_lit_model::to_nat(bp) + 1,
+                        ));
                     }
                     Some((r, crate::nat_lit_model::biguint_succ(bp)))
-                }
+                },
                 None => None,
             }
-        }
+        },
         None => None,
     }
 }
 
 /// Delta-lift CM: `verified_whnf_measured_rounds` over the capped model
-
 // ===========================================================================
 // KERNEL-SHAPED WHNF (2026-09-11). Mirrors `tc.rs`'s own two functions
 // instead of approximating them with a rounds loop:
@@ -998,8 +1274,6 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 // difference from the kernel is `fuel`, which bounds the recursion the
 // kernel bounds by termination of reduction.
 // ===========================================================================
-
-
 // ===========================================================================
 // PROOF-CARRYING WHNF MEMO (2026-09-11). `tc.rs` keeps `whnf_cache` and
 // `whnf_no_unfolding_cache` because 99% of the reduction work it is asked for
@@ -1011,7 +1285,6 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>,
 // forge one because the fields are private and the only constructor is below.
 // Nothing here is trusted: no `external_body`, no assumed specification.
 // ===========================================================================
-
 /// A pointer's packed representation, as a function of the pointer. The only
 /// thing assumed about it is that it IS a function -- the same pointer always
 /// gives the same bits -- which is what lets the table below have a
@@ -1022,7 +1295,8 @@ pub uninterp spec fn ptr_raw<'t>(e: ExprPtr<'t>) -> u32;
 
 #[verifier::external_body]
 fn ptr_bits<'t>(e: ExprPtr<'t>) -> (result: u32)
-    ensures result == ptr_raw(e)
+    ensures
+        result == ptr_raw(e),
 {
     e.raw_bits()
 }
@@ -1036,27 +1310,45 @@ pub struct WhnfCert<'x, 't> {
 impl<'x, 't> WhnfCert<'x, 't> {
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
-        pstep_star(env_model_nofv(self.env@), to_model(self.e), to_model(self.r))
-            && nlbv(to_model(self.r)) <= 0
+        pstep_star(env_model_nofv(self.env@), to_model(self.e), to_model(self.r)) && nlbv(
+            to_model(self.r),
+        ) <= 0
     }
 
-    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
-    pub closed spec fn spec_src(self) -> ExprPtr<'t> { self.e }
-    pub closed spec fn spec_dst(self) -> ExprPtr<'t> { self.r }
+    pub closed spec fn spec_env(self) -> Env<'x, 't> {
+        self.env@
+    }
+
+    pub closed spec fn spec_src(self) -> ExprPtr<'t> {
+        self.e
+    }
+
+    pub closed spec fn spec_dst(self) -> ExprPtr<'t> {
+        self.r
+    }
 
     pub fn src(&self) -> (result: ExprPtr<'t>)
-        ensures result == self.spec_src()
-    { self.e }
+        ensures
+            result == self.spec_src(),
+    {
+        self.e
+    }
 
     pub fn dst(&self) -> (result: ExprPtr<'t>)
-        ensures result == self.spec_dst()
-    { self.r }
+        ensures
+            result == self.spec_dst(),
+    {
+        self.r
+    }
 
     /// Does this entry answer the question being asked? One key now, not two:
     /// the claim no longer mentions a cap, so the term alone identifies it.
     pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
-        ensures result == (self.spec_src() == e)
-    { expr_ptr_eq(self.e, e) }
+        ensures
+            result == (self.spec_src() == e),
+    {
+        expr_ptr_eq(self.e, e)
+    }
 
     /// The only constructor: the caller must already hold the claim.
     pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
@@ -1082,7 +1374,9 @@ pub struct WhnfMemo<'x, 't> {
     env: Ghost<Env<'x, 't>>,
 }
 
-pub open spec fn memo_slots() -> nat { 8192 }
+pub open spec fn memo_slots() -> nat {
+    8192
+}
 
 impl<'x, 't> WhnfMemo<'x, 't> {
     /// Well-formedness carried explicitly rather than as a type invariant:
@@ -1091,21 +1385,19 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// says the table has its slots and that every entry belongs to this
     /// environment.
     pub closed spec fn wf(self) -> bool {
-        self.slots@.len() == memo_slots()
-        && (forall |i: int| 0 <= i < self.slots@.len() ==> match #[trigger] self.slots@[i] {
-            Some(c) => c.spec_env() == self.env@,
-            None => true,
-        })
-        && self.islots@.len() == memo_slots()
-        && (forall |i: int| 0 <= i < self.islots@.len() ==> match #[trigger] self.islots@[i] {
-            Some(c) => c.spec_env() == self.env@,
-            None => true,
-        })
-        && self.cslots@.len() == memo_slots()
-        && (forall |i: int| 0 <= i < self.cslots@.len() ==> match #[trigger] self.cslots@[i] {
-            Some(c) => c.spec_env() == self.env@,
-            None => true,
-        })
+        self.slots@.len() == memo_slots() && (forall|i: int|
+            0 <= i < self.slots@.len() ==> match #[trigger] self.slots@[i] {
+                Some(c) => c.spec_env() == self.env@,
+                None => true,
+            }) && self.islots@.len() == memo_slots() && (forall|i: int|
+            0 <= i < self.islots@.len() ==> match #[trigger] self.islots@[i] {
+                Some(c) => c.spec_env() == self.env@,
+                None => true,
+            }) && self.cslots@.len() == memo_slots() && (forall|i: int|
+            0 <= i < self.cslots@.len() ==> match #[trigger] self.cslots@[i] {
+                Some(c) => c.spec_env() == self.env@,
+                None => true,
+            })
     }
 
     /// What the table answers, as a function of its contents: the entry in the
@@ -1115,7 +1407,11 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// something that hands back proofs.
     pub closed spec fn spec_get(self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
         match self.slots@[(ptr_raw(e) % 8192) as int] {
-            Some(c) => if c.spec_src() == e { Some(c.spec_dst()) } else { None },
+            Some(c) => if c.spec_src() == e {
+                Some(c.spec_dst())
+            } else {
+                None
+            },
             None => None,
         }
     }
@@ -1123,15 +1419,23 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// The inference table's contents, as a function, in the same style.
     pub closed spec fn spec_get_infer(self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
         match self.islots@[(ptr_raw(e) % 8192) as int] {
-            Some(c) => if c.spec_src() == e { Some(c.spec_dst()) } else { None },
+            Some(c) => if c.spec_src() == e {
+                Some(c.spec_dst())
+            } else {
+                None
+            },
             None => None,
         }
     }
 
-    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
+    pub closed spec fn spec_env(self) -> Env<'x, 't> {
+        self.env@
+    }
 
     pub fn new(env: &Env<'x, 't>) -> (result: Self)
-        ensures result.spec_env() == *env, result.wf()
+        ensures
+            result.spec_env() == *env,
+            result.wf(),
     {
         let mut slots: Vec<Option<WhnfCert<'x, 't>>> = Vec::new();
         let mut i: usize = 0;
@@ -1139,8 +1443,8 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             invariant
                 i <= 8192,
                 slots@.len() == i,
-                forall |j: int| 0 <= j < slots@.len() ==> (#[trigger] slots@[j]) is None,
-            decreases 8192 - i
+                forall|j: int| 0 <= j < slots@.len() ==> (#[trigger] slots@[j]) is None,
+            decreases 8192 - i,
         {
             slots.push(None);
             i = i + 1;
@@ -1151,8 +1455,8 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             invariant
                 j <= 8192,
                 islots@.len() == j,
-                forall |q: int| 0 <= q < islots@.len() ==> (#[trigger] islots@[q]) is None,
-            decreases 8192 - j
+                forall|q: int| 0 <= q < islots@.len() ==> (#[trigger] islots@[q]) is None,
+            decreases 8192 - j,
         {
             islots.push(None);
             j = j + 1;
@@ -1163,8 +1467,8 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             invariant
                 m <= 8192,
                 cslots@.len() == m,
-                forall |q: int| 0 <= q < cslots@.len() ==> (#[trigger] cslots@[q]) is None,
-            decreases 8192 - m
+                forall|q: int| 0 <= q < cslots@.len() ==> (#[trigger] cslots@[q]) is None,
+            decreases 8192 - m,
         {
             cslots.push(None);
             m = m + 1;
@@ -1174,13 +1478,17 @@ impl<'x, 't> WhnfMemo<'x, 't> {
 
     /// A hit hands back the reduct together with its claim.
     pub fn get(&self, e: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
-        requires self.wf(), self.spec_env() == *env
+        requires
+            self.wf(),
+            self.spec_env() == *env,
         ensures
             result == self.spec_get(e),
             match result {
-                Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
+                Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(
+                    to_model(r),
+                ) <= 0,
                 None => true,
-            }
+            },
     {
         let bits = ptr_bits(e);
         let idx = (bits as usize) % 8192;
@@ -1190,24 +1498,27 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         }
         match &self.slots[idx] {
             Some(c) => {
-                proof { use_type_invariant(c); }
+                proof {
+                    use_type_invariant(c);
+                }
                 if c.hit(e) {
                     Some(c.dst())
                 } else {
                     None
                 }
-            }
+            },
             None => None,
         }
     }
 
     pub fn put(&mut self, cert: WhnfCert<'x, 't>)
-        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
+        requires
+            old(self).wf(),
+            cert.spec_env() == old(self).spec_env(),
         ensures
             final(self).wf(),
             final(self).spec_env() == old(self).spec_env(),
             (*final(self)).spec_get(cert.spec_src()) == Some(cert.spec_dst()),
-
     {
         let src = cert.src();
         let bits = ptr_bits(src);
@@ -1221,13 +1532,15 @@ impl<'x, 't> WhnfMemo<'x, 't> {
 
     /// A hit hands back the inferred type together with its claim.
     pub fn infer_get(&self, e: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Option<ExprPtr<'t>>)
-        requires self.wf(), self.spec_env() == *env
+        requires
+            self.wf(),
+            self.spec_env() == *env,
         ensures
             result == self.spec_get_infer(e),
             match result {
                 Some(r) => infer_shadow_claim(*env, e, r),
                 None => true,
-            }
+            },
     {
         let bits = ptr_bits(e);
         let idx = (bits as usize) % 8192;
@@ -1237,19 +1550,23 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         }
         match &self.islots[idx] {
             Some(c) => {
-                proof { use_type_invariant(c); }
+                proof {
+                    use_type_invariant(c);
+                }
                 if c.hit(e) {
                     Some(c.dst())
                 } else {
                     None
                 }
-            }
+            },
             None => None,
         }
     }
 
     pub fn infer_put(&mut self, cert: InferCert<'x, 't>)
-        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
+        requires
+            old(self).wf(),
+            cert.spec_env() == old(self).spec_env(),
         ensures
             final(self).wf(),
             final(self).spec_env() == old(self).spec_env(),
@@ -1269,8 +1586,17 @@ impl<'x, 't> WhnfMemo<'x, 't> {
     /// back with it, so the caller may return `Some(true)` on the strength of
     /// the certificate alone.
     pub fn conv_get(&self, x: ExprPtr<'t>, y: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: bool)
-        requires self.wf(), self.spec_env() == *env
-        ensures result ==> deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y))
+        requires
+            self.wf(),
+            self.spec_env() == *env,
+        ensures
+            result ==> deq_p_any(
+                to_model_of_declar_ty(*env),
+                to_model_of_env(*env),
+                arena_lctx(),
+                to_model(x),
+                to_model(y),
+            ),
     {
         let bits = ptr_bits(x);
         let idx = (bits as usize) % 8192;
@@ -1280,16 +1606,22 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         }
         match &self.cslots[idx] {
             Some(c) => {
-                proof { use_type_invariant(c); }
+                proof {
+                    use_type_invariant(c);
+                }
                 c.hit(x, y)
-            }
+            },
             None => false,
         }
     }
 
     pub fn conv_put(&mut self, cert: ConvCert<'x, 't>)
-        requires old(self).wf(), cert.spec_env() == old(self).spec_env()
-        ensures final(self).wf(), final(self).spec_env() == old(self).spec_env(),
+        requires
+            old(self).wf(),
+            cert.spec_env() == old(self).spec_env(),
+        ensures
+            final(self).wf(),
+            final(self).spec_env() == old(self).spec_env(),
     {
         let src = cert.left();
         let bits = ptr_bits(src);
@@ -1307,12 +1639,28 @@ impl<'x, 't> WhnfMemo<'x, 't> {
 /// the arena's local context, at some fuel. Stated here (rather than in
 /// `delta_bound_model`, where inference itself lives) so that the certificate
 /// type below can carry it as its type invariant.
-pub open spec fn infer_types_to<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>, fuel: nat) -> bool {
-    types_to(to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(), to_model(e), to_model(r), fuel)
+pub open spec fn infer_types_to<'t, 'x>(
+    env: Env<'x, 't>,
+    e: ExprPtr<'t>,
+    r: ExprPtr<'t>,
+    fuel: nat,
+) -> bool {
+    types_to(
+        to_model_of_declar_ty(env),
+        to_model_of_env(env),
+        arena_lctx(),
+        to_model(e),
+        to_model(r),
+        fuel,
+    )
 }
 
-pub open spec fn infer_shadow_claim<'t, 'x>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>) -> bool {
-    exists |f: nat| #[trigger] infer_types_to(env, e, r, f)
+pub open spec fn infer_shadow_claim<'t, 'x>(
+    env: Env<'x, 't>,
+    e: ExprPtr<'t>,
+    r: ExprPtr<'t>,
+) -> bool {
+    exists|f: nat| #[trigger] infer_types_to(env, e, r, f)
 }
 
 /// The inference counterpart of `WhnfCert`: an unforgeable record that `r` is
@@ -1331,25 +1679,43 @@ impl<'x, 't> InferCert<'x, 't> {
         infer_shadow_claim(self.env@, self.e, self.r)
     }
 
-    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
-    pub closed spec fn spec_src(self) -> ExprPtr<'t> { self.e }
-    pub closed spec fn spec_dst(self) -> ExprPtr<'t> { self.r }
+    pub closed spec fn spec_env(self) -> Env<'x, 't> {
+        self.env@
+    }
+
+    pub closed spec fn spec_src(self) -> ExprPtr<'t> {
+        self.e
+    }
+
+    pub closed spec fn spec_dst(self) -> ExprPtr<'t> {
+        self.r
+    }
 
     pub fn src(&self) -> (result: ExprPtr<'t>)
-        ensures result == self.spec_src()
-    { self.e }
+        ensures
+            result == self.spec_src(),
+    {
+        self.e
+    }
 
     pub fn dst(&self) -> (result: ExprPtr<'t>)
-        ensures result == self.spec_dst()
-    { self.r }
+        ensures
+            result == self.spec_dst(),
+    {
+        self.r
+    }
 
     pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
-        ensures result == (self.spec_src() == e)
-    { expr_ptr_eq(self.e, e) }
+        ensures
+            result == (self.spec_src() == e),
+    {
+        expr_ptr_eq(self.e, e)
+    }
 
     /// The only constructor: the caller must already hold the claim.
     pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
-        requires infer_shadow_claim(*env, e, r),
+        requires
+            infer_shadow_claim(*env, e, r),
         ensures
             result.spec_env() == *env,
             result.spec_src() == e,
@@ -1373,24 +1739,55 @@ pub struct ConvCert<'x, 't> {
 impl<'x, 't> ConvCert<'x, 't> {
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
-        deq_p_any(to_model_of_declar_ty(self.env@), to_model_of_env(self.env@), arena_lctx(),
-                  to_model(self.x), to_model(self.y))
+        deq_p_any(
+            to_model_of_declar_ty(self.env@),
+            to_model_of_env(self.env@),
+            arena_lctx(),
+            to_model(self.x),
+            to_model(self.y),
+        )
     }
 
-    pub closed spec fn spec_env(self) -> Env<'x, 't> { self.env@ }
-    pub closed spec fn spec_x(self) -> ExprPtr<'t> { self.x }
-    pub closed spec fn spec_y(self) -> ExprPtr<'t> { self.y }
+    pub closed spec fn spec_env(self) -> Env<'x, 't> {
+        self.env@
+    }
 
-    pub fn left(&self) -> (result: ExprPtr<'t>) ensures result == self.spec_x() { self.x }
+    pub closed spec fn spec_x(self) -> ExprPtr<'t> {
+        self.x
+    }
+
+    pub closed spec fn spec_y(self) -> ExprPtr<'t> {
+        self.y
+    }
+
+    pub fn left(&self) -> (result: ExprPtr<'t>)
+        ensures
+            result == self.spec_x(),
+    {
+        self.x
+    }
 
     pub fn hit(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
-        ensures result == (self.spec_x() == x && self.spec_y() == y)
-    { expr_ptr_eq(self.x, x) && expr_ptr_eq(self.y, y) }
+        ensures
+            result == (self.spec_x() == x && self.spec_y() == y),
+    {
+        expr_ptr_eq(self.x, x) && expr_ptr_eq(self.y, y)
+    }
 
     /// The only constructor: the caller must already hold the claim.
     pub fn make(x: ExprPtr<'t>, y: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
-        requires deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(), to_model(x), to_model(y)),
-        ensures result.spec_env() == *env, result.spec_x() == x, result.spec_y() == y,
+        requires
+            deq_p_any(
+                to_model_of_declar_ty(*env),
+                to_model_of_env(*env),
+                arena_lctx(),
+                to_model(x),
+                to_model(y),
+            ),
+        ensures
+            result.spec_env() == *env,
+            result.spec_x() == x,
+            result.spec_y() == y,
     {
         ConvCert { x, y, env: Ghost(*env) }
     }
@@ -1403,34 +1800,14 @@ fn whnf_seen_note<'t>(e: ExprPtr<'t>, k: u32) {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /// `find_index` hits are in range and hit the value.
 pub proof fn find_index_hit<T>(s: Seq<T>, v: T)
-    ensures match find_index(s, v) {
-        Some(i) => i < s.len() && s[i as int] == v,
-        None => true,
-    }
-    decreases s.len()
+    ensures
+        match find_index(s, v) {
+            Some(i) => i < s.len() && s[i as int] == v,
+            None => true,
+        },
+    decreases s.len(),
 {
     if s.len() == 0 {
     } else if s[0] == v {
@@ -1442,11 +1819,15 @@ pub proof fn find_index_hit<T>(s: Seq<T>, v: T)
 /// The exec rule scan (`find_index` by constructor NAME) agrees with the
 /// model's `find_rule` (by constructor id): `name_id` is injective.
 pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr<'a>)
-    ensures find_rule(rec_rules_model(rules), name_id(cname)) == (match find_index(rec_rule_ctor_names(rules), cname) {
-        Some(i) => Some(i as int),
-        None => None,
-    })
-    decreases rules.len()
+    ensures
+        find_rule(rec_rules_model(rules), name_id(cname)) == (match find_index(
+            rec_rule_ctor_names(rules),
+            cname,
+        ) {
+            Some(i) => Some(i as int),
+            None => None,
+        }),
+    decreases rules.len(),
 {
     let names = rec_rule_ctor_names(rules);
     let model = rec_rules_model(rules);
@@ -1479,7 +1860,6 @@ fn rec_stat(kind: u8) {
     crate::tc::route_stats::conv_leaf(kind);
 }
 
-
 /// `2^exp`, defined recursively since Verus's `nat` has no built-in
 /// exponentiation -- needed to state `Shl`/`Shr`/`Pow`'s semantics
 /// cleanly (`util.rs::nat_shl`/`nat_shr` are literally `x * 2^y`/`x / 2^y`,
@@ -1494,34 +1874,53 @@ fn rec_stat(kind: u8) {
 /// a real, unexplained tooling quirk worth remembering, not a mistake in
 /// how these are written.
 pub open spec fn nat_pow(base: nat, exp: nat) -> nat
-    decreases exp
+    decreases exp,
 {
-    if exp == 0 { 1 } else { base * nat_pow(base, (exp - 1) as nat) }
+    if exp == 0 {
+        1
+    } else {
+        base * nat_pow(base, (exp - 1) as nat)
+    }
 }
 
 /// Euclidean `gcd`, defined recursively (standard `gcd(a, 0) = a`,
 /// `gcd(a, b) = gcd(b, a % b)` for `b > 0`) -- Verus's `nat` has no
 /// built-in `gcd` either.
 pub open spec fn nat_gcd_spec(a: nat, b: nat) -> nat
-    decreases b
+    decreases b,
 {
-    if b == 0 { a } else { nat_gcd_spec(b, (a % b) as nat) }
+    if b == 0 {
+        a
+    } else {
+        nat_gcd_spec(b, (a % b) as nat)
+    }
 }
 
-pub assume_specification [<BigUint as num_traits::Pow<BigUint>>::pow] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == nat_pow(to_nat(x), to_nat(y));
+pub assume_specification[ <BigUint as num_traits::Pow<BigUint>>::pow ](
+    x: BigUint,
+    y: BigUint,
+) -> (result: BigUint)
+    ensures
+        to_nat(result) == nat_pow(to_nat(x), to_nat(y)),
+;
 
 /// `util.rs::nat_shl`/`nat_shr` (`x * 2^y`/`x / 2^y`) -- trusted directly,
 /// same spirit as `nat_sub`/`nat_div`/`nat_mod` (a trivial composition of
 /// already-trusted primitives, no independent branching to verify).
-pub assume_specification [crate::util::nat_shl] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) * nat_pow(2, to_nat(y));
+pub assume_specification[ crate::util::nat_shl ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) * nat_pow(2, to_nat(y)),
+;
 
-pub assume_specification [crate::util::nat_shr] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == to_nat(x) / nat_pow(2, to_nat(y));
+pub assume_specification[ crate::util::nat_shr ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) / nat_pow(2, to_nat(y)),
+;
 
-pub assume_specification [crate::util::nat_gcd] (x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == nat_gcd_spec(to_nat(*x), to_nat(*y));
+pub assume_specification[ crate::util::nat_gcd ](x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == nat_gcd_spec(to_nat(*x), to_nat(*y)),
+;
 
 /// Bitwise AND/OR/XOR, defined recursively by peeling one bit at a time
 /// (`a % 2`/`a / 2`) -- the fundamentally different mathematical
@@ -1534,26 +1933,49 @@ pub assume_specification [crate::util::nat_gcd] (x: &BigUint, y: &BigUint) -> (r
 /// soon as one hits 0, so the recursive branch is only ever reached with
 /// `a > 0`, and `decreases a` covers all three uniformly.
 pub open spec fn nat_land_spec(a: nat, b: nat) -> nat
-    decreases a
+    decreases a,
 {
-    if a == 0 || b == 0 { 0 }
-    else { (if a % 2 == 1 && b % 2 == 1 { 1nat } else { 0nat }) + 2 * nat_land_spec((a / 2) as nat, (b / 2) as nat) }
+    if a == 0 || b == 0 {
+        0
+    } else {
+        (if a % 2 == 1 && b % 2 == 1 {
+            1nat
+        } else {
+            0nat
+        }) + 2 * nat_land_spec((a / 2) as nat, (b / 2) as nat)
+    }
 }
 
 pub open spec fn nat_lor_spec(a: nat, b: nat) -> nat
-    decreases a
+    decreases a,
 {
-    if a == 0 { b }
-    else if b == 0 { a }
-    else { (if a % 2 == 1 || b % 2 == 1 { 1nat } else { 0nat }) + 2 * nat_lor_spec((a / 2) as nat, (b / 2) as nat) }
+    if a == 0 {
+        b
+    } else if b == 0 {
+        a
+    } else {
+        (if a % 2 == 1 || b % 2 == 1 {
+            1nat
+        } else {
+            0nat
+        }) + 2 * nat_lor_spec((a / 2) as nat, (b / 2) as nat)
+    }
 }
 
 pub open spec fn nat_xor_spec(a: nat, b: nat) -> nat
-    decreases a
+    decreases a,
 {
-    if a == 0 { b }
-    else if b == 0 { a }
-    else { (if (a % 2 == 1) != (b % 2 == 1) { 1nat } else { 0nat }) + 2 * nat_xor_spec((a / 2) as nat, (b / 2) as nat) }
+    if a == 0 {
+        b
+    } else if b == 0 {
+        a
+    } else {
+        (if (a % 2 == 1) != (b % 2 == 1) {
+            1nat
+        } else {
+            0nat
+        }) + 2 * nat_xor_spec((a / 2) as nat, (b / 2) as nat)
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -1574,51 +1996,72 @@ pub open spec fn nat_xor_spec(a: nat, b: nat) -> nat
 // assumption nobody stated. Had any pair disagreed, the axiom set would have
 // been INCONSISTENT -- `false` derivable -- with nothing pointing at it.
 pub proof fn nat_pow_agrees(a: nat, b: nat)
-    ensures nat_pow(a, b) == crate::beta_model::nat_pow(a, b)
-    decreases b
+    ensures
+        nat_pow(a, b) == crate::beta_model::nat_pow(a, b),
+    decreases b,
 {
-    if b != 0 { nat_pow_agrees(a, (b - 1) as nat); }
+    if b != 0 {
+        nat_pow_agrees(a, (b - 1) as nat);
+    }
 }
 
 pub proof fn nat_gcd_spec_agrees(a: nat, b: nat)
-    ensures nat_gcd_spec(a, b) == crate::beta_model::nat_gcd(a, b)
-    decreases b
+    ensures
+        nat_gcd_spec(a, b) == crate::beta_model::nat_gcd(a, b),
+    decreases b,
 {
-    if b != 0 { nat_gcd_spec_agrees(b, (a % b) as nat); }
+    if b != 0 {
+        nat_gcd_spec_agrees(b, (a % b) as nat);
+    }
 }
 
 pub proof fn nat_land_spec_agrees(a: nat, b: nat)
-    ensures nat_land_spec(a, b) == crate::beta_model::nat_land(a, b)
-    decreases a
+    ensures
+        nat_land_spec(a, b) == crate::beta_model::nat_land(a, b),
+    decreases a,
 {
-    if a != 0 && b != 0 { nat_land_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+    if a != 0 && b != 0 {
+        nat_land_spec_agrees((a / 2) as nat, (b / 2) as nat);
+    }
 }
 
 pub proof fn nat_lor_spec_agrees(a: nat, b: nat)
-    ensures nat_lor_spec(a, b) == crate::beta_model::nat_lor(a, b)
-    decreases a
+    ensures
+        nat_lor_spec(a, b) == crate::beta_model::nat_lor(a, b),
+    decreases a,
 {
-    if a != 0 && b != 0 { nat_lor_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+    if a != 0 && b != 0 {
+        nat_lor_spec_agrees((a / 2) as nat, (b / 2) as nat);
+    }
 }
 
 pub proof fn nat_xor_spec_agrees(a: nat, b: nat)
-    ensures nat_xor_spec(a, b) == crate::beta_model::nat_xor(a, b)
-    decreases a
+    ensures
+        nat_xor_spec(a, b) == crate::beta_model::nat_xor(a, b),
+    decreases a,
 {
-    if a != 0 && b != 0 { nat_xor_spec_agrees((a / 2) as nat, (b / 2) as nat); }
+    if a != 0 && b != 0 {
+        nat_xor_spec_agrees((a / 2) as nat, (b / 2) as nat);
+    }
 }
 
 /// `util.rs::nat_land`/`nat_lor`/`nat_xor` are one-line delegations to
 /// `BigUint`'s native `&`/`|`/`^` operators -- trusted directly, same
 /// "trust the delegation" convention `nat_gcd` above uses.
-pub assume_specification [crate::util::nat_land] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == nat_land_spec(to_nat(x), to_nat(y));
+pub assume_specification[ crate::util::nat_land ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == nat_land_spec(to_nat(x), to_nat(y)),
+;
 
-pub assume_specification [crate::util::nat_lor] (x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures to_nat(result) == nat_lor_spec(to_nat(x), to_nat(y));
+pub assume_specification[ crate::util::nat_lor ](x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == nat_lor_spec(to_nat(x), to_nat(y)),
+;
 
-pub assume_specification [crate::util::nat_xor] (x: &BigUint, y: &BigUint) -> (result: BigUint)
-    ensures to_nat(result) == nat_xor_spec(to_nat(*x), to_nat(*y));
+pub assume_specification[ crate::util::nat_xor ](x: &BigUint, y: &BigUint) -> (result: BigUint)
+    ensures
+        to_nat(result) == nat_xor_spec(to_nat(*x), to_nat(*y)),
+;
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::def_eq_sort`
 /// (`tc.rs:1165-1170`): `Sort(l) def_eq Sort(r) <=> eq_antisymm(l,r)` --
@@ -1627,16 +2070,22 @@ pub assume_specification [crate::util::nat_xor] (x: &BigUint, y: &BigUint) -> (r
 /// of that cluster bridged. Was unreachable before `verified_leq`/
 /// `verified_eq_antisymm` (previous commit) existed, since `eq_antisymm`
 /// is exactly what this bottoms out in.
-pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq_sort<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
-            to_model(x) == ExprSpec::Sort(level_to_model(lx))
-            && to_model(y) == ExprSpec::Sort(level_to_model(ly))
-            && (r ==> forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho)),
-        None => true,
-    }
+            Some(r) => exists|lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                to_model(x) == ExprSpec::Sort(level_to_model(lx)) && to_model(y) == ExprSpec::Sort(
+                    level_to_model(ly),
+                ) && (r ==> forall|rho: Map<nat, nat>| #[trigger]
+                    interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho)),
+            None => true,
+        },
 {
     let x_el = ctx.read_expr(x);
     let lx = match expr_as_sort(&x_el) {
@@ -1659,14 +2108,25 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
 /// inside it), unlocked by `verified_eq_antisymm_many` (two commits back).
 /// Name equality is real `NamePtr` pointer equality (`name_ptr_eq`), which
 /// by `name_id_injective` gives `const_id(x) == const_id(y)` for free.
-pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: bool)
+pub fn verified_def_eq_const<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: bool)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        result ==> is_const_shape(x) && is_const_shape(y)
-        && const_id(x) == const_id(y)
-        && to_model_of_levels(const_levels_of(x)).len() == to_model_of_levels(const_levels_of(y)).len()
-        && forall |i: int| #![trigger to_model_of_levels(const_levels_of(x))[i]] 0 <= i < to_model_of_levels(const_levels_of(x)).len() ==>
-            forall |rho: Map<nat, nat>| #[trigger] interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho)
+        result ==> is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y)
+            && to_model_of_levels(const_levels_of(x)).len() == to_model_of_levels(
+            const_levels_of(y),
+        ).len() && forall|i: int|
+            #![trigger to_model_of_levels(const_levels_of(x))[i]]
+            0 <= i < to_model_of_levels(const_levels_of(x)).len() ==> forall|rho: Map<nat, nat>|
+             #[trigger]
+                interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(
+                    to_model_of_levels(const_levels_of(y))[i],
+                    rho,
+                ),
 {
     let x_el = ctx.read_expr(x);
     let (x_name, x_levels) = match ctx.try_const_info(x) {
@@ -1715,13 +2175,21 @@ pub fn verified_def_eq_const<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>
 /// exactly like `pstep_spine_app_star`). This is the lemma that turns
 /// `verified_def_eq_app`'s pairwise `deq_core_claim` facts into a
 /// whole-term equality whenever every pair lands on the `deq` disjunct.
-pub proof fn deq_spine_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, fx: ExprSpec, fy: ExprSpec, ax: Seq<ExprSpec>, ay: Seq<ExprSpec>, h: nat)
+pub proof fn deq_spine_app_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    fx: ExprSpec,
+    fy: ExprSpec,
+    ax: Seq<ExprSpec>,
+    ay: Seq<ExprSpec>,
+    h: nat,
+)
     requires
         ax.len() == ay.len(),
         deq(env, fx, fy, h),
-        forall |i: int| 0 <= i < ax.len() ==> deq(env, #[trigger] ax[i], ay[i], h),
-    ensures deq(env, spine_app(fx, ax), spine_app(fy, ay), (h + ax.len()) as nat)
-    decreases ax.len()
+        forall|i: int| 0 <= i < ax.len() ==> deq(env, #[trigger] ax[i], ay[i], h),
+    ensures
+        deq(env, spine_app(fx, ax), spine_app(fy, ay), (h + ax.len()) as nat),
+    decreases ax.len(),
 {
     if ax.len() == 0 {
         assert(spine_app(fx, ax) == fx);
@@ -1732,7 +2200,7 @@ pub proof fn deq_spine_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, fx: ExprSp
         let lx = ax[ax.len() - 1];
         let ly = ay[ay.len() - 1];
         assert(ax0.len() == ay0.len());
-        assert forall |i: int| 0 <= i < ax0.len() implies deq(env, #[trigger] ax0[i], ay0[i], h) by {
+        assert forall|i: int| 0 <= i < ax0.len() implies deq(env, #[trigger] ax0[i], ay0[i], h) by {
             assert(ax0[i] == ax[i]);
             assert(ay0[i] == ay[i]);
             assert(deq(env, ax[i], ay[i], h));
@@ -1752,7 +2220,7 @@ pub proof fn deq_spine_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, fx: ExprSp
 /// Non-recursive, so it inlines and both directions (witnessing from any
 /// concrete height, extracting via choose) work freely.
 pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec) -> bool {
-    exists |h: nat| #[trigger] deq(env, x, y, h)
+    exists|h: nat| #[trigger] deq(env, x, y, h)
 }
 
 /// The claim `verified_def_eq_nat`'s `Some(true)` makes, NAMED so
@@ -1764,15 +2232,20 @@ pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 /// the whole-term `deq_any` lift available whenever that sub-claim's
 /// `deq` disjunct holds. `open`, purely notational.
 pub open spec fn nat_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    (nat_repr_is_zero(x) && nat_repr_is_zero(y)
-        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y))
-        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
-    || (is_nat_lit_shape(x) && is_nat_lit_shape(y) && to_model(x) == to_model(y)
-        && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y))))
-    || (exists |xp: ExprPtr<'t>, yp: ExprPtr<'t>| nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp)
-        && deq_full_claim(xp, yp)
-        && ((forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)))
-            ==> (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))))
+    (nat_repr_is_zero(x) && nat_repr_is_zero(y) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>|
+     #[trigger]
+        full_def_eq(env, x, y)) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+        deq_any(env, to_model(x), to_model(y)))) || (is_nat_lit_shape(x) && is_nat_lit_shape(y)
+        && to_model(x) == to_model(y) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+        deq_any(env, to_model(x), to_model(y)))) || (exists|xp: ExprPtr<'t>, yp: ExprPtr<'t>|
+        nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp) && deq_full_claim(
+            xp,
+            yp,
+        ) && ((forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            deq_any(env, to_model(xp), to_model(yp))) ==> (forall|
+            env: Map<u64, (Seq<u64>, ExprSpec)>,
+        | #[trigger]
+            deq_any(env, to_model(x), to_model(y)))))
 }
 
 /// The claim `verified_try_eq_const_app`'s `Some(true)` makes, NAMED for
@@ -1784,15 +2257,20 @@ pub open spec fn nat_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// `deq_core_claim` at height `h` -- so a consumer holding all-`deq`
 /// pairwise verdicts lifts the whole spine via `deq_spine_app_congr`.
 pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
-    exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-        && argsx.len() == argsy.len()
-        && is_const_shape(fx) && is_const_shape(fy) && const_id(fx) == const_id(fy)
-        && deq_leaf(to_model(fx), to_model(fy))
-        && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], h))
-        && ((forall |i: int| 0 <= i < argsx.len() ==> forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| deq(env2, to_model(#[trigger] argsx[i]), to_model(argsy[i]), h))
-            ==> (forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(y))))
+    exists|fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx)) && to_model(y) == spine_app(
+            to_model(fy),
+            args_model_of(argsy),
+        ) && argsx.len() == argsy.len() && is_const_shape(fx) && is_const_shape(fy) && const_id(fx)
+            == const_id(fy) && deq_leaf(to_model(fx), to_model(fy)) && (forall|i: int|
+            0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], h)) && ((forall|
+            i: int,
+        |
+            0 <= i < argsx.len() ==> forall|env2: Map<u64, (Seq<u64>, ExprSpec)>|
+                deq(env2, to_model(#[trigger] argsx[i]), to_model(argsy[i]), h)) ==> (forall|
+            env2: Map<u64, (Seq<u64>, ExprSpec)>,
+        | #[trigger]
+            deq_any(env2, to_model(x), to_model(y))))
 }
 
 /// A `nat_repr_pred(e, p)` pair's whole term is `deq_any`-related to the
@@ -1802,17 +2280,30 @@ pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: na
 /// `const_expr_no_levels_canonical`), one `pstep` (the `NatLit`
 /// unfolding rule) for the literal representation. The connecting edge
 /// `verified_def_eq_nat`'s pred case needs on each side.
-pub proof fn nat_repr_pred_reaches_succ_app<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprPtr<'t>, p: ExprPtr<'t>)
-    requires nat_repr_pred(e, p)
-    ensures deq_any(env, to_model(e), ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p))))
+pub proof fn nat_repr_pred_reaches_succ_app<'t>(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    e: ExprPtr<'t>,
+    p: ExprPtr<'t>,
+)
+    requires
+        nat_repr_pred(e, p),
+    ensures
+        deq_any(
+            env,
+            to_model(e),
+            ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p))),
+        ),
 {
-    let target = ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p)));
-    if exists |fun: ExprPtr<'t>|
+    let target = ExprSpec::App(
+        Box::new(const_expr_no_levels(nat_succ_id())),
+        Box::new(to_model(p)),
+    );
+    if exists|fun: ExprPtr<'t>|
         to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-        && is_const_shape(fun) && const_id(fun) == nat_succ_id() {
-        let fun = choose |fun: ExprPtr<'t>|
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id() {
+        let fun = choose|fun: ExprPtr<'t>|
             to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-            && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
         nat_succ_arity_is_zero(fun);
         const_levels_vec_model(fun);
         is_const_shape_model(fun);
@@ -1822,7 +2313,9 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(env: Map<u64, (Seq<u64>, ExprSpe
         assert(to_model(e) == target);
         deq_any_refl(env, to_model(e));
     } else {
-        assert(is_nat_lit_shape(e) && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e) - 1) as nat);
+        assert(is_nat_lit_shape(e) && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(
+            p,
+        ) == (nat_lit_value(e) - 1) as nat);
         is_nat_lit_shape_model(e);
         is_nat_lit_shape_model(p);
         assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
@@ -1839,44 +2332,63 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(env: Map<u64, (Seq<u64>, ExprSpe
 /// consumers actually want (heights erased, monotonicity handled
 /// internally via `deq_mono`).
 pub proof fn deq_any_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
-    requires defeq(env, x, y)
-    ensures deq_any(env, x, y)
+    requires
+        defeq(env, x, y),
+    ensures
+        deq_any(env, x, y),
 {
     deq_of_defeq(env, x, y, 0);
     assert(deq(env, x, y, 0));
 }
 
 pub proof fn deq_any_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
-    requires deq_leaf(x, y)
-    ensures deq_any(env, x, y)
+    requires
+        deq_leaf(x, y),
+    ensures
+        deq_any(env, x, y),
 {
     deq_of_leaf(env, x, y, 0);
     assert(deq(env, x, y, 0));
 }
 
 pub proof fn deq_any_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec)
-    ensures deq_any(env, x, x)
+    ensures
+        deq_any(env, x, x),
 {
     deq_refl(env, x, 0);
     assert(deq(env, x, x, 0));
 }
 
 pub proof fn deq_any_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
-    requires deq_any(env, x, y)
-    ensures deq_any(env, y, x)
+    requires
+        deq_any(env, x, y),
+    ensures
+        deq_any(env, y, x),
 {
-    let h = choose |h: nat| deq(env, x, y, h);
+    let h = choose|h: nat| deq(env, x, y, h);
     deq_symm(env, x, y, h);
     assert(deq(env, y, x, h));
 }
 
-pub proof fn deq_any_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
-    requires deq_any(env, x, y), deq_any(env, y, z)
-    ensures deq_any(env, x, z)
+pub proof fn deq_any_trans(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprSpec,
+    y: ExprSpec,
+    z: ExprSpec,
+)
+    requires
+        deq_any(env, x, y),
+        deq_any(env, y, z),
+    ensures
+        deq_any(env, x, z),
 {
-    let h1 = choose |h: nat| deq(env, x, y, h);
-    let h2 = choose |h: nat| deq(env, y, z, h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| deq(env, x, y, h);
+    let h2 = choose|h: nat| deq(env, y, z, h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_mono(env, x, y, h1, hm);
     deq_mono(env, y, z, h2, hm);
     deq_trans(env, x, y, z, hm);
@@ -1886,13 +2398,20 @@ pub proof fn deq_any_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: 
 /// Spine congruence for the untyped relation: equal heads and pointwise
 /// equal arguments give equal spines. Induction on the argument list, one
 /// `deq_any_app_congr` per step.
-pub proof fn deq_any_spine_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, h1: ExprSpec, h2: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+pub proof fn deq_any_spine_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    h1: ExprSpec,
+    h2: ExprSpec,
+    a1: Seq<ExprSpec>,
+    a2: Seq<ExprSpec>,
+)
     requires
         deq_any(env, h1, h2),
         a1.len() == a2.len(),
-        forall |i: int| 0 <= i < a1.len() ==> deq_any(env, #[trigger] a1[i], a2[i]),
-    ensures deq_any(env, spine_app(h1, a1), spine_app(h2, a2))
-    decreases a1.len()
+        forall|i: int| 0 <= i < a1.len() ==> deq_any(env, #[trigger] a1[i], a2[i]),
+    ensures
+        deq_any(env, spine_app(h1, a1), spine_app(h2, a2)),
+    decreases a1.len(),
 {
     if a1.len() == 0 {
         assert(spine_app(h1, a1) == h1);
@@ -1901,7 +2420,7 @@ pub proof fn deq_any_spine_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, h1: ExprSp
         let n = a1.len() - 1;
         let p1 = a1.subrange(0, n);
         let p2 = a2.subrange(0, n);
-        assert forall |i: int| 0 <= i < p1.len() implies deq_any(env, #[trigger] p1[i], p2[i]) by {
+        assert forall|i: int| 0 <= i < p1.len() implies deq_any(env, #[trigger] p1[i], p2[i]) by {
             assert(p1[i] == a1[i]);
             assert(p2[i] == a2[i]);
         }
@@ -1914,37 +2433,88 @@ pub proof fn deq_any_spine_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, h1: ExprSp
     }
 }
 
-pub proof fn deq_any_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
-    requires deq_any(env, f1, f2), deq_any(env, a1, a2)
-    ensures deq_any(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
+pub proof fn deq_any_app_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    f1: ExprSpec,
+    f2: ExprSpec,
+    a1: ExprSpec,
+    a2: ExprSpec,
+)
+    requires
+        deq_any(env, f1, f2),
+        deq_any(env, a1, a2),
+    ensures
+        deq_any(
+            env,
+            ExprSpec::App(Box::new(f1), Box::new(a1)),
+            ExprSpec::App(Box::new(f2), Box::new(a2)),
+        ),
 {
-    let h1 = choose |h: nat| deq(env, f1, f2, h);
-    let h2 = choose |h: nat| deq(env, a1, a2, h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| deq(env, f1, f2, h);
+    let h2 = choose|h: nat| deq(env, a1, a2, h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_mono(env, f1, f2, h1, hm);
     deq_mono(env, a1, a2, h2, hm);
     deq_app_congr(env, f1, f2, a1, a2, hm);
-    assert(deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), hm + 1));
+    assert(deq(
+        env,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        hm + 1,
+    ));
 }
 
-pub proof fn deq_any_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
-    requires deq_any(env, t1, t2), deq_any(env, b1, b2)
-    ensures deq_any(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+pub proof fn deq_any_bind_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+)
+    requires
+        deq_any(env, t1, t2),
+        deq_any(env, b1, b2),
+    ensures
+        deq_any(
+            env,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ),
 {
-    let h1 = choose |h: nat| deq(env, t1, t2, h);
-    let h2 = choose |h: nat| deq(env, b1, b2, h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| deq(env, t1, t2, h);
+    let h2 = choose|h: nat| deq(env, b1, b2, h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_mono(env, t1, t2, h1, hm);
     deq_mono(env, b1, b2, h2, hm);
     deq_bind_congr(env, t1, t2, b1, b2, hm);
-    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
+    assert(deq(
+        env,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        hm + 1,
+    ));
 }
 
-pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, s1: ExprSpec, s2: ExprSpec)
-    requires deq_any(env, s1, s2)
-    ensures deq_any(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)))
+pub proof fn deq_any_proj_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    pidx: usize,
+    s1: ExprSpec,
+    s2: ExprSpec,
+)
+    requires
+        deq_any(env, s1, s2),
+    ensures
+        deq_any(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2))),
 {
-    let h = choose |h: nat| deq(env, s1, s2, h);
+    let h = choose|h: nat| deq(env, s1, s2, h);
     deq_proj_congr(env, pidx, s1, s2, h);
     assert(deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1));
 }
@@ -1962,18 +2532,30 @@ pub proof fn deq_any_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize
 /// minus the three `deq` now subsumes. As more paths strengthen,
 /// verdicts migrate into the first disjunct with no signature change.
 pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))
-    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
-    || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-        && argsx.len() == argsy.len() && argsx.len() > 0)
-    || (exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
+    (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))
+        || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y)) || (exists|
+        pidx: usize,
+        sx: ExprPtr<'t>,
+        sy: ExprPtr<'t>,
+    |
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx))) && to_model(y)
+            == ExprSpec::Proj(pidx, Box::new(to_model(sy)))) || (exists|
+        fx: ExprPtr<'t>,
+        fy: ExprPtr<'t>,
+        argsx: Seq<ExprPtr<'t>>,
+        argsy: Seq<ExprPtr<'t>>,
+    |
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx)) && to_model(y) == spine_app(
+            to_model(fy),
+            args_model_of(argsy),
+        ) && argsx.len() == argsy.len() && argsx.len() > 0) || (exists|
+        t1: ExprPtr<'t>,
+        body1: ExprPtr<'t>,
+        t2: ExprPtr<'t>,
+        body2: ExprPtr<'t>,
+    |
         to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
-        && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
+            && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
 }
 
 /// The `deq`-side claim `verified_def_eq_core` (and, pairwise,
@@ -1986,11 +2568,14 @@ pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// cannot express (see `verified_def_eq_core`'s doc), or from a Proj
 /// whose children hit that local case (shape-only fallback).
 pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
-    (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), h))
-    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
+    (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), h))
+        || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y)) || (exists|
+        pidx: usize,
+        sx: ExprPtr<'t>,
+        sy: ExprPtr<'t>,
+    |
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx))) && to_model(y)
+            == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
 }
 
 /// The `Some(true)` ensures carries TWO conjuncts: the original four-way
@@ -2011,30 +2596,42 @@ pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> b
 /// that local case falls back to the shape-only Proj disjunct for the
 /// same reason. `fuel` doubles as the `deq` height: each Proj recursion
 /// level costs one congruence layer.
-pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq_core<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) =>
-            ((exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
-                to_model(x) == ExprSpec::Sort(level_to_model(lx))
-                && to_model(y) == ExprSpec::Sort(level_to_model(ly))
-                && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
-            || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
-            || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-            || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-                to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
-                && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy)))))
-            && deq_core_claim(x, y, fuel as nat),
-        _ => true,
-    }
-    decreases fuel
+            Some(true) => ((exists|lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+                to_model(x) == ExprSpec::Sort(level_to_model(lx)) && to_model(y) == ExprSpec::Sort(
+                    level_to_model(ly),
+                ) && forall|rho: Map<nat, nat>| #[trigger]
+                    interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho)) || (
+            is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y)) || (
+            is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y)) || (exists|
+                pidx: usize,
+                sx: ExprPtr<'t>,
+                sy: ExprPtr<'t>,
+            |
+                to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx))) && to_model(y)
+                    == ExprSpec::Proj(pidx, Box::new(to_model(sy))))) && deq_core_claim(
+                x,
+                y,
+                fuel as nat,
+            ),
+            _ => true,
+        },
+    decreases fuel,
 {
     if let Some(r) = verified_def_eq_sort(ctx, x, y, fuel) {
         if r {
             proof {
                 assert(deq_leaf(to_model(x), to_model(y)));
-                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
+                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    deq(env, to_model(x), to_model(y), fuel as nat) by {
                     deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
                 }
             }
@@ -2050,13 +2647,21 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
             assert(to_model(x) == ExprSpec::Const(const_id(x), const_levels_vec(x)));
             assert(to_model(y) == ExprSpec::Const(const_id(y), const_levels_vec(y)));
             assert(const_levels_vec(x).len() == const_levels_vec(y).len());
-            assert forall |i: int, rho: Map<nat, nat>| 0 <= i < const_levels_vec(x).len() implies #[trigger] interp(const_levels_vec(x)[i], rho) == interp(const_levels_vec(y)[i], rho) by {
+            assert forall|i: int, rho: Map<nat, nat>|
+                0 <= i < const_levels_vec(x).len() implies #[trigger] interp(
+                const_levels_vec(x)[i],
+                rho,
+            ) == interp(const_levels_vec(y)[i], rho) by {
                 assert(const_levels_vec(x)[i] == to_model_of_levels(const_levels_of(x))[i]);
                 assert(const_levels_vec(y)[i] == to_model_of_levels(const_levels_of(y))[i]);
-                assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(to_model_of_levels(const_levels_of(y))[i], rho));
+                assert(interp(to_model_of_levels(const_levels_of(x))[i], rho) == interp(
+                    to_model_of_levels(const_levels_of(y))[i],
+                    rho,
+                ));
             }
             assert(deq_leaf(to_model(x), to_model(y)));
-            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
+            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                deq(env, to_model(x), to_model(y), fuel as nat) by {
                 deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
             }
         }
@@ -2089,10 +2694,23 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
                     proof {
                         assert(to_model(x) == ExprSpec::Proj(x_idx, Box::new(to_model(x_struct))));
                         assert(to_model(y) == ExprSpec::Proj(x_idx, Box::new(to_model(y_struct))));
-                        if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat) {
-                            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) by {
-                                assert(deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat));
-                                deq_proj_congr(env, x_idx, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat);
+                        if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                            deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat) {
+                            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                                deq(env, to_model(x), to_model(y), fuel as nat) by {
+                                assert(deq(
+                                    env,
+                                    to_model(x_struct),
+                                    to_model(y_struct),
+                                    (fuel - 1) as nat,
+                                ));
+                                deq_proj_congr(
+                                    env,
+                                    x_idx,
+                                    to_model(x_struct),
+                                    to_model(y_struct),
+                                    (fuel - 1) as nat,
+                                );
                                 assert((fuel - 1) as nat + 1 == fuel as nat);
                             }
                         }
@@ -2127,18 +2745,31 @@ pub fn verified_def_eq_core<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>,
 /// application equality) isn't covered, same honest incompleteness as
 /// everywhere else in this arc (`None` = ran out of fuel before a
 /// verdict, not "definitely unequal").
-pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq_app<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-            to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-            && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-            && argsx.len() == argsy.len() && argsx.len() > 0
-            && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], fuel as nat))
-            && deq_core_claim(fx, fy, fuel as nat),
-        _ => true,
-    }
+            Some(true) => exists|
+                fx: ExprPtr<'t>,
+                fy: ExprPtr<'t>,
+                argsx: Seq<ExprPtr<'t>>,
+                argsy: Seq<ExprPtr<'t>>,
+            |
+                to_model(x) == spine_app(to_model(fx), args_model_of(argsx)) && to_model(y)
+                    == spine_app(to_model(fy), args_model_of(argsy)) && argsx.len() == argsy.len()
+                    && argsx.len() > 0 && (forall|i: int|
+                    0 <= i < argsx.len() ==> deq_core_claim(
+                        #[trigger] argsx[i],
+                        argsy[i],
+                        fuel as nat,
+                    )) && deq_core_claim(fx, fy, fuel as nat),
+            _ => true,
+        },
 {
     let (f1, args1) = ctx.unfold_apps(x);
     if args1.len() == 0 {
@@ -2157,13 +2788,18 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= args1.len(),
             args1.len() == args2.len(),
-            forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] args1@[j], args2@[j], fuel as nat),
-        decreases args1.len() - i
+            forall|j: int|
+                0 <= j < i ==> deq_core_claim(#[trigger] args1@[j], args2@[j], fuel as nat),
+        decreases args1.len() - i,
     {
         match verified_def_eq_core(ctx, args1[i], args2[i], fuel) {
             Some(true) => {},
-            Some(false) => { return Some(false); },
-            None => { return None; },
+            Some(false) => {
+                return Some(false);
+            },
+            None => {
+                return None;
+            },
         }
         i += 1;
     }
@@ -2173,7 +2809,12 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             assert(to_model(y) == spine_app(to_model(f2), args_model_of(args2@)));
             assert(args1@.len() == args2@.len());
             assert(args1@.len() > 0);
-            assert(forall |i: int| 0 <= i < args1@.len() ==> deq_core_claim(#[trigger] args1@[i], args2@[i], fuel as nat));
+            assert(forall|i: int|
+                0 <= i < args1@.len() ==> deq_core_claim(
+                    #[trigger] args1@[i],
+                    args2@[i],
+                    fuel as nat,
+                ));
             assert(deq_core_claim(f1, f2, fuel as nat));
             Some(true)
         },
@@ -2217,23 +2858,36 @@ pub fn verified_def_eq_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
 /// notational: unfolds for free, changes no proof obligation anywhere
 /// this substitutes for the inline form.
 pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    to_model(x) == to_model(y)
-    || (exists |lx: LevelPtr<'t>, ly: LevelPtr<'t>|
-        to_model(x) == ExprSpec::Sort(level_to_model(lx))
-        && to_model(y) == ExprSpec::Sort(level_to_model(ly))
-        && forall |rho: Map<nat, nat>| #[trigger] interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho))
-    || (is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y))
-    || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y))
-    || (exists |pidx: usize, sx: ExprPtr<'t>, sy: ExprPtr<'t>|
-        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx)))
-        && to_model(y) == ExprSpec::Proj(pidx, Box::new(to_model(sy))))
-    || (exists |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-        to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-        && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-        && argsx.len() == argsy.len() && argsx.len() > 0)
-    || (exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
+    to_model(x) == to_model(y) || (exists|lx: LevelPtr<'t>, ly: LevelPtr<'t>|
+        to_model(x) == ExprSpec::Sort(level_to_model(lx)) && to_model(y) == ExprSpec::Sort(
+            level_to_model(ly),
+        ) && forall|rho: Map<nat, nat>| #[trigger]
+            interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho)) || (is_const_shape(
+        x,
+    ) && is_const_shape(y) && const_id(x) == const_id(y)) || (is_local_shape(x) && is_local_shape(y)
+        && local_id_of(x) == local_id_of(y)) || (exists|
+        pidx: usize,
+        sx: ExprPtr<'t>,
+        sy: ExprPtr<'t>,
+    |
+        to_model(x) == ExprSpec::Proj(pidx, Box::new(to_model(sx))) && to_model(y)
+            == ExprSpec::Proj(pidx, Box::new(to_model(sy)))) || (exists|
+        fx: ExprPtr<'t>,
+        fy: ExprPtr<'t>,
+        argsx: Seq<ExprPtr<'t>>,
+        argsy: Seq<ExprPtr<'t>>,
+    |
+        to_model(x) == spine_app(to_model(fx), args_model_of(argsx)) && to_model(y) == spine_app(
+            to_model(fy),
+            args_model_of(argsy),
+        ) && argsx.len() == argsy.len() && argsx.len() > 0) || (exists|
+        t1: ExprPtr<'t>,
+        body1: ExprPtr<'t>,
+        t2: ExprPtr<'t>,
+        body2: ExprPtr<'t>,
+    |
         to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
-        && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
+            && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
 }
 
 /// The FULL notion of "these two terms are definitionally equal" this
@@ -2257,12 +2911,13 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// the `defeq` congruences, and a proper inductive definitional-equality
 /// relation (closing BOTH disjuncts under congruence/transitivity at
 /// once) is still real, substantial future work.
-pub open spec fn full_def_eq<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+pub open spec fn full_def_eq<'t>(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+) -> bool {
     defeq(env, to_model(x), to_model(y)) || def_eq_witness(x, y)
 }
-
-
-
 
 /// THE MODEL-LEVEL TYPING RELATION -- `infer_spec` lifted off the arena:
 /// pure `ExprSpec`-to-`ExprSpec`, with the arena's implicit local-type
@@ -2289,13 +2944,28 @@ pub open spec fn full_def_eq<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprPtr
 /// exists in a match arm can't be introduced through a trigger that
 /// mentions match-bound selectors, so the trigger is this ground marker
 /// over the binder alone (see the memo's match-arm exists law).
-pub open spec fn fuel_marker(f: nat) -> bool { true }
+pub open spec fn fuel_marker(f: nat) -> bool {
+    true
+}
 
 /// Marker trigger for the `Proj` rule's witnesses (same device).
-pub open spec fn proj_marker(f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec) -> bool { true }
+pub open spec fn proj_marker(
+    f2: nat,
+    sty: ExprSpec,
+    ind_id: u64,
+    ls: Seq<LevelSpec>,
+    args: Seq<ExprSpec>,
+    ctor_id: u64,
+    np: u16,
+    ctor_ty0: ExprSpec,
+) -> bool {
+    true
+}
 
 /// Marker trigger for one telescope step of `proj_field_type`.
-pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool { true }
+pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool {
+    true
+}
 
 /// The kernel's `infer_proj` telescope walk (`tc.rs`): from the
 /// constructor's (level-instantiated) type `cur`, reduce to a `Pi`
@@ -2304,20 +2974,48 @@ pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool { true }
 /// fields left), or -- both exhausted -- read the field type off the
 /// binder. Instantiating a closed body is a no-op (`subst_full_noop`),
 /// which covers the kernel's "no loose bvars" shortcut.
-pub open spec fn proj_field_type(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, args: Seq<ExprSpec>, np: nat, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec) -> bool
-    decreases np + remaining
+pub open spec fn proj_field_type(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    cur: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+) -> bool
+    decreases np + remaining,
 {
-    exists |bt: ExprSpec, body: ExprSpec|
-        #[trigger] proj_step_marker(bt, body)
-        && pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)))
-        && (if np > 0 {
-                args.len() > 0
-                && proj_field_type(denv, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s, t)
-            } else if remaining > 0 {
-                proj_field_type(denv, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, t)
-            } else {
-                t == bt
-            })
+    exists|bt: ExprSpec, body: ExprSpec| #[trigger]
+        proj_step_marker(bt, body) && pstep_star(
+            denv,
+            cur,
+            ExprSpec::Bind(Box::new(bt), Box::new(body)),
+        ) && (if np > 0 {
+            args.len() > 0 && proj_field_type(
+                denv,
+                subst_full(body, seq![args[0]], 0),
+                args.drop_first(),
+                (np - 1) as nat,
+                fld,
+                remaining,
+                s,
+                t,
+            )
+        } else if remaining > 0 {
+            proj_field_type(
+                denv,
+                subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
+                args,
+                0,
+                (fld + 1) as usize,
+                (remaining - 1) as nat,
+                s,
+                t,
+            )
+        } else {
+            t == bt
+        })
 }
 
 pub open spec fn types_to(
@@ -2328,7 +3026,7 @@ pub open spec fn types_to(
     t: ExprSpec,
     fuel: nat,
 ) -> bool
-    decreases fuel, e
+    decreases fuel, e,
 {
     ||| (match e {
         ExprSpec::Free(lid) => lctx.contains_key(lid) && t == lctx[lid],
@@ -2339,8 +3037,12 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (match e {
-        ExprSpec::Const(cid, clevels) =>
-            dty.contains_key(cid) && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
+        ExprSpec::Const(cid, clevels) => dty.contains_key(cid) && subst_expr_levels_rel(
+            dty[cid].1,
+            dty[cid].0,
+            clevels,
+            t,
+        ),
         _ => false,
     })
     // APPLICATION (2026-09-05, replaces a vacuous "some substitution
@@ -2371,14 +3073,14 @@ pub open spec fn types_to(
     // to a proof of `(a :: head :: tail) != []`. Found 2026-09-14 by the
     // disagreement counter on `Init.Data.List.Lemmas` (see `4bf07bb`).
     ||| (match e {
-        ExprSpec::App(f, a) => exists |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+        ExprSpec::App(f, a) => exists|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2)
-            && types_to(dty, denv, lctx, *f, ft, fuel)
-            && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
-            && types_to(dty, denv, lctx, *a, aty2, fuel)
-            && deq_any(denv, aty2, aty)
-            && t == subst_full(bt, seq![*a], 0),
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, *f, ft, fuel) && pstep_star(
+                denv,
+                ft,
+                ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+            ) && types_to(dty, denv, lctx, *a, aty2, fuel) && deq_any(denv, aty2, aty) && t
+                == subst_full(bt, seq![*a], 0),
         _ => false,
     })
     ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
@@ -2390,59 +3092,132 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Let(_ty0, val, body) => exists |f2: nat|
-            #[trigger] fuel_marker(f2) && f2 < fuel && types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, f2),
+        ExprSpec::Let(_ty0, val, body) => exists|f2: nat| #[trigger]
+            fuel_marker(f2) && f2 < fuel && types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![*val], 0),
+                t,
+                f2,
+            ),
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Bind(binder_type, body) => exists |lid: u32, infd: ExprSpec|
-            #[trigger] bind_marker(lid, infd)
-            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat)
-            && t == ExprSpec::Bind(
+        ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec| #[trigger]
+            bind_marker(lid, infd) && types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                infd,
+                (fuel - 1) as nat,
+            ) && t == ExprSpec::Bind(
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
-                Box::new(abstr_full(infd, seq![lid], 0))),
+                Box::new(abstr_full(infd, seq![lid], 0)),
+            ),
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Bind(binder_type, body) => exists |lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
-            #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level)
-            && types_to(dty, denv, lctx, *binder_type, bt_ty, (fuel - 1) as nat)
-            && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
-            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat)
-            && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
-            && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
+        ExprSpec::Bind(binder_type, body) => exists|
+            lid: u32,
+            bt_ty: ExprSpec,
+            dom_level: LevelSpec,
+            instd_ty: ExprSpec,
+            cod_level: LevelSpec,
+        | #[trigger]
+            pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
+                dty,
+                denv,
+                lctx,
+                *binder_type,
+                bt_ty,
+                (fuel - 1) as nat,
+            ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                instd_ty,
+                (fuel - 1) as nat,
+            ) && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)) && t == ExprSpec::Sort(
+                LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)),
+            ),
         _ => false,
     })
     ||| (match e {
-        ExprSpec::Proj(idx, s) => exists |f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
-            #[trigger] proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0)
-            && f2 < fuel
-            && types_to(dty, denv, lctx, *s, sty, f2)
-            && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
-            && struct_ctor_of(ind_id) == Some(ctor_id)
-            && ctor_num_params_of(ctor_id) == Some(np)
-            && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2)
-            && (np as nat) <= args.len()
-            && proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, *s, t),
+        ExprSpec::Proj(idx, s) => exists|
+            f2: nat,
+            sty: ExprSpec,
+            ind_id: u64,
+            ls: Seq<LevelSpec>,
+            args: Seq<ExprSpec>,
+            ctor_id: u64,
+            np: u16,
+            ctor_ty0: ExprSpec,
+        | #[trigger]
+            proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && f2 < fuel && types_to(
+                dty,
+                denv,
+                lctx,
+                *s,
+                sty,
+                f2,
+            ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+                && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
+                np,
+            ) && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (
+            np as nat) <= args.len() && proj_field_type(
+                denv,
+                ctor_ty0,
+                args,
+                np as nat,
+                0,
+                idx as nat,
+                *s,
+                t,
+            ),
         _ => false,
     })
 }
 
-pub proof fn types_to_nat_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, fuel: nat)
+pub proof fn types_to_nat_lit(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    e: ExprSpec,
+    t: ExprSpec,
+    fuel: nat,
+)
     requires
         matches!(e, ExprSpec::NatLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
-        (match t { ExprSpec::Const(cid, _) => cid == nat_type_id(), _ => false }),
-    ensures types_to(dty, denv, lctx, e, t, fuel)
+        (match t {
+            ExprSpec::Const(cid, _) => cid == nat_type_id(),
+            _ => false,
+        }),
+    ensures
+        types_to(dty, denv, lctx, e, t, fuel),
 {
 }
 
-pub proof fn types_to_string_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, fuel: nat)
+pub proof fn types_to_string_lit(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    e: ExprSpec,
+    t: ExprSpec,
+    fuel: nat,
+)
     requires
         matches!(e, ExprSpec::StringLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
-        (match t { ExprSpec::Const(cid, _) => cid == string_type_id(), _ => false }),
-    ensures types_to(dty, denv, lctx, e, t, fuel)
+        (match t {
+            ExprSpec::Const(cid, _) => cid == string_type_id(),
+            _ => false,
+        }),
+    ensures
+        types_to(dty, denv, lctx, e, t, fuel),
 {
 }
 
@@ -2456,21 +3231,32 @@ pub proof fn types_to_string_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<
 /// recursive call returns a derivation at its own height, and the rule being
 /// applied wants them at a common one.
 #[verifier::spinoff_prover]
-pub proof fn types_to_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, e: ExprSpec, t: ExprSpec, f1: nat, f2: nat)
-    requires types_to(dty, denv, lctx, e, t, f1), f1 <= f2
-    ensures types_to(dty, denv, lctx, e, t, f2)
-    decreases f1, e
+pub proof fn types_to_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    e: ExprSpec,
+    t: ExprSpec,
+    f1: nat,
+    f2: nat,
+)
+    requires
+        types_to(dty, denv, lctx, e, t, f1),
+        f1 <= f2,
+    ensures
+        types_to(dty, denv, lctx, e, t, f2),
+    decreases f1, e,
 {
     // App: the premise is on a syntactic subterm at the SAME height.
     if let ExprSpec::App(f, a) = e {
-        let (ft, aty, bt, aty2) = choose |ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+        let (ft, aty, bt, aty2) = choose|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2)
-            && types_to(dty, denv, lctx, *f, ft, f1)
-            && pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)))
-            && types_to(dty, denv, lctx, *a, aty2, f1)
-            && deq_any(denv, aty2, aty)
-            && t == subst_full(bt, seq![*a], 0);
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, *f, ft, f1) && pstep_star(
+                denv,
+                ft,
+                ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+            ) && types_to(dty, denv, lctx, *a, aty2, f1) && deq_any(denv, aty2, aty) && t
+                == subst_full(bt, seq![*a], 0);
         types_to_mono(dty, denv, lctx, *f, ft, f1, f2);
         // the ARGUMENT's derivation has to be lifted too, now that the rule
         // actually requires one
@@ -2483,86 +3269,216 @@ pub proof fn types_to_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (
     }
     // Leaves: these disjuncts do not mention the height at all, but the goal
     // still has to be unfolded at f2 for the solver to see that.
+
     match e {
-        ExprSpec::Free(_) | ExprSpec::Sort(_) | ExprSpec::Const(_, _)
-        | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Var(_) | ExprSpec::Closed => {
+        ExprSpec::Free(_)
+        | ExprSpec::Sort(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Var(_)
+        | ExprSpec::Closed => {
             assert(types_to(dty, denv, lctx, e, t, f2));
-        }
-        _ => {}
+        },
+        _ => {},
     }
     // Let and Proj: the premise sits at a height STRICTLY below f1, so the
     // very same witness serves at f2; it only has to be re-exhibited.
     if let ExprSpec::Let(_ty0, val, body) = e {
-        let h = choose |h: nat| #[trigger] fuel_marker(h) && h < f1
-            && types_to(dty, denv, lctx, subst_full(*body, seq![*val], 0), t, h);
+        let h = choose|h: nat| #[trigger]
+            fuel_marker(h) && h < f1 && types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![*val], 0),
+                t,
+                h,
+            );
         assert(fuel_marker(h));
         assert(types_to(dty, denv, lctx, e, t, f2));
     }
     if let ExprSpec::Proj(idx, s) = e {
-        let (h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) = choose |h: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
-            #[trigger] proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0)
-            && h < f1
-            && types_to(dty, denv, lctx, *s, sty, h)
-            && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
-            && struct_ctor_of(ind_id) == Some(ctor_id)
-            && ctor_num_params_of(ctor_id) == Some(np)
-            && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, h)
-            && (np as nat) <= args.len()
-            && proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, *s, t);
+        let (h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) = choose|
+            h: nat,
+            sty: ExprSpec,
+            ind_id: u64,
+            ls: Seq<LevelSpec>,
+            args: Seq<ExprSpec>,
+            ctor_id: u64,
+            np: u16,
+            ctor_ty0: ExprSpec,
+        | #[trigger]
+            proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && h < f1 && types_to(
+                dty,
+                denv,
+                lctx,
+                *s,
+                sty,
+                h,
+            ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+                && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
+                np,
+            ) && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, h) && (np as nat)
+                <= args.len() && proj_field_type(
+                denv,
+                ctor_ty0,
+                args,
+                np as nat,
+                0,
+                idx as nat,
+                *s,
+                t,
+            );
         assert(proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
         assert(types_to(dty, denv, lctx, e, t, f2));
     }
     // Binders: premises one height down, re-exhibited through the markers.
+
     if let ExprSpec::Bind(binder_type, body) = e {
         assert(f1 > 0);
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
-        if exists |lid: u32, infd: ExprSpec| #[trigger] bind_marker(lid, infd)
-            && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1)
-            && t == ExprSpec::Bind(Box::new(abstr_full(*binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0)))
-        {
-            let (lid, infd) = choose |lid: u32, infd: ExprSpec| #[trigger] bind_marker(lid, infd)
-                && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1)
-                && t == ExprSpec::Bind(Box::new(abstr_full(*binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0)));
-            types_to_mono(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, g1, g2);
+        if exists|lid: u32, infd: ExprSpec| #[trigger]
+            bind_marker(lid, infd) && types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                infd,
+                g1,
+            ) && t == ExprSpec::Bind(
+                Box::new(abstr_full(*binder_type, seq![lid], 0)),
+                Box::new(abstr_full(infd, seq![lid], 0)),
+            ) {
+            let (lid, infd) = choose|lid: u32, infd: ExprSpec| #[trigger]
+                bind_marker(lid, infd) && types_to(
+                    dty,
+                    denv,
+                    lctx,
+                    subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                    infd,
+                    g1,
+                ) && t == ExprSpec::Bind(
+                    Box::new(abstr_full(*binder_type, seq![lid], 0)),
+                    Box::new(abstr_full(infd, seq![lid], 0)),
+                );
+            types_to_mono(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                infd,
+                g1,
+                g2,
+            );
             assert(bind_marker(lid, infd));
-            assert(types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (f2 - 1) as nat));
+            assert(types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                infd,
+                (f2 - 1) as nat,
+            ));
             assert(types_to(dty, denv, lctx, e, t, f2));
         } else {
-            let (lid, bt_ty, dom_level, instd_ty, cod_level) = choose |lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
-                #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level)
-                && types_to(dty, denv, lctx, *binder_type, bt_ty, g1)
-                && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level))
-                && types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, g1)
-                && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level))
-                && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
+            let (lid, bt_ty, dom_level, instd_ty, cod_level) = choose|
+                lid: u32,
+                bt_ty: ExprSpec,
+                dom_level: LevelSpec,
+                instd_ty: ExprSpec,
+                cod_level: LevelSpec,
+            | #[trigger]
+                pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
+                    dty,
+                    denv,
+                    lctx,
+                    *binder_type,
+                    bt_ty,
+                    g1,
+                ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
+                    dty,
+                    denv,
+                    lctx,
+                    subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                    instd_ty,
+                    g1,
+                ) && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)) && t == ExprSpec::Sort(
+                    LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)),
+                );
             types_to_mono(dty, denv, lctx, *binder_type, bt_ty, g1, g2);
-            types_to_mono(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, g1, g2);
+            types_to_mono(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                instd_ty,
+                g1,
+                g2,
+            );
             assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
             assert(types_to(dty, denv, lctx, *binder_type, bt_ty, (f2 - 1) as nat));
-            assert(types_to(dty, denv, lctx, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (f2 - 1) as nat));
+            assert(types_to(
+                dty,
+                denv,
+                lctx,
+                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
+                instd_ty,
+                (f2 - 1) as nat,
+            ));
             assert(types_to(dty, denv, lctx, e, t, f2));
         }
     }
 }
 
 /// recursive-exists note).
-pub proof fn types_to_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, lid: u32, fuel: nat)
-    requires lctx.contains_key(lid)
-    ensures types_to(dty, denv, lctx, ExprSpec::Free(lid), lctx[lid], fuel)
+pub proof fn types_to_free(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    lid: u32,
+    fuel: nat,
+)
+    requires
+        lctx.contains_key(lid),
+    ensures
+        types_to(dty, denv, lctx, ExprSpec::Free(lid), lctx[lid], fuel),
 {
 }
 
-pub proof fn types_to_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, l: LevelSpec, fuel: nat)
-    ensures types_to(dty, denv, lctx, ExprSpec::Sort(l), ExprSpec::Sort(LevelSpec::Succ(Box::new(l))), fuel)
+pub proof fn types_to_sort(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    l: LevelSpec,
+    fuel: nat,
+)
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            ExprSpec::Sort(l),
+            ExprSpec::Sort(LevelSpec::Succ(Box::new(l))),
+            fuel,
+        ),
 {
 }
 
-pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, cid: u64, clevels: Seq<LevelSpec>, t: ExprSpec, fuel: nat)
+pub proof fn types_to_const(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    cid: u64,
+    clevels: Seq<LevelSpec>,
+    t: ExprSpec,
+    fuel: nat,
+)
     requires
         dty.contains_key(cid),
         subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
-    ensures types_to(dty, denv, lctx, ExprSpec::Const(cid, clevels), t, fuel)
+    ensures
+        types_to(dty, denv, lctx, ExprSpec::Const(cid, clevels), t, fuel),
 {
 }
 
@@ -2570,15 +3486,36 @@ pub proof fn types_to_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, 
 /// `irrel_marker`/`fuel_marker` elsewhere in this file: a multi-binder
 /// `exists` needs one trigger term mentioning every bound variable, and no
 /// natural term here mentions all four.
-pub open spec fn app_marker(ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec) -> bool { true }
+pub open spec fn app_marker(ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec) -> bool {
+    true
+}
 
-pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f: ExprSpec, a: ExprSpec, ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, fuel: nat, aty2: ExprSpec)
+pub proof fn types_to_app(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    f: ExprSpec,
+    a: ExprSpec,
+    ft: ExprSpec,
+    aty: ExprSpec,
+    bt: ExprSpec,
+    fuel: nat,
+    aty2: ExprSpec,
+)
     requires
         types_to(dty, denv, lctx, f, ft, fuel),
         pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
         types_to(dty, denv, lctx, a, aty2, fuel),
         deq_any(denv, aty2, aty),
-    ensures types_to(dty, denv, lctx, ExprSpec::App(Box::new(f), Box::new(a)), subst_full(bt, seq![a], 0), fuel)
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            ExprSpec::App(Box::new(f), Box::new(a)),
+            subst_full(bt, seq![a], 0),
+            fuel,
+        ),
 {
     assert(app_marker(ft, aty, bt, aty2));
     assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
@@ -2587,20 +3524,51 @@ pub proof fn types_to_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (S
     assert(subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
 }
 
-
-
-
-pub proof fn types_to_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty0: ExprSpec, val: ExprSpec, body: ExprSpec, t: ExprSpec, f2: nat, fuel: nat)
+pub proof fn types_to_let(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    ty0: ExprSpec,
+    val: ExprSpec,
+    body: ExprSpec,
+    t: ExprSpec,
+    f2: nat,
+    fuel: nat,
+)
     requires
         f2 < fuel,
         types_to(dty, denv, lctx, subst_full(body, seq![val], 0), t, f2),
-    ensures types_to(dty, denv, lctx, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), t, fuel)
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)),
+            t,
+            fuel,
+        ),
 {
     assert(fuel_marker(f2));
 }
 
 /// Constructor lemma for the `Proj` rule.
-pub proof fn types_to_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, idx: usize, s: ExprSpec, t: ExprSpec, f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec, fuel: nat)
+pub proof fn types_to_proj(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    t: ExprSpec,
+    f2: nat,
+    sty: ExprSpec,
+    ind_id: u64,
+    ls: Seq<LevelSpec>,
+    args: Seq<ExprSpec>,
+    ctor_id: u64,
+    np: u16,
+    ctor_ty0: ExprSpec,
+    fuel: nat,
+)
     requires
         f2 < fuel,
         types_to(dty, denv, lctx, s, sty, f2),
@@ -2610,61 +3578,165 @@ pub proof fn types_to_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (
         types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
         (np as nat) <= args.len(),
         proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
-    ensures types_to(dty, denv, lctx, ExprSpec::Proj(idx, Box::new(s)), t, fuel)
+    ensures
+        types_to(dty, denv, lctx, ExprSpec::Proj(idx, Box::new(s)), t, fuel),
 {
     assert(proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
 }
 
 /// One parameter step of `proj_field_type`.
-pub proof fn proj_field_type_param_step(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, np: nat, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec)
+pub proof fn proj_field_type_param_step(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+)
     requires
         np > 0,
         args.len() > 0,
         pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
-        proj_field_type(denv, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s, t),
-    ensures proj_field_type(denv, cur, args, np, fld, remaining, s, t)
+        proj_field_type(
+            denv,
+            subst_full(body, seq![args[0]], 0),
+            args.drop_first(),
+            (np - 1) as nat,
+            fld,
+            remaining,
+            s,
+            t,
+        ),
+    ensures
+        proj_field_type(denv, cur, args, np, fld, remaining, s, t),
 {
     assert(proj_step_marker(bt, body));
 }
 
 /// One field step of `proj_field_type`.
-pub proof fn proj_field_type_field_step(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, fld: usize, remaining: nat, s: ExprSpec, t: ExprSpec)
+pub proof fn proj_field_type_field_step(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+)
     requires
         remaining > 0,
         pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
-        proj_field_type(denv, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, t),
-    ensures proj_field_type(denv, cur, args, 0, fld, remaining, s, t)
+        proj_field_type(
+            denv,
+            subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
+            args,
+            0,
+            (fld + 1) as usize,
+            (remaining - 1) as nat,
+            s,
+            t,
+        ),
+    ensures
+        proj_field_type(denv, cur, args, 0, fld, remaining, s, t),
 {
     assert(proj_step_marker(bt, body));
 }
 
 /// The final step of `proj_field_type`: the field type is the binder type.
-pub proof fn proj_field_type_final(denv: Map<u64, (Seq<u64>, ExprSpec)>, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, args: Seq<ExprSpec>, fld: usize, s: ExprSpec)
-    requires pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
-    ensures proj_field_type(denv, cur, args, 0, fld, 0, s, bt)
+pub proof fn proj_field_type_final(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    fld: usize,
+    s: ExprSpec,
+)
+    requires
+        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+    ensures
+        proj_field_type(denv, cur, args, 0, fld, 0, s, bt),
 {
     assert(proj_step_marker(bt, body));
 }
 
-pub proof fn types_to_lambda(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, infd: ExprSpec, fuel: nat)
+pub proof fn types_to_lambda(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    binder_type: ExprSpec,
+    body: ExprSpec,
+    lid: u32,
+    infd: ExprSpec,
+    fuel: nat,
+)
     requires
         fuel > 0,
-        types_to(dty, denv, lctx, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat),
-    ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
-        ExprSpec::Bind(Box::new(abstr_full(binder_type, seq![lid], 0)), Box::new(abstr_full(infd, seq![lid], 0))), fuel)
+        types_to(
+            dty,
+            denv,
+            lctx,
+            subst_full(body, seq![ExprSpec::Free(lid)], 0),
+            infd,
+            (fuel - 1) as nat,
+        ),
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
+            ExprSpec::Bind(
+                Box::new(abstr_full(binder_type, seq![lid], 0)),
+                Box::new(abstr_full(infd, seq![lid], 0)),
+            ),
+            fuel,
+        ),
 {
     assert(bind_marker(lid, infd));
 }
 
-pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, binder_type: ExprSpec, body: ExprSpec, lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec, fuel: nat)
+pub proof fn types_to_pi(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    binder_type: ExprSpec,
+    body: ExprSpec,
+    lid: u32,
+    bt_ty: ExprSpec,
+    dom_level: LevelSpec,
+    instd_ty: ExprSpec,
+    cod_level: LevelSpec,
+    fuel: nat,
+)
     requires
         fuel > 0,
         types_to(dty, denv, lctx, binder_type, bt_ty, (fuel - 1) as nat),
         pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)),
-        types_to(dty, denv, lctx, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat),
+        types_to(
+            dty,
+            denv,
+            lctx,
+            subst_full(body, seq![ExprSpec::Free(lid)], 0),
+            instd_ty,
+            (fuel - 1) as nat,
+        ),
         pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)),
-    ensures types_to(dty, denv, lctx, ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
-        ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))), fuel)
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
+            ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
+            fuel,
+        ),
 {
     assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
 }
@@ -2677,19 +3749,29 @@ pub proof fn types_to_pi(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Se
 /// ingredient a future `deq_p` (typed definitional equality with the
 /// irrelevance case) consumes. Non-recursive; clean triggers.
 /// Marker trigger for `proof_irrel_pair`'s witnesses.
-pub open spec fn irrel_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool { true }
+pub open spec fn irrel_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool {
+    true
+}
 
 /// Marker trigger for `is_proof_type_m`'s witnesses.
-pub open spec fn proof_type_marker(tt: ExprSpec, f: nat, l: LevelSpec) -> bool { true }
+pub open spec fn proof_type_marker(tt: ExprSpec, f: nat, l: LevelSpec) -> bool {
+    true
+}
 
 /// "`ty` is the type of a PROOF": its own type reduces to a `Prop`-level
 /// sort (the model-side twin of `delta_bound_model::is_proof_type_claim`).
-pub open spec fn is_proof_type_m(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ty: ExprSpec) -> bool {
-    exists |tt: ExprSpec, f: nat, l: LevelSpec|
-        #[trigger] proof_type_marker(tt, f, l)
-        && types_to(dty, denv, lctx, ty, tt, f)
-        && pstep_star(denv, tt, ExprSpec::Sort(l))
-        && (forall |rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0)
+pub open spec fn is_proof_type_m(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    ty: ExprSpec,
+) -> bool {
+    exists|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
+        proof_type_marker(tt, f, l) && types_to(dty, denv, lctx, ty, tt, f) && pstep_star(
+            denv,
+            tt,
+            ExprSpec::Sort(l),
+        ) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0)
 }
 
 /// Proof irrelevance: `x` and `y` are PROOFS (their types' types are
@@ -2697,16 +3779,32 @@ pub open spec fn is_proof_type_m(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<
 /// previous form tested the types themselves against `Prop`, i.e. made `x`
 /// and `y` propositions rather than proofs -- the same slip the exec
 /// shadow route once had; nothing on the live certifier read the old form.)
-pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
-    decreases h, 3int
+pub open spec fn proof_irrel_pair(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 3int,
 {
-    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-        #[trigger] irrel_marker(tx, ty2, fx, fy)
-        && types_to(dty, denv, lctx, x, tx, fx)
-        && types_to(dty, denv, lctx, y, ty2, fy)
-        && is_proof_type_m(dty, denv, lctx, tx)
-        && is_proof_type_m(dty, denv, lctx, ty2)
-        && deq_p(dty, denv, lctx, tx, ty2, h)
+    exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+        irrel_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, x, tx, fx) && types_to(
+            dty,
+            denv,
+            lctx,
+            y,
+            ty2,
+            fy,
+        ) && is_proof_type_m(dty, denv, lctx, tx) && is_proof_type_m(dty, denv, lctx, ty2) && deq_p(
+            dty,
+            denv,
+            lctx,
+            tx,
+            ty2,
+            h,
+        )
 }
 
 /// Marker triggers for `types_to`'s two BINDER rules. Without them those
@@ -2716,35 +3814,57 @@ pub open spec fn proof_irrel_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map
 /// already trigger on `fuel_marker`/`proj_marker` instead. Monotonicity in
 /// the derivation height needs to re-exhibit these witnesses, so the binder
 /// rules now carry markers of their own.
-pub open spec fn bind_marker(lid: u32, infd: ExprSpec) -> bool { true }
+pub open spec fn bind_marker(lid: u32, infd: ExprSpec) -> bool {
+    true
+}
 
-pub open spec fn pi_marker(lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec) -> bool { true }
+pub open spec fn pi_marker(
+    lid: u32,
+    bt_ty: ExprSpec,
+    dom_level: LevelSpec,
+    instd_ty: ExprSpec,
+    cod_level: LevelSpec,
+) -> bool {
+    true
+}
 
 /// Marker trigger for `unit_pair`'s witnesses, the same device
 /// `irrel_marker` plays for proof irrelevance.
-pub open spec fn unit_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool { true }
+pub open spec fn unit_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> bool {
+    true
+}
 
 /// "This constant names a structure with one constructor that takes no
 /// fields" -- a type with exactly one element.
 pub open spec fn unit_like_head(id: u64) -> bool {
-    exists |c: u64| #[trigger] struct_ctor_of(id) == Some(c) && ctor_num_fields_of(c) == Some(0u16)
+    exists|c: u64| #[trigger] struct_ctor_of(id) == Some(c) && ctor_num_fields_of(c) == Some(0u16)
 }
 
 /// The same, up to reduction: the kernel whnfs the inferred type before
 /// looking at its head, so the rule's real side condition is that the type
 /// REDUCES to such a structure.
 pub open spec fn unit_like_type_m(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec) -> bool {
-    exists |r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
+    exists|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
 }
 
 /// "This type is such a structure, applied to whatever parameters."
 pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
-    exists |id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>|
-        #[trigger] spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
+    exists|id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>| #[trigger]
+        spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
 }
 
 /// Marker trigger for `eta_struct_expand`'s witnesses.
-pub open spec fn eta_struct_marker(tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat) -> bool { true }
+pub open spec fn eta_struct_marker(
+    tx: ExprSpec,
+    f: nat,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    params: Seq<ExprSpec>,
+    nf: nat,
+) -> bool {
+    true
+}
 
 /// "`tx` is CONVERTIBLE to the structure `ind` applied to `params` (and
 /// possibly more)".
@@ -2755,9 +3875,14 @@ pub open spec fn eta_struct_marker(tx: ExprSpec, f: nat, ind: u64, cid: u64, ls:
 /// types are definitionally equal. Requiring `tx` to reduce to the structure
 /// on its own is strictly stronger, and it was rejecting pairs the kernel
 /// accepts, because `tx` need not whnf to a constant-headed application.
-pub open spec fn struct_type_of(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec, ind: u64, params: Seq<ExprSpec>) -> bool {
-    exists |ils: Seq<LevelSpec>, rest: Seq<ExprSpec>|
-        #[trigger] deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
+pub open spec fn struct_type_of(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    tx: ExprSpec,
+    ind: u64,
+    params: Seq<ExprSpec>,
+) -> bool {
+    exists|ils: Seq<LevelSpec>, rest: Seq<ExprSpec>| #[trigger]
+        deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
 }
 
 /// STRUCTURE ETA, the kernel's `try_eta_struct`, in the same shape the
@@ -2770,20 +3895,39 @@ pub open spec fn struct_type_of(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSp
 /// expansion is only equal to `x` when `x` really does inhabit that
 /// structure, so the leaf carries `x`'s type and the fact that it reduces
 /// to the structure whose sole constructor is the one being applied.
-pub open spec fn eta_struct_expand(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
-    exists |tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
-        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf)
-        && types_to(dty, denv, lctx, x, tx, f)
-        && struct_type_of(denv, tx, ind, params)
-        && struct_ctor_of(ind) == Some(cid)
-        && ctor_num_fields_of(cid) == Some(nf as u16)
-        && y == spine_app(ExprSpec::Const(cid, ls),
-                params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))))
+pub open spec fn eta_struct_expand(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+) -> bool {
+    exists|
+        tx: ExprSpec,
+        f: nat,
+        ind: u64,
+        cid: u64,
+        ls: Seq<LevelSpec>,
+        params: Seq<ExprSpec>,
+        nf: nat,
+    | #[trigger]
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && types_to(dty, denv, lctx, x, tx, f)
+            && struct_type_of(denv, tx, ind, params) && struct_ctor_of(ind) == Some(cid)
+            && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
+            ExprSpec::Const(cid, ls),
+            params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
+        )
 }
 
 /// Symmetric, for the same reason the unit leaf is: `deq_p_c_symm` inverts
 /// every disjunct, and either side may be the one being expanded.
-pub open spec fn eta_struct_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+pub open spec fn eta_struct_pair(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+) -> bool {
     eta_struct_expand(dty, denv, lctx, x, y) || eta_struct_expand(dty, denv, lctx, y, x)
 }
 
@@ -2794,18 +3938,28 @@ pub open spec fn eta_struct_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<
 /// irrelevance, this is a rule ABOUT TYPING rather than about reduction,
 /// so it lives in the `_p` family beside `proof_irrel_pair` and is stated
 /// the same way, with a marker trigger over its four witnesses.
-pub open spec fn unit_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
-    exists |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-        #[trigger] unit_marker(tx, ty2, fx, fy)
-        && types_to(dty, denv, lctx, x, tx, fx)
-        && types_to(dty, denv, lctx, y, ty2, fy)
+pub open spec fn unit_pair(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+) -> bool {
+    exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+        unit_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, x, tx, fx) && types_to(
+            dty,
+            denv,
+            lctx,
+            y,
+            ty2,
+            fy,
+        )
         // EITHER side being the unit-like one is enough, and stating it that
         // way keeps the leaf symmetric, which `deq_p_c_symm` inverts. The
         // kernel only ever inspects `x`'s type, but the rule is symmetric in
         // truth: the two types are convertible, so if one has a single
         // element so does the other.
-        && (unit_like_type_m(denv, tx) || unit_like_type_m(denv, ty2))
-        && deq_any(denv, tx, ty2)
+         && (unit_like_type_m(denv, tx) || unit_like_type_m(denv, ty2)) && deq_any(denv, tx, ty2)
 }
 
 /// The NON-REDUCTION leaf equalities of definitional equality: two
@@ -2820,11 +3974,11 @@ pub open spec fn unit_pair(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: Map<u64, (
 /// equality is already `defeq` via reflexivity.
 pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
     match (x, y) {
-        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) =>
-            forall |rho: Map<nat, nat>| #[trigger] interp(l1, rho) == interp(l2, rho),
-        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) =>
-            id1 == id2 && ls1.len() == ls2.len()
-            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < ls1.len() ==> #[trigger] interp(ls1[i], rho) == interp(ls2[i], rho)),
+        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => forall|rho: Map<nat, nat>| #[trigger]
+            interp(l1, rho) == interp(l2, rho),
+        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) => id1 == id2 && ls1.len()
+            == ls2.len() && (forall|i: int, rho: Map<nat, nat>|
+            0 <= i < ls1.len() ==> #[trigger] interp(ls1[i], rho) == interp(ls2[i], rho)),
         _ => false,
     }
 }
@@ -2838,7 +3992,10 @@ pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
 /// identity via `nlbv_shift_noop`. Match-based, no existential.
 pub open spec fn eta_expands_to(lam: ExprSpec, f: ExprSpec) -> bool {
     match lam {
-        ExprSpec::Bind(_t, b) => *b == ExprSpec::App(Box::new(shift(1, 0, f)), Box::new(ExprSpec::Var(0))),
+        ExprSpec::Bind(_t, b) => *b == ExprSpec::App(
+            Box::new(shift(1, 0, f)),
+            Box::new(ExprSpec::Var(0)),
+        ),
         _ => false,
     }
 }
@@ -2851,8 +4008,6 @@ pub open spec fn eta_expands_to(lam: ExprSpec, f: ExprSpec) -> bool {
 pub open spec fn deq_eta(x: ExprSpec, y: ExprSpec) -> bool {
     eta_expands_to(x, y) || eta_expands_to(y, x)
 }
-
-
 
 /// ONE PARALLEL STEP of the inductive definitional-equality relation:
 /// the congruence closure of (reduction joinability `defeq` ∪ the leaf
@@ -2924,7 +4079,7 @@ pub open spec fn quot_ready(s: ExprSpec) -> bool {
         Some(qi) => {
             let args = spine_args(s);
             args.len() > qi && quot_mk_spine(args[qi as int])
-        }
+        },
         None => false,
     }
 }
@@ -2945,7 +4100,14 @@ pub open spec fn deq_quot(x: ExprSpec, y: ExprSpec) -> bool {
 /// contracted term is `quot_result`. Extracted from the exec producer,
 /// whose single query exceeded the resource limit with this inline.
 #[verifier::spinoff_prover]
-pub proof fn deq_quot_intro(head_m: ExprSpec, args2: Seq<ExprSpec>, qi: nat, mk_head: ExprSpec, mk_args: Seq<ExprSpec>, r: ExprSpec)
+pub proof fn deq_quot_intro(
+    head_m: ExprSpec,
+    args2: Seq<ExprSpec>,
+    qi: nat,
+    mk_head: ExprSpec,
+    mk_args: Seq<ExprSpec>,
+    r: ExprSpec,
+)
     requires
         matches!(head_m, ExprSpec::Const(_, _)),
         quot_major_idx(spine_app(head_m, args2)) == Some(qi),
@@ -2955,8 +4117,12 @@ pub proof fn deq_quot_intro(head_m: ExprSpec, args2: Seq<ExprSpec>, qi: nat, mk_
         quot_kind_of(mk_head->Const_0) == Some(2u8),
         args2[qi as int] == spine_app(mk_head, mk_args),
         mk_args.len() == 3,
-        r == spine_app(ExprSpec::App(Box::new(args2[3int]), Box::new(mk_args[2int])), args2.skip(qi as int + 1)),
-    ensures deq_quot(spine_app(head_m, args2), r)
+        r == spine_app(
+            ExprSpec::App(Box::new(args2[3int]), Box::new(mk_args[2int])),
+            args2.skip(qi as int + 1),
+        ),
+    ensures
+        deq_quot(spine_app(head_m, args2), r),
 {
     let sp = spine_app(head_m, args2);
     spine_destruct_app(head_m, args2);
@@ -2971,42 +4137,61 @@ pub proof fn deq_quot_intro(head_m: ExprSpec, args2: Seq<ExprSpec>, qi: nat, mk_
     assert(quot_result(sp) == r);
 }
 
-pub open spec fn deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
-    decreases h, 0int
+pub open spec fn deq_c(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 0int,
 {
     ||| defeq(env, x, y)
     ||| deq_leaf(x, y)
     ||| deq_eta(x, y)
     ||| deq_quot(x, y)
     ||| (h > 0 && match (x, y) {
-        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
-            deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat),
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_c(env, *f1, *f2, (h - 1) as nat)
+            && deq_c(env, *a1, *a2, (h - 1) as nat),
         // Binder congruence, two forms: on the RAW bodies (loose `Var 0`
         // and all), or -- the standard locally-nameless rule, which the
         // real checker uses -- on the bodies OPENED with one fresh free
         // variable `k` (absent from both bodies), related by a `deq`
         // CHAIN one height down (chains, not a single step: the opened
         // bodies may need reduction steps that raw bodies cannot take).
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
-            deq_c(env, *t1, *t2, (h - 1) as nat)
-            && (deq_c(env, *b1, *b2, (h - 1) as nat)
-                || (exists |k: u32| #[trigger] fresh_marker(k)
-                    && fv_absent(*b1, k) && fv_absent(*b2, k)
-                    && deq(env, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat))),
-        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
-            deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
-        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) =>
-            pidx1 == pidx2 && deq_c(env, *s1, *s2, (h - 1) as nat),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_c(env, *t1, *t2, (h - 1) as nat)
+            && (deq_c(env, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
+            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq(
+                env,
+                inst_free(*b1, k),
+                inst_free(*b2, k),
+                (h - 1) as nat,
+            ))),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => deq_c(
+            env,
+            *t1,
+            *t2,
+            (h - 1) as nat,
+        ) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && deq_c(
+            env,
+            *s1,
+            *s2,
+            (h - 1) as nat,
+        ),
         _ => false,
     })
 }
 
 /// A chain of `deq_c` steps at height `h` -- `pstep_chain_valid`'s
 /// direct analogue.
-pub open spec fn deq_chain_valid(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<ExprSpec>, h: nat) -> bool
-    decreases h, 1int
+pub open spec fn deq_chain_valid(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    ch: Seq<ExprSpec>,
+    h: nat,
+) -> bool
+    decreases h, 1int,
 {
-    forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 ==> deq_c(env, ch[i], ch[i + 1], h)
+    forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 ==> deq_c(env, ch[i], ch[i + 1], h)
 }
 
 /// THE INDUCTIVE DEFINITIONAL-EQUALITY RELATION -- the "proper
@@ -3019,63 +4204,111 @@ pub open spec fn deq_chain_valid(env: Map<u64, (Seq<u64>, ExprSpec)>, ch: Seq<Ex
 /// `pstep_star_trans`), congruent (`deq_app_congr` etc.), and subsumes
 /// both `defeq` and the leaf equalities (length-2 chains).
 pub open spec fn deq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
-    decreases h, 2int
+    decreases h, 2int,
 {
-    exists |ch: Seq<ExprSpec>|
+    exists|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h)
 }
 
 /// `deq_c` is monotone in its height index.
-pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
-    requires deq_c(env, x, y, h1), h1 <= h2
-    ensures deq_c(env, x, y, h2)
-    decreases h1, 0int
+pub proof fn deq_c_mono(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        deq_c(env, x, y, h1),
+        h1 <= h2,
+    ensures
+        deq_c(env, x, y, h2),
+    decreases h1, 0int,
 {
     if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_c(env, *f1, *f2, (h1 - 1) as nat) && deq_c(env, *a1, *a2, (h1 - 1) as nat));
+                assert(deq_c(env, *f1, *f2, (h1 - 1) as nat) && deq_c(
+                    env,
+                    *a1,
+                    *a2,
+                    (h1 - 1) as nat,
+                ));
                 deq_c_mono(env, *f1, *f2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_c_mono(env, *a1, *a2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_c(env, *f1, *f2, (h2 - 1) as nat) && deq_c(env, *a1, *a2, (h2 - 1) as nat));
+                assert(h2 > 0 && deq_c(env, *f1, *f2, (h2 - 1) as nat) && deq_c(
+                    env,
+                    *a1,
+                    *a2,
+                    (h2 - 1) as nat,
+                ));
                 assert(deq_c(env, x, y, h2));
-            }
+            },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
                 assert(deq_c(env, *t1, *t2, (h1 - 1) as nat));
                 deq_c_mono(env, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 if deq_c(env, *b1, *b2, (h1 - 1) as nat) {
                     deq_c_mono(env, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                    assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
+                    assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(
+                        env,
+                        *b1,
+                        *b2,
+                        (h2 - 1) as nat,
+                    ));
                 } else {
-                    let k = choose |k: u32| #[trigger] fresh_marker(k)
-                        && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq(env, inst_free(*b1, k), inst_free(*b2, k), (h1 - 1) as nat);
-                    deq_mono(env, inst_free(*b1, k), inst_free(*b2, k), (h1 - 1) as nat, (h2 - 1) as nat);
+                    let k = choose|k: u32| #[trigger]
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq(
+                            env,
+                            inst_free(*b1, k),
+                            inst_free(*b2, k),
+                            (h1 - 1) as nat,
+                        );
+                    deq_mono(
+                        env,
+                        inst_free(*b1, k),
+                        inst_free(*b2, k),
+                        (h1 - 1) as nat,
+                        (h2 - 1) as nat,
+                    );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq(env, inst_free(*b1, k), inst_free(*b2, k), (h2 - 1) as nat));
+                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq(
+                        env,
+                        inst_free(*b1, k),
+                        inst_free(*b2, k),
+                        (h2 - 1) as nat,
+                    ));
                 }
                 assert(deq_c(env, x, y, h2));
-            }
+            },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_c(env, *t1, *t2, (h1 - 1) as nat) && deq_c(env, *v1, *v2, (h1 - 1) as nat) && deq_c(env, *b1, *b2, (h1 - 1) as nat));
+                assert(deq_c(env, *t1, *t2, (h1 - 1) as nat) && deq_c(
+                    env,
+                    *v1,
+                    *v2,
+                    (h1 - 1) as nat,
+                ) && deq_c(env, *b1, *b2, (h1 - 1) as nat));
                 deq_c_mono(env, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_c_mono(env, *v1, *v2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_c_mono(env, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(env, *v1, *v2, (h2 - 1) as nat) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
+                assert(h2 > 0 && deq_c(env, *t1, *t2, (h2 - 1) as nat) && deq_c(
+                    env,
+                    *v1,
+                    *v2,
+                    (h2 - 1) as nat,
+                ) && deq_c(env, *b1, *b2, (h2 - 1) as nat));
                 assert(deq_c(env, x, y, h2));
-            }
+            },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_c(env, *s1, *s2, (h1 - 1) as nat));
                 deq_c_mono(env, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
                 assert(h2 > 0 && deq_c(env, *s1, *s2, (h2 - 1) as nat));
                 assert(deq_c(env, x, y, h2));
-            }
+            },
             _ => {
                 assert(false);
-            }
+            },
         }
     }
 }
@@ -3084,9 +4317,11 @@ pub proof fn deq_c_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
 /// `deq_leaf` by the symmetry of its interp equalities, congruence by
 /// the IH on sub-derivations.
 pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_c(env, x, y, h)
-    ensures deq_c(env, y, x, h)
-    decreases h, 0int
+    requires
+        deq_c(env, x, y, h),
+    ensures
+        deq_c(env, y, x, h),
+    decreases h, 0int,
 {
     if defeq(env, x, y) {
         defeq_symm(env, x, y);
@@ -3100,61 +4335,97 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
         assert(h > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(env, *a1, *a2, (h - 1) as nat));
+                assert(deq_c(env, *f1, *f2, (h - 1) as nat) && deq_c(
+                    env,
+                    *a1,
+                    *a2,
+                    (h - 1) as nat,
+                ));
                 deq_c_symm(env, *f1, *f2, (h - 1) as nat);
                 deq_c_symm(env, *a1, *a2, (h - 1) as nat);
-                assert(h > 0 && deq_c(env, *f2, *f1, (h - 1) as nat) && deq_c(env, *a2, *a1, (h - 1) as nat));
+                assert(h > 0 && deq_c(env, *f2, *f1, (h - 1) as nat) && deq_c(
+                    env,
+                    *a2,
+                    *a1,
+                    (h - 1) as nat,
+                ));
                 assert(deq_c(env, y, x, h));
-            }
+            },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
                 assert(deq_c(env, *t1, *t2, (h - 1) as nat));
                 deq_c_symm(env, *t1, *t2, (h - 1) as nat);
                 if deq_c(env, *b1, *b2, (h - 1) as nat) {
                     deq_c_symm(env, *b1, *b2, (h - 1) as nat);
-                    assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(env, *b2, *b1, (h - 1) as nat));
+                    assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(
+                        env,
+                        *b2,
+                        *b1,
+                        (h - 1) as nat,
+                    ));
                 } else {
-                    let k = choose |k: u32| #[trigger] fresh_marker(k)
-                        && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq(env, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
+                    let k = choose|k: u32| #[trigger]
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq(
+                            env,
+                            inst_free(*b1, k),
+                            inst_free(*b2, k),
+                            (h - 1) as nat,
+                        );
                     deq_symm(env, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k)
-                        && deq(env, inst_free(*b2, k), inst_free(*b1, k), (h - 1) as nat));
+                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && deq(
+                        env,
+                        inst_free(*b2, k),
+                        inst_free(*b1, k),
+                        (h - 1) as nat,
+                    ));
                 }
                 assert(deq_c(env, y, x, h));
-            }
+            },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat) && deq_c(env, *b1, *b2, (h - 1) as nat));
+                assert(deq_c(env, *t1, *t2, (h - 1) as nat) && deq_c(env, *v1, *v2, (h - 1) as nat)
+                    && deq_c(env, *b1, *b2, (h - 1) as nat));
                 deq_c_symm(env, *t1, *t2, (h - 1) as nat);
                 deq_c_symm(env, *v1, *v2, (h - 1) as nat);
                 deq_c_symm(env, *b1, *b2, (h - 1) as nat);
-                assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(env, *v2, *v1, (h - 1) as nat) && deq_c(env, *b2, *b1, (h - 1) as nat));
+                assert(h > 0 && deq_c(env, *t2, *t1, (h - 1) as nat) && deq_c(
+                    env,
+                    *v2,
+                    *v1,
+                    (h - 1) as nat,
+                ) && deq_c(env, *b2, *b1, (h - 1) as nat));
                 assert(deq_c(env, y, x, h));
-            }
+            },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_c(env, *s1, *s2, (h - 1) as nat));
                 deq_c_symm(env, *s1, *s2, (h - 1) as nat);
                 assert(h > 0 && deq_c(env, *s2, *s1, (h - 1) as nat));
                 assert(deq_c(env, y, x, h));
-            }
+            },
             _ => {
                 assert(false);
-            }
+            },
         }
     }
 }
 
 /// A single `deq_c` step is a `deq` fact: the length-2 chain.
 pub proof fn deq_of_deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_c(env, x, y, h)
-    ensures deq(env, x, y, h)
+    requires
+        deq_c(env, x, y, h),
+    ensures
+        deq(env, x, y, h),
 {
     let ch = seq![x, y];
     assert(ch.len() == 2);
     assert(ch[0] == x);
     assert(ch[ch.len() - 1] == y);
     assert(deq_chain_valid(env, ch, h)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(
+            env,
+            ch[i],
+            ch[i + 1],
+            h,
+        ) by {
             assert(i == 0);
         }
     }
@@ -3162,47 +4433,59 @@ pub proof fn deq_of_deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: E
 
 /// Constructor lemma: joinability is `deq` at any height.
 pub proof fn deq_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires defeq(env, x, y)
-    ensures deq(env, x, y, h)
+    requires
+        defeq(env, x, y),
+    ensures
+        deq(env, x, y, h),
 {
     deq_of_deq_c(env, x, y, h);
 }
 
 /// Constructor lemma: a leaf level-equality is `deq` at any height.
 pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_leaf(x, y)
-    ensures deq(env, x, y, h)
+    requires
+        deq_leaf(x, y),
+    ensures
+        deq(env, x, y, h),
 {
     deq_of_deq_c(env, x, y, h);
 }
 
 /// Constructor lemma: an eta pair is `deq` at any height.
 pub proof fn deq_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_quot(x, y)
-    ensures deq(env, x, y, h)
+    requires
+        deq_quot(x, y),
+    ensures
+        deq(env, x, y, h),
 {
     deq_of_deq_c(env, x, y, h);
 }
 
 pub proof fn deq_any_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
-    requires deq_quot(x, y)
-    ensures deq_any(env, x, y)
+    requires
+        deq_quot(x, y),
+    ensures
+        deq_any(env, x, y),
 {
     deq_of_quot(env, x, y, 0);
     assert(deq(env, x, y, 0));
 }
 
 pub proof fn deq_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_eta(x, y)
-    ensures deq(env, x, y, h)
+    requires
+        deq_eta(x, y),
+    ensures
+        deq(env, x, y, h),
 {
     deq_of_deq_c(env, x, y, h);
 }
 
 /// `deq_any` form of the eta constructor.
 pub proof fn deq_any_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
-    requires deq_eta(x, y)
-    ensures deq_any(env, x, y)
+    requires
+        deq_eta(x, y),
+    ensures
+        deq_any(env, x, y),
 {
     deq_of_eta(env, x, y, 0);
     assert(deq(env, x, y, 0));
@@ -3210,7 +4493,8 @@ pub proof fn deq_any_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y:
 
 /// `deq` is reflexive at every height: the length-1 chain.
 pub proof fn deq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, h: nat)
-    ensures deq(env, x, x, h)
+    ensures
+        deq(env, x, x, h),
 {
     let ch = seq![x];
     assert(ch.len() == 1);
@@ -3221,15 +4505,29 @@ pub proof fn deq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, h: nat)
 
 /// `deq` is monotone in its height index: per-link `deq_c_mono` over
 /// the witness chain.
-pub proof fn deq_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
-    requires deq(env, x, y, h1), h1 <= h2
-    ensures deq(env, x, y, h2)
-    decreases h1, 1int
+pub proof fn deq_mono(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        deq(env, x, y, h1),
+        h1 <= h2,
+    ensures
+        deq(env, x, y, h2),
+    decreases h1, 1int,
 {
-    let ch = choose |ch: Seq<ExprSpec>|
+    let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h1);
     assert(deq_chain_valid(env, ch, h2)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h2) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(
+            env,
+            ch[i],
+            ch[i + 1],
+            h2,
+        ) by {
             assert(deq_c(env, ch[i], ch[i + 1], h1));
             deq_c_mono(env, ch[i], ch[i + 1], h1, h2);
         }
@@ -3239,11 +4537,13 @@ pub proof fn deq_mono(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprS
 /// `deq` is symmetric, height-preserving: reverse the witness chain and
 /// flip each link with `deq_c_symm`.
 pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq(env, x, y, h)
-    ensures deq(env, y, x, h)
-    decreases h, 1int
+    requires
+        deq(env, x, y, h),
+    ensures
+        deq(env, y, x, h),
+    decreases h, 1int,
 {
-    let ch = choose |ch: Seq<ExprSpec>|
+    let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
     let n = ch.len();
     let rev = Seq::new(n, |i: int| ch[n - 1 - i]);
@@ -3251,7 +4551,12 @@ pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprS
     assert(rev[0] == ch[n - 1]);
     assert(rev[rev.len() - 1] == ch[0]);
     assert(deq_chain_valid(env, rev, h)) by {
-        assert forall |i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_c(env, rev[i], rev[i + 1], h) by {
+        assert forall|i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_c(
+            env,
+            rev[i],
+            rev[i + 1],
+            h,
+        ) by {
             assert(rev[i] == ch[n - 1 - i]);
             assert(rev[i + 1] == ch[n - 2 - i]);
             assert(deq_c(env, ch[n - 2 - i], ch[n - 1 - i], h));
@@ -3263,13 +4568,22 @@ pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprS
 /// `deq` is transitive -- for FREE, by chain concatenation, exactly like
 /// `pstep_star_trans` (and unlike every attempt to keep transitivity as
 /// a constructor inside a recursive relation, see `deq_c`'s doc).
-pub proof fn deq_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, z: ExprSpec, h: nat)
-    requires deq(env, x, y, h), deq(env, y, z, h)
-    ensures deq(env, x, z, h)
+pub proof fn deq_trans(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprSpec,
+    y: ExprSpec,
+    z: ExprSpec,
+    h: nat,
+)
+    requires
+        deq(env, x, y, h),
+        deq(env, y, z, h),
+    ensures
+        deq(env, x, z, h),
 {
-    let ch1 = choose |ch: Seq<ExprSpec>|
+    let ch1 = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
-    let ch2 = choose |ch: Seq<ExprSpec>|
+    let ch2 = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == y && ch[ch.len() - 1] == z && deq_chain_valid(env, ch, h);
     let n1 = ch1.len();
     let ch2_tail = ch2.subrange(1, ch2.len() as int);
@@ -3286,7 +4600,12 @@ pub proof fn deq_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Expr
         assert(ch2_tail[ch2_tail.len() - 1] == ch2[ch2.len() - 1]);
     }
     assert(deq_chain_valid(env, ch, h)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(env, ch[i], ch[i + 1], h) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_c(
+            env,
+            ch[i],
+            ch[i + 1],
+            h,
+        ) by {
             if i < n1 - 1 {
                 assert(ch[i] == ch1[i]);
                 assert(ch[i + 1] == ch1[i + 1]);
@@ -3314,18 +4633,38 @@ pub proof fn deq_trans(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Expr
 /// chain, and concatenate -- each mapped link is a `deq_c` congruence
 /// step one height up (the fixed side rides along via `deq_c`
 /// reflexivity through `defeq`).
-pub proof fn deq_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec, h: nat)
-    requires deq(env, f1, f2, h), deq(env, a1, a2, h)
-    ensures deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1)
+pub proof fn deq_app_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    f1: ExprSpec,
+    f2: ExprSpec,
+    a1: ExprSpec,
+    a2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq(env, f1, f2, h),
+        deq(env, a1, a2, h),
+    ensures
+        deq(
+            env,
+            ExprSpec::App(Box::new(f1), Box::new(a1)),
+            ExprSpec::App(Box::new(f2), Box::new(a2)),
+            h + 1,
+        ),
 {
-    let chf = choose |ch: Seq<ExprSpec>|
+    let chf = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == f1 && ch[ch.len() - 1] == f2 && deq_chain_valid(env, ch, h);
-    let cha = choose |ch: Seq<ExprSpec>|
+    let cha = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == a1 && ch[ch.len() - 1] == a2 && deq_chain_valid(env, ch, h);
     let mf = Seq::new(chf.len(), |i: int| ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
     let ma = Seq::new(cha.len(), |i: int| ExprSpec::App(Box::new(f2), Box::new(cha[i])));
     assert(deq_chain_valid(env, mf, h + 1)) by {
-        assert forall |i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_c(env, mf[i], mf[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_c(
+            env,
+            mf[i],
+            mf[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, chf[i], chf[i + 1], h));
             defeq_refl(env, a1);
             assert(deq_c(env, a1, a1, h));
@@ -3336,7 +4675,12 @@ pub proof fn deq_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2
         }
     }
     assert(deq_chain_valid(env, ma, h + 1)) by {
-        assert forall |i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_c(env, ma[i], ma[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_c(
+            env,
+            ma[i],
+            ma[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, cha[i], cha[i + 1], h));
             defeq_refl(env, f2);
             assert(deq_c(env, f2, f2, h));
@@ -3350,25 +4694,61 @@ pub proof fn deq_app_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, f1: ExprSpec, f2
     assert(mf[mf.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a1)));
     assert(ma[0] == ExprSpec::App(Box::new(f2), Box::new(a1)));
     assert(ma[ma.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a2)));
-    assert(deq(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), h + 1));
-    assert(deq(env, ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1));
-    deq_trans(env, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1);
+    assert(deq(
+        env,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        h + 1,
+    ));
+    assert(deq(
+        env,
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        h + 1,
+    ));
+    deq_trans(
+        env,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        h + 1,
+    );
 }
 
 /// `deq` congruence at `Bind`, both positions varying (same two-segment
 /// chain-mapping as `deq_app_congr`).
-pub proof fn deq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, h: nat)
-    requires deq(env, t1, t2, h), deq(env, b1, b2, h)
-    ensures deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+pub proof fn deq_bind_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq(env, t1, t2, h),
+        deq(env, b1, b2, h),
+    ensures
+        deq(
+            env,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            h + 1,
+        ),
 {
-    let cht = choose |ch: Seq<ExprSpec>|
+    let cht = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
-    let chb = choose |ch: Seq<ExprSpec>|
+    let chb = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_chain_valid(env, ch, h);
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
     let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
     assert(deq_chain_valid(env, mt, h + 1)) by {
-        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(env, mt[i], mt[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(
+            env,
+            mt[i],
+            mt[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
@@ -3379,7 +4759,12 @@ pub proof fn deq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t
         }
     }
     assert(deq_chain_valid(env, mb, h + 1)) by {
-        assert forall |i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_c(env, mb[i], mb[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_c(
+            env,
+            mb[i],
+            mb[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, chb[i], chb[i + 1], h));
             defeq_refl(env, t2);
             assert(deq_c(env, t2, t2, h));
@@ -3393,9 +4778,25 @@ pub proof fn deq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t
     assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
     assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
     assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
-    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
-    assert(deq(env, ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
-    deq_trans(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1);
+    assert(deq(
+        env,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        h + 1,
+    ));
+    assert(deq(
+        env,
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        h + 1,
+    ));
+    deq_trans(
+        env,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        h + 1,
+    );
 }
 
 /// Binder INTRODUCTION by a fresh instance (the locally-nameless rule):
@@ -3404,19 +4805,38 @@ pub proof fn deq_bind_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t
 /// one height up. No abstraction of chain elements is ever needed: the
 /// fresh-instance disjunct of `deq_c`'s `Bind` case takes the opened-body
 /// chain as is.
-pub proof fn deq_bind_fresh(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32, h: nat)
+pub proof fn deq_bind_fresh(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+    h: nat,
+)
     requires
         deq(env, t1, t2, h),
         fv_absent(b1, k),
         fv_absent(b2, k),
         deq(env, inst_free(b1, k), inst_free(b2, k), h),
-    ensures deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+    ensures
+        deq(
+            env,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            h + 1,
+        ),
 {
-    let cht = choose |ch: Seq<ExprSpec>|
+    let cht = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
     assert(deq_chain_valid(env, mt, h + 1)) by {
-        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(env, mt[i], mt[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(
+            env,
+            mt[i],
+            mt[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
@@ -3428,21 +4848,35 @@ pub proof fn deq_bind_fresh(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t
     }
     assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
     assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
+    assert(deq(
+        env,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        h + 1,
+    ));
     // The fresh-instance link.
     let bx = ExprSpec::Bind(Box::new(t2), Box::new(b1));
     let by = ExprSpec::Bind(Box::new(t2), Box::new(b2));
     defeq_refl(env, t2);
     assert(deq_c(env, t2, t2, h));
     assert(fresh_marker(k));
-    assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k)
-        && deq(env, inst_free(b1, k), inst_free(b2, k), h));
+    assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k) && deq(
+        env,
+        inst_free(b1, k),
+        inst_free(b2, k),
+        h,
+    ));
     assert(((h + 1) - 1) as nat == h);
     assert(deq_c(env, bx, by, h + 1));
     let link = seq![bx, by];
     assert(link.len() == 2 && link[0] == bx && link[1] == by);
     assert(deq_chain_valid(env, link, h + 1)) by {
-        assert forall |i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_c(env, link[i], link[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_c(
+            env,
+            link[i],
+            link[i + 1],
+            h + 1,
+        ) by {
             assert(i == 0);
         }
     }
@@ -3451,34 +4885,67 @@ pub proof fn deq_bind_fresh(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t
 }
 
 /// `deq_any` form of `deq_bind_fresh` (heights joined by `deq_mono`).
-pub proof fn deq_any_bind_fresh(env: Map<u64, (Seq<u64>, ExprSpec)>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32)
+pub proof fn deq_any_bind_fresh(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+)
     requires
         deq_any(env, t1, t2),
         fv_absent(b1, k),
         fv_absent(b2, k),
         deq_any(env, inst_free(b1, k), inst_free(b2, k)),
-    ensures deq_any(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+    ensures
+        deq_any(
+            env,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ),
 {
-    let h1 = choose |h: nat| deq(env, t1, t2, h);
-    let h2 = choose |h: nat| deq(env, inst_free(b1, k), inst_free(b2, k), h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| deq(env, t1, t2, h);
+    let h2 = choose|h: nat| deq(env, inst_free(b1, k), inst_free(b2, k), h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_mono(env, t1, t2, h1, hm);
     deq_mono(env, inst_free(b1, k), inst_free(b2, k), h2, hm);
     deq_bind_fresh(env, t1, t2, b1, b2, k, hm);
-    assert(deq(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
+    assert(deq(
+        env,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        hm + 1,
+    ));
 }
 
-
 /// `deq` congruence at `Proj` (single mapped chain).
-pub proof fn deq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, s1: ExprSpec, s2: ExprSpec, h: nat)
-    requires deq(env, s1, s2, h)
-    ensures deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1)
+pub proof fn deq_proj_congr(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    pidx: usize,
+    s1: ExprSpec,
+    s2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq(env, s1, s2, h),
+    ensures
+        deq(env, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1),
 {
-    let chs = choose |ch: Seq<ExprSpec>|
+    let chs = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_chain_valid(env, ch, h);
     let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chs[i])));
     assert(deq_chain_valid(env, ms, h + 1)) by {
-        assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_c(env, ms[i], ms[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_c(
+            env,
+            ms[i],
+            ms[i + 1],
+            h + 1,
+        ) by {
             assert(deq_c(env, chs[i], chs[i + 1], h));
             assert(ms[i] == ExprSpec::Proj(pidx, Box::new(chs[i])));
             assert(ms[i + 1] == ExprSpec::Proj(pidx, Box::new(chs[i + 1])));
@@ -3505,85 +4972,176 @@ pub proof fn deq_proj_congr(env: Map<u64, (Seq<u64>, ExprSpec)>, pidx: usize, s1
 /// conversion is the deep kernel metatheory this deliberately stops
 /// short of: propositions differing only by EMBEDDED proof terms are
 /// not identified at the type-comparison layer here.
-pub open spec fn deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
-    decreases h, 0int
+pub open spec fn deq_p_c(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 0int,
 {
     ||| deq_c(env, x, y, h)
     ||| (h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat))
     ||| unit_pair(dty, env, lctx, x, y)
     ||| eta_struct_pair(dty, env, lctx, x, y)
     ||| (h > 0 && match (x, y) {
-        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
-            deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat),
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_p_c(
+            dty,
+            env,
+            lctx,
+            *f1,
+            *f2,
+            (h - 1) as nat,
+        ) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat),
         // Binder congruence, two forms as in `deq_c`: raw bodies, or the
         // bodies opened with one fresh free variable related by a `deq_p`
         // chain one height down (2026-09-06: lets proof irrelevance apply
         // UNDER binders, the kernel's shape). The fresh variable's type in
         // `lctx` is whatever the arena says -- the exec producer opens with
         // the first binder's type.
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
-            deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat)
-            && (deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat)
-                || (exists |k: u32| #[trigger] fresh_marker(k)
-                    && fv_absent(*b1, k) && fv_absent(*b2, k)
-                    && deq_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat))),
-        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
-            deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat),
-        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) =>
-            pidx1 == pidx2 && deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_p_c(
+            dty,
+            env,
+            lctx,
+            *t1,
+            *t2,
+            (h - 1) as nat,
+        ) && (deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
+            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                dty,
+                env,
+                lctx,
+                inst_free(*b1, k),
+                inst_free(*b2, k),
+                (h - 1) as nat,
+            ))),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => deq_p_c(
+            dty,
+            env,
+            lctx,
+            *t1,
+            *t2,
+            (h - 1) as nat,
+        ) && deq_p_c(dty, env, lctx, *v1, *v2, (h - 1) as nat) && deq_p_c(
+            dty,
+            env,
+            lctx,
+            *b1,
+            *b2,
+            (h - 1) as nat,
+        ),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && deq_p_c(
+            dty,
+            env,
+            lctx,
+            *s1,
+            *s2,
+            (h - 1) as nat,
+        ),
         _ => false,
     })
 }
 
 /// A chain of `deq_p_c` steps -- `deq_chain_valid`'s typed analogue.
-pub open spec fn deq_p_chain_valid(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, ch: Seq<ExprSpec>, h: nat) -> bool
-    decreases h, 1int
+pub open spec fn deq_p_chain_valid(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    ch: Seq<ExprSpec>,
+    h: nat,
+) -> bool
+    decreases h, 1int,
 {
-    forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 ==> deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h)
+    forall|i: int|
+        #![trigger ch[i]]
+        0 <= i < ch.len() - 1 ==> deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h)
 }
 
 /// TYPED definitional equality (v1): chain-witnessed transitive closure
 /// of `deq_p_c` -- `deq` plus proof irrelevance, closed under
 /// congruence and transitivity. Same chain architecture as `deq` for
 /// the same encoding reasons.
-pub open spec fn deq_p(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
-    decreases h, 2int
+pub open spec fn deq_p(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 2int,
 {
-    exists |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(dty, env, lctx, ch, h)
+    exists|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        )
 }
 
 /// Height-erased form, like `deq_any`.
-pub open spec fn deq_p_any(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
-    exists |h: nat| #[trigger] deq_p(dty, env, lctx, x, y, h)
+pub open spec fn deq_p_any(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+) -> bool {
+    exists|h: nat| #[trigger] deq_p(dty, env, lctx, x, y, h)
 }
 
 /// `deq_p_c` subsumes `deq_c` (first disjunct, definitional).
-pub proof fn deq_p_c_of_deq_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_c(env, x, y, h)
-    ensures deq_p_c(dty, env, lctx, x, y, h)
+pub proof fn deq_p_c_of_deq_c(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_c(env, x, y, h),
+    ensures
+        deq_p_c(dty, env, lctx, x, y, h),
 {
 }
 
-
 /// `deq_p_c` is monotone in its height index.
-pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
-    requires deq_p_c(dty, env, lctx, x, y, h1), h1 <= h2
-    ensures deq_p_c(dty, env, lctx, x, y, h2)
-    decreases h1, 0int
+pub proof fn deq_p_c_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        deq_p_c(dty, env, lctx, x, y, h1),
+        h1 <= h2,
+    ensures
+        deq_p_c(dty, env, lctx, x, y, h2),
+    decreases h1, 0int,
 {
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
     } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h1 - 1) as nat) {
         // the proposition-equality conjunct is now a TYPED conversion, so it
         // has to be lifted along with the step itself
-        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-            #[trigger] irrel_marker(tx, ty2, fx, fy)
-            && types_to(dty, env, lctx, x, tx, fx)
-            && types_to(dty, env, lctx, y, ty2, fy)
-            && is_proof_type_m(dty, env, lctx, tx)
-            && is_proof_type_m(dty, env, lctx, ty2)
-            && deq_p(dty, env, lctx, tx, ty2, (h1 - 1) as nat);
+        let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+                dty,
+                env,
+                lctx,
+                y,
+                ty2,
+                fy,
+            ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2)
+                && deq_p(dty, env, lctx, tx, ty2, (h1 - 1) as nat);
         deq_p_mono(dty, env, lctx, tx, ty2, (h1 - 1) as nat, (h2 - 1) as nat);
         assert(irrel_marker(tx, ty2, fx, fy));
         assert(proof_irrel_pair(dty, env, lctx, x, y, (h2 - 1) as nat));
@@ -3593,46 +5151,101 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
         assert(h1 > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h1 - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h1 - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h1 - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *a1,
+                    *a2,
+                    (h1 - 1) as nat,
+                ));
                 deq_p_c_mono(dty, env, lctx, *f1, *f2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_p_c_mono(dty, env, lctx, *a1, *a2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_p_c(dty, env, lctx, *f1, *f2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h2 - 1) as nat));
+                assert(h2 > 0 && deq_p_c(dty, env, lctx, *f1, *f2, (h2 - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *a1,
+                    *a2,
+                    (h2 - 1) as nat,
+                ));
                 assert(deq_p_c(dty, env, lctx, x, y, h2));
-            }
+            },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
                 assert(deq_p_c(dty, env, lctx, *t1, *t2, (h1 - 1) as nat));
                 deq_p_c_mono(dty, env, lctx, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 if deq_p_c(dty, env, lctx, *b1, *b2, (h1 - 1) as nat) {
                     deq_p_c_mono(dty, env, lctx, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                    assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h2 - 1) as nat));
+                    assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
+                        dty,
+                        env,
+                        lctx,
+                        *b1,
+                        *b2,
+                        (h2 - 1) as nat,
+                    ));
                 } else {
-                    let k = choose |k: u32| #[trigger] fresh_marker(k)
-                        && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h1 - 1) as nat);
-                    deq_p_mono(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h1 - 1) as nat, (h2 - 1) as nat);
+                    let k = choose|k: u32| #[trigger]
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                            dty,
+                            env,
+                            lctx,
+                            inst_free(*b1, k),
+                            inst_free(*b2, k),
+                            (h1 - 1) as nat,
+                        );
+                    deq_p_mono(
+                        dty,
+                        env,
+                        lctx,
+                        inst_free(*b1, k),
+                        inst_free(*b2, k),
+                        (h1 - 1) as nat,
+                        (h2 - 1) as nat,
+                    );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h2 - 1) as nat));
+                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                        dty,
+                        env,
+                        lctx,
+                        inst_free(*b1, k),
+                        inst_free(*b2, k),
+                        (h2 - 1) as nat,
+                    ));
                 }
                 assert(deq_p_c(dty, env, lctx, x, y, h2));
-            }
+            },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h1 - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h1 - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h1 - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h1 - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *v1,
+                    *v2,
+                    (h1 - 1) as nat,
+                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h1 - 1) as nat));
                 deq_p_c_mono(dty, env, lctx, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_p_c_mono(dty, env, lctx, *v1, *v2, (h1 - 1) as nat, (h2 - 1) as nat);
                 deq_p_c_mono(dty, env, lctx, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h2 - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h2 - 1) as nat));
+                assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *v1,
+                    *v2,
+                    (h2 - 1) as nat,
+                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h2 - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, x, y, h2));
-            }
+            },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_p_c(dty, env, lctx, *s1, *s2, (h1 - 1) as nat));
                 deq_p_c_mono(dty, env, lctx, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
                 assert(h2 > 0 && deq_p_c(dty, env, lctx, *s1, *s2, (h2 - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, x, y, h2));
-            }
+            },
             _ => {
                 assert(false);
-            }
+            },
         }
     }
 }
@@ -3640,31 +5253,46 @@ pub proof fn deq_p_c_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
 /// `deq_p_c` is symmetric, height-preserving: `deq_c` by its lemma,
 /// the irrelevance pair by swapping its witnesses (+ `deq_any_symm` for
 /// the proposition-equality conjunct), congruence by the IH.
-pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_p_c(dty, env, lctx, x, y, h)
-    ensures deq_p_c(dty, env, lctx, y, x, h)
-    decreases h, 0int
+pub proof fn deq_p_c_symm(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p_c(dty, env, lctx, x, y, h),
+    ensures
+        deq_p_c(dty, env, lctx, y, x, h),
+    decreases h, 0int,
 {
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
     } else if h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat) {
-        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-            #[trigger] irrel_marker(tx, ty2, fx, fy)
-            && types_to(dty, env, lctx, x, tx, fx)
-            && types_to(dty, env, lctx, y, ty2, fy)
-            && is_proof_type_m(dty, env, lctx, tx)
-            && is_proof_type_m(dty, env, lctx, ty2)
-            && deq_p(dty, env, lctx, tx, ty2, (h - 1) as nat);
+        let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+                dty,
+                env,
+                lctx,
+                y,
+                ty2,
+                fy,
+            ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2)
+                && deq_p(dty, env, lctx, tx, ty2, (h - 1) as nat);
         deq_p_symm(dty, env, lctx, tx, ty2, (h - 1) as nat);
         assert(irrel_marker(ty2, tx, fy, fx));
         assert(proof_irrel_pair(dty, env, lctx, y, x, (h - 1) as nat));
     } else if unit_pair(dty, env, lctx, x, y) {
-        let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-            #[trigger] unit_marker(tx, ty2, fx, fy)
-            && types_to(dty, env, lctx, x, tx, fx)
-            && types_to(dty, env, lctx, y, ty2, fy)
-            && (unit_like_type_m(env, tx) || unit_like_type_m(env, ty2))
-            && deq_any(env, tx, ty2);
+        let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+            unit_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+                dty,
+                env,
+                lctx,
+                y,
+                ty2,
+                fy,
+            ) && (unit_like_type_m(env, tx) || unit_like_type_m(env, ty2)) && deq_any(env, tx, ty2);
         deq_any_symm(env, tx, ty2);
         assert(unit_marker(ty2, tx, fy, fx));
         assert(unit_pair(dty, env, lctx, y, x));
@@ -3674,61 +5302,131 @@ pub proof fn deq_p_c_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
         assert(h > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *a1,
+                    *a2,
+                    (h - 1) as nat,
+                ));
                 deq_p_c_symm(dty, env, lctx, *f1, *f2, (h - 1) as nat);
                 deq_p_c_symm(dty, env, lctx, *a1, *a2, (h - 1) as nat);
-                assert(h > 0 && deq_p_c(dty, env, lctx, *f2, *f1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *a2, *a1, (h - 1) as nat));
+                assert(h > 0 && deq_p_c(dty, env, lctx, *f2, *f1, (h - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *a2,
+                    *a1,
+                    (h - 1) as nat,
+                ));
                 assert(deq_p_c(dty, env, lctx, y, x, h));
-            }
+            },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
                 assert(deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat));
                 deq_p_c_symm(dty, env, lctx, *t1, *t2, (h - 1) as nat);
                 if deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat) {
                     deq_p_c_symm(dty, env, lctx, *b1, *b2, (h - 1) as nat);
-                    assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b2, *b1, (h - 1) as nat));
+                    assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(
+                        dty,
+                        env,
+                        lctx,
+                        *b2,
+                        *b1,
+                        (h - 1) as nat,
+                    ));
                 } else {
-                    let k = choose |k: u32| #[trigger] fresh_marker(k)
-                        && fv_absent(*b1, k) && fv_absent(*b2, k)
-                        && deq_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
-                    deq_p_symm(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
+                    let k = choose|k: u32| #[trigger]
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                            dty,
+                            env,
+                            lctx,
+                            inst_free(*b1, k),
+                            inst_free(*b2, k),
+                            (h - 1) as nat,
+                        );
+                    deq_p_symm(
+                        dty,
+                        env,
+                        lctx,
+                        inst_free(*b1, k),
+                        inst_free(*b2, k),
+                        (h - 1) as nat,
+                    );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k)
-                        && deq_p(dty, env, lctx, inst_free(*b2, k), inst_free(*b1, k), (h - 1) as nat));
+                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && deq_p(
+                        dty,
+                        env,
+                        lctx,
+                        inst_free(*b2, k),
+                        inst_free(*b1, k),
+                        (h - 1) as nat,
+                    ));
                 }
                 assert(deq_p_c(dty, env, lctx, y, x, h));
-            }
+            },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *v1, *v2, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *v1,
+                    *v2,
+                    (h - 1) as nat,
+                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat));
                 deq_p_c_symm(dty, env, lctx, *t1, *t2, (h - 1) as nat);
                 deq_p_c_symm(dty, env, lctx, *v1, *v2, (h - 1) as nat);
                 deq_p_c_symm(dty, env, lctx, *b1, *b2, (h - 1) as nat);
-                assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *v2, *v1, (h - 1) as nat) && deq_p_c(dty, env, lctx, *b2, *b1, (h - 1) as nat));
+                assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(
+                    dty,
+                    env,
+                    lctx,
+                    *v2,
+                    *v1,
+                    (h - 1) as nat,
+                ) && deq_p_c(dty, env, lctx, *b2, *b1, (h - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, y, x, h));
-            }
+            },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
                 assert(deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat));
                 deq_p_c_symm(dty, env, lctx, *s1, *s2, (h - 1) as nat);
                 assert(h > 0 && deq_p_c(dty, env, lctx, *s2, *s1, (h - 1) as nat));
                 assert(deq_p_c(dty, env, lctx, y, x, h));
-            }
+            },
             _ => {
                 assert(false);
-            }
+            },
         }
     }
 }
 
 /// A single typed step is a `deq_p` fact: the length-2 chain.
-pub proof fn deq_p_of_deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_p_c(dty, env, lctx, x, y, h)
-    ensures deq_p(dty, env, lctx, x, y, h)
+pub proof fn deq_p_of_deq_p_c(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p_c(dty, env, lctx, x, y, h),
+    ensures
+        deq_p(dty, env, lctx, x, y, h),
 {
     let ch = seq![x, y];
     assert(ch.len() == 2);
     assert(ch[0] == x);
     assert(ch[ch.len() - 1] == y);
     assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ch[i],
+            ch[i + 1],
+            h,
+        ) by {
             assert(i == 0);
         }
     }
@@ -3736,14 +5434,30 @@ pub proof fn deq_p_of_deq_p_c(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
 
 /// `deq_p` subsumes the untyped `deq`: per-link `deq_p_c_of_deq_c` over
 /// the witness chain.
-pub proof fn deq_p_of_deq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq(env, x, y, h)
-    ensures deq_p(dty, env, lctx, x, y, h)
+pub proof fn deq_p_of_deq(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        deq(env, x, y, h),
+    ensures
+        deq_p(dty, env, lctx, x, y, h),
 {
-    let ch = choose |ch: Seq<ExprSpec>|
+    let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
     assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ch[i],
+            ch[i + 1],
+            h,
+        ) by {
             assert(deq_c(env, ch[i], ch[i + 1], h));
         }
     }
@@ -3752,25 +5466,56 @@ pub proof fn deq_p_of_deq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Se
 /// The irrelevance leaf is monotone in its own height: its only height-
 /// dependent conjunct is the typed conversion between the two propositions,
 /// and that is `deq_p_mono`.
-pub proof fn proof_irrel_pair_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
-    requires proof_irrel_pair(dty, env, lctx, x, y, h1), h1 <= h2
-    ensures proof_irrel_pair(dty, env, lctx, x, y, h2)
+pub proof fn proof_irrel_pair_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        proof_irrel_pair(dty, env, lctx, x, y, h1),
+        h1 <= h2,
+    ensures
+        proof_irrel_pair(dty, env, lctx, x, y, h2),
 {
-    let (tx, ty2, fx, fy) = choose |tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat|
-        #[trigger] irrel_marker(tx, ty2, fx, fy)
-        && types_to(dty, env, lctx, x, tx, fx)
-        && types_to(dty, env, lctx, y, ty2, fy)
-        && is_proof_type_m(dty, env, lctx, tx)
-        && is_proof_type_m(dty, env, lctx, ty2)
-        && deq_p(dty, env, lctx, tx, ty2, h1);
+    let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+        irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+            dty,
+            env,
+            lctx,
+            y,
+            ty2,
+            fy,
+        ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2) && deq_p(
+            dty,
+            env,
+            lctx,
+            tx,
+            ty2,
+            h1,
+        );
     deq_p_mono(dty, env, lctx, tx, ty2, h1, h2);
     assert(irrel_marker(tx, ty2, fx, fy));
 }
 
 /// An irrelevance pair at height `hi` is `deq_p` at any height above it.
-pub proof fn deq_p_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, hi: nat, h: nat)
-    requires proof_irrel_pair(dty, env, lctx, x, y, hi), h > hi
-    ensures deq_p(dty, env, lctx, x, y, h)
+pub proof fn deq_p_of_irrel(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    hi: nat,
+    h: nat,
+)
+    requires
+        proof_irrel_pair(dty, env, lctx, x, y, hi),
+        h > hi,
+    ensures
+        deq_p(dty, env, lctx, x, y, h),
 {
     proof_irrel_pair_mono(dty, env, lctx, x, y, hi, (h - 1) as nat);
     assert(deq_p_c(dty, env, lctx, x, y, h));
@@ -3780,16 +5525,33 @@ pub proof fn deq_p_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (
 /// The unit rule lifts into `deq_p` at any height, exactly as proof
 /// irrelevance does: it is a leaf of `deq_p_c`, and a leaf is a length-2
 /// chain.
-pub proof fn deq_p_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires unit_pair(dty, env, lctx, x, y)
-    ensures deq_p(dty, env, lctx, x, y, h)
+pub proof fn deq_p_of_unit(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        unit_pair(dty, env, lctx, x, y),
+    ensures
+        deq_p(dty, env, lctx, x, y, h),
 {
     deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
 }
 
-pub proof fn deq_p_any_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires unit_pair(dty, env, lctx, x, y)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_unit(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        unit_pair(dty, env, lctx, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
     deq_p_of_unit(dty, env, lctx, x, y, 0);
     assert(deq_p(dty, env, lctx, x, y, 0));
@@ -3797,24 +5559,48 @@ pub proof fn deq_p_any_of_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64
 
 /// Structure eta lifts into `deq_p` at any height, as the other typed
 /// leaves do.
-pub proof fn deq_p_of_eta_struct(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires eta_struct_pair(dty, env, lctx, x, y)
-    ensures deq_p(dty, env, lctx, x, y, h)
+pub proof fn deq_p_of_eta_struct(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        eta_struct_pair(dty, env, lctx, x, y),
+    ensures
+        deq_p(dty, env, lctx, x, y, h),
 {
     deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
 }
 
-pub proof fn deq_p_any_of_eta_struct(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires eta_struct_pair(dty, env, lctx, x, y)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_eta_struct(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        eta_struct_pair(dty, env, lctx, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
     deq_p_of_eta_struct(dty, env, lctx, x, y, 0);
     assert(deq_p(dty, env, lctx, x, y, 0));
 }
 
 /// `deq_p` is reflexive at every height: the length-1 chain.
-pub proof fn deq_p_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, h: nat)
-    ensures deq_p(dty, env, lctx, x, x, h)
+pub proof fn deq_p_refl(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    h: nat,
+)
+    ensures
+        deq_p(dty, env, lctx, x, x, h),
 {
     let ch = seq![x];
     assert(ch.len() == 1);
@@ -3824,15 +5610,39 @@ pub proof fn deq_p_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<
 }
 
 /// `deq_p` is monotone in its height index.
-pub proof fn deq_p_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h1: nat, h2: nat)
-    requires deq_p(dty, env, lctx, x, y, h1), h1 <= h2
-    ensures deq_p(dty, env, lctx, x, y, h2)
-    decreases h1, 1int
+pub proof fn deq_p_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        deq_p(dty, env, lctx, x, y, h1),
+        h1 <= h2,
+    ensures
+        deq_p(dty, env, lctx, x, y, h2),
+    decreases h1, 1int,
 {
-    let ch = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(dty, env, lctx, ch, h1);
+    let ch = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h1,
+        );
     assert(deq_p_chain_valid(dty, env, lctx, ch, h2)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h2) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ch[i],
+            ch[i + 1],
+            h2,
+        ) by {
             assert(deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h1));
             deq_p_c_mono(dty, env, lctx, ch[i], ch[i + 1], h1, h2);
         }
@@ -3840,20 +5650,42 @@ pub proof fn deq_p_mono(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<
 }
 
 /// `deq_p` is symmetric, height-preserving: chain reversal.
-pub proof fn deq_p_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
-    requires deq_p(dty, env, lctx, x, y, h)
-    ensures deq_p(dty, env, lctx, y, x, h)
-    decreases h, 1int
+pub proof fn deq_p_symm(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, x, y, h),
+    ensures
+        deq_p(dty, env, lctx, y, x, h),
+    decreases h, 1int,
 {
-    let ch = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let ch = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let n = ch.len();
     let rev = Seq::new(n, |i: int| ch[n - 1 - i]);
     assert(rev.len() == n);
     assert(rev[0] == ch[n - 1]);
     assert(rev[rev.len() - 1] == ch[0]);
     assert(deq_p_chain_valid(dty, env, lctx, rev, h)) by {
-        assert forall |i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_p_c(dty, env, lctx, rev[i], rev[i + 1], h) by {
+        assert forall|i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            rev[i],
+            rev[i + 1],
+            h,
+        ) by {
             assert(rev[i] == ch[n - 1 - i]);
             assert(rev[i + 1] == ch[n - 2 - i]);
             assert(deq_p_c(dty, env, lctx, ch[n - 2 - i], ch[n - 1 - i], h));
@@ -3863,14 +5695,37 @@ pub proof fn deq_p_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<
 }
 
 /// `deq_p` is transitive -- for FREE, by chain concatenation.
-pub proof fn deq_p_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec, h: nat)
-    requires deq_p(dty, env, lctx, x, y, h), deq_p(dty, env, lctx, y, z, h)
-    ensures deq_p(dty, env, lctx, x, z, h)
+pub proof fn deq_p_trans(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    z: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, y, z, h),
+    ensures
+        deq_p(dty, env, lctx, x, z, h),
 {
-    let ch1 = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(dty, env, lctx, ch, h);
-    let ch2 = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == y && ch[ch.len() - 1] == z && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let ch1 = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
+    let ch2 = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == y && ch[ch.len() - 1] == z && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let n1 = ch1.len();
     let ch2_tail = ch2.subrange(1, ch2.len() as int);
     let ch = ch1 + ch2_tail;
@@ -3886,7 +5741,14 @@ pub proof fn deq_p_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
         assert(ch2_tail[ch2_tail.len() - 1] == ch2[ch2.len() - 1]);
     }
     assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
-        assert forall |i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h) by {
+        assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ch[i],
+            ch[i + 1],
+            h,
+        ) by {
             if i < n1 - 1 {
                 assert(ch[i] == ch1[i]);
                 assert(ch[i + 1] == ch1[i + 1]);
@@ -3913,18 +5775,56 @@ pub proof fn deq_p_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq
 /// two-segment chain mapping as `deq_app_congr`, with the fixed side
 /// riding along via `defeq` reflexivity (a `deq_c`, hence `deq_p_c`,
 /// fact).
-pub proof fn deq_p_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec, h: nat)
-    requires deq_p(dty, env, lctx, f1, f2, h), deq_p(dty, env, lctx, a1, a2, h)
-    ensures deq_p(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1)
+pub proof fn deq_p_app_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    f1: ExprSpec,
+    f2: ExprSpec,
+    a1: ExprSpec,
+    a2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, f1, f2, h),
+        deq_p(dty, env, lctx, a1, a2, h),
+    ensures
+        deq_p(
+            dty,
+            env,
+            lctx,
+            ExprSpec::App(Box::new(f1), Box::new(a1)),
+            ExprSpec::App(Box::new(f2), Box::new(a2)),
+            h + 1,
+        ),
 {
-    let chf = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == f1 && ch[ch.len() - 1] == f2 && deq_p_chain_valid(dty, env, lctx, ch, h);
-    let cha = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == a1 && ch[ch.len() - 1] == a2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let chf = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == f1 && ch[ch.len() - 1] == f2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
+    let cha = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == a1 && ch[ch.len() - 1] == a2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let mf = Seq::new(chf.len(), |i: int| ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
     let ma = Seq::new(cha.len(), |i: int| ExprSpec::App(Box::new(f2), Box::new(cha[i])));
     assert(deq_p_chain_valid(dty, env, lctx, mf, h + 1)) by {
-        assert forall |i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_p_c(dty, env, lctx, mf[i], mf[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            mf[i],
+            mf[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, chf[i], chf[i + 1], h));
             defeq_refl(env, a1);
             assert(deq_c(env, a1, a1, h));
@@ -3936,7 +5836,14 @@ pub proof fn deq_p_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, 
         }
     }
     assert(deq_p_chain_valid(dty, env, lctx, ma, h + 1)) by {
-        assert forall |i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_p_c(dty, env, lctx, ma[i], ma[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ma[i],
+            ma[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, cha[i], cha[i + 1], h));
             defeq_refl(env, f2);
             assert(deq_c(env, f2, f2, h));
@@ -3951,24 +5858,84 @@ pub proof fn deq_p_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, 
     assert(mf[mf.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a1)));
     assert(ma[0] == ExprSpec::App(Box::new(f2), Box::new(a1)));
     assert(ma[ma.len() - 1] == ExprSpec::App(Box::new(f2), Box::new(a2)));
-    assert(deq_p(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), h + 1));
-    assert(deq_p(dty, env, lctx, ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1));
-    deq_p_trans(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1);
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        h + 1,
+    ));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        h + 1,
+    ));
+    deq_p_trans(
+        dty,
+        env,
+        lctx,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        h + 1,
+    );
 }
 
 /// `deq_p` congruence at `Bind`.
-pub proof fn deq_p_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, h: nat)
-    requires deq_p(dty, env, lctx, t1, t2, h), deq_p(dty, env, lctx, b1, b2, h)
-    ensures deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+pub proof fn deq_p_bind_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, t1, t2, h),
+        deq_p(dty, env, lctx, b1, b2, h),
+    ensures
+        deq_p(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            h + 1,
+        ),
 {
-    let cht = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(dty, env, lctx, ch, h);
-    let chb = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let cht = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
+    let chb = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
     let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
     assert(deq_p_chain_valid(dty, env, lctx, mt, h + 1)) by {
-        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            mt[i],
+            mt[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
@@ -3980,7 +5947,14 @@ pub proof fn deq_p_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
         }
     }
     assert(deq_p_chain_valid(dty, env, lctx, mb, h + 1)) by {
-        assert forall |i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_p_c(dty, env, lctx, mb[i], mb[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            mb[i],
+            mb[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, chb[i], chb[i + 1], h));
             defeq_refl(env, t2);
             assert(deq_c(env, t2, t2, h));
@@ -3995,21 +5969,73 @@ pub proof fn deq_p_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
     assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
     assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
     assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
-    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
-    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
-    deq_p_trans(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1);
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        h + 1,
+    ));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        h + 1,
+    ));
+    deq_p_trans(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        h + 1,
+    );
 }
 
 /// `deq_p` congruence at `Proj`.
-pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, pidx: usize, s1: ExprSpec, s2: ExprSpec, h: nat)
-    requires deq_p(dty, env, lctx, s1, s2, h)
-    ensures deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1)
+pub proof fn deq_p_proj_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    pidx: usize,
+    s1: ExprSpec,
+    s2: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, s1, s2, h),
+    ensures
+        deq_p(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Proj(pidx, Box::new(s1)),
+            ExprSpec::Proj(pidx, Box::new(s2)),
+            h + 1,
+        ),
 {
-    let chs = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let chs = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chs[i])));
     assert(deq_p_chain_valid(dty, env, lctx, ms, h + 1)) by {
-        assert forall |i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            ms[i],
+            ms[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, chs[i], chs[i + 1], h));
             assert(ms[i] == ExprSpec::Proj(pidx, Box::new(chs[i])));
             assert(ms[i + 1] == ExprSpec::Proj(pidx, Box::new(chs[i + 1])));
@@ -4019,30 +6045,62 @@ pub proof fn deq_p_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
     }
     assert(ms[0] == ExprSpec::Proj(pidx, Box::new(s1)));
     assert(ms[ms.len() - 1] == ExprSpec::Proj(pidx, Box::new(s2)));
-    assert(deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Proj(pidx, Box::new(s1)),
+        ExprSpec::Proj(pidx, Box::new(s2)),
+        h + 1,
+    ));
 }
 
 /// `deq_p_any` API -- height-erased typed equality, mirroring `deq_any`'s.
-pub proof fn deq_p_any_of_deq_any(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires deq_any(env, x, y)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_deq_any(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        deq_any(env, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
-    let h = choose |h: nat| deq(env, x, y, h);
+    let h = choose|h: nat| deq(env, x, y, h);
     deq_p_of_deq(dty, env, lctx, x, y, h);
     assert(deq_p(dty, env, lctx, x, y, h));
 }
 
-pub proof fn deq_p_any_of_defeq(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires defeq(env, x, y)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_defeq(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        defeq(env, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
     deq_any_of_defeq(env, x, y);
     deq_p_any_of_deq_any(dty, env, lctx, x, y);
 }
 
-pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, hi: nat)
-    requires proof_irrel_pair(dty, env, lctx, x, y, hi)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_irrel(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    hi: nat,
+)
+    requires
+        proof_irrel_pair(dty, env, lctx, x, y, hi),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
     deq_p_of_irrel(dty, env, lctx, x, y, hi, hi + 1);
     assert(deq_p(dty, env, lctx, x, y, hi + 1));
@@ -4050,44 +6108,130 @@ pub proof fn deq_p_any_of_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u6
 
 /// `deq_p_any` congruences: lift the height-indexed `deq_p_*_congr` through
 /// `deq_p_mono` to a common height (2026-09-06, for the conversion route).
-pub proof fn deq_p_any_app_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, f1: ExprSpec, f2: ExprSpec, a1: ExprSpec, a2: ExprSpec)
-    requires deq_p_any(dty, env, lctx, f1, f2), deq_p_any(dty, env, lctx, a1, a2)
-    ensures deq_p_any(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)))
+pub proof fn deq_p_any_app_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    f1: ExprSpec,
+    f2: ExprSpec,
+    a1: ExprSpec,
+    a2: ExprSpec,
+)
+    requires
+        deq_p_any(dty, env, lctx, f1, f2),
+        deq_p_any(dty, env, lctx, a1, a2),
+    ensures
+        deq_p_any(
+            dty,
+            env,
+            lctx,
+            ExprSpec::App(Box::new(f1), Box::new(a1)),
+            ExprSpec::App(Box::new(f2), Box::new(a2)),
+        ),
 {
-    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, f1, f2, h);
-    let h2 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, a1, a2, h);
-    let h = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, f1, f2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, a1, a2, h);
+    let h = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_p_mono(dty, env, lctx, f1, f2, h1, h);
     deq_p_mono(dty, env, lctx, a1, a2, h2, h);
     deq_p_app_congr(dty, env, lctx, f1, f2, a1, a2, h);
-    assert(deq_p(dty, env, lctx, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2)), h + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::App(Box::new(f1), Box::new(a1)),
+        ExprSpec::App(Box::new(f2), Box::new(a2)),
+        h + 1,
+    ));
 }
 
-pub proof fn deq_p_any_bind_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec)
-    requires deq_p_any(dty, env, lctx, t1, t2), deq_p_any(dty, env, lctx, b1, b2)
-    ensures deq_p_any(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+pub proof fn deq_p_any_bind_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+)
+    requires
+        deq_p_any(dty, env, lctx, t1, t2),
+        deq_p_any(dty, env, lctx, b1, b2),
+    ensures
+        deq_p_any(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ),
 {
-    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
-    let h2 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, b1, b2, h);
-    let h = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, b1, b2, h);
+    let h = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_p_mono(dty, env, lctx, t1, t2, h1, h);
     deq_p_mono(dty, env, lctx, b1, b2, h2, h);
     deq_p_bind_congr(dty, env, lctx, t1, t2, b1, b2, h);
-    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        h + 1,
+    ));
 }
 
-pub proof fn deq_p_any_proj_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, pidx: usize, s1: ExprSpec, s2: ExprSpec)
-    requires deq_p_any(dty, env, lctx, s1, s2)
-    ensures deq_p_any(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)))
+pub proof fn deq_p_any_proj_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    pidx: usize,
+    s1: ExprSpec,
+    s2: ExprSpec,
+)
+    requires
+        deq_p_any(dty, env, lctx, s1, s2),
+    ensures
+        deq_p_any(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Proj(pidx, Box::new(s1)),
+            ExprSpec::Proj(pidx, Box::new(s2)),
+        ),
 {
-    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, s1, s2, h);
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, s1, s2, h);
     deq_p_proj_congr(dty, env, lctx, pidx, s1, s2, h1);
-    assert(deq_p(dty, env, lctx, ExprSpec::Proj(pidx, Box::new(s1)), ExprSpec::Proj(pidx, Box::new(s2)), h1 + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Proj(pidx, Box::new(s1)),
+        ExprSpec::Proj(pidx, Box::new(s2)),
+        h1 + 1,
+    ));
 }
 
-pub proof fn deq_p_any_of_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires deq_leaf(x, y)
-    ensures deq_p_any(dty, env, lctx, x, y)
+pub proof fn deq_p_any_of_leaf(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        deq_leaf(x, y),
+    ensures
+        deq_p_any(dty, env, lctx, x, y),
 {
     deq_any_of_leaf(env, x, y);
     deq_p_any_of_deq_any(dty, env, lctx, x, y);
@@ -4100,19 +6244,50 @@ pub proof fn deq_p_any_of_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64
 /// (deq_p twin, 2026-09-06) fresh-instance disjunct of `deq_p_c`'s `Bind` case takes the opened-body
 /// chain as is.
 #[verifier::spinoff_prover]
-pub proof fn deq_p_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32, h: nat)
+pub proof fn deq_p_bind_fresh(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+    h: nat,
+)
     requires
         deq_p(dty, env, lctx, t1, t2, h),
         fv_absent(b1, k),
         fv_absent(b2, k),
         deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h),
-    ensures deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), h + 1)
+    ensures
+        deq_p(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            h + 1,
+        ),
 {
-    let cht = choose |ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(dty, env, lctx, ch, h);
+    let cht = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(
+            dty,
+            env,
+            lctx,
+            ch,
+            h,
+        );
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
     assert(deq_p_chain_valid(dty, env, lctx, mt, h + 1)) by {
-        assert forall |i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            mt[i],
+            mt[i + 1],
+            h + 1,
+        ) by {
             assert(deq_p_c(dty, env, lctx, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
@@ -4126,7 +6301,14 @@ pub proof fn deq_p_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
     }
     assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
     assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b1)), h + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        h + 1,
+    ));
     // The fresh-instance link.
     let bx = ExprSpec::Bind(Box::new(t2), Box::new(b1));
     let by = ExprSpec::Bind(Box::new(t2), Box::new(b2));
@@ -4135,14 +6317,27 @@ pub proof fn deq_p_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
     deq_p_c_of_deq_c(dty, env, lctx, t2, t2, h);
     assert(deq_p_c(dty, env, lctx, t2, t2, h));
     assert(fresh_marker(k));
-    assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k)
-        && deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h));
+    assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k) && deq_p(
+        dty,
+        env,
+        lctx,
+        inst_free(b1, k),
+        inst_free(b2, k),
+        h,
+    ));
     assert(((h + 1) - 1) as nat == h);
     assert(deq_p_c(dty, env, lctx, bx, by, h + 1));
     let link = seq![bx, by];
     assert(link.len() == 2 && link[0] == bx && link[1] == by);
     assert(deq_p_chain_valid(dty, env, lctx, link, h + 1)) by {
-        assert forall |i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_p_c(dty, env, lctx, link[i], link[i + 1], h + 1) by {
+        assert forall|i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_p_c(
+            dty,
+            env,
+            lctx,
+            link[i],
+            link[i + 1],
+            h + 1,
+        ) by {
             assert(i == 0);
         }
     }
@@ -4151,29 +6346,65 @@ pub proof fn deq_p_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64,
 }
 
 /// `deq_p_any` face of `deq_p_bind_fresh`.
-pub proof fn deq_p_any_bind_fresh(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, t1: ExprSpec, t2: ExprSpec, b1: ExprSpec, b2: ExprSpec, k: u32)
+pub proof fn deq_p_any_bind_fresh(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+)
     requires
         deq_p_any(dty, env, lctx, t1, t2),
         fv_absent(b1, k),
         fv_absent(b2, k),
         deq_p_any(dty, env, lctx, inst_free(b1, k), inst_free(b2, k)),
-    ensures deq_p_any(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)))
+    ensures
+        deq_p_any(
+            dty,
+            env,
+            lctx,
+            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ),
 {
-    let h1 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
-    let h2 = choose |h: nat| #[trigger] deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_p_mono(dty, env, lctx, t1, t2, h1, hm);
     deq_p_mono(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h2, hm);
     deq_p_bind_fresh(dty, env, lctx, t1, t2, b1, b2, k, hm);
-    assert(deq_p(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2)), hm + 1));
+    assert(deq_p(
+        dty,
+        env,
+        lctx,
+        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        hm + 1,
+    ));
 }
 
 /// `deq_p_any` congruence along a spine of unchanged arguments (2026-09-08,
 /// K-like recursor leaf): `x ~ y` gives `x args ~ y args`.
-pub proof fn deq_p_any_spine_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, rest: Seq<ExprSpec>)
-    requires deq_p_any(dty, env, lctx, x, y)
-    ensures deq_p_any(dty, env, lctx, spine_app(x, rest), spine_app(y, rest))
-    decreases rest.len()
+pub proof fn deq_p_any_spine_congr(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    rest: Seq<ExprSpec>,
+)
+    requires
+        deq_p_any(dty, env, lctx, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, spine_app(x, rest), spine_app(y, rest)),
+    decreases rest.len(),
 {
     if rest.len() == 0 {
         assert(spine_app(x, rest) == x);
@@ -4192,11 +6423,20 @@ pub proof fn deq_p_any_spine_congr(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map
 
 /// One argument of a spine replaced by a `deq_p_any`-related term (the
 /// `pstep_star_spine_update` twin).
-pub proof fn deq_p_any_spine_update(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, head: ExprSpec, args: Seq<ExprSpec>, i: int, y: ExprSpec)
+pub proof fn deq_p_any_spine_update(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    head: ExprSpec,
+    args: Seq<ExprSpec>,
+    i: int,
+    y: ExprSpec,
+)
     requires
         0 <= i < args.len(),
         deq_p_any(dty, env, lctx, args[i], y),
-    ensures deq_p_any(dty, env, lctx, spine_app(head, args), spine_app(head, args.update(i, y)))
+    ensures
+        deq_p_any(dty, env, lctx, spine_app(head, args), spine_app(head, args.update(i, y))),
 {
     let args2 = args.update(i, y);
     let pre = args.subrange(0, i);
@@ -4210,32 +6450,67 @@ pub proof fn deq_p_any_spine_update(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Ma
     spine_app_compose_last(head, pre, y);
     deq_p_any_refl(dty, env, lctx, x);
     deq_p_any_app_congr(dty, env, lctx, x, x, args[i], y);
-    deq_p_any_spine_congr(dty, env, lctx, ExprSpec::App(Box::new(x), Box::new(args[i])), ExprSpec::App(Box::new(x), Box::new(y)), rest);
+    deq_p_any_spine_congr(
+        dty,
+        env,
+        lctx,
+        ExprSpec::App(Box::new(x), Box::new(args[i])),
+        ExprSpec::App(Box::new(x), Box::new(y)),
+        rest,
+    );
 }
 
-pub proof fn deq_p_any_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec)
-    ensures deq_p_any(dty, env, lctx, x, x)
+pub proof fn deq_p_any_refl(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+)
+    ensures
+        deq_p_any(dty, env, lctx, x, x),
 {
     deq_p_refl(dty, env, lctx, x, 0);
     assert(deq_p(dty, env, lctx, x, x, 0));
 }
 
-pub proof fn deq_p_any_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires deq_p_any(dty, env, lctx, x, y)
-    ensures deq_p_any(dty, env, lctx, y, x)
+pub proof fn deq_p_any_symm(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+)
+    requires
+        deq_p_any(dty, env, lctx, x, y),
+    ensures
+        deq_p_any(dty, env, lctx, y, x),
 {
-    let h = choose |h: nat| deq_p(dty, env, lctx, x, y, h);
+    let h = choose|h: nat| deq_p(dty, env, lctx, x, y, h);
     deq_p_symm(dty, env, lctx, x, y, h);
     assert(deq_p(dty, env, lctx, y, x, h));
 }
 
-pub proof fn deq_p_any_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, (Seq<u64>, ExprSpec)>, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
-    requires deq_p_any(dty, env, lctx, x, y), deq_p_any(dty, env, lctx, y, z)
-    ensures deq_p_any(dty, env, lctx, x, z)
+pub proof fn deq_p_any_trans(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    z: ExprSpec,
+)
+    requires
+        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, y, z),
+    ensures
+        deq_p_any(dty, env, lctx, x, z),
 {
-    let h1 = choose |h: nat| deq_p(dty, env, lctx, x, y, h);
-    let h2 = choose |h: nat| deq_p(dty, env, lctx, y, z, h);
-    let hm = if h1 >= h2 { h1 } else { h2 };
+    let h1 = choose|h: nat| deq_p(dty, env, lctx, x, y, h);
+    let h2 = choose|h: nat| deq_p(dty, env, lctx, y, z, h);
+    let hm = if h1 >= h2 {
+        h1
+    } else {
+        h2
+    };
     deq_p_mono(dty, env, lctx, x, y, h1, hm);
     deq_p_mono(dty, env, lctx, y, z, h2, hm);
     deq_p_trans(dty, env, lctx, x, y, z, hm);
@@ -4254,9 +6529,14 @@ pub proof fn deq_p_any_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: Map<u64, 
 /// representation" disjunct needs to lift to a real `full_def_eq(x, y)`
 /// claim (see `feedback_defeq_witness_vs_pstep_star` for why this
 /// couldn't just reuse `def_eq_witness`).
-pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprPtr<'t>)
-    requires nat_repr_is_zero(e)
-    ensures pstep_star(env, to_model(e), const_expr_no_levels(nat_zero_id()))
+pub proof fn nat_repr_is_zero_reaches_canonical<'t>(
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    e: ExprPtr<'t>,
+)
+    requires
+        nat_repr_is_zero(e),
+    ensures
+        pstep_star(env, to_model(e), const_expr_no_levels(nat_zero_id())),
 {
     if is_nat_lit_shape(e) && nat_lit_value(e) == 0 {
         is_nat_lit_shape_model(e);
@@ -4287,16 +6567,26 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(env: Map<u64, (Seq<u64>, Exp
 /// the legacy path" -- the verified route only ever CONFIRMS equality
 /// (the direction that both carries a claim and is the dangerous one to
 /// get wrong), never denies, so routing costs no completeness.
-pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
+pub fn verified_def_eq_checked<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
-        _ => true,
-    }
+            Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
+            _ => true,
+        },
 {
-    let sx = match verified_size(ctx, x, 100000) { Some(v) => v, None => return None };
-    let sy = match verified_size(ctx, y, 100000) { Some(v) => v, None => return None };
+    let sx = match verified_size(ctx, x, 100000) {
+        Some(v) => v,
+        None => return None,
+    };
+    let sy = match verified_size(ctx, y, 100000) {
+        Some(v) => v,
+        None => return None,
+    };
     proof {
         depth_le_size(to_model(x));
         depth_le_size(to_model(y));
@@ -4305,7 +6595,7 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'
     }
     match verified_def_eq(ctx, x, y, 100) {
         Some(true) => return Some(true),
-        _ => {}
+        _ => {},
     }
     // Nat-literal equality (zero representations, equal literals,
     // successor peeling) -- same depth gates, real nat_found_claim.
@@ -4315,21 +6605,27 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'
     }
 }
 
-pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
-        _ => true,
-    }
-    decreases fuel
+            Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
+            _ => true,
+        },
+    decreases fuel,
 {
     if expr_ptr_eq(x, y) {
         proof {
-            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                deq_any(env, to_model(x), to_model(y)) by {
                 deq_refl(env, to_model(x), 0);
                 assert(deq(env, to_model(x), to_model(y), 0));
             }
@@ -4339,8 +6635,10 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
     match verified_def_eq_core(ctx, x, y, fuel) {
         Some(true) => {
             proof {
-                if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), fuel as nat) {
-                    assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    deq(env, to_model(x), to_model(y), fuel as nat) {
+                    assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                        deq_any(env, to_model(x), to_model(y)) by {
                         assert(deq(env, to_model(x), to_model(y), fuel as nat));
                     }
                 }
@@ -4365,19 +6663,36 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
             // deq disjunct, lift the whole spine through
             // deq_spine_app_congr; otherwise the spine-shape disjunct
             // of deq_full_claim already holds from the app ensures.
-            let (fx, fy, argsx, argsy) = choose |fx: ExprPtr<'t>, fy: ExprPtr<'t>, argsx: Seq<ExprPtr<'t>>, argsy: Seq<ExprPtr<'t>>|
-                to_model(x) == spine_app(to_model(fx), args_model_of(argsx))
-                && to_model(y) == spine_app(to_model(fy), args_model_of(argsy))
-                && argsx.len() == argsy.len() && argsx.len() > 0
-                && (forall |i: int| 0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], fuel as nat))
-                && deq_core_claim(fx, fy, fuel as nat);
-            if (forall |i: int| 0 <= i < argsx.len() ==> forall |env: Map<u64, (Seq<u64>, ExprSpec)>| deq(env, to_model(#[trigger] argsx[i]), to_model(argsy[i]), fuel as nat))
-                && (forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(fx), to_model(fy), fuel as nat)) {
-                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+            let (fx, fy, argsx, argsy) = choose|
+                fx: ExprPtr<'t>,
+                fy: ExprPtr<'t>,
+                argsx: Seq<ExprPtr<'t>>,
+                argsy: Seq<ExprPtr<'t>>,
+            |
+                to_model(x) == spine_app(to_model(fx), args_model_of(argsx)) && to_model(y)
+                    == spine_app(to_model(fy), args_model_of(argsy)) && argsx.len() == argsy.len()
+                    && argsx.len() > 0 && (forall|i: int|
+                    0 <= i < argsx.len() ==> deq_core_claim(
+                        #[trigger] argsx[i],
+                        argsy[i],
+                        fuel as nat,
+                    )) && deq_core_claim(fx, fy, fuel as nat);
+            if (forall|i: int|
+                0 <= i < argsx.len() ==> forall|env: Map<u64, (Seq<u64>, ExprSpec)>|
+                    deq(env, to_model(#[trigger] argsx[i]), to_model(argsy[i]), fuel as nat)) && (
+            forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                deq(env, to_model(fx), to_model(fy), fuel as nat)) {
+                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    deq_any(env, to_model(x), to_model(y)) by {
                     let ax = args_model_of(argsx);
                     let ay = args_model_of(argsy);
                     assert(ax.len() == ay.len());
-                    assert forall |i: int| 0 <= i < ax.len() implies deq(env, #[trigger] ax[i], ay[i], fuel as nat) by {
+                    assert forall|i: int| 0 <= i < ax.len() implies deq(
+                        env,
+                        #[trigger] ax[i],
+                        ay[i],
+                        fuel as nat,
+                    ) by {
                         assert(ax[i] == to_model(argsx[i]));
                         assert(ay[i] == to_model(argsy[i]));
                         assert(deq(env, to_model(argsx[i]), to_model(argsy[i]), fuel as nat));
@@ -4449,9 +6764,11 @@ pub fn verified_def_eq<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: E
 ///
 /// Walks backwards because `replace_dbj_level` pops the counter's top.
 fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t>>)
-    requires old(ctx).dbj_level_counter as int >= locals@.len() as int
+    requires
+        old(ctx).dbj_level_counter as int >= locals@.len() as int,
     ensures
-        final(ctx).dbj_level_counter as int == old(ctx).dbj_level_counter as int - locals@.len() as int,
+        final(ctx).dbj_level_counter as int == old(ctx).dbj_level_counter as int
+            - locals@.len() as int,
         final(ctx).expr_cache == old(ctx).expr_cache,
 {
     let mut k: usize = locals.len();
@@ -4459,45 +6776,60 @@ fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t
         invariant
             k <= locals@.len(),
             old(ctx).dbj_level_counter as int >= locals@.len() as int,
-            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int - (locals@.len() as int - k as int),
+            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int - (
+            locals@.len() as int - k as int),
             ctx.expr_cache == old(ctx).expr_cache,
-        decreases k
+        decreases k,
     {
         ctx.replace_dbj_level(locals[k - 1]);
         k = k - 1;
     }
 }
 
-pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq_binder_step<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => exists |t1: ExprPtr<'t>, body1: ExprPtr<'t>, t2: ExprPtr<'t>, body2: ExprPtr<'t>|
-            to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
-            && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))),
-        _ => true,
-    }
-    decreases fuel
+            Some(true) => exists|
+                t1: ExprPtr<'t>,
+                body1: ExprPtr<'t>,
+                t2: ExprPtr<'t>,
+                body2: ExprPtr<'t>,
+            |
+                to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
+                    && to_model(y) == ExprSpec::Bind(
+                    Box::new(to_model(t2)),
+                    Box::new(to_model(body2)),
+                ),
+            _ => true,
+        },
+    decreases fuel,
 {
     let x_el = ctx.read_expr(x);
     let y_el = ctx.read_expr(y);
-    let first: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)> =
-        if let Some((name, style, t1, body1)) = expr_as_pi(&x_el) {
-            match expr_as_pi(&y_el) {
-                Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
-                None => None,
-            }
-        } else if let Some((name, style, t1, body1)) = expr_as_lambda(&x_el) {
-            match expr_as_lambda(&y_el) {
-                Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
-                None => None,
-            }
-        } else {
-            None
-        };
+    let first: Option<
+        (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>),
+    > = if let Some((name, style, t1, body1)) = expr_as_pi(&x_el) {
+        match expr_as_pi(&y_el) {
+            Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
+            None => None,
+        }
+    } else if let Some((name, style, t1, body1)) = expr_as_lambda(&x_el) {
+        match expr_as_lambda(&y_el) {
+            Some((_, _, t2, body2)) => Some((name, style, t1, body1, t2, body2)),
+            None => None,
+        }
+    } else {
+        None
+    };
     let (name, style, t1, body1, t2, body2) = match first {
         Some(p) => p,
         None => return None,
@@ -4516,8 +6848,18 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
         None => return None,
     };
     proof {
-        subst_full_depth_bound_n(to_model(t1), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
-        subst_full_depth_bound_n(to_model(t2), Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])), 0, 0);
+        subst_full_depth_bound_n(
+            to_model(t1),
+            Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])),
+            0,
+            0,
+        );
+        subst_full_depth_bound_n(
+            to_model(t2),
+            Seq::new(empty_substs@.len(), |i: int| to_model(empty_substs@[i])),
+            0,
+            0,
+        );
     }
     let mut fuel_left = fuel;
     if fuel_left == 0 {
@@ -4529,7 +6871,10 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     }
     // `mk_dbj_level` needs headroom in the `u16` counter; no locals are open
     // yet, so declining here needs no cleanup.
-    if get_dbj_level_counter(ctx) == u16::MAX { return None; }
+
+    if get_dbj_level_counter(ctx) == u16::MAX {
+        return None;
+    }
     let local = ctx.mk_dbj_level(name, style, t1i);
     assert(depth(to_model(local)) == 0);
     assert(depth(to_model(body1)) <= 60000);
@@ -4544,29 +6889,31 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
     // one fresh local per layer, until neither side matches anymore.
     while true
         invariant
-            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int + locals@.len() as int,
+            ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int
+                + locals@.len() as int,
             depth(to_model(cur_x)) <= 60000,
             depth(to_model(cur_y)) <= 60000,
-            forall |i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
+            forall|i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
             fuel_left < fuel,
-        decreases depth(to_model(cur_x))
+        decreases depth(to_model(cur_x)),
     {
         let cx_el = ctx.read_expr(cur_x);
         let cy_el = ctx.read_expr(cur_y);
-        let next: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)> =
-            if let Some((n, s, nt1, nb1)) = expr_as_pi(&cx_el) {
-                match expr_as_pi(&cy_el) {
-                    Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
-                    None => None,
-                }
-            } else if let Some((n, s, nt1, nb1)) = expr_as_lambda(&cx_el) {
-                match expr_as_lambda(&cy_el) {
-                    Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
-                    None => None,
-                }
-            } else {
-                None
-            };
+        let next: Option<
+            (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>),
+        > = if let Some((n, s, nt1, nb1)) = expr_as_pi(&cx_el) {
+            match expr_as_pi(&cy_el) {
+                Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
+                None => None,
+            }
+        } else if let Some((n, s, nt1, nb1)) = expr_as_lambda(&cx_el) {
+            match expr_as_lambda(&cy_el) {
+                Some((_, _, nt2, nb2)) => Some((n, s, nt1, nb1, nt2, nb2)),
+                None => None,
+            }
+        } else {
+            None
+        };
         let (n, s, nt1, nb1, nt2, nb2) = match next {
             Some(p) => p,
             None => break,
@@ -4575,14 +6922,23 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
         assert(depth(to_model(nt2)) <= 60000);
         let nt1i = match verified_inst(ctx, nt1, locals.as_slice(), 0, fuel) {
             Some(v) => v,
-            None => { close_dbj_locals(ctx, &locals); return None; },
+            None => {
+                close_dbj_locals(ctx, &locals);
+                return None;
+            },
         };
         let nt2i = match verified_inst(ctx, nt2, locals.as_slice(), 0, fuel) {
             Some(v) => v,
-            None => { close_dbj_locals(ctx, &locals); return None; },
+            None => {
+                close_dbj_locals(ctx, &locals);
+                return None;
+            },
         };
         proof {
-            let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
+            let substs_model: Seq<ExprSpec> = Seq::new(
+                locals@.len(),
+                |i: int| to_model(locals@[i]),
+            );
             subst_full_depth_bound_n(to_model(nt1), substs_model, 0, 0);
             subst_full_depth_bound_n(to_model(nt2), substs_model, 0, 0);
         }
@@ -4610,11 +6966,17 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
 
     let cxi = match verified_inst(ctx, cur_x, locals.as_slice(), 0, fuel) {
         Some(v) => v,
-        None => { close_dbj_locals(ctx, &locals); return None; },
+        None => {
+            close_dbj_locals(ctx, &locals);
+            return None;
+        },
     };
     let cyi = match verified_inst(ctx, cur_y, locals.as_slice(), 0, fuel) {
         Some(v) => v,
-        None => { close_dbj_locals(ctx, &locals); return None; },
+        None => {
+            close_dbj_locals(ctx, &locals);
+            return None;
+        },
     };
     proof {
         let substs_model: Seq<ExprSpec> = Seq::new(locals@.len(), |i: int| to_model(locals@[i]));
@@ -4647,26 +7009,33 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprP
 /// `delta_try_nat`'s second half) -- standalone for now, same "build the
 /// piece, wire it in later" pattern as `verified_def_eq_app`/`_binder_
 /// step` originally were.
-pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, y: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+pub fn verified_def_eq_nat<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
     requires
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => nat_found_claim(x, y),
-        _ => true,
-    }
-    decreases fuel
+            Some(true) => nat_found_claim(x, y),
+            _ => true,
+        },
+    decreases fuel,
 {
     if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
         proof {
-            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] full_def_eq(env, x, y) by {
+            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                full_def_eq(env, x, y) by {
                 nat_repr_is_zero_reaches_canonical(env, x);
                 nat_repr_is_zero_reaches_canonical(env, y);
                 assert(defeq(env, to_model(x), to_model(y)));
             }
-            assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                deq_any(env, to_model(x), to_model(y)) by {
                 nat_repr_is_zero_reaches_canonical(env, x);
                 nat_repr_is_zero_reaches_canonical(env, y);
                 assert(defeq(env, to_model(x), to_model(y)));
@@ -4681,7 +7050,8 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
         let b = expr_ptr_eq(x, y);
         proof {
             if b {
-                assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    deq_any(env, to_model(x), to_model(y)) by {
                     deq_any_refl(env, to_model(x));
                 }
             }
@@ -4708,10 +7078,12 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
             let r = verified_def_eq(ctx, xp, yp, fuel - 1);
             proof {
                 if r == Some(true) {
-                    if forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(xp), to_model(yp)) {
+                    if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                        deq_any(env, to_model(xp), to_model(yp)) {
                         // Lift through the canonical successor application:
                         // x ~ App(succ, xp) ~ App(succ, yp) ~ y.
-                        assert forall |env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)) by {
+                        assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                            deq_any(env, to_model(x), to_model(y)) by {
                             let sc = const_expr_no_levels(nat_succ_id());
                             let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
                             let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
@@ -4728,7 +7100,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
                 }
             }
             r
-        }
+        },
         _ => None,
     }
 }
@@ -4743,16 +7115,22 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, x: ExprPtr<'t>, 
 /// applied Const at all" and "that Const isn't a Definition/Theorem"
 /// (e.g. it's an Axiom, Inductive, Constructor, ...), matching the real
 /// function's own single `Option` return exactly.
-pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
-    ensures match result {
-        Some((_, hint)) =>
-            exists |fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
-                to_model(e) == spine_app(to_model(fun), args_model_of(args))
-                && is_const_shape(fun)
-                && to_model_of_declar_hint(*env).contains_key(const_id(fun))
-                && to_model_of_declar_hint(*env)[const_id(fun)] == reducibility_hint_to_model(hint),
-        None => true,
-    }
+pub fn verified_get_applied_def<'t, 'p: 't, 'x>(
+    ctx: &TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
+    ensures
+        match result {
+            Some((_, hint)) => exists|fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
+                to_model(e) == spine_app(to_model(fun), args_model_of(args)) && is_const_shape(fun)
+                    && to_model_of_declar_hint(*env).contains_key(const_id(fun))
+                    && to_model_of_declar_hint(*env)[const_id(fun)] == reducibility_hint_to_model(
+                    hint,
+                ),
+            None => true,
+        },
 {
     let (fun, _args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
@@ -4764,7 +7142,7 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'
         Some((info_name, hint)) => {
             assert(to_model(e) == spine_app(to_model(fun), args_model_of(_args@)));
             Some((info_name, hint))
-        }
+        },
         None => None,
     }
 }
@@ -4789,16 +7167,20 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'
 /// only ever produces the `FoundEqResult(true)` case, never `Exhausted`.
 pub fn verified_try_eq_const_app<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
-    x: ExprPtr<'t>, x_defname: NamePtr<'t>, x_hint: ReducibilityHint,
-    y: ExprPtr<'t>, y_defname: NamePtr<'t>, y_hint: ReducibilityHint,
+    x: ExprPtr<'t>,
+    x_defname: NamePtr<'t>,
+    x_hint: ReducibilityHint,
+    y: ExprPtr<'t>,
+    y_defname: NamePtr<'t>,
+    y_hint: ReducibilityHint,
     fuel: u32,
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(true) => const_app_found_claim(x, y, fuel as nat),
-        _ => true,
-    }
+            Some(true) => const_app_found_claim(x, y, fuel as nat),
+            _ => true,
+        },
 {
     if !name_ptr_eq(x_defname, y_defname) {
         return None;
@@ -4838,8 +7220,9 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             i <= l_args.len(),
             l_args.len() == r_args.len(),
-            forall |j: int| 0 <= j < i ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat),
-        decreases l_args.len() - i
+            forall|j: int|
+                0 <= j < i ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat),
+        decreases l_args.len() - i,
     {
         match verified_def_eq_core(ctx, l_args[i], r_args[i], fuel) {
             Some(true) => {},
@@ -4860,26 +7243,42 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
         assert(to_model(l_fun) == ExprSpec::Const(const_id(l_fun), const_levels_vec(l_fun)));
         assert(to_model(r_fun) == ExprSpec::Const(const_id(r_fun), const_levels_vec(r_fun)));
         assert(const_levels_vec(l_fun).len() == const_levels_vec(r_fun).len());
-        assert forall |i2: int, rho: Map<nat, nat>| 0 <= i2 < const_levels_vec(l_fun).len() implies #[trigger] interp(const_levels_vec(l_fun)[i2], rho) == interp(const_levels_vec(r_fun)[i2], rho) by {
+        assert forall|i2: int, rho: Map<nat, nat>|
+            0 <= i2 < const_levels_vec(l_fun).len() implies #[trigger] interp(
+            const_levels_vec(l_fun)[i2],
+            rho,
+        ) == interp(const_levels_vec(r_fun)[i2], rho) by {
             assert(const_levels_vec(l_fun)[i2] == to_model_of_levels(const_levels_of(l_fun))[i2]);
             assert(const_levels_vec(r_fun)[i2] == to_model_of_levels(const_levels_of(r_fun))[i2]);
-            assert(interp(to_model_of_levels(const_levels_of(l_fun))[i2], rho) == interp(to_model_of_levels(const_levels_of(r_fun))[i2], rho));
+            assert(interp(to_model_of_levels(const_levels_of(l_fun))[i2], rho) == interp(
+                to_model_of_levels(const_levels_of(r_fun))[i2],
+                rho,
+            ));
         }
         assert(deq_leaf(to_model(l_fun), to_model(r_fun)));
     }
     assert(to_model(x) == spine_app(to_model(l_fun), args_model_of(l_args@)));
     assert(to_model(y) == spine_app(to_model(r_fun), args_model_of(r_args@)));
-    assert(forall |j: int| 0 <= j < l_args@.len() ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat));
+    assert(forall|j: int|
+        0 <= j < l_args@.len() ==> deq_core_claim(#[trigger] l_args@[j], r_args@[j], fuel as nat));
     proof {
         // The whole-spine lift: heads are deq_leaf UNCONDITIONALLY, so
         // if every arg pair's verdict was deq-expressible the spines
         // are deq under every env (mirrors verified_def_eq's app path).
-        if forall |i: int| 0 <= i < l_args@.len() ==> forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| deq(env2, to_model(#[trigger] l_args@[i]), to_model(r_args@[i]), fuel as nat) {
-            assert forall |env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env2, to_model(x), to_model(y)) by {
+        if forall|i: int|
+            0 <= i < l_args@.len() ==> forall|env2: Map<u64, (Seq<u64>, ExprSpec)>|
+                deq(env2, to_model(#[trigger] l_args@[i]), to_model(r_args@[i]), fuel as nat) {
+            assert forall|env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                deq_any(env2, to_model(x), to_model(y)) by {
                 let ax = args_model_of(l_args@);
                 let ay = args_model_of(r_args@);
                 assert(ax.len() == ay.len());
-                assert forall |i: int| 0 <= i < ax.len() implies deq(env2, #[trigger] ax[i], ay[i], fuel as nat) by {
+                assert forall|i: int| 0 <= i < ax.len() implies deq(
+                    env2,
+                    #[trigger] ax[i],
+                    ay[i],
+                    fuel as nat,
+                ) by {
                     assert(ax[i] == to_model(l_args@[i]));
                     assert(ay[i] == to_model(r_args@[i]));
                     assert(deq(env2, to_model(l_args@[i]), to_model(r_args@[i]), fuel as nat));
@@ -4909,7 +7308,13 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
 /// the real function's own `eprime != e` check via real pointer
 /// inequality), never a fabricated claim of "no further reduction
 /// possible."
-pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+    Ghost(bound): Ghost<nat>,
+    Ghost(d): Ghost<nat>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -4919,15 +7324,15 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => {
-            &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
-            &&& r != e
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), bound + d * d * d + d * d)
-            &&& depth(to_model(r)) <= d * d + 4 * d
+            Some(r) => {
+                &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+                &&& r != e
+                &&& nlbv(to_model(r)) <= 0
+                &&& max_var_below(to_model(r), bound + d * d * d + d * d)
+                &&& depth(to_model(r)) <= d * d + 4 * d
+            },
+            None => true,
         },
-        None => true,
-    }
 {
     let (fun, _args) = ctx.unfold_apps(e);
     let fun_el = ctx.read_expr(fun);
@@ -4941,21 +7346,21 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: Expr
             } else {
                 Some(r)
             }
-        }
+        },
         None => None,
     }
 }
-
 
 /// Real-arena counterpart to `tc.rs::TypeChecker::infer_sort`
 /// (`tc.rs:552-558`), `InferOnly` case: `Sort(l) : Sort(succ(l))`.
 /// `TcCtx::succ`/`TcCtx::mk_sort` are both already bridged (`level_arena_
 /// bridge.rs`/`quot_model.rs`), so this composes directly with no new
 /// trust boundary.
-pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result:
+    ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l))))
+        to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))),
 {
     let out = ctx.succ(l);
     ctx.mk_sort(out)
@@ -4973,20 +7378,33 @@ pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>)
 /// unfold_def_step`'s own defensive check for the analogous situation --
 /// a well-formed export file never actually hits it, but nothing in this
 /// bridge's trust boundary rules it out structurally.
-pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'x, 't>, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_infer_const<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    c_name: NamePtr<'t>,
+    c_uparams: LevelsPtr<'t>,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => {
-            &&& exists |uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
-                to_model_of_declar_ty(*env).contains_key(name_id(c_name))
-                && to_model_of_declar_ty(*env)[name_id(c_name)] == (level_names(to_model_of_levels(uparams)), to_model(ty))
-                && subst_expr_levels_rel(to_model(ty), level_names(to_model_of_levels(uparams)), to_model_of_levels(c_uparams), to_model(r))
-            &&& depth(to_model(r)) <= env_global_cap(*env)
-            &&& nlbv(to_model(r)) == 0
+            Some(r) => {
+                &&& exists|uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|
+                    to_model_of_declar_ty(*env).contains_key(name_id(c_name))
+                        && to_model_of_declar_ty(*env)[name_id(c_name)] == (
+                        level_names(to_model_of_levels(uparams)),
+                        to_model(ty),
+                    ) && subst_expr_levels_rel(
+                        to_model(ty),
+                        level_names(to_model_of_levels(uparams)),
+                        to_model_of_levels(c_uparams),
+                        to_model(r),
+                    )
+                &&& depth(to_model(r)) <= env_global_cap(*env)
+                &&& nlbv(to_model(r)) == 0
+            },
+            None => true,
         },
-        None => true,
-    }
 {
     let (uparams, ty) = match get_declar_info_ty(env, &c_name) {
         Some(p) => p,
@@ -5012,13 +7430,9 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(ctx: &mut TcCtx<'t, 'p>, env: &Env<'
                 subst_expr_levels_rel_nlbv(val, ks, to_model_of_levels(c_uparams), to_model(r));
             }
             Some(r)
-        }
+        },
         None => None,
     }
 }
 
-
-
-
-
-}
+} // verus!

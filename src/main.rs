@@ -50,8 +50,11 @@ fn use_config(config_path: &Path) -> Result<Option<String>, Box<dyn Error>> {
             if skipped_axioms.is_empty() {
                 Ok(Some(format!("Checked {} declarations with no errors", export_file.declars.len())))
             } else {
-                Ok(Some(format!("Checked {} declarations with no errors, skipping exported but unpermitted axioms {:?}",
-                export_file.declars.len(), skipped_axioms)))
+                Ok(Some(format!(
+                    "Checked {} declarations with no errors, skipping exported but unpermitted axioms {:?}",
+                    export_file.declars.len(),
+                    skipped_axioms
+                )))
             }
         } else {
             Ok(Some(format!(
@@ -71,7 +74,9 @@ fn use_config(config_path: &Path) -> Result<Option<String>, Box<dyn Error>> {
 struct MainError(Box<dyn Error>);
 
 impl std::fmt::Debug for MainError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}\n\n{}", self.0, HELP_SHORT) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\n\n{}", self.0, HELP_SHORT)
+    }
 }
 
 const HELP_SHORT: &str = "run with `-h` or `--help` for help";

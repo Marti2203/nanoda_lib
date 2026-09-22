@@ -28,27 +28,26 @@
 //! accessors (same shape as `level_as_succ`/`level_as_param`, just without
 //! an arena pointer underneath), reimplementing `is_lt`'s match logic and
 //! proving it equal to the spec version.
-
-use vstd::prelude::*;
-use std::sync::Arc;
-use crate::env::{ReducibilityHint, Env, RecRule, Declar};
-use crate::util::{NamePtr, LevelsPtr, ExprPtr};
-#[allow(unused_imports)]
-use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, depth, has_fv};
+use crate::beta_model::{depth_le_size, max_var_below, max_var_below_mono, nlbv_bound_implies_max_var_below, size};
+use crate::env::{Declar, Env, RecRule, ReducibilityHint};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model as expr_to_model;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{RecRuleSpec, RecDataSpec};
+use crate::expr_arena_bridge::{RecDataSpec, RecRuleSpec};
+#[allow(unused_imports)]
+use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
-use crate::tc_model::{rec_rule_ctor_name_of, rec_rule_ctor_telescope_size_wo_params_of, rec_rule_val_of};
+use crate::expr_model::{depth, has_fv, nlbv};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, to_model_of_levels};
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
-use crate::beta_model::{size, max_var_below, depth_le_size, max_var_below_mono, nlbv_bound_implies_max_var_below};
+use crate::tc_model::{rec_rule_ctor_name_of, rec_rule_ctor_telescope_size_wo_params_of, rec_rule_val_of};
+use crate::util::{ExprPtr, LevelsPtr, NamePtr};
+use std::sync::Arc;
+use vstd::prelude::*;
 
 /// `Env::get_constructor` returns `Option<&ConstructorData>`, a reference
 /// to a struct with several fields -- rather than registering the whole
@@ -61,7 +60,6 @@ pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
     env.get_constructor(n).map(|cd| cd.num_params)
 }
 
-
 /// `Env::get_recursor` returns `Option<&RecursorData>`; this wrapper
 /// extracts exactly the fields `reduce_rec` (`tc.rs:1070-1102`) actually
 /// reads (`num_params`/`num_motives`/`num_minors`, the computed `major_
@@ -71,7 +69,10 @@ pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
 /// `rec_rules` is cloned (an `Arc`, cheap) rather than borrowed, sidestepping
 /// tying the result's lifetime to the `Env` reference.
 #[allow(dead_code)]
-pub(crate) fn get_recursor_data<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)> {
+pub(crate) fn get_recursor_data<'x, 'a>(
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)> {
     let rec = env.get_recursor(n)?;
     Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
 }
@@ -113,7 +114,10 @@ pub(crate) fn get_declar_hint<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Opt
 /// reusing `to_model_of_env`.
 #[allow(dead_code)]
 pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(LevelsPtr<'a>, ExprPtr<'a>)> {
-    env.get_declar(n).map(|d| { let info = d.info(); (info.uparams, info.ty) })
+    env.get_declar(n).map(|d| {
+        let info = d.info();
+        (info.uparams, info.ty)
+    })
 }
 
 /// `Env::get_structure` returns `Option<&InductiveData>`; this wrapper
@@ -123,15 +127,13 @@ pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> 
 /// match guard already guarantees `all_ctor_names.len() == 1` whenever it
 /// returns `Some`, so indexing `[0]` can't panic.
 #[allow(dead_code)]
-pub(crate) fn get_structure_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> Option<NamePtr<'a>> {
+pub(crate) fn get_structure_first_ctor<'x, 'a>(
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+    rec_ok: bool,
+) -> Option<NamePtr<'a>> {
     env.get_structure(n, rec_ok).map(|i| i.all_ctor_names[0])
 }
-
-
-
-
-
-
 
 /// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
 /// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
@@ -140,9 +142,6 @@ pub(crate) fn get_structure_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a
 pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
     env.get_constructor(n).map(|cd| cd.num_fields)
 }
-
-
-
 
 verus! {
 
@@ -164,10 +163,6 @@ pub open spec fn is_lt(a: ReducibilityHintSpec, b: ReducibilityHintSpec) -> bool
     }
 }
 
-
-
-
-
 /// TRANSPARENT. Opaque, the three variants could only be reached through
 /// three `assume_specification`s and `to_model` had to be uninterpreted; the
 /// model is a three-arm relabelling of a three-variant enum, so there was
@@ -187,26 +182,32 @@ pub open spec fn to_model(h: ReducibilityHint) -> ReducibilityHintSpec {
 
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_opaque(h: &ReducibilityHint) -> (result: bool)
-    ensures result == (to_model(*h) == ReducibilityHintSpec::Opaque)
+    ensures
+        result == (to_model(*h) == ReducibilityHintSpec::Opaque),
 {
     matches!(h, ReducibilityHint::Opaque)
 }
 
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_is_abbrev(h: &ReducibilityHint) -> (result: bool)
-    ensures result == (to_model(*h) == ReducibilityHintSpec::Abbrev)
+    ensures
+        result == (to_model(*h) == ReducibilityHintSpec::Abbrev),
 {
     matches!(h, ReducibilityHint::Abbrev)
 }
 
 #[allow(dead_code)]
 pub(crate) fn reducibility_hint_as_regular(h: &ReducibilityHint) -> (result: Option<u16>)
-    ensures match result {
-        Some(n) => to_model(*h) == ReducibilityHintSpec::Regular(n),
-        None => !matches!(to_model(*h), ReducibilityHintSpec::Regular(_)),
-    }
+    ensures
+        match result {
+            Some(n) => to_model(*h) == ReducibilityHintSpec::Regular(n),
+            None => !matches!(to_model(*h), ReducibilityHintSpec::Regular(_)),
+        },
 {
-    match h { ReducibilityHint::Regular(n) => Some(*n), _ => None }
+    match h {
+        ReducibilityHint::Regular(n) => Some(*n),
+        _ => None,
+    }
 }
 
 // `ReducibilityHint::is_lt` is verified in place now (`env.rs`); it used to
@@ -214,13 +215,13 @@ pub(crate) fn reducibility_hint_as_regular(h: &ReducibilityHint) -> (result: Opt
 // the assumption was as trivial as claimed. The check is kept -- it is now an
 // independent reimplementation agreeing with a PROVEN function rather than
 // with an axiom.
-
 /// A from-scratch reimplementation using only the axiomatized accessors,
 /// proven equal to `is_lt` independently of the trust step above --
 /// belt-and-suspenders documentation that the axiom above is exactly as
 /// trivial as claimed.
 pub fn verified_is_lt(a: &ReducibilityHint, b: &ReducibilityHint) -> (result: bool)
-    ensures result == is_lt(to_model(*a), to_model(*b))
+    ensures
+        result == is_lt(to_model(*a), to_model(*b)),
 {
     if reducibility_hint_is_opaque(b) {
         false
@@ -265,22 +266,30 @@ pub uninterp spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<
 /// `env_wf` requires (`size`/`max_var_below`/`depth` bounded by some `cap`)
 /// then follows for free from `nlbv == 0` alone via `nlbv_bound_implies_
 /// max_var_below`/`depth_le_size` -- no further trust needed.
-pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
-    ensures match result {
-        Some((uparams, val)) =>
-            to_model_of_env(*env).contains_key(name_id(*n))
-            && to_model_of_env(*env)[name_id(*n)]
-                == (level_names(to_model_of_levels(uparams)), expr_to_model(val))
-            && nlbv(expr_to_model(val)) == 0
+pub assume_specification<'x, 'a>[ Env::<'x, 'a>::get_declar_val ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
+    ensures
+        match result {
+            Some((uparams, val)) => to_model_of_env(*env).contains_key(name_id(*n))
+                && to_model_of_env(*env)[name_id(*n)] == (
+                level_names(to_model_of_levels(uparams)),
+                expr_to_model(val),
+            ) && nlbv(expr_to_model(val))
+                == 0
             // A top-level declaration's stored value is CLOSED in the
             // free-variable sense too, not just the loose-de-Bruijn sense.
             // Local constants exist only while a declaration is being checked;
             // nothing that survives into the environment can mention one.
             // `nlbv == 0` above is the de Bruijn half and does NOT imply this.
-            && !has_fv(expr_to_model(val))
-            && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
-        None => !to_model_of_env(*env).contains_key(name_id(*n)),
-    };
+             && !has_fv(expr_to_model(val)) && forall|j: int|
+                0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
+                    uparams,
+                )[j] is Param,
+            None => !to_model_of_env(*env).contains_key(name_id(*n)),
+        },
+;
 
 /// COVERAGE of the visible declaration names: every id in either
 /// model-level declaration map's domain appears (as `name_id`) in the
@@ -288,12 +297,17 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::get_declar_val] (env: &Env<'x, 
 /// iterates exactly the maps the keyed lookups read (temp extension +
 /// persistent-up-to-cutoff), so nothing the models can see is missed --
 /// the iteration-completeness twin of the per-key lookup contracts.
-pub assume_specification<'x, 'a> [Env::<'x, 'a>::visible_declar_names] (env: &Env<'x, 'a>) -> (result: Vec<NamePtr<'a>>) where 'a: 'x
+pub assume_specification<'x, 'a>[ Env::<'x, 'a>::visible_declar_names ](
+    env: &Env<'x, 'a>,
+) -> (result: Vec<NamePtr<'a>>) where 'a: 'x
     ensures
-        forall |id: u64| #[trigger] to_model_of_env(*env).contains_key(id)
-            ==> exists |i: int| 0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
-        forall |id: u64| #[trigger] to_model_of_declar_ty(*env).contains_key(id)
-            ==> exists |i: int| 0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id;
+        forall|id: u64| #[trigger]
+            to_model_of_env(*env).contains_key(id) ==> exists|i: int|
+                0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
+        forall|id: u64| #[trigger]
+            to_model_of_declar_ty(*env).contains_key(id) ==> exists|i: int|
+                0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
+;
 
 /// LEASTNESS pin for `env_global_cap`: any `k` that bounds every visible
 /// declaration's value and type models (depth AND `max_var_below`)
@@ -313,12 +327,12 @@ pub uninterp spec fn env_global_size_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 #[verifier::external_body]
 pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
     requires
-        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-            ==> size(to_model_of_env(env)[id].1) <= k,
-    ensures env_global_size_cap(env) <= k
+        forall|id: u64| #[trigger]
+            to_model_of_env(env).contains_key(id) ==> size(to_model_of_env(env)[id].1) <= k,
+    ensures
+        env_global_size_cap(env) <= k,
 {
 }
-
 
 /// Closedness of every definition body (no locals) -- CHECKED by the
 /// certificate scan via the real `has_fvars` flag, then pinned here --
@@ -343,26 +357,24 @@ pub uninterp spec fn env_global_closed_ty<'x, 'a>(env: Env<'x, 'a>) -> bool;
 #[verifier::external_body]
 pub proof fn env_global_closed_ty_pin<'x, 'a>(env: Env<'x, 'a>)
     requires
-        forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id)
-            ==> !has_fv(to_model_of_declar_ty(env)[id].1),
-    ensures env_global_closed_ty(env)
+        forall|id: u64| #[trigger]
+            to_model_of_declar_ty(env).contains_key(id) ==> !has_fv(
+                to_model_of_declar_ty(env)[id].1,
+            ),
+    ensures
+        env_global_closed_ty(env),
 {
 }
 
 #[verifier::external_body]
 pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
     requires
-        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-            ==> !has_fv(to_model_of_env(env)[id].1),
-    ensures env_global_closed(env)
+        forall|id: u64| #[trigger]
+            to_model_of_env(env).contains_key(id) ==> !has_fv(to_model_of_env(env)[id].1),
+    ensures
+        env_global_closed(env),
 {
 }
-
-
-
-
-
-
 
 /// The UNCAPPED delta model: every definition whose value has no free
 /// variables, with no size ceiling at all. `env_model_capped`'s `size <= k`
@@ -390,25 +402,24 @@ pub proof fn env_model_nofv_has<'x, 'a>(env: Env<'x, 'a>, id: u64)
 
 /// The uncapped model is a sub-map of the full model (for `pstep_star_env_weaken`).
 pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] env_model_nofv(env).contains_key(id)
-        ==> to_model_of_env(env).contains_key(id) && env_model_nofv(env)[id] == to_model_of_env(env)[id]
+    ensures
+        forall|id: u64| #[trigger]
+            env_model_nofv(env).contains_key(id) ==> to_model_of_env(env).contains_key(id)
+                && env_model_nofv(env)[id] == to_model_of_env(env)[id],
 {
 }
-
-
-
-
-
-
 
 #[verifier::external_body]
 pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
     requires
-        forall |id: u64| #[trigger] to_model_of_env(env).contains_key(id)
-            ==> depth(to_model_of_env(env)[id].1) <= k && max_var_below(to_model_of_env(env)[id].1, k),
-        forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id)
-            ==> depth(to_model_of_declar_ty(env)[id].1) <= k && max_var_below(to_model_of_declar_ty(env)[id].1, k),
-    ensures env_global_cap(env) <= k
+        forall|id: u64| #[trigger]
+            to_model_of_env(env).contains_key(id) ==> depth(to_model_of_env(env)[id].1) <= k
+                && max_var_below(to_model_of_env(env)[id].1, k),
+        forall|id: u64| #[trigger]
+            to_model_of_declar_ty(env).contains_key(id) ==> depth(to_model_of_declar_ty(env)[id].1)
+                <= k && max_var_below(to_model_of_declar_ty(env)[id].1, k),
+    ensures
+        env_global_cap(env) <= k,
 {
 }
 
@@ -420,23 +431,34 @@ pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
 /// (`nlbv == 0` -- a top-level type can no more have an escaping de-
 /// Bruijn index than a top-level value can), and its `uparams` are always
 /// genuinely `Param`-shaped.
-pub uninterp spec fn to_model_of_declar_ty<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
+pub uninterp spec fn to_model_of_declar_ty<'x, 'a>(env: Env<'x, 'a>) -> Map<
+    u64,
+    (Seq<u64>, ExprSpec),
+>;
 
-pub assume_specification<'x, 'a> [get_declar_info_ty] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
-    ensures match result {
-        Some((uparams, ty)) =>
-            to_model_of_declar_ty(*env).contains_key(name_id(*n))
-            && to_model_of_declar_ty(*env)[name_id(*n)]
-                == (level_names(to_model_of_levels(uparams)), expr_to_model(ty))
-            && nlbv(expr_to_model(ty)) == 0
+pub assume_specification<'x, 'a>[ get_declar_info_ty ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
+    ensures
+        match result {
+            Some((uparams, ty)) => to_model_of_declar_ty(*env).contains_key(name_id(*n))
+                && to_model_of_declar_ty(*env)[name_id(*n)] == (
+                level_names(to_model_of_levels(uparams)),
+                expr_to_model(ty),
+            ) && nlbv(expr_to_model(ty))
+                == 0
             // Closed in the free-variable sense too, for the same reason
             // `get_declar_val` is: local constants exist only while a
             // declaration is being checked, so a stored TYPE cannot mention one.
             // `nlbv == 0` above is the de Bruijn half and does not imply this.
-            && !has_fv(expr_to_model(ty))
-            && forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param,
-        None => !to_model_of_declar_ty(*env).contains_key(name_id(*n)),
-    };
+             && !has_fv(expr_to_model(ty)) && forall|j: int|
+                0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
+                    uparams,
+                )[j] is Param,
+            None => !to_model_of_declar_ty(*env).contains_key(name_id(*n)),
+        },
+;
 
 /// A real environment's `Definition`/`Theorem` reducibility hints, as a
 /// NAME-id-keyed map (mirrors `to_model_of_ctor_num_params`'s shape) --
@@ -446,28 +468,37 @@ pub assume_specification<'x, 'a> [get_declar_info_ty] (env: &Env<'x, 'a>, n: &Na
 /// both, so "has a value to unfold" and "has a reducibility hint" are the
 /// same set of names, not independently-axiomatized facts that could
 /// silently drift apart.
-pub uninterp spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, ReducibilityHintSpec>;
+pub uninterp spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<
+    u64,
+    ReducibilityHintSpec,
+>;
 
-pub assume_specification<'x, 'a> [get_declar_hint] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ReducibilityHint)>)
-    ensures match result {
-        Some((_, hint)) =>
-            to_model_of_env(*env).contains_key(name_id(*n))
-            && to_model_of_declar_hint(*env).contains_key(name_id(*n))
-            && to_model_of_declar_hint(*env)[name_id(*n)] == to_model(hint),
-        None => !to_model_of_env(*env).contains_key(name_id(*n)),
-    };
+pub assume_specification<'x, 'a>[ get_declar_hint ](env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result:
+    Option<(NamePtr<'a>, ReducibilityHint)>)
+    ensures
+        match result {
+            Some((_, hint)) => to_model_of_env(*env).contains_key(name_id(*n))
+                && to_model_of_declar_hint(*env).contains_key(name_id(*n))
+                && to_model_of_declar_hint(*env)[name_id(*n)] == to_model(hint),
+            None => !to_model_of_env(*env).contains_key(name_id(*n)),
+        },
+;
 
 /// A real environment's constructors, as a NAME-id-keyed `num_params` map
 /// -- `reduce_proj`'s only real dependency on `ConstructorData`.
 pub uninterp spec fn to_model_of_ctor_num_params<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
 
-pub assume_specification<'x, 'a> [get_constructor_num_params] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
-    ensures match result {
-        Some(num_params) =>
-            to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
-            && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
-        None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
-    };
+pub assume_specification<'x, 'a>[ get_constructor_num_params ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<u16>)
+    ensures
+        match result {
+            Some(num_params) => to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
+                && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
+            None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
+        },
+;
 
 /// Ties any env's per-env constructor-arity lookup to the ARENA-GLOBAL
 /// `ctor_num_params_of` (`expr_arena_bridge`, defined next to
@@ -484,8 +515,12 @@ pub assume_specification<'x, 'a> [get_constructor_num_params] (env: &Env<'x, 'a>
 /// result via this lemma.
 #[verifier::external_body]
 pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires to_model_of_ctor_num_params(env).contains_key(id)
-    ensures crate::expr_arena_bridge::ctor_num_params_of(id) == Some(to_model_of_ctor_num_params(env)[id])
+    requires
+        to_model_of_ctor_num_params(env).contains_key(id),
+    ensures
+        crate::expr_arena_bridge::ctor_num_params_of(id) == Some(
+            to_model_of_ctor_num_params(env)[id],
+        ),
 {
 }
 
@@ -505,19 +540,28 @@ pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
 pub uninterp spec fn to_model_of_recursors<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, RecDataSpec>;
 
 pub open spec fn rec_rules_model<'a>(rules: Seq<RecRule<'a>>) -> Seq<RecRuleSpec> {
-    Seq::new(rules.len(), |i: int| RecRuleSpec {
-        ctor_id: name_id(rec_rule_ctor_name_of(rules[i])),
-        nfields: rec_rule_ctor_telescope_size_wo_params_of(rules[i]) as nat,
-        rhs: expr_to_model(rec_rule_val_of(rules[i])),
-    })
+    Seq::new(
+        rules.len(),
+        |i: int|
+            RecRuleSpec {
+                ctor_id: name_id(rec_rule_ctor_name_of(rules[i])),
+                nfields: rec_rule_ctor_telescope_size_wo_params_of(rules[i]) as nat,
+                rhs: expr_to_model(rec_rule_val_of(rules[i])),
+            },
+    )
 }
 
-pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
-    ensures match result {
-        Some((np, nm, nmin, major, uparams, rules)) =>
-            (forall |j: int| 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(uparams)[j] is Param)
-            && to_model_of_recursors(*env).contains_key(name_id(*n))
-            && to_model_of_recursors(*env)[name_id(*n)] == RecDataSpec {
+pub assume_specification<'x, 'a>[ get_recursor_data ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
+    ensures
+        match result {
+            Some((np, nm, nmin, major, uparams, rules)) => (forall|j: int|
+                0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
+                    uparams,
+                )[j] is Param) && to_model_of_recursors(*env).contains_key(name_id(*n))
+                && to_model_of_recursors(*env)[name_id(*n)] == RecDataSpec {
                 num_params: np as nat,
                 num_motives: nm as nat,
                 num_minors: nmin as nat,
@@ -525,15 +569,18 @@ pub assume_specification<'x, 'a> [get_recursor_data] (env: &Env<'x, 'a>, n: &Nam
                 uparams: level_names(to_model_of_levels(uparams)),
                 rules: rec_rules_model(rules@),
             },
-        None => true,
-    };
+            None => true,
+        },
+;
 
 /// Ties any env's recursor lookup to the arena-global `rec_data_of`
 /// (see `ctor_num_params_of_agrees`).
 #[verifier::external_body]
 pub proof fn rec_data_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires to_model_of_recursors(env).contains_key(id)
-    ensures crate::expr_arena_bridge::rec_data_of(id) == Some(to_model_of_recursors(env)[id])
+    requires
+        to_model_of_recursors(env).contains_key(id),
+    ensures
+        crate::expr_arena_bridge::rec_data_of(id) == Some(to_model_of_recursors(env)[id]),
 {
 }
 
@@ -554,16 +601,25 @@ pub uninterp spec fn to_model_of_struct_ctor<'x, 'a>(env: Env<'x, 'a>) -> Map<u6
 /// in SOME env has the arena-global first-constructor its env reports.
 #[verifier::external_body]
 pub proof fn struct_ctor_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires to_model_of_struct_ctor(env).contains_key(id)
-    ensures crate::expr_arena_bridge::struct_ctor_of(id) == Some(to_model_of_struct_ctor(env)[id])
+    requires
+        to_model_of_struct_ctor(env).contains_key(id),
+    ensures
+        crate::expr_arena_bridge::struct_ctor_of(id) == Some(to_model_of_struct_ctor(env)[id]),
 {
 }
 
-pub assume_specification<'x, 'a> [get_structure_first_ctor] (env: &Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<NamePtr<'a>>)
-    ensures match result {
-        Some(c) => to_model_of_struct_ctor(*env).contains_key(name_id(*n)) && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
-        None => true,
-    };
+pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+    rec_ok: bool,
+) -> (result: Option<NamePtr<'a>>)
+    ensures
+        match result {
+            Some(c) => to_model_of_struct_ctor(*env).contains_key(name_id(*n))
+                && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
+            None => true,
+        },
+;
 
 /// Constructor -> its field count, keyed the same way as
 /// `to_model_of_struct_ctor` above, because `def_eq_unit` relates two
@@ -575,19 +631,32 @@ pub uninterp spec fn to_model_of_ctor_num_fields<'x, 'a>(env: Env<'x, 'a>) -> Ma
 /// SOME env has the arena-global field count its env reports.
 #[verifier::external_body]
 pub proof fn ctor_num_fields_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires to_model_of_ctor_num_fields(env).contains_key(id)
-    ensures crate::expr_arena_bridge::ctor_num_fields_of(id) == Some(to_model_of_ctor_num_fields(env)[id])
+    requires
+        to_model_of_ctor_num_fields(env).contains_key(id),
+    ensures
+        crate::expr_arena_bridge::ctor_num_fields_of(id) == Some(
+            to_model_of_ctor_num_fields(env)[id],
+        ),
 {
 }
 
-pub assume_specification<'x, 'a> [get_constructor_num_fields] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
-    ensures match result {
-        Some(k) => to_model_of_ctor_num_fields(*env).contains_key(name_id(*n))
-            && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
-        None => true,
-    };
+pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<u16>)
+    ensures
+        match result {
+            Some(k) => to_model_of_ctor_num_fields(*env).contains_key(name_id(*n))
+                && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
+            None => true,
+        },
+;
 
-pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<bool>);
+pub assume_specification<'x, 'a>[ get_recursor_is_k ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<bool>)
+;
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
 /// returns a plain `bool`, no struct field extraction required), same
@@ -603,21 +672,42 @@ pub assume_specification<'x, 'a> [get_recursor_is_k] (env: &Env<'x, 'a>, n: &Nam
 /// Deliberately not given a contract: saying what a `Declar` IS would mean
 /// modelling declaration kinds, which is a much larger trust boundary than
 /// anything these two functions need.
-pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_declar] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b Declar<'a>>) where 'a: 'x;
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_declar ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
+;
 
 /// CLAIM-FREE, same terms as `get_declar` above. `tc.rs`'s `mk_nullary_ctor`
 /// reads the inductive's constructor list; what it promises its callers is
 /// about the EXPRESSION it builds, not about the environment, so nothing is
 /// stated here.
-pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_inductive] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x;
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_inductive ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
+;
 
 /// CLAIM-FREE, same terms as the two above.
-pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_structure] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x;
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_structure ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+    rec_ok: bool,
+) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
+;
 
 /// CLAIM-FREE, same terms as the three above.
-pub assume_specification<'b, 'x, 'a> [Env::<'x, 'a>::get_constructor] (env: &'b Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<&'b crate::env::ConstructorData<'a>>) where 'a: 'x;
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_constructor ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<&'b crate::env::ConstructorData<'a>>) where 'a: 'x
+;
 
-pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: bool) where 'a: 'x;
+pub assume_specification<'x, 'a>[ Env::<'x, 'a>::can_be_struct ](
+    env: &Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: bool) where 'a: 'x
+;
 
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
 /// among its declarations -- a genuine structural fact about any finite
@@ -636,7 +726,6 @@ pub assume_specification<'x, 'a> [Env::<'x, 'a>::can_be_struct] (env: &Env<'x, '
 /// step`'s outer loop have both independently been blocked on needing.
 pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
-
 /// `env_global_wf`'s counterpart for `to_model_of_declar_ty` (declaration
 /// TYPES, needed by `infer_const`'s own depth-boundedness -- a completely
 /// separate lookup table from `to_model_of_env`, since `get_declar_info_
@@ -647,26 +736,17 @@ pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// global_wf` above does (see its doc comment / [[feedback_verus_size_axiom_blowup]]).
 #[verifier::external_body]
 pub proof fn env_global_wf_ty<'x, 'a>(env: Env<'x, 'a>)
-    ensures forall |id: u64| #[trigger] to_model_of_declar_ty(env).contains_key(id) ==> {
-        &&& nlbv(to_model_of_declar_ty(env)[id].1) == 0
-        &&& max_var_below(to_model_of_declar_ty(env)[id].1, env_global_cap(env))
-        &&& depth(to_model_of_declar_ty(env)[id].1) <= env_global_cap(env)
-    }
+    ensures
+        forall|id: u64| #[trigger]
+            to_model_of_declar_ty(env).contains_key(id) ==> {
+                &&& nlbv(to_model_of_declar_ty(env)[id].1) == 0
+                &&& max_var_below(to_model_of_declar_ty(env)[id].1, env_global_cap(env))
+                &&& depth(to_model_of_declar_ty(env)[id].1) <= env_global_cap(env)
+            },
 {
 }
 
-
-
-
-
-
-
-
-
-
-
-}
-
+} // verus!
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,7 +774,12 @@ mod tests {
 
     #[test]
     fn verified_is_lt_matches_real_is_lt() {
-        let hints = [ReducibilityHint::Opaque, ReducibilityHint::Regular(0), ReducibilityHint::Regular(3), ReducibilityHint::Abbrev];
+        let hints = [
+            ReducibilityHint::Opaque,
+            ReducibilityHint::Regular(0),
+            ReducibilityHint::Regular(3),
+            ReducibilityHint::Abbrev,
+        ];
         for a in &hints {
             for b in &hints {
                 assert_eq!(verified_is_lt(a, b), a.is_lt(b));

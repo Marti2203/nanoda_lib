@@ -26,63 +26,62 @@
 //! `binder_type`, though that shouldn't arise for well-formed terms), so
 //! `expr_id` mirrors `name_id`/`level_ptr_eq`'s pointer-identity approach
 //! rather than reaching into the `Local` payload.
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::{ptr_index, ptr_is_tc, child_ok};
-#[allow(unused_imports)]
-use crate::util::TcCtx;
-use crate::util::{ExprPtr, NamePtr, LevelsPtr, LevelPtr, StringPtr};
-#[allow(unused_imports)]
-use crate::util::IterSpec;
-use crate::expr::{Expr, BinderStyle, FVarId};
+use crate::beta_model::{
+    args_size_sum, const_expr_no_levels_canonical, depth_le_size, max_var_below, max_var_below_mono,
+    nlbv_bound_implies_max_var_below, pstep, pstep_chain_valid, pstep_spine_app_star, pstep_star, pstep_star_one,
+    pstep_star_refl, pstep_star_spine_reduce, pstep_star_trans, size, spine_app, spine_app_bounds, spine_app_compose,
+    spine_app_concat, spine_app_decompose, spine_app_max_var_below, spine_app_nlbv, spine_app_size, spine_bind,
+    spine_bind_depth, spine_bind_nlbv, spine_reduce, spine_reduce_bounds, spine_reduce_eq_subst_full, string_free,
+    string_free_lits_ok, string_lit_expand_model, string_lits_ok, string_lits_ok_spine_app, subst1, subst1_depth_bound,
+    subst1_max_var_below, subst_c, subst_c_eq_subst_full, subst_full_depth_bound_n, subst_full_nlbv_bound,
+    subst_full_nlbv_bound_n,
+};
+use crate::expr::{BinderStyle, Expr, FVarId};
+#[cfg(verus_only)]
+use crate::expr_model::fv_absent;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 use crate::expr_model::NatLitPayload;
-#[cfg(verus_only)]
-use crate::expr_model::fv_absent;
 use crate::expr_model::StringLitPayload;
-#[allow(unused_imports)]
-use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::level_arena_bridge::{name_id, to_model_of_levels};
+use crate::expr_model::{
+    abstr_full, abstr_full_depth, depth, find_from_end, has_fv, mul_ge_one, mul_pred_step, nlbv, subst_expr_levels,
+    subst_expr_levels_rel, subst_full, subst_full_noop,
+};
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
-use crate::expr_model::{nlbv, has_fv, depth, subst_full, subst_full_noop, abstr_full, abstr_full_depth, mul_ge_one, mul_pred_step, find_from_end, subst_expr_levels_rel, subst_expr_levels};
-#[cfg(verus_only)]
-use crate::level_model::{level_names, subst_env, interp};
+use crate::level_arena_bridge::{name_id, to_model_of_levels};
 use crate::level_arena_bridge::{verified_subst_level, verified_subst_levels};
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::beta_model::{size, args_size_sum, pstep_chain_valid, spine_bind, spine_app, spine_reduce, spine_reduce_eq_subst_full, spine_app_compose, spine_app_concat, spine_bind_nlbv, spine_bind_depth, spine_app_decompose, spine_reduce_bounds, spine_app_bounds, spine_app_nlbv, max_var_below, max_var_below_mono, pstep_star, pstep_star_spine_reduce, pstep_spine_app_star, subst1, subst1_max_var_below, subst1_depth_bound, subst_full_nlbv_bound, subst_full_nlbv_bound_n, subst_full_depth_bound_n, subst_c, subst_c_eq_subst_full, pstep, pstep_star_one, pstep_star_refl, pstep_star_trans, const_expr_no_levels_canonical, string_lit_expand_model, string_free, string_lits_ok, string_free_lits_ok, nlbv_bound_implies_max_var_below, depth_le_size, spine_app_size, spine_app_max_var_below, string_lits_ok_spine_app};
+use crate::level_model::{interp, level_names, subst_env};
+#[cfg(verus_only)]
+use crate::name_arena_bridge::{child_ok, ptr_index, ptr_is_tc};
 use crate::nat_lit_model::{biguint_is_zero, biguint_pred};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
-
-
-
-
-
-
-
-
-
-
+#[allow(unused_imports)]
+use crate::util::IterSpec;
+#[allow(unused_imports)]
+use crate::util::TcCtx;
+use crate::util::{ExprPtr, LevelPtr, LevelsPtr, NamePtr, StringPtr};
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: dereference
 /// and clone the arena-stored `BigUint` (real `read_bignum` returns
 /// `Option<&BigUint>`; bridged as one opaque real function rather than
 /// separately bridging `Option::cloned`/`Clone` for a foreign type).
 #[allow(dead_code)]
-pub(crate) fn read_bignum_value<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> Option<num_bigint::BigUint> {
+pub(crate) fn read_bignum_value<'t, 'p: 't>(
+    ctx: &TcCtx<'t, 'p>,
+    p: crate::util::BigUintPtr<'t>,
+) -> Option<num_bigint::BigUint> {
     ctx.read_bignum(p).cloned()
 }
-
-
-
-
-
 
 /// `expr.rs::TcCtx::abstr_levels`, wrapped with an EXPLICIT `locals_hint`
 /// slice purely for the assume_specification below to reference -- the
@@ -106,7 +105,12 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, p: crate::util:
 /// pattern `verified_infer_lambda`/`_pi` actually use: called immediately
 /// after `locals_hint` were the only locals allocated since `start_pos`.
 #[allow(dead_code)]
-pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, _locals_hint: &[ExprPtr<'t>]) -> ExprPtr<'t> {
+pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    start_pos: u16,
+    _locals_hint: &[ExprPtr<'t>],
+) -> ExprPtr<'t> {
     ctx.abstr_levels(e, start_pos)
 }
 
@@ -161,15 +165,32 @@ pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
     match e {
         Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
         Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
-        Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
-        Expr::App { fun, arg, .. } => ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))),
-        Expr::Pi { binder_type, body, .. } => ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))),
-        Expr::Lambda { binder_type, body, .. } => ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))),
-        Expr::Let { binder_type, val, body, .. } =>
-            ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))),
+        Expr::Const { name, levels, .. } => ExprSpec::Const(
+            name_id(name),
+            to_model_of_levels(levels),
+        ),
+        Expr::App { fun, arg, .. } => ExprSpec::App(
+            Box::new(to_model(fun)),
+            Box::new(to_model(arg)),
+        ),
+        Expr::Pi { binder_type, body, .. } => ExprSpec::Bind(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(body)),
+        ),
+        Expr::Lambda { binder_type, body, .. } => ExprSpec::Bind(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(body)),
+        ),
+        Expr::Let { binder_type, val, body, .. } => ExprSpec::Let(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(val)),
+            Box::new(to_model(body)),
+        ),
         Expr::Proj { idx, structure, .. } => ExprSpec::Proj(idx, Box::new(to_model(structure))),
         Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
-        Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+        Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
+            StringLitPayload(Ghost(string_len(ptr))),
+        ),
         Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(e)),
     }
 }
@@ -187,15 +208,14 @@ pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
 // `local_fvar_id_of`, an opaque identity that is deliberately NOT structural
 // (see the module doc comment), so there is nothing to compute from storage.
 // ---------------------------------------------------------------------
-
 /// A stored expression's children live at strictly smaller indices.
 pub open spec fn expr_children_below<'a>(e: Expr<'a>, i: nat) -> bool {
     match e {
         Expr::App { fun, arg, .. } => ptr_index(fun) < i && ptr_index(arg) < i,
         Expr::Pi { binder_type, body, .. } => ptr_index(binder_type) < i && ptr_index(body) < i,
         Expr::Lambda { binder_type, body, .. } => ptr_index(binder_type) < i && ptr_index(body) < i,
-        Expr::Let { binder_type, val, body, .. } =>
-            ptr_index(binder_type) < i && ptr_index(val) < i && ptr_index(body) < i,
+        Expr::Let { binder_type, val, body, .. } => ptr_index(binder_type) < i && ptr_index(val) < i
+            && ptr_index(body) < i,
         Expr::Proj { structure, .. } => ptr_index(structure) < i,
         _ => true,
     }
@@ -207,7 +227,7 @@ pub open spec fn exprs_arena_wf<'a>(es: Seq<Expr<'a>>) -> bool {
 
 /// What the expression at index `i` denotes, COMPUTED from storage.
 pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
-    decreases i
+    decreases i,
 {
     if i >= es.len() {
         ExprSpec::Closed
@@ -215,39 +235,60 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
         match es[i as int] {
             Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
             Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
-            Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
-            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
-            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+            Expr::Const { name, levels, .. } => ExprSpec::Const(
+                name_id(name),
+                to_model_of_levels(levels),
+            ),
+            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(
+                NatLitPayload(Ghost(bignum_ptr_value(ptr))),
+            ),
+            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
+                StringLitPayload(Ghost(string_len(ptr))),
+            ),
             Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(es[i as int])),
-            Expr::App { fun, arg, .. } =>
-                if ptr_index(fun) < i && ptr_index(arg) < i {
-                    ExprSpec::App(
-                        Box::new(expr_model_at(es, ptr_index(fun))),
-                        Box::new(expr_model_at(es, ptr_index(arg))))
-                } else { ExprSpec::Closed },
-            Expr::Pi { binder_type, body, .. } =>
-                if ptr_index(binder_type) < i && ptr_index(body) < i {
-                    ExprSpec::Bind(
-                        Box::new(expr_model_at(es, ptr_index(binder_type))),
-                        Box::new(expr_model_at(es, ptr_index(body))))
-                } else { ExprSpec::Closed },
-            Expr::Lambda { binder_type, body, .. } =>
-                if ptr_index(binder_type) < i && ptr_index(body) < i {
-                    ExprSpec::Bind(
-                        Box::new(expr_model_at(es, ptr_index(binder_type))),
-                        Box::new(expr_model_at(es, ptr_index(body))))
-                } else { ExprSpec::Closed },
-            Expr::Let { binder_type, val, body, .. } =>
-                if ptr_index(binder_type) < i && ptr_index(val) < i && ptr_index(body) < i {
-                    ExprSpec::Let(
-                        Box::new(expr_model_at(es, ptr_index(binder_type))),
-                        Box::new(expr_model_at(es, ptr_index(val))),
-                        Box::new(expr_model_at(es, ptr_index(body))))
-                } else { ExprSpec::Closed },
-            Expr::Proj { idx, structure, .. } =>
-                if ptr_index(structure) < i {
-                    ExprSpec::Proj(idx, Box::new(expr_model_at(es, ptr_index(structure))))
-                } else { ExprSpec::Closed },
+            Expr::App { fun, arg, .. } => if ptr_index(fun) < i && ptr_index(arg) < i {
+                ExprSpec::App(
+                    Box::new(expr_model_at(es, ptr_index(fun))),
+                    Box::new(expr_model_at(es, ptr_index(arg))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Pi { binder_type, body, .. } => if ptr_index(binder_type) < i && ptr_index(body)
+                < i {
+                ExprSpec::Bind(
+                    Box::new(expr_model_at(es, ptr_index(binder_type))),
+                    Box::new(expr_model_at(es, ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Lambda { binder_type, body, .. } => if ptr_index(binder_type) < i && ptr_index(
+                body,
+            ) < i {
+                ExprSpec::Bind(
+                    Box::new(expr_model_at(es, ptr_index(binder_type))),
+                    Box::new(expr_model_at(es, ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Let { binder_type, val, body, .. } => if ptr_index(binder_type) < i && ptr_index(
+                val,
+            ) < i && ptr_index(body) < i {
+                ExprSpec::Let(
+                    Box::new(expr_model_at(es, ptr_index(binder_type))),
+                    Box::new(expr_model_at(es, ptr_index(val))),
+                    Box::new(expr_model_at(es, ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Proj { idx, structure, .. } => if ptr_index(structure) < i {
+                ExprSpec::Proj(idx, Box::new(expr_model_at(es, ptr_index(structure))))
+            } else {
+                ExprSpec::Closed
+            },
         }
     }
 }
@@ -256,21 +297,28 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
 /// computed denotation agrees with the structural reading of the node. Stated
 /// for the compound shapes, which are the ones carrying a guard.
 pub proof fn expr_model_at_unfold<'a>(es: Seq<Expr<'a>>, i: nat)
-    requires exprs_arena_wf(es), i < es.len(),
+    requires
+        exprs_arena_wf(es),
+        i < es.len(),
     ensures
         ({
             let e = es[i as int];
             &&& (e matches Expr::App { fun, arg, .. } ==> expr_model_at(es, i) == ExprSpec::App(
-                    Box::new(expr_model_at(es, ptr_index(fun))),
-                    Box::new(expr_model_at(es, ptr_index(arg)))))
-            &&& (e matches Expr::Pi { binder_type, body, .. } ==> expr_model_at(es, i) == ExprSpec::Bind(
-                    Box::new(expr_model_at(es, ptr_index(binder_type))),
-                    Box::new(expr_model_at(es, ptr_index(body)))))
-            &&& (e matches Expr::Lambda { binder_type, body, .. } ==> expr_model_at(es, i) == ExprSpec::Bind(
-                    Box::new(expr_model_at(es, ptr_index(binder_type))),
-                    Box::new(expr_model_at(es, ptr_index(body)))))
-            &&& (e matches Expr::Proj { idx, structure, .. } ==> expr_model_at(es, i) == ExprSpec::Proj(
-                    idx, Box::new(expr_model_at(es, ptr_index(structure)))))
+                Box::new(expr_model_at(es, ptr_index(fun))),
+                Box::new(expr_model_at(es, ptr_index(arg))),
+            ))
+            &&& (e matches Expr::Pi { binder_type, body, .. } ==> expr_model_at(es, i)
+                == ExprSpec::Bind(
+                Box::new(expr_model_at(es, ptr_index(binder_type))),
+                Box::new(expr_model_at(es, ptr_index(body))),
+            ))
+            &&& (e matches Expr::Lambda { binder_type, body, .. } ==> expr_model_at(es, i)
+                == ExprSpec::Bind(
+                Box::new(expr_model_at(es, ptr_index(binder_type))),
+                Box::new(expr_model_at(es, ptr_index(body))),
+            ))
+            &&& (e matches Expr::Proj { idx, structure, .. } ==> expr_model_at(es, i)
+                == ExprSpec::Proj(idx, Box::new(expr_model_at(es, ptr_index(structure)))))
         }),
 {
     assert(expr_children_below(es[i as int], i));
@@ -279,66 +327,117 @@ pub proof fn expr_model_at_unfold<'a>(es: Seq<Expr<'a>>, i: nat)
 /// Non-degeneracy: `[Var 0, App(p0, p0)]` must denote `App(Var 0, Var 0)`, so
 /// the definitions above cannot be collapsing everything to `Closed`.
 pub proof fn expr_model_at_computes_nesting<'a>(p0: ExprPtr<'a>, h: u64)
-    requires ptr_index(p0) == 0,
-    ensures ({
-        let es = seq![
-            Expr::Var { hash: h, dbj_idx: 0 },
-            Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false }];
-        &&& exprs_arena_wf(es)
-        &&& expr_model_at(es, 1) == ExprSpec::App(
-                Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Var(0)))
-    }),
+    requires
+        ptr_index(p0) == 0,
+    ensures
+        ({
+            let es = seq![
+                Expr::Var { hash: h, dbj_idx: 0 },
+                Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false },
+            ];
+            &&& exprs_arena_wf(es)
+            &&& expr_model_at(es, 1) == ExprSpec::App(
+                Box::new(ExprSpec::Var(0)),
+                Box::new(ExprSpec::Var(0)),
+            )
+        }),
 {
     let es: Seq<Expr<'a>> = seq![
         Expr::Var { hash: h, dbj_idx: 0 },
-        Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false }];
+        Expr::App { hash: h, fun: p0, arg: p0, num_loose_bvars: 1, has_fvars: false },
+    ];
     assert(es.len() == 2);
     assert(es[0] == Expr::<'a>::Var { hash: h, dbj_idx: 0 });
-    assert forall|i: int| 0 <= i < es.len() implies expr_children_below(#[trigger] es[i], i as nat) by {
-        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    assert forall|i: int| 0 <= i < es.len() implies expr_children_below(
+        #[trigger] es[i],
+        i as nat,
+    ) by {
+        if i == 0 {
+        } else {
+            assert(ptr_index(p0) == 0);
+        }
     }
     assert(expr_model_at(es, 0) == ExprSpec::Var(0));
 }
 
 /// Two-tier denotation for expressions -- the shape the READERS need, since
 /// `read_expr` selects a tier by dag marker and indexes into it.
-pub open spec fn expr_model_at2<'a>(ef: Seq<Expr<'a>>, tc: Seq<Expr<'a>>, is_tc: bool, i: nat) -> ExprSpec
-    decreases if is_tc { 1int } else { 0int }, i
+pub open spec fn expr_model_at2<'a>(
+    ef: Seq<Expr<'a>>,
+    tc: Seq<Expr<'a>>,
+    is_tc: bool,
+    i: nat,
+) -> ExprSpec
+    decreases
+            if is_tc {
+                1int
+            } else {
+                0int
+            },
+            i,
 {
-    let store = if is_tc { tc } else { ef };
+    let store = if is_tc {
+        tc
+    } else {
+        ef
+    };
     if i >= store.len() {
         ExprSpec::Closed
     } else {
         match store[i as int] {
             Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
             Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
-            Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
-            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
-            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_len(ptr)))),
+            Expr::Const { name, levels, .. } => ExprSpec::Const(
+                name_id(name),
+                to_model_of_levels(levels),
+            ),
+            Expr::NatLit { ptr, .. } => ExprSpec::NatLit(
+                NatLitPayload(Ghost(bignum_ptr_value(ptr))),
+            ),
+            Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
+                StringLitPayload(Ghost(string_len(ptr))),
+            ),
             Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(store[i as int])),
-            Expr::App { fun, arg, .. } =>
-                if child_ok(fun, is_tc, i) && child_ok(arg, is_tc, i) {
-                    ExprSpec::App(
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(fun), ptr_index(fun))),
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(arg), ptr_index(arg))))
-                } else { ExprSpec::Closed },
-            Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
-                if child_ok(binder_type, is_tc, i) && child_ok(body, is_tc, i) {
-                    ExprSpec::Bind(
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type))),
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))))
-                } else { ExprSpec::Closed },
-            Expr::Let { binder_type, val, body, .. } =>
-                if child_ok(binder_type, is_tc, i) && child_ok(val, is_tc, i) && child_ok(body, is_tc, i) {
-                    ExprSpec::Let(
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type))),
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(val), ptr_index(val))),
-                        Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))))
-                } else { ExprSpec::Closed },
-            Expr::Proj { idx, structure, .. } =>
-                if child_ok(structure, is_tc, i) {
-                    ExprSpec::Proj(idx, Box::new(expr_model_at2(ef, tc, ptr_is_tc(structure), ptr_index(structure))))
-                } else { ExprSpec::Closed },
+            Expr::App { fun, arg, .. } => if child_ok(fun, is_tc, i) && child_ok(arg, is_tc, i) {
+                ExprSpec::App(
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(fun), ptr_index(fun))),
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(arg), ptr_index(arg))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Pi { binder_type, body, .. }
+            | Expr::Lambda { binder_type, body, .. } => if child_ok(binder_type, is_tc, i)
+                && child_ok(body, is_tc, i) {
+                ExprSpec::Bind(
+                    Box::new(
+                        expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type)),
+                    ),
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Let { binder_type, val, body, .. } => if child_ok(binder_type, is_tc, i)
+                && child_ok(val, is_tc, i) && child_ok(body, is_tc, i) {
+                ExprSpec::Let(
+                    Box::new(
+                        expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type)),
+                    ),
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(val), ptr_index(val))),
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Proj { idx, structure, .. } => if child_ok(structure, is_tc, i) {
+                ExprSpec::Proj(
+                    idx,
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(structure), ptr_index(structure))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
         }
     }
 }
@@ -346,56 +445,91 @@ pub open spec fn expr_model_at2<'a>(ef: Seq<Expr<'a>>, tc: Seq<Expr<'a>>, is_tc:
 /// Appending to the local tier never changes an export-file pointer's
 /// denotation.
 pub proof fn expr_model_at2_append_tc<'a>(ef: Seq<Expr<'a>>, tc: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
-    ensures expr_model_at2(ef, tc.push(e), false, i) == expr_model_at2(ef, tc, false, i),
+    ensures
+        expr_model_at2(ef, tc.push(e), false, i) == expr_model_at2(ef, tc, false, i),
     decreases i,
 {
     if i < ef.len() {
         match ef[i as int] {
             Expr::App { fun, arg, .. } => {
-                if child_ok(fun, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(fun)); }
-                if child_ok(arg, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(arg)); }
-            }
+                if child_ok(fun, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(fun));
+                }
+                if child_ok(arg, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(arg));
+                }
+            },
             Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } => {
-                if child_ok(binder_type, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type)); }
-                if child_ok(body, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(body)); }
-            }
+                if child_ok(binder_type, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type));
+                }
+                if child_ok(body, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(body));
+                }
+            },
             Expr::Let { binder_type, val, body, .. } => {
-                if child_ok(binder_type, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type)); }
-                if child_ok(val, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(val)); }
-                if child_ok(body, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(body)); }
-            }
+                if child_ok(binder_type, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(binder_type));
+                }
+                if child_ok(val, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(val));
+                }
+                if child_ok(body, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(body));
+                }
+            },
             Expr::Proj { structure, .. } => {
-                if child_ok(structure, false, i) { expr_model_at2_append_tc(ef, tc, e, ptr_index(structure)); }
-            }
-            _ => {}
+                if child_ok(structure, false, i) {
+                    expr_model_at2_append_tc(ef, tc, e, ptr_index(structure));
+                }
+            },
+            _ => {},
         }
     }
 }
 
 /// MONOTONICITY: allocating never changes what an existing pointer denotes.
 pub proof fn expr_model_at_append<'a>(es: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
-    requires i < es.len(),
-    ensures expr_model_at(es.push(e), i) == expr_model_at(es, i),
+    requires
+        i < es.len(),
+    ensures
+        expr_model_at(es.push(e), i) == expr_model_at(es, i),
     decreases i,
 {
     match es[i as int] {
         Expr::App { fun, arg, .. } => {
-            if ptr_index(fun) < i { expr_model_at_append(es, e, ptr_index(fun)); }
-            if ptr_index(arg) < i { expr_model_at_append(es, e, ptr_index(arg)); }
-        }
+            if ptr_index(fun) < i {
+                expr_model_at_append(es, e, ptr_index(fun));
+            }
+            if ptr_index(arg) < i {
+                expr_model_at_append(es, e, ptr_index(arg));
+            }
+        },
         Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } => {
-            if ptr_index(binder_type) < i { expr_model_at_append(es, e, ptr_index(binder_type)); }
-            if ptr_index(body) < i { expr_model_at_append(es, e, ptr_index(body)); }
-        }
+            if ptr_index(binder_type) < i {
+                expr_model_at_append(es, e, ptr_index(binder_type));
+            }
+            if ptr_index(body) < i {
+                expr_model_at_append(es, e, ptr_index(body));
+            }
+        },
         Expr::Let { binder_type, val, body, .. } => {
-            if ptr_index(binder_type) < i { expr_model_at_append(es, e, ptr_index(binder_type)); }
-            if ptr_index(val) < i { expr_model_at_append(es, e, ptr_index(val)); }
-            if ptr_index(body) < i { expr_model_at_append(es, e, ptr_index(body)); }
-        }
+            if ptr_index(binder_type) < i {
+                expr_model_at_append(es, e, ptr_index(binder_type));
+            }
+            if ptr_index(val) < i {
+                expr_model_at_append(es, e, ptr_index(val));
+            }
+            if ptr_index(body) < i {
+                expr_model_at_append(es, e, ptr_index(body));
+            }
+        },
         Expr::Proj { structure, .. } => {
-            if ptr_index(structure) < i { expr_model_at_append(es, e, ptr_index(structure)); }
-        }
-        _ => {}
+            if ptr_index(structure) < i {
+                expr_model_at_append(es, e, ptr_index(structure));
+            }
+        },
+        _ => {},
     }
     assert(es.push(e)[i as int] == es[i as int]);
 }
@@ -406,7 +540,8 @@ pub uninterp spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32;
 
 #[verifier::external_body]
 pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
-    ensures (a == b) <==> (expr_id(a) == expr_id(b))
+    ensures
+        (a == b) <==> (expr_id(a) == expr_id(b)),
 {
 }
 
@@ -414,7 +549,8 @@ pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
 /// (`util_model.rs`), so the body proves the contract.
 #[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
-    ensures result == (a == b)
+    ensures
+        result == (a == b),
 {
     a == b
 }
@@ -434,7 +570,6 @@ pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
 // payload clauses are -- that keying is what made those provable rather than
 // assumed, and it does the same job here.
 // ---------------------------------------------------------------------
-
 /// The `DbjLevel` serial an `FVarId` carries, `None` for a `Unique` one.
 /// DEFINED -- `ExFVarId` is transparent.
 pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
@@ -454,26 +589,26 @@ pub uninterp spec fn dbj_serial(id: u32) -> Option<u16>;
 /// preserves it -- so this is a genuine invariant to be CHECKED, not a fact to
 /// be assumed about the cache.
 pub open spec fn subst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
-    forall |k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)|
-        #[trigger] ctx.expr_cache.subst_cache@.contains_key(k) ==>
-            to_model(ctx.expr_cache.subst_cache@[k])
-                == subst_expr_levels(
-                    to_model(k.0),
-                    crate::level_model::level_names(to_model_of_levels(k.1)),
-                    to_model_of_levels(k.2))
+    forall|k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)| #[trigger]
+        ctx.expr_cache.subst_cache@.contains_key(k) ==> to_model(ctx.expr_cache.subst_cache@[k])
+            == subst_expr_levels(
+            to_model(k.0),
+            crate::level_model::level_names(to_model_of_levels(k.1)),
+            to_model_of_levels(k.2),
+        )
 }
 
 /// Same invariant for the OUTER level-substitution cache. `subst_expr_levels`
 /// keys this one and clears `subst_cache` beneath it, so the two are
 /// independent: the inner one is scratch for a single call, this one persists.
 pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
-    forall |k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)|
-        #[trigger] ctx.expr_cache.dsubst_cache@.contains_key(k) ==>
-            to_model(ctx.expr_cache.dsubst_cache@[k])
-                == subst_expr_levels(
-                    to_model(k.0),
-                    crate::level_model::level_names(to_model_of_levels(k.1)),
-                    to_model_of_levels(k.2))
+    forall|k: (ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>)| #[trigger]
+        ctx.expr_cache.dsubst_cache@.contains_key(k) ==> to_model(ctx.expr_cache.dsubst_cache@[k])
+            == subst_expr_levels(
+            to_model(k.0),
+            crate::level_model::level_names(to_model_of_levels(k.1)),
+            to_model_of_levels(k.2),
+        )
 }
 
 /// The instantiation cache. Unlike the level caches, this one is keyed by
@@ -481,10 +616,9 @@ pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
 /// because `inst` clears the cache on every call. So soundness is relative to
 /// the `substs` in flight, and the reset is what makes that safe.
 pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPtr<'t>>) -> bool {
-    forall |k: (ExprPtr<'t>, u16)|
-        #[trigger] ctx.expr_cache.inst_cache@.contains_key(k) ==>
-            to_model(ctx.expr_cache.inst_cache@[k])
-                == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
+    forall|k: (ExprPtr<'t>, u16)| #[trigger]
+        ctx.expr_cache.inst_cache@.contains_key(k) ==> to_model(ctx.expr_cache.inst_cache@[k])
+            == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
 }
 
 /// The de Bruijn-LEVEL abstraction's cache. Keyed by the full triple, unlike the
@@ -492,20 +626,19 @@ pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPt
 /// `start_pos` and `num_open_binders` vary WITHIN a single traversal, so neither
 /// can be left out of the key.
 pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
-    forall |k: (ExprPtr<'t>, u16, u16)|
-        #[trigger] ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==>
-            to_model(ctx.expr_cache.abstr_cache_levels@[k])
-                == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
+    forall|k: (ExprPtr<'t>, u16, u16)| #[trigger]
+        ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==> to_model(
+            ctx.expr_cache.abstr_cache_levels@[k],
+        ) == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
 }
 
 /// The abstraction cache. Keyed `(expr, offset)` like the instantiation one and
 /// for the same reason: `abstr` clears it per call, so the `locals` list need
 /// not be part of the key and soundness is relative to the list in flight.
 pub open spec fn abstr_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, locals: Seq<ExprPtr<'t>>) -> bool {
-    forall |k: (ExprPtr<'t>, u16)|
-        #[trigger] ctx.expr_cache.abstr_cache@.contains_key(k) ==>
-            to_model(ctx.expr_cache.abstr_cache@[k])
-                == abstr_full(to_model(k.0), local_ids(locals), k.1 as nat)
+    forall|k: (ExprPtr<'t>, u16)| #[trigger]
+        ctx.expr_cache.abstr_cache@.contains_key(k) ==> to_model(ctx.expr_cache.abstr_cache@[k])
+            == abstr_full(to_model(k.0), local_ids(locals), k.1 as nat)
 }
 
 /// The `expr_id`s of a list of locals -- `abstr_full`'s own `Seq<u32>` argument.
@@ -541,21 +674,21 @@ pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<u32> {
 /// 65535 means 65535 enclosing binders).
 pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
     match e {
-        Expr::App { num_loose_bvars, has_fvars, .. } =>
-            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
-            && has_fvars == has_fv(to_model_of_expr(e)),
-        Expr::Pi { num_loose_bvars, has_fvars, .. } =>
-            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
-            && has_fvars == has_fv(to_model_of_expr(e)),
-        Expr::Lambda { num_loose_bvars, has_fvars, .. } =>
-            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
-            && has_fvars == has_fv(to_model_of_expr(e)),
-        Expr::Let { num_loose_bvars, has_fvars, .. } =>
-            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
-            && has_fvars == has_fv(to_model_of_expr(e)),
-        Expr::Proj { num_loose_bvars, has_fvars, .. } =>
-            num_loose_bvars as nat == nlbv(to_model_of_expr(e))
-            && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::App { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
+            to_model_of_expr(e),
+        ) && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Pi { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
+            to_model_of_expr(e),
+        ) && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Lambda { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
+            to_model_of_expr(e),
+        ) && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Let { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
+            to_model_of_expr(e),
+        ) && has_fvars == has_fv(to_model_of_expr(e)),
+        Expr::Proj { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
+            to_model_of_expr(e),
+        ) && has_fvars == has_fv(to_model_of_expr(e)),
         Expr::Var { dbj_idx, .. } => dbj_idx < u16::MAX,
         _ => true,
     }
@@ -583,11 +716,15 @@ pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
 /// such a term before any of this code ran.
 #[verifier::external_body]
 pub broadcast proof fn axiom_arena_depth_bounded<'t>(e: ExprPtr<'t>)
-    ensures #[trigger] depth(to_model(e)) < 60000,
+    ensures
+        #[trigger] depth(to_model(e)) < 60000,
 {
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Expr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
+    ctx: &TcCtx<'t, 'p>,
+    ptr: ExprPtr<'t>,
+) -> (result: Expr<'t>) where 'p: 't
     ensures
         to_model_of_expr(result) == to_model(ptr),
         node_cache_ok(result),
@@ -599,10 +736,10 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
         // condition: `read_expr` reads the node the pointer names, so there is
         // no pair to get wrong. This is what lets the kernel's own
         // `unfold_const_apps` match on `Const { .. }` directly.
-        result matches Expr::Const { name, levels, .. } ==>
-            const_name_of(ptr) == name && const_levels_of(ptr) == levels,
-        result matches Expr::Local { id, binder_type, .. } ==>
-            local_id_of(ptr) == id && local_binder_type_of(ptr) == binder_type,
+        result matches Expr::Const { name, levels, .. } ==> const_name_of(ptr) == name
+            && const_levels_of(ptr) == levels,
+        result matches Expr::Local { id, binder_type, .. } ==> local_id_of(ptr) == id
+            && local_binder_type_of(ptr) == binder_type,
         result matches Expr::NatLit { ptr: np, .. } ==> nat_lit_ptr_of(ptr) == np,
         result matches Expr::StringLit { ptr: sp, .. } ==> string_lit_ptr_of(ptr) == sp,
         // The last of `expr_is_local`'s claims, re-keyed here for the same
@@ -613,8 +750,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
         // The de Bruijn-LEVEL serial, keyed here for the same reason as the
         // payload clauses above: on `read_expr` there is no `(ptr, e)` pair to
         // get wrong.
-        result matches Expr::Local { id, .. } ==>
-            dbj_serial(expr_id(ptr)) == fvar_dbj_serial(id);
+        result matches Expr::Local { id, .. } ==> dbj_serial(expr_id(ptr)) == fvar_dbj_serial(id),
+;
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
 // assuming exactly the six clauses above (`to_model_of_expr(e) ==
@@ -628,15 +765,18 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_expr] (ctx: &TcCtx<'t, '
 // `TcCtx::unfold_const_apps` in `expr.rs`, and `expr_as_local`/
 // `expr_as_nat_lit`/`expr_as_string_lit` below, none of which can state their
 // contract at all without the matching clause.
-
 #[allow(dead_code)]
 pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
-    ensures match result {
-        Some(i) => to_model_of_expr(*e) == ExprSpec::Var(i as u32),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::Var(_)),
-    }
+    ensures
+        match result {
+            Some(i) => to_model_of_expr(*e) == ExprSpec::Var(i as u32),
+            None => !matches!(to_model_of_expr(*e), ExprSpec::Var(_)),
+        },
 {
-    match e { Expr::Var { dbj_idx, .. } => Some(*dbj_idx), _ => None }
+    match e {
+        Expr::Var { dbj_idx, .. } => Some(*dbj_idx),
+        _ => None,
+    }
 }
 
 /// Was an `assume_specification` over a `(ptr, e)` pair -- the last one of that
@@ -651,14 +791,16 @@ pub fn expr_is_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 
 #[allow(dead_code)]
 pub fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _))
+    ensures
+        result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _)),
 {
     matches!(e, Expr::Pi { .. } | Expr::Lambda { .. })
 }
 
 #[allow(dead_code)]
 pub fn expr_is_const_shape<'t>(e: &Expr<'t>) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e), ExprSpec::Const(_, _))
+    ensures
+        result == matches!(to_model_of_expr(*e), ExprSpec::Const(_, _)),
 {
     matches!(e, Expr::Const { .. })
 }
@@ -670,7 +812,8 @@ pub fn expr_is_const_shape<'t>(e: &Expr<'t>) -> (result: bool)
 /// the old `expr_is_closed_leaf` axiom got wrong in the other direction back
 /// when `Sort` still collapsed into `Closed`.
 pub proof fn to_model_of_expr_never_closed<'a>(e: Expr<'a>)
-    ensures to_model_of_expr(e) != ExprSpec::Closed
+    ensures
+        to_model_of_expr(e) != ExprSpec::Closed,
 {
 }
 
@@ -683,21 +826,30 @@ pub proof fn to_model_of_expr_never_closed<'a>(e: Expr<'a>)
 /// looks -- at the value -- and discharged from those definitions.
 #[allow(dead_code)]
 pub fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool)
-    ensures result == matches!(to_model_of_expr(*e),
+    ensures
+        result
+            == matches!(to_model_of_expr(*e),
         ExprSpec::Closed | ExprSpec::Sort(_) | ExprSpec::Const(_, _)
-        | ExprSpec::NatLit(_) | ExprSpec::StringLit(_))
+        | ExprSpec::NatLit(_) | ExprSpec::StringLit(_)),
 {
     matches!(e, Expr::Sort { .. } | Expr::Const { .. } | Expr::StringLit { .. } | Expr::NatLit { .. })
 }
 
 #[allow(dead_code)]
 pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
-    ensures match result {
-        Some((f, a)) => to_model_of_expr(*e) == ExprSpec::App(Box::new(to_model(f)), Box::new(to_model(a))),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::App(_, _)),
-    }
+    ensures
+        match result {
+            Some((f, a)) => to_model_of_expr(*e) == ExprSpec::App(
+                Box::new(to_model(f)),
+                Box::new(to_model(a)),
+            ),
+            None => !matches!(to_model_of_expr(*e), ExprSpec::App(_, _)),
+        },
 {
-    match e { Expr::App { fun, arg, .. } => Some((*fun, *arg)), _ => None }
+    match e {
+        Expr::App { fun, arg, .. } => Some((*fun, *arg)),
+        _ => None,
+    }
 }
 
 /// `Const`'s name/levels, keyed by the pointer (like `expr_id`) --
@@ -722,11 +874,15 @@ pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t
 pub open spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::Const(_, _))
 }
+
 pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
+
 pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
+
 pub open spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u64 {
     name_id(const_name_of(ptr))
 }
+
 /// (Delta-lift L1: no longer an uninterpreted Vec side channel -- `ExprSpec::Const`
 /// carries a `Seq<LevelSpec>` now, so this is simply the level bridge itself.)
 pub open spec fn const_levels_vec<'a>(ptr: ExprPtr<'a>) -> Seq<LevelSpec> {
@@ -735,7 +891,8 @@ pub open spec fn const_levels_vec<'a>(ptr: ExprPtr<'a>) -> Seq<LevelSpec> {
 
 /// Now definitional (kept so the ~50 existing call sites read unchanged).
 pub proof fn const_levels_vec_model<'a>(ptr: ExprPtr<'a>)
-    ensures const_levels_vec(ptr) =~= to_model_of_levels(const_levels_of(ptr))
+    ensures
+        const_levels_vec(ptr) =~= to_model_of_levels(const_levels_of(ptr)),
 {
 }
 
@@ -748,11 +905,12 @@ pub proof fn const_levels_vec_model<'a>(ptr: ExprPtr<'a>)
 /// `to_model(ptr)`'s actual shape.
 #[verifier::external_body]
 pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
-    requires is_const_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::Const(const_id(ptr), const_levels_vec(ptr))
+    requires
+        is_const_shape(ptr),
+    ensures
+        to_model(ptr) == ExprSpec::Const(const_id(ptr), const_levels_vec(ptr)),
 {
 }
-
 
 /// `Local`'s payload, same trust-boundary shape as `Const`'s
 /// `is_const_shape`/`const_name_of`/`const_levels_of`: `local_id_of` is the
@@ -763,7 +921,9 @@ pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
 pub open spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::Free(_))
 }
+
 pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
+
 pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 
 /// The arena's local context, viewed at the MODEL level: the (total,
@@ -779,7 +939,8 @@ pub uninterp spec fn arena_lctx() -> Map<u32, ExprSpec>;
 
 #[verifier::external_body]
 pub proof fn arena_lctx_local<'a>(ptr: ExprPtr<'a>)
-    requires is_local_shape(ptr)
+    requires
+        is_local_shape(ptr),
     ensures
         arena_lctx().contains_key(expr_id(ptr)),
         arena_lctx()[expr_id(ptr)] == to_model(local_binder_type_of(ptr)),
@@ -794,8 +955,10 @@ pub proof fn arena_lctx_local<'a>(ptr: ExprPtr<'a>)
 /// from an earlier accessor rather than a fresh `expr_is_local` call).
 #[verifier::external_body]
 pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
-    requires is_local_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::Free(expr_id(ptr))
+    requires
+        is_local_shape(ptr),
+    ensures
+        to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
 {
 }
 
@@ -819,7 +982,6 @@ pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
 /// separate caps per context.
 pub uninterp spec fn local_type_cap() -> nat;
 
-
 /// Deliberately omits `max_var_below`/`size` (unlike `env_global_wf`) --
 /// `depth` is needed for `infer`'s own depth-boundedness, and an
 /// UNCONDITIONAL axiom that includes `size` has been shown to blow up
@@ -834,10 +996,11 @@ pub uninterp spec fn local_type_cap() -> nat;
 /// parameter forever.
 #[verifier::external_body]
 pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
-    ensures is_local_shape(ptr) ==> {
-        &&& depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
-        &&& nlbv(to_model(local_binder_type_of(ptr))) == 0
-    }
+    ensures
+        is_local_shape(ptr) ==> {
+            &&& depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
+            &&& nlbv(to_model(local_binder_type_of(ptr))) == 0
+        },
 {
 }
 
@@ -847,7 +1010,8 @@ pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
 /// still an unspecified external call -- the match is what discharges it.
 #[allow(dead_code)]
 pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> (result: bool)
-    ensures result == (a == b)
+    ensures
+        result == (a == b),
 {
     match (a, b) {
         (FVarId::DbjLevel(x), FVarId::DbjLevel(y)) => x == y,
@@ -858,11 +1022,16 @@ pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> (result: bool)
 
 /// Was an `assume_specification` over a `(ptr, e)` pair whose correspondence
 /// nothing checked; reads the node itself now, so the same contract is proven.
-pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<(FVarId, ExprPtr<'t>)>)
-    ensures match result {
-        Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(ptr) == t,
-        None => !is_local_shape(ptr),
-    }
+pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<
+    (FVarId, ExprPtr<'t>),
+>)
+    ensures
+        match result {
+            Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(
+                ptr,
+            ) == t,
+            None => !is_local_shape(ptr),
+        },
 {
     match ctx.read_expr(ptr) {
         Expr::Local { id, binder_type, .. } => Some((id, binder_type)),
@@ -875,7 +1044,6 @@ pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 /// read-side contract above (same three facts), letting `is_const_shape_
 /// model`/`const_levels_vec_model` derive `to_model(result)` the same way
 /// for either a freshly-built or a pre-existing `Const` pointer.
-
 /// Construction-side mirror for `Local`, same pattern as `mk_const` above:
 /// `mk_dbj_level` (`util.rs:612-623`, "open a binder with a fresh free
 /// variable") always produces an `is_local_shape` node carrying exactly
@@ -922,22 +1090,30 @@ pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 // expr_id(result)) == Some(old counter)`) and the counter's increment. Those
 // are the two facts `abstr_levels_with_locals` was bundling, so retiring it
 // onto `abstr_levels_full_eq_abstr_full` is no longer blocked here.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_dbj_level] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
-    requires old(ctx).dbj_level_counter < u16::MAX
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
+    ctx: &mut TcCtx<'t, 'p>,
+    binder_name: NamePtr<'t>,
+    binder_style: BinderStyle,
+    binder_type: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>) where 'p: 't
+    requires
+        old(ctx).dbj_level_counter < u16::MAX,
     ensures
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,
         to_model(result) == ExprSpec::Free(expr_id(result)),
         dbj_serial(expr_id(result)) == Some(old(ctx).dbj_level_counter),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter + 1,
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+;
 
 /// Was a claim-free `assume_specification` -- `TcCtx` was `external_body`, so
 /// a wrapper round a field read could not even say which field. Transparent, it
 /// says so and proves it.
 #[allow(dead_code)]
 pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result: u16)
-    ensures result == ctx.dbj_level_counter
+    ensures
+        result == ctx.dbj_level_counter,
 {
     ctx.dbj_level_counter
 }
@@ -950,11 +1126,16 @@ pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result:
 /// Still assumed rather than verified. Its body is three lines, but they are
 /// awkward ones: a `debug_assert_eq!` (same `AssertKind` wall as `assert_eq!`),
 /// a `panic!` arm that formats via `debug_print`, and the decrement itself.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: ()) where 'p: 't
-    requires old(ctx).dbj_level_counter > 0
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+) -> (result: ()) where 'p: 't
+    requires
+        old(ctx).dbj_level_counter > 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter - 1,
-        final(ctx).expr_cache == old(ctx).expr_cache;
+        final(ctx).expr_cache == old(ctx).expr_cache,
+;
 
 // ATTEMPTED AND BACKED OUT: retiring this onto
 // `abstr_levels_full_eq_abstr_full`. The algorithmic half is DONE -- that lemma
@@ -1002,10 +1183,20 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::replace_dbj_level] (ctx: &mut
 // exactly the "axiom with an unchecked pair" shape. A retirement should
 // reorder that call BEFORE the `replace_dbj_level` (behaviour-preserving:
 // the abstraction is a no-op either way) rather than preserve the accident.
-
-pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, start_pos: u16, locals_hint: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures to_model(result) == abstr_full(to_model(e), Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])), 0),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+pub assume_specification<'t, 'p>[ abstr_levels_with_locals ](
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    start_pos: u16,
+    locals_hint: &[ExprPtr<'t>],
+) -> (result: ExprPtr<'t>) where 'p: 't
+    ensures
+        to_model(result) == abstr_full(
+            to_model(e),
+            Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])),
+            0,
+        ),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
@@ -1020,16 +1211,25 @@ pub assume_specification<'t, 'p> [abstr_levels_with_locals] (ctx: &mut TcCtx<'t,
 /// `None` covers the real function's only failure mode (the name isn't
 /// present in this export file's cache at all).
 pub uninterp spec fn bool_true_id() -> u64;
+
 pub uninterp spec fn bool_false_id() -> u64;
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCtx<'t, 'p>, b: bool) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::bool_to_expr ](
+    ctx: &mut TcCtx<'t, 'p>,
+    b: bool,
+) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures
         final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
         match result {
-        Some(e) => is_const_shape(e) && const_id(e) == if b { bool_true_id() } else { bool_false_id() },
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+            Some(e) => is_const_shape(e) && const_id(e) == if b {
+                bool_true_id()
+            } else {
+                bool_false_id()
+            },
+            None => true,
+        },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
 /// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
@@ -1094,6 +1294,7 @@ pub proof fn name_cache_ids_ok<'p>(nc: crate::util::NameCache<'p>)
 pub uninterp spec fn quot_kind_of(id: u64) -> Option<u8>;
 
 pub uninterp spec fn nat_zero_id() -> u64;
+
 pub uninterp spec fn nat_succ_id() -> u64;
 
 /// ARENA-GLOBAL constructor arity: `Some(num_params)` when the name id
@@ -1131,8 +1332,6 @@ pub uninterp spec fn ctor_num_fields_of(id: u64) -> Option<u16>;
 /// 8 ble (`land`/`lor`/`xor`/`shl`/`shr` are NOT modeled: `None`).
 pub uninterp spec fn nat_bin_op_of(id: u64) -> Option<u8>;
 
-
-
 /// RECURSOR DATA, arena-global (rec-iota P0, 2026-09-04) -- the same
 /// "one declaration per name id per export" trust as `ctor_num_params_of`
 /// above: what `pstep`'s recursor-iota rule needs about a recursor, with
@@ -1157,7 +1356,6 @@ pub ghost struct RecDataSpec {
 }
 
 pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
-
 
 /// Disclosed trust: every recursor rule's right-hand side is a CLOSED
 /// term (no loose bound variables, no free variables) with no string
@@ -1185,9 +1383,9 @@ pub proof fn rec_rule_rhs_wf(id: u64, i: int)
 /// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
 /// itself.
 pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
-    (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e) == nat_zero_id())
+    (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e)
+        == nat_zero_id())
 }
-
 
 /// Exec size computation over the real arena, mirroring the model
 /// `size` exactly -- THE opening piece of the chain-carrying
@@ -1198,20 +1396,29 @@ pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
 /// with dischargeable per-element bounds. `None` covers fuel
 /// exhaustion, the gate, and unmodeled shapes -- honest incompleteness,
 /// never a wrong size.
-pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<u32>)
-    ensures match result {
-        Some(n) => n as nat == size(to_model(e)) && n <= 60000,
-        None => true,
-    }
-    decreases fuel
+pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<
+    u32,
+>)
+    ensures
+        match result {
+            Some(n) => n as nat == size(to_model(e)) && n <= 60000,
+            None => true,
+        },
+    decreases fuel,
 {
     if fuel == 0 {
         return None;
     }
     let el = ctx.read_expr(e);
     if let Some((f, a)) = expr_as_app(&el) {
-        let nf = match verified_size(ctx, f, fuel - 1) { Some(v) => v, None => return None };
-        let na = match verified_size(ctx, a, fuel - 1) { Some(v) => v, None => return None };
+        let nf = match verified_size(ctx, f, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
+        let na = match verified_size(ctx, a, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
         let total: u64 = 1u64 + nf as u64 + na as u64;
         if total > 60000 {
             return None;
@@ -1220,8 +1427,14 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         return Some(total as u32);
     }
     if let Some((_, _, ty, body)) = expr_as_pi(&el) {
-        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let nb = match verified_size(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let nt = match verified_size(ctx, ty, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
+        let nb = match verified_size(ctx, body, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
         let total: u64 = 1u64 + nt as u64 + nb as u64;
         if total > 60000 {
             return None;
@@ -1230,8 +1443,14 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         return Some(total as u32);
     }
     if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
-        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v) => v, None => return None };
-        let nb = match verified_size(ctx, body, fuel - 1) { Some(v) => v, None => return None };
+        let nt = match verified_size(ctx, ty, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
+        let nb = match verified_size(ctx, body, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
         let total: u64 = 1u64 + nt as u64 + nb as u64;
         if total > 60000 {
             return None;
@@ -1240,18 +1459,32 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         return Some(total as u32);
     }
     if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
-        let nt = match verified_size(ctx, ty, fuel - 1) { Some(v2) => v2, None => return None };
-        let nv = match verified_size(ctx, v, fuel - 1) { Some(v2) => v2, None => return None };
-        let nb = match verified_size(ctx, body, fuel - 1) { Some(v2) => v2, None => return None };
+        let nt = match verified_size(ctx, ty, fuel - 1) {
+            Some(v2) => v2,
+            None => return None,
+        };
+        let nv = match verified_size(ctx, v, fuel - 1) {
+            Some(v2) => v2,
+            None => return None,
+        };
+        let nb = match verified_size(ctx, body, fuel - 1) {
+            Some(v2) => v2,
+            None => return None,
+        };
         let total: u64 = 1u64 + nt as u64 + nv as u64 + nb as u64;
         if total > 60000 {
             return None;
         }
-        assert(size(to_model(e)) == 1 + size(to_model(ty)) + size(to_model(v)) + size(to_model(body)));
+        assert(size(to_model(e)) == 1 + size(to_model(ty)) + size(to_model(v)) + size(
+            to_model(body),
+        ));
         return Some(total as u32);
     }
     if let Some((_, _, st)) = expr_as_proj(&el) {
-        let ns = match verified_size(ctx, st, fuel - 1) { Some(v) => v, None => return None };
+        let ns = match verified_size(ctx, st, fuel - 1) {
+            Some(v) => v,
+            None => return None,
+        };
         let total: u64 = 1u64 + ns as u64;
         if total > 60000 {
             return None;
@@ -1268,68 +1501,101 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
         return Some(1);
     }
     if expr_is_const_shape(&el) {
-        proof { is_const_shape_model(e); }
+        proof {
+            is_const_shape_model(e);
+        }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
     if expr_as_local(ctx, e).is_some() {
-        proof { is_local_shape_model(e); }
+        proof {
+            is_local_shape_model(e);
+        }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
     if expr_as_nat_lit(ctx, e).is_some() {
-        proof { is_nat_lit_shape_model(e); }
+        proof {
+            is_nat_lit_shape_model(e);
+        }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
     if expr_as_string_lit(ctx, e) {
-        proof { is_string_lit_shape_model(e); }
+        proof {
+            is_string_lit_shape_model(e);
+        }
         assert(size(to_model(e)) == 1);
         return Some(1);
     }
     None
 }
 
-
 /// Freshness walker for the binder fresh-instance rule: `Some(true)`
 /// certifies `fv_absent(to_model(e), expr_id(local))` by POINTER
 /// comparison at every `Local` node (`expr_id` is injective on pointers,
 /// `expr_id_injective`). Sound regardless of `FVarId` reuse, since the
 /// model keys free variables by pointer identity.
-pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
-    ensures match result {
-        Some(true) => fv_absent(to_model(e), expr_id(local)),
-        _ => true,
-    }
-    decreases fuel
+pub fn verified_fv_absent<'t, 'p: 't>(
+    ctx: &TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    local: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<bool>)
+    ensures
+        match result {
+            Some(true) => fv_absent(to_model(e), expr_id(local)),
+            _ => true,
+        },
+    decreases fuel,
 {
     if fuel == 0 {
         return None;
     }
     let el = ctx.read_expr(e);
     if let Some((f, a)) = expr_as_app(&el) {
-        if verified_fv_absent(ctx, f, local, fuel - 1) != Some(true) { return None; }
-        if verified_fv_absent(ctx, a, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, f, local, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_fv_absent(ctx, a, local, fuel - 1) != Some(true) {
+            return None;
+        }
         return Some(true);
     }
     if let Some((_, _, ty, body)) = expr_as_pi(&el) {
-        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
-        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) {
+            return None;
+        }
         return Some(true);
     }
     if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
-        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
-        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) {
+            return None;
+        }
         return Some(true);
     }
     if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
-        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) { return None; }
-        if verified_fv_absent(ctx, v, local, fuel - 1) != Some(true) { return None; }
-        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, ty, local, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_fv_absent(ctx, v, local, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_fv_absent(ctx, body, local, fuel - 1) != Some(true) {
+            return None;
+        }
         return Some(true);
     }
     if let Some((_, _, st)) = expr_as_proj(&el) {
-        if verified_fv_absent(ctx, st, local, fuel - 1) != Some(true) { return None; }
+        if verified_fv_absent(ctx, st, local, fuel - 1) != Some(true) {
+            return None;
+        }
         return Some(true);
     }
     if expr_as_var(&el).is_some() {
@@ -1339,29 +1605,37 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
         return Some(true);
     }
     if expr_is_const_shape(&el) {
-        proof { is_const_shape_model(e); }
+        proof {
+            is_const_shape_model(e);
+        }
         return Some(true);
     }
     if expr_as_local(ctx, e).is_some() {
-        proof { is_local_shape_model(e); }
+        proof {
+            is_local_shape_model(e);
+        }
         if expr_ptr_eq(e, local) {
             return None;
         }
-        proof { expr_id_injective(e, local); }
+        proof {
+            expr_id_injective(e, local);
+        }
         return Some(true);
     }
     if expr_as_nat_lit(ctx, e).is_some() {
-        proof { is_nat_lit_shape_model(e); }
+        proof {
+            is_nat_lit_shape_model(e);
+        }
         return Some(true);
     }
     if expr_as_string_lit(ctx, e) {
-        proof { is_string_lit_shape_model(e); }
+        proof {
+            is_string_lit_shape_model(e);
+        }
         return Some(true);
     }
     None
 }
-
-
 
 /// `Nat.zero`'s own declared universe-parameter arity is unconditionally
 /// ZERO -- a basic, permanent fact about the real Lean prelude (`Nat.zero`
@@ -1379,19 +1653,24 @@ pub fn verified_fv_absent<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, local
 /// always-zero-arity declaration rather than stated generically.
 #[verifier::external_body]
 pub proof fn nat_zero_arity_is_zero<'a>(e: ExprPtr<'a>)
-    requires is_const_shape(e), const_id(e) == nat_zero_id()
-    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+    requires
+        is_const_shape(e),
+        const_id(e) == nat_zero_id(),
+    ensures
+        to_model_of_levels(const_levels_of(e)).len() == 0,
 {
 }
-
 
 /// Either `Bool` constant (`bool_to_expr`'s result) carries empty levels
 /// -- `bool_true_arity_is_zero` extended to `Bool.false`, same disclosed
 /// trust (neither constructor is universe-polymorphic).
 #[verifier::external_body]
 pub proof fn bool_true_arity_is_zero_any<'a>(e: ExprPtr<'a>)
-    requires is_const_shape(e), const_id(e) == bool_true_id() || const_id(e) == bool_false_id()
-    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+    requires
+        is_const_shape(e),
+        const_id(e) == bool_true_id() || const_id(e) == bool_false_id(),
+    ensures
+        to_model_of_levels(const_levels_of(e)).len() == 0,
 {
 }
 
@@ -1404,33 +1683,45 @@ pub proof fn bool_true_arity_is_zero_any<'a>(e: ExprPtr<'a>)
 /// `pstep`'s `NatLit` unfolding rule targets.
 #[verifier::external_body]
 pub proof fn nat_succ_arity_is_zero<'a>(e: ExprPtr<'a>)
-    requires is_const_shape(e), const_id(e) == nat_succ_id()
-    ensures to_model_of_levels(const_levels_of(e)).len() == 0
+    requires
+        is_const_shape(e),
+        const_id(e) == nat_succ_id(),
+    ensures
+        to_model_of_levels(const_levels_of(e)).len() == 0,
 {
 }
 
 /// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
 pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
-    (exists |fun: ExprPtr<'a>|
+    (exists|fun: ExprPtr<'a>|
         to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-        && is_const_shape(fun) && const_id(fun) == nat_succ_id())
-    || (is_nat_lit_shape(e) && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e) - 1) as nat)
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id()) || (is_nat_lit_shape(e)
+        && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e)
+        - 1) as nat)
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::is_nat_zero ](
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+) -> (result: bool) where 'p: 't
     ensures
         final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
         result == nat_repr_is_zero(e),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::pred_of_nat_succ ](
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures
         final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
         match result {
-        Some(r) => nat_repr_pred(e, r),
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+            Some(r) => nat_repr_pred(e, r),
+            None => true,
+        },
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// Real-arena counterpart to `expr.rs::TcCtx::nat_lit_to_constructor`
 /// (`expr.rs:523-533`): turn a bignum into the constructor it denotes --
@@ -1455,18 +1746,21 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut 
 /// value(n))` reduces to, bridged from the opaque `const_expr_no_levels`
 /// stand-in (see its own doc comment) to the REAL `Const` this function
 /// actually builds via `const_expr_no_levels_canonical`.
-pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    n: crate::util::BigUintPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r)) <= 1
-            && pstep(
+            Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r))
+                <= 1 && pstep(
                 Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
                 ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
                 to_model(r),
             ),
-        None => true,
-    }
+            None => true,
+        },
 {
     let val = match read_bignum_value(ctx, n) {
         Some(v) => v,
@@ -1507,7 +1801,10 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
         }
         let result = ctx.mk_app(succ_c, pred);
         proof {
-            assert(to_model(result) == ExprSpec::App(Box::new(to_model(succ_c)), Box::new(to_model(pred))));
+            assert(to_model(result) == ExprSpec::App(
+                Box::new(to_model(succ_c)),
+                Box::new(to_model(pred)),
+            ));
             assert(depth(to_model(succ_c)) == 0);
             assert(depth(to_model(pred)) == 0);
             assert(nlbv(to_model(succ_c)) == 0);
@@ -1536,6 +1833,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: c
 /// same "don't model environment-level config" convention as everywhere
 /// else in this arc.
 pub uninterp spec fn nat_type_id() -> u64;
+
 pub uninterp spec fn string_type_id() -> u64;
 
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
@@ -1550,24 +1848,33 @@ pub uninterp spec fn string_type_id() -> u64;
 pub open spec fn is_nat_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::NatLit(_))
 }
+
 pub uninterp spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr<'a>;
+
 pub uninterp spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat;
+
 pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
     bignum_ptr_value(nat_lit_ptr_of(ptr))
 }
 
 #[verifier::external_body]
 pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
-    requires is_nat_lit_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(ptr))))
-{}
+    requires
+        is_nat_lit_shape(ptr),
+    ensures
+        to_model(ptr) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(ptr)))),
+{
+}
 
 /// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
-pub fn expr_as_nat_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<crate::util::BigUintPtr<'t>>)
-    ensures match result {
-        Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
-        None => !is_nat_lit_shape(ptr),
-    }
+pub fn expr_as_nat_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<
+    crate::util::BigUintPtr<'t>,
+>)
+    ensures
+        match result {
+            Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
+            None => !is_nat_lit_shape(ptr),
+        },
 {
     match ctx.read_expr(ptr) {
         Expr::NatLit { ptr: np, .. } => Some(np),
@@ -1587,19 +1894,25 @@ pub fn expr_as_nat_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (re
 pub open spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::StringLit(_))
 }
+
 pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
 
 /// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
 pub fn expr_as_string_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
-    ensures result == is_string_lit_shape(ptr)
+    ensures
+        result == is_string_lit_shape(ptr),
 {
     matches!(ctx.read_expr(ptr), Expr::StringLit { .. })
 }
 
 #[verifier::external_body]
 pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
-    requires is_string_lit_shape(ptr)
-    ensures to_model(ptr) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(ptr)))))
+    requires
+        is_string_lit_shape(ptr),
+    ensures
+        to_model(ptr) == ExprSpec::StringLit(
+            StringLitPayload(Ghost(string_len(string_lit_ptr_of(ptr)))),
+        ),
 {
 }
 
@@ -1629,25 +1942,34 @@ pub uninterp spec fn string_len<'a>(s: StringPtr<'a>) -> nat;
 /// of those -- no `Var`/`Free` anywhere -- so `nlbv`/`max_var_below`
 /// hold unconditionally (bound `0` suffices for `max_var_below`,
 /// weakened to whatever the caller needs via `max_var_below_mono`).
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx: &mut TcCtx<'t, 'p>, s: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
+    ctx: &mut TcCtx<'t, 'p>,
+    s: StringPtr<'t>,
+) -> (result: Option<ExprPtr<'t>>) where 'p: 't
     ensures
         final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
         match result {
-        Some(r) => {
-            &&& nlbv(to_model(r)) <= 0
-            &&& max_var_below(to_model(r), 0)
-            &&& depth(to_model(r)) <= string_len(s) + 3
-            &&& to_model(r) == string_lit_expand_model(string_len(s))
+            Some(r) => {
+                &&& nlbv(to_model(r)) <= 0
+                &&& max_var_below(to_model(r), 0)
+                &&& depth(to_model(r)) <= string_len(s) + 3
+                &&& to_model(r) == string_lit_expand_model(string_len(s))
+            },
+            None => true,
         },
-        None => true,
-    },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
-pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: crate::util::BigUintPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
-    ensures match result {
-        Some(v) => crate::nat_lit_model::to_nat(v) == bignum_ptr_value(p),
-        None => true,
-    };
+pub assume_specification<'t, 'p>[ read_bignum_value ](
+    ctx: &TcCtx<'t, 'p>,
+    p: crate::util::BigUintPtr<'t>,
+) -> (result: Option<num_bigint::BigUint>) where 'p: 't
+    ensures
+        match result {
+            Some(v) => crate::nat_lit_model::to_nat(v) == bignum_ptr_value(p),
+            None => true,
+        },
+;
 
 /// `Sort`'s level, read directly off the shallow value -- simpler than
 /// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s
@@ -1665,52 +1987,94 @@ pub assume_specification<'t, 'p> [read_bignum_value] (ctx: &TcCtx<'t, 'p>, p: cr
 /// genuine `Sort` node to surface the inconsistency).
 #[allow(dead_code)]
 pub fn expr_as_sort<'t>(e: &Expr<'t>) -> (result: Option<LevelPtr<'t>>)
-    ensures match result {
-        Some(level) => to_model_of_expr(*e) == ExprSpec::Sort(level_to_model(level)),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::Sort(_)),
-    }
+    ensures
+        match result {
+            Some(level) => to_model_of_expr(*e) == ExprSpec::Sort(level_to_model(level)),
+            None => !matches!(to_model_of_expr(*e), ExprSpec::Sort(_)),
+        },
 {
-    match e { Expr::Sort { level, .. } => Some(*level), _ => None }
+    match e {
+        Expr::Sort { level, .. } => Some(*level),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]
-pub fn expr_as_pi<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
-    ensures match result {
-        Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))),
-        None => true,
-    }
+pub fn expr_as_pi<'t>(e: &Expr<'t>) -> (result: Option<
+    (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>),
+>)
+    ensures
+        match result {
+            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
+                Box::new(to_model(ty)),
+                Box::new(to_model(body)),
+            ),
+            None => true,
+        },
 {
-    match e { Expr::Pi { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
+    match e {
+        Expr::Pi { binder_name, binder_style, binder_type, body, .. } => Some(
+            (*binder_name, *binder_style, *binder_type, *body),
+        ),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]
-pub fn expr_as_lambda<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>)>)
-    ensures match result {
-        Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))),
-        None => true,
-    }
+pub fn expr_as_lambda<'t>(e: &Expr<'t>) -> (result: Option<
+    (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>),
+>)
+    ensures
+        match result {
+            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
+                Box::new(to_model(ty)),
+                Box::new(to_model(body)),
+            ),
+            None => true,
+        },
 {
-    match e { Expr::Lambda { binder_name, binder_style, binder_type, body, .. } => Some((*binder_name, *binder_style, *binder_type, *body)), _ => None }
+    match e {
+        Expr::Lambda { binder_name, binder_style, binder_type, body, .. } => Some(
+            (*binder_name, *binder_style, *binder_type, *body),
+        ),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]
-pub fn expr_as_let<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool)>)
-    ensures match result {
-        Some((_, ty, v, body, _)) => to_model_of_expr(*e) == ExprSpec::Let(Box::new(to_model(ty)), Box::new(to_model(v)), Box::new(to_model(body))),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::Let(_, _, _)),
-    }
+pub fn expr_as_let<'t>(e: &Expr<'t>) -> (result: Option<
+    (NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool),
+>)
+    ensures
+        match result {
+            Some((_, ty, v, body, _)) => to_model_of_expr(*e) == ExprSpec::Let(
+                Box::new(to_model(ty)),
+                Box::new(to_model(v)),
+                Box::new(to_model(body)),
+            ),
+            None => !matches!(to_model_of_expr(*e), ExprSpec::Let(_, _, _)),
+        },
 {
-    match e { Expr::Let { binder_name, binder_type, val, body, nondep, .. } => Some((*binder_name, *binder_type, *val, *body, *nondep)), _ => None }
+    match e {
+        Expr::Let { binder_name, binder_type, val, body, nondep, .. } => Some(
+            (*binder_name, *binder_type, *val, *body, *nondep),
+        ),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]
 pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, ExprPtr<'t>)>)
-    ensures match result {
-        Some((_, idx, s)) => to_model_of_expr(*e) == ExprSpec::Proj(idx, Box::new(to_model(s))),
-        None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_, _)),
-    }
+    ensures
+        match result {
+            Some((_, idx, s)) => to_model_of_expr(*e) == ExprSpec::Proj(idx, Box::new(to_model(s))),
+            None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_, _)),
+        },
 {
-    match e { Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)), _ => None }
+    match e {
+        Expr::Proj { ty_name, idx, structure, .. } => Some((*ty_name, *idx, *structure)),
+        _ => None,
+    }
 }
 
 /// THE storage primitive for bignums: allocation returns a pointer denoting
@@ -1721,14 +2085,18 @@ pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, Ex
 /// size but sits in a better place: a fact about what STORAGE holds, rather
 /// than about what one convenience constructor returns -- and with it both
 /// `mk_nat_lit` and `mk_nat_lit_quick` are proved rather than assumed.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_bignum] (ctx: &mut TcCtx<'t, 'p>, n: num_bigint::BigUint) -> (result: Option<crate::util::BigUintPtr<'t>>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
+    ctx: &mut TcCtx<'t, 'p>,
+    n: num_bigint::BigUint,
+) -> (result: Option<crate::util::BigUintPtr<'t>>) where 'p: 't
     ensures
         match result {
             Some(p) => bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
             None => true,
         },
         final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// THE storage primitive for expressions: allocation returns a pointer
 /// denoting exactly the node handed in. Hash-consing may return an existing
@@ -1736,7 +2104,10 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_bignum] (ctx: &mut TcCt
 /// children keep their denotations by `expr_model_at_append` (proven above).
 ///
 /// The `mk_*` contracts are DERIVED from this rather than assumed separately.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<'t, 'p>, e: Expr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
+    ctx: &mut TcCtx<'t, 'p>,
+    e: Expr<'t>,
+) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         to_model(result) == to_model_of_expr(e),
         // The same clause `read_expr` carries, on the write side. `const_name_of`
@@ -1744,8 +2115,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
         // cannot say what they are -- which is why `mk_const` was the one
         // constructor of fifteen still needing its own axiom while the other
         // twelve derived from this one. With this, it derives too.
-        e matches Expr::Const { name, levels, .. } ==>
-            const_name_of(result) == name && const_levels_of(result) == levels,
+        e matches Expr::Const { name, levels, .. } ==> const_name_of(result) == name
+            && const_levels_of(result) == levels,
         // Same, for the literal's payload pointer: `nat_lit_ptr_of` is a
         // separate uninterpreted projection from the one the denotation
         // carries, so `to_model(result)` alone does not pin it.
@@ -1754,7 +2125,8 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
         // this, every constructor call inside a cache-wrapped function havocs
         // the cache and its soundness invariant cannot survive the body.
         final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 // HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
 //
@@ -1781,9 +2153,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
 // Net once done: these 9, plus the level and name constructors -- roughly 25
 // denotation claims -- collapse to 3 storage primitives, and that many kernel
 // functions move inside `verus!`.
-
-
-
 /// Adapter over the kernel's own `TcCtx::inst`, which is verified in place now
 /// (`expr.rs`). This was a 110-line reimplementation with its own fuel
 /// parameter; what is left is the `Option` shape its twenty-four call sites
@@ -1797,13 +2166,23 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_expr] (ctx: &mut TcCtx<
 /// The `substs` length check takes the place of a precondition the call sites
 /// could not establish, using the same `None` escape the mirror used for fuel
 /// exhaustion.
-pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_inst<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    substs: &[ExprPtr<'t>],
+    offset: u16,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         offset == 0,
         offset as nat + depth(to_model(e)) <= 60000,
     ensures
         (match result {
-            Some(r) => to_model(r) == subst_full(to_model(e), Seq::new(substs@.len(), |i: int| to_model(substs@[i])), offset as nat),
+            Some(r) => to_model(r) == subst_full(
+                to_model(e),
+                Seq::new(substs@.len(), |i: int| to_model(substs@[i])),
+                offset as nat,
+            ),
             None => true,
         }),
         // Frame on the de Bruijn counter. Nothing in the shadow route said what
@@ -1822,7 +2201,6 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
     Some(r)
 }
 
-
 /// Closed-form model of `TcCtx::abstr_pi_telescope`'s (`expr.rs:670-676`)
 /// own recursion: peels `binder_ids`/`binder_tys` from the END (matching
 /// the real function's `while let [tl @ .., binder] = binders`), each
@@ -1831,8 +2209,12 @@ pub fn verified_inst<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, substs
 /// shorter prefix -- so the OUTERMOST `Pi` in the result binds
 /// `binder_ids[0]`/`binder_tys[0]`, matching `[a, b, c], e ~> Pi(a, Pi(b,
 /// Pi(c, e)))` exactly as the doc comment there describes.
-pub open spec fn abstr_pi_telescope_model(binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec) -> ExprSpec
-    decreases binder_ids.len()
+pub open spec fn abstr_pi_telescope_model(
+    binder_ids: Seq<u32>,
+    binder_tys: Seq<ExprSpec>,
+    e: ExprSpec,
+) -> ExprSpec
+    decreases binder_ids.len(),
 {
     if binder_ids.len() == 0 {
         e
@@ -1841,7 +2223,11 @@ pub open spec fn abstr_pi_telescope_model(binder_ids: Seq<u32>, binder_tys: Seq<
         let last_ty = binder_tys.last();
         let rest_ids = binder_ids.drop_last();
         let rest_tys = binder_tys.drop_last();
-        abstr_pi_telescope_model(rest_ids, rest_tys, ExprSpec::Bind(Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))))
+        abstr_pi_telescope_model(
+            rest_ids,
+            rest_tys,
+            ExprSpec::Bind(Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))),
+        )
     }
 }
 
@@ -1851,12 +2237,18 @@ pub open spec fn abstr_pi_telescope_model(binder_ids: Seq<u32>, binder_tys: Seq<
 /// must be `Free`-shaped (an already-created `Local`, same precondition
 /// `abstr_pi` itself already carries) for its own `abstr_pi` step to
 /// apply.
-pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    binders: &[ExprPtr<'t>],
+    e: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
     requires
-        (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
-            let m = to_model(binders@[i]);
-            matches!(m, ExprSpec::Free(_))
-        }),
+        (forall|i: int|
+            #![trigger binders@[i]]
+            0 <= i < binders@.len() ==> {
+                let m = to_model(binders@[i]);
+                matches!(m, ExprSpec::Free(_))
+            }),
         // Each step consumes one binder and wraps the result in a `Bind` whose
         // DOMAIN is that binder's type, so the depth grows by `1 + the type's
         // depth` per step -- not by one. `local_type_cap` bounds the latter,
@@ -1867,14 +2259,13 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders:
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
-        depth(to_model(result))
-            <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
-to_model(result) == abstr_pi_telescope_model(
-        Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
-        Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
-        to_model(e),
-    )
-    decreases binders.len()
+        depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
+        to_model(result) == abstr_pi_telescope_model(
+            Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
+            Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
+            to_model(e),
+        ),
+    decreases binders.len(),
 {
     if binders.len() == 0 {
         assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
@@ -1918,12 +2309,18 @@ to_model(result) == abstr_pi_telescope_model(
 /// so the two telescope functions' closed forms are the SAME spec fn,
 /// just reached via a different real constructor underneath (invisible
 /// to the model either way).
-pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, binders: &[ExprPtr<'t>], e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    binders: &[ExprPtr<'t>],
+    e: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
     requires
-        (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len() ==> {
-            let m = to_model(binders@[i]);
-            matches!(m, ExprSpec::Free(_))
-        }),
+        (forall|i: int|
+            #![trigger binders@[i]]
+            0 <= i < binders@.len() ==> {
+                let m = to_model(binders@[i]);
+                matches!(m, ExprSpec::Free(_))
+            }),
         // Each step consumes one binder and wraps the result in a `Bind` whose
         // DOMAIN is that binder's type, so the depth grows by `1 + the type's
         // depth` per step -- not by one. `local_type_cap` bounds the latter,
@@ -1934,14 +2331,13 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, bind
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
-        depth(to_model(result))
-            <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
-to_model(result) == abstr_pi_telescope_model(
-        Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
-        Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
-        to_model(e),
-    )
-    decreases binders.len()
+        depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
+        to_model(result) == abstr_pi_telescope_model(
+            Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
+            Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
+            to_model(e),
+        ),
+    decreases binders.len(),
 {
     if binders.len() == 0 {
         assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
@@ -1989,19 +2385,35 @@ to_model(result) == abstr_pi_telescope_model(
 /// `expr_is_local` is treated as a no-op here purely for totality, mirroring
 /// `subst_expr_levels_model`'s `Free` case, not because it's expected to
 /// fire.
-pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_subst_expr_levels<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    ks: LevelsPtr<'t>,
+    vs: LevelsPtr<'t>,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
-        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        forall|j: int|
+            0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => subst_expr_levels_rel(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs), to_model(r))
+            Some(r) => subst_expr_levels_rel(
+                to_model(e),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs),
+                to_model(r),
+            )
             // SYNTACTIC pin (delta-lift L2): the real result IS the spec function's output.
-            && to_model(r) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
-        None => true,
-    }
-    decreases fuel
+             && to_model(r) == subst_expr_levels(
+                to_model(e),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs),
+            ),
+            None => true,
+        },
+    decreases fuel,
 {
     if fuel == 0 {
         return None;
@@ -2022,9 +2434,13 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
             Some(new_level) => {
                 let result = ctx.mk_sort(new_level);
                 assert(to_model(result) == ExprSpec::Sort(level_to_model(new_level)));
-                assert(to_model(result) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
+                assert(to_model(result) == subst_expr_levels(
+                    to_model(e),
+                    level_names(to_model_of_levels(ks)),
+                    to_model_of_levels(vs),
+                ));
                 Some(result)
-            }
+            },
             None => None,
         };
     }
@@ -2039,42 +2455,78 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
         return match verified_subst_levels(ctx, levels, ks, vs, fuel1) {
             Some(new_levels) => {
                 let result = ctx.mk_const(name, new_levels);
-                assert(is_const_shape(result) && const_name_of(result) == name && const_levels_of(result) == new_levels);
+                assert(is_const_shape(result) && const_name_of(result) == name && const_levels_of(
+                    result,
+                ) == new_levels);
                 proof {
                     is_const_shape_model(result);
                     const_levels_vec_model(result);
                 }
-                assert(to_model(result) == ExprSpec::Const(const_id(result), const_levels_vec(result)));
+                assert(to_model(result) == ExprSpec::Const(
+                    const_id(result),
+                    const_levels_vec(result),
+                ));
                 assert(const_levels_vec(result) =~= to_model_of_levels(new_levels));
                 assert(const_id(result) == const_id(e));
                 assert(to_model_of_levels(new_levels).len() == to_model_of_levels(levels).len());
-                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < to_model_of_levels(levels).len() implies
-                    #[trigger] interp(to_model_of_levels(new_levels)[j], rho)
-                        == interp(to_model_of_levels(levels)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                assert forall|j: int, rho: Map<nat, nat>|
+                    0 <= j < to_model_of_levels(levels).len() implies #[trigger] interp(
+                    to_model_of_levels(new_levels)[j],
+                    rho,
+                ) == interp(
+                    to_model_of_levels(levels)[j],
+                    subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
+                ) by {}
                 assert(const_levels_vec(result).len() == const_levels_vec(e).len());
-                assert forall |j: int, rho: Map<nat, nat>| 0 <= j < const_levels_vec(e).len() implies
-                    #[trigger] interp(const_levels_vec(result)[j], rho)
-                        == interp(const_levels_vec(e)[j], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))) by {}
+                assert forall|j: int, rho: Map<nat, nat>|
+                    0 <= j < const_levels_vec(e).len() implies #[trigger] interp(
+                    const_levels_vec(result)[j],
+                    rho,
+                ) == interp(
+                    const_levels_vec(e)[j],
+                    subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
+                ) by {}
                 // Syntactic pin: the Seq extensional equality from the level
                 // bridge lifts to the Const node.
-                assert(to_model_of_levels(new_levels) =~= crate::level_model::subst_levels_spec(to_model_of_levels(levels), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
-                assert(to_model(result) == ExprSpec::Const(const_id(e), crate::level_model::subst_levels_spec(const_levels_vec(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs))));
-                assert(to_model(result) == subst_expr_levels(to_model(e), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)));
+                assert(to_model_of_levels(new_levels) =~= crate::level_model::subst_levels_spec(
+                    to_model_of_levels(levels),
+                    level_names(to_model_of_levels(ks)),
+                    to_model_of_levels(vs),
+                ));
+                assert(to_model(result) == ExprSpec::Const(
+                    const_id(e),
+                    crate::level_model::subst_levels_spec(
+                        const_levels_vec(e),
+                        level_names(to_model_of_levels(ks)),
+                        to_model_of_levels(vs),
+                    ),
+                ));
+                assert(to_model(result) == subst_expr_levels(
+                    to_model(e),
+                    level_names(to_model_of_levels(ks)),
+                    to_model_of_levels(vs),
+                ));
                 Some(result)
-            }
+            },
             None => None,
         };
     }
     if let Some(_p) = expr_as_nat_lit(ctx, e) {
         assert(is_nat_lit_shape(e));
-        proof { is_nat_lit_shape_model(e); }
+        proof {
+            is_nat_lit_shape_model(e);
+        }
         assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
         return Some(e);
     }
     if expr_as_string_lit(ctx, e) {
         assert(is_string_lit_shape(e));
-        proof { is_string_lit_shape_model(e); }
-        assert(to_model(e) == ExprSpec::StringLit(StringLitPayload(Ghost(string_len(string_lit_ptr_of(e))))));
+        proof {
+            is_string_lit_shape_model(e);
+        }
+        assert(to_model(e) == ExprSpec::StringLit(
+            StringLitPayload(Ghost(string_len(string_lit_ptr_of(e)))),
+        ));
         return Some(e);
     }
     if expr_is_closed_leaf(e, &el) {
@@ -2083,28 +2535,50 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
     }
     if let Some((fun, arg)) = expr_as_app(&el) {
         assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
-        return match (verified_subst_expr_levels(ctx, fun, ks, vs, fuel1), verified_subst_expr_levels(ctx, arg, ks, vs, fuel1)) {
+        return match (
+            verified_subst_expr_levels(ctx, fun, ks, vs, fuel1),
+            verified_subst_expr_levels(ctx, arg, ks, vs, fuel1),
+        ) {
             (Some(sf), Some(sa)) => Some(ctx.mk_app(sf, sa)),
             _ => None,
         };
     }
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, body, ks, vs, fuel1)) {
+        assert(to_model(e) == ExprSpec::Bind(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(body)),
+        ));
+        return match (
+            verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1),
+            verified_subst_expr_levels(ctx, body, ks, vs, fuel1),
+        ) {
             (Some(st), Some(sb)) => Some(ctx.mk_pi(binder_name, binder_style, st, sb)),
             _ => None,
         };
     }
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body))));
-        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, body, ks, vs, fuel1)) {
+        assert(to_model(e) == ExprSpec::Bind(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(body)),
+        ));
+        return match (
+            verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1),
+            verified_subst_expr_levels(ctx, body, ks, vs, fuel1),
+        ) {
             (Some(st), Some(sb)) => Some(ctx.mk_lambda(binder_name, binder_style, st, sb)),
             _ => None,
         };
     }
     if let Some((binder_name, binder_type, val, body, nondep)) = expr_as_let(&el) {
-        assert(to_model(e) == ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body))));
-        return match (verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1), verified_subst_expr_levels(ctx, val, ks, vs, fuel1)) {
+        assert(to_model(e) == ExprSpec::Let(
+            Box::new(to_model(binder_type)),
+            Box::new(to_model(val)),
+            Box::new(to_model(body)),
+        ));
+        return match (
+            verified_subst_expr_levels(ctx, binder_type, ks, vs, fuel1),
+            verified_subst_expr_levels(ctx, val, ks, vs, fuel1),
+        ) {
             (Some(st), Some(sv)) => match verified_subst_expr_levels(ctx, body, ks, vs, fuel1) {
                 Some(sb) => Some(ctx.mk_let(binder_name, st, sv, sb, nondep)),
                 None => None,
@@ -2133,7 +2607,6 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
 // FULL beta step -- not just its `inst` sub-call -- is provably related
 // to the model.
 // -----------------------------------------------------------------------
-
 /// A slice-shaped call into the kernel's own `TcCtx::foldl_apps`, which is
 /// now verified in place (`expr.rs`). This used to be a mirror: the loop
 /// reformulated as a recursion, because a real exec loop could not carry the
@@ -2145,10 +2618,17 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPt
 /// kernel takes an `Iterator`. The two asserts are the two extensionality
 /// steps that bridge them -- `iter().copied()`'s `remaining()` to the slice
 /// view, and `ptr_models` to the `Seq::new` spelling the callers use.
-pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>, args: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
+pub fn verified_foldl_apps<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    fun: ExprPtr<'t>,
+    args: &[ExprPtr<'t>],
+) -> (result: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        to_model(result) == spine_app(to_model(fun), Seq::new(args@.len(), |i: int| to_model(args@[i])))
+        to_model(result) == spine_app(
+            to_model(fun),
+            Seq::new(args@.len(), |i: int| to_model(args@[i])),
+        ),
 {
     let it = args.iter().copied();
     proof {
@@ -2161,8 +2641,6 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
     r
 }
 
-
-
 /// Real-arena counterpart to `spine_app`'s inverse: `TcCtx::unfold_apps`'s
 /// actual loop (`from f a_0 .. a_N, return (f, [a_0, .. a_N])`),
 /// reformulated recursively -- peels one `App` at a time descending into
@@ -2173,7 +2651,6 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
 // `<[T]>::reverse` used to be assumed here. It is in vstd now (the spec is
 // general, not nanoda-specific, so that is where it belongs) and this crate
 // picks it up from there.
-
 // `foldl_apps` -- the dual of `unfold_apps` -- was attempted and backed out
 // (2026-09-17). Its contract and invariant are straightforward:
 //
@@ -2191,7 +2668,6 @@ pub fn verified_foldl_apps<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, fun: ExprPtr<'t>
 // invariant is easy, getting the wrapper to hand over its relationship to
 // the original iterator is not. `unfold_apps` avoided it by using a bare
 // `loop` rather than a `for`.
-
 /// The models of a sequence of expression pointers.
 pub open spec fn ptr_models<'a>(s: Seq<ExprPtr<'a>>) -> Seq<ExprSpec> {
     Seq::new(s.len(), |i: int| to_model(s[i]))
@@ -2199,35 +2675,42 @@ pub open spec fn ptr_models<'a>(s: Seq<ExprPtr<'a>>) -> Seq<ExprSpec> {
 
 /// Taking models commutes with pushing.
 pub proof fn ptr_models_push<'a>(s: Seq<ExprPtr<'a>>, x: ExprPtr<'a>)
-    ensures ptr_models(s.push(x)) =~= ptr_models(s).push(to_model(x)),
+    ensures
+        ptr_models(s.push(x)) =~= ptr_models(s).push(to_model(x)),
 {
-    assert forall|i: int| 0 <= i < s.len() + 1 implies
-        #[trigger] ptr_models(s.push(x))[i] == ptr_models(s).push(to_model(x))[i] by {
-        if i < s.len() { assert(s.push(x)[i] == s[i]); }
+    assert forall|i: int| 0 <= i < s.len() + 1 implies #[trigger] ptr_models(s.push(x))[i]
+        == ptr_models(s).push(to_model(x))[i] by {
+        if i < s.len() {
+            assert(s.push(x)[i] == s[i]);
+        }
     }
 }
 
 /// Taking models distributes over concatenation.
 pub proof fn ptr_models_add<'a>(a: Seq<ExprPtr<'a>>, b: Seq<ExprPtr<'a>>)
-    ensures ptr_models(a + b) =~= ptr_models(a) + ptr_models(b),
+    ensures
+        ptr_models(a + b) =~= ptr_models(a) + ptr_models(b),
 {
-    assert forall|i: int| 0 <= i < (a + b).len() implies
-        #[trigger] ptr_models(a + b)[i] == (ptr_models(a) + ptr_models(b))[i] by {
-        if i < a.len() { assert((a + b)[i] == a[i]); }
-        else { assert((a + b)[i] == b[i - a.len()]); }
+    assert forall|i: int| 0 <= i < (a + b).len() implies #[trigger] ptr_models(a + b)[i] == (
+    ptr_models(a) + ptr_models(b))[i] by {
+        if i < a.len() {
+            assert((a + b)[i] == a[i]);
+        } else {
+            assert((a + b)[i] == b[i - a.len()]);
+        }
     }
 }
 
 /// Taking models commutes with reversing.
 pub proof fn ptr_models_reverse<'a>(s: Seq<ExprPtr<'a>>)
-    ensures ptr_models(s.reverse()) =~= ptr_models(s).reverse(),
+    ensures
+        ptr_models(s.reverse()) =~= ptr_models(s).reverse(),
 {
-    assert forall|i: int| 0 <= i < s.len() implies
-        #[trigger] ptr_models(s.reverse())[i] == ptr_models(s).reverse()[i] by {
+    assert forall|i: int| 0 <= i < s.len() implies #[trigger] ptr_models(s.reverse())[i]
+        == ptr_models(s).reverse()[i] by {
         assert(s.reverse()[i] == s[s.len() - 1 - i]);
     }
 }
-
 
 /// Real-arena counterpart to `spine_bind`: mirrors
 /// `whnf_no_unfolding_aux`'s peeling `while let (Lambda { body, .. },
@@ -2237,12 +2720,20 @@ pub proof fn ptr_models_reverse<'a>(s: Seq<ExprPtr<'a>>)
 /// depth of e, args_len)` binders -- the loop stops the instant EITHER
 /// condition fails, matching `spine_bind`'s own "peel until `n` or until
 /// not `Bind`-shaped" behavior exactly.
-pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, args_len: usize, fuel: u32) -> (result: Option<(ExprPtr<'t>, usize)>)
-    ensures match result {
-        Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(to_model(body)),
-        None => true,
-    }
-    decreases fuel
+pub fn verified_peel_lambdas<'t, 'p: 't>(
+    ctx: &TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    args_len: usize,
+    fuel: u32,
+) -> (result: Option<(ExprPtr<'t>, usize)>)
+    ensures
+        match result {
+            Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(
+                to_model(body),
+            ),
+            None => true,
+        },
+    decreases fuel,
 {
     if fuel == 0 {
         return None;
@@ -2257,18 +2748,18 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, ar
         assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))));
         match verified_peel_lambdas(ctx, body, args_len - 1, fuel1) {
             Some((b2, n2)) => {
-                assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(to_model(body), n2 as nat));
+                assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(
+                    to_model(body),
+                    n2 as nat,
+                ));
                 Some((b2, n2 + 1))
-            }
+            },
             None => None,
         }
     } else {
         Some((e, 0))
     }
 }
-
-
-
 
 /// The capstone: bridges `tc.rs`'s `whnf_no_unfolding_aux`'s
 /// `Lambda { .. } if !args.is_empty()` branch -- the real kernel's
@@ -2287,25 +2778,39 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, ar
 /// peeled body satisfies `spine_reduce_eq_subst_full`'s precondition for
 /// WHATEVER peel count `n` the real code data-dependently computes,
 /// without needing to know `n` in advance.
-pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_beta_step<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e_fun: ExprPtr<'t>,
+    args: &[ExprPtr<'t>],
+    fuel: u32,
+    Ghost(bound): Ghost<nat>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         args.len() > 0,
         nlbv(to_model(e_fun)) <= 0,
-        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        forall|i: int|
+            0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(
+                to_model(args@[i]),
+                bound,
+            ),
         depth(to_model(e_fun)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => exists|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
-            && spine_bind(to_model(e_fun), n) is Some
-            && to_model(r) == spine_app(
-                spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
-                Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
-            )
-            && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
-        None => true,
-    }
+            Some(r) => exists|n: nat|
+                #![trigger spine_bind(to_model(e_fun), n)]
+                n <= args.len() && spine_bind(to_model(e_fun), n) is Some && to_model(r)
+                    == spine_app(
+                    spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
+                    Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                ) && pstep_star(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
+                    to_model(r),
+                ),
+            None => true,
+        },
 {
     match verified_peel_lambdas(ctx, e_fun, args.len(), fuel) {
         Some((peeled, n)) => {
@@ -2318,37 +2823,76 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
             match verified_inst(ctx, peeled, consumed, 0, fuel) {
                 Some(inst_result) => {
                     proof {
-                        assert forall|i: int| 0 <= i < consumed@.len() implies
-                            nlbv(to_model(consumed@[i])) <= 0 && max_var_below(to_model(consumed@[i]), bound)
-                        by {
+                        assert forall|i: int| 0 <= i < consumed@.len() implies nlbv(
+                            to_model(consumed@[i]),
+                        ) <= 0 && max_var_below(to_model(consumed@[i]), bound) by {
                             assert(consumed@[i] == args@[i]);
                         }
-                        let consumed_model = Seq::new(consumed@.len(), |i: int| to_model(consumed@[i]));
-                        spine_reduce_eq_subst_full(to_model(e_fun), consumed_model, to_model(peeled), bound);
-                        assert(spine_reduce(to_model(e_fun), consumed_model) == subst_full(to_model(peeled), consumed_model, 0));
-                        assert(to_model(inst_result) == subst_full(to_model(peeled), consumed_model, 0));
+                        let consumed_model = Seq::new(
+                            consumed@.len(),
+                            |i: int| to_model(consumed@[i]),
+                        );
+                        spine_reduce_eq_subst_full(
+                            to_model(e_fun),
+                            consumed_model,
+                            to_model(peeled),
+                            bound,
+                        );
+                        assert(spine_reduce(to_model(e_fun), consumed_model) == subst_full(
+                            to_model(peeled),
+                            consumed_model,
+                            0,
+                        ));
+                        assert(to_model(inst_result) == subst_full(
+                            to_model(peeled),
+                            consumed_model,
+                            0,
+                        ));
                     }
                     let result = verified_foldl_apps(ctx, inst_result, remaining);
                     proof {
                         assert(remaining@ =~= args@.subrange(n as int, args@.len() as int));
                         assert(Seq::new(remaining@.len(), |i: int| to_model(remaining@[i]))
-                            =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
+                            =~= Seq::new(
+                            (args@.len() - n) as nat,
+                            |i: int| to_model(args@[n as int + i]),
+                        ));
                         assert(Seq::new(consumed@.len(), |i: int| to_model(consumed@[i]))
                             =~= Seq::new(n as nat, |i: int| to_model(args@[i])));
-                        assert(to_model(result) == spine_app(to_model(inst_result), Seq::new(remaining@.len(), |i: int| to_model(remaining@[i]))));
                         assert(to_model(result) == spine_app(
-                            spine_reduce(to_model(e_fun), Seq::new(n as nat, |i: int| to_model(args@[i]))),
-                            Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                            to_model(inst_result),
+                            Seq::new(remaining@.len(), |i: int| to_model(remaining@[i])),
+                        ));
+                        assert(to_model(result) == spine_app(
+                            spine_reduce(
+                                to_model(e_fun),
+                                Seq::new(n as nat, |i: int| to_model(args@[i])),
+                            ),
+                            Seq::new(
+                                (args@.len() - n) as nat,
+                                |i: int| to_model(args@[n as int + i]),
+                            ),
                         ));
                         assert(spine_bind(to_model(e_fun), n as nat) == Some(to_model(peeled)));
 
                         let consumed_model = Seq::new(n as nat, |i: int| to_model(args@[i]));
-                        let remaining_model = Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i]));
+                        let remaining_model = Seq::new(
+                            (args@.len() - n) as nat,
+                            |i: int| to_model(args@[n as int + i]),
+                        );
                         let full_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                         assert(consumed_model + remaining_model =~= full_model);
 
-                        pstep_star_spine_reduce(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), consumed_model);
-                        assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), consumed_model), spine_reduce(to_model(e_fun), consumed_model)));
+                        pstep_star_spine_reduce(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            to_model(e_fun),
+                            consumed_model,
+                        );
+                        assert(pstep_star(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            spine_app(to_model(e_fun), consumed_model),
+                            spine_reduce(to_model(e_fun), consumed_model),
+                        ));
 
                         pstep_spine_app_star(
                             Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
@@ -2359,20 +2903,29 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
                         assert(pstep_star(
                             Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
                             spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model),
-                            spine_app(spine_reduce(to_model(e_fun), consumed_model), remaining_model),
+                            spine_app(
+                                spine_reduce(to_model(e_fun), consumed_model),
+                                remaining_model,
+                            ),
                         ));
 
                         spine_app_concat(to_model(e_fun), consumed_model, remaining_model);
-                        assert(spine_app(to_model(e_fun), full_model)
-                            == spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model));
+                        assert(spine_app(to_model(e_fun), full_model) == spine_app(
+                            spine_app(to_model(e_fun), consumed_model),
+                            remaining_model,
+                        ));
 
-                        assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), full_model), to_model(result)));
+                        assert(pstep_star(
+                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            spine_app(to_model(e_fun), full_model),
+                            to_model(result),
+                        ));
                     }
                     Some(result)
-                }
+                },
                 None => None,
             }
-        }
+        },
         None => None,
     }
 }
@@ -2392,53 +2945,118 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
 /// `pstep(Let(t,v,b), subst1(b,v))` was simply false in the model, so
 /// this bridge (and the `pstep_star` conclusion in particular) could not
 /// have been stated, let alone proven.
-pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprPtr<'t>, val: ExprPtr<'t>, body: ExprPtr<'t>, args: &[ExprPtr<'t>], fuel: u32, Ghost(bound): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_zeta_step<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e_fun: ExprPtr<'t>,
+    val: ExprPtr<'t>,
+    body: ExprPtr<'t>,
+    args: &[ExprPtr<'t>],
+    fuel: u32,
+    Ghost(bound): Ghost<nat>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
-        exists |t_model: ExprSpec| to_model(e_fun) == ExprSpec::Let(Box::new(t_model), Box::new(to_model(val)), Box::new(to_model(body))),
+        exists|t_model: ExprSpec|
+            to_model(e_fun) == ExprSpec::Let(
+                Box::new(t_model),
+                Box::new(to_model(val)),
+                Box::new(to_model(body)),
+            ),
         nlbv(to_model(body)) <= 1,
         nlbv(to_model(val)) <= 0,
         max_var_below(to_model(val), bound),
-        forall|i: int| 0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound),
+        forall|i: int|
+            0 <= i < args@.len() ==> nlbv(to_model(args@[i])) <= 0 && max_var_below(
+                to_model(args@[i]),
+                bound,
+            ),
         depth(to_model(body)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => to_model(r) == spine_app(subst1(to_model(body), to_model(val)), Seq::new(args@.len(), |i: int| to_model(args@[i])))
-            && pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))), to_model(r)),
-        None => true,
-    }
+            Some(r) => to_model(r) == spine_app(
+                subst1(to_model(body), to_model(val)),
+                Seq::new(args@.len(), |i: int| to_model(args@[i])),
+            ) && pstep_star(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
+                to_model(r),
+            ),
+            None => true,
+        },
 {
     let substs_arr = [val];
     match verified_inst(ctx, body, &substs_arr, 0, fuel) {
         Some(inst_result) => {
             proof {
                 assert(substs_arr@ =~= seq![val]);
-                assert(Seq::new(substs_arr@.len(), |i: int| to_model(substs_arr@[i])) =~= seq![to_model(val)]);
+                assert(Seq::new(substs_arr@.len(), |i: int| to_model(substs_arr@[i])) =~= seq![
+                    to_model(val),
+                ]);
                 assert(to_model(inst_result) == subst_full(to_model(body), seq![to_model(val)], 0));
 
-                assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                assert(subst1(to_model(body), to_model(val)) == subst_c(
+                    to_model(body),
+                    to_model(val),
+                    0,
+                ));
                 subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
-                assert(subst_c(to_model(body), to_model(val), 0) == subst_full(to_model(body), seq![to_model(val)], 0));
+                assert(subst_c(to_model(body), to_model(val), 0) == subst_full(
+                    to_model(body),
+                    seq![to_model(val)],
+                    0,
+                ));
                 assert(to_model(inst_result) == subst1(to_model(body), to_model(val)));
             }
             let result = verified_foldl_apps(ctx, inst_result, args);
             proof {
                 let args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
                 assert(to_model(result) == spine_app(to_model(inst_result), args_model));
-                assert(to_model(result) == spine_app(subst1(to_model(body), to_model(val)), args_model));
+                assert(to_model(result) == spine_app(
+                    subst1(to_model(body), to_model(val)),
+                    args_model,
+                ));
 
-                assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)))) by {
-                    assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(body), to_model(body)));
-                    assert(pstep(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(val), to_model(val)));
+                assert(pstep(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model(e_fun),
+                    subst1(to_model(body), to_model(val)),
+                )) by {
+                    assert(pstep(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        to_model(body),
+                        to_model(body),
+                    ));
+                    assert(pstep(
+                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        to_model(val),
+                        to_model(val),
+                    ));
                 }
-                pstep_star_one(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)));
-                pstep_spine_app_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e_fun), subst1(to_model(body), to_model(val)), args_model);
-                assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), args_model), spine_app(subst1(to_model(body), to_model(val)), args_model)));
-                assert(pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), spine_app(to_model(e_fun), args_model), to_model(result)));
+                pstep_star_one(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model(e_fun),
+                    subst1(to_model(body), to_model(val)),
+                );
+                pstep_spine_app_star(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    to_model(e_fun),
+                    subst1(to_model(body), to_model(val)),
+                    args_model,
+                );
+                assert(pstep_star(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    spine_app(to_model(e_fun), args_model),
+                    spine_app(subst1(to_model(body), to_model(val)), args_model),
+                ));
+                assert(pstep_star(
+                    Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                    spine_app(to_model(e_fun), args_model),
+                    to_model(result),
+                ));
             }
             Some(result)
-        }
+        },
         None => None,
     }
 }
@@ -2479,7 +3097,13 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e_fun: ExprP
 /// thousands, not tens of thousands) for the arithmetic to fit in
 /// `0xFFFF_0000` -- a real, motivated numeric consequence of proving the
 /// fully general (any `args.len()`) statement, not an arbitrary choice.
-pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32, Ghost(bound): Ghost<nat>, Ghost(d): Ghost<nat>) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+    Ghost(bound): Ghost<nat>,
+    Ghost(d): Ghost<nat>,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
@@ -2489,21 +3113,25 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
-            && nlbv(to_model(r)) <= 0
-            && max_var_below(to_model(r), bound + d * d * d + d * d)
-            && depth(to_model(r)) <= d * d + 4 * d,
-        None => true,
-    }
+            Some(r) => pstep_star(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                to_model(e),
+                to_model(r),
+            ) && nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), bound + d * d * d + d * d)
+                && depth(to_model(r)) <= d * d + 4 * d,
+            None => true,
+        },
 {
-    { let (e_fun, args) = ctx.unfold_apps(e); {
+    {
+        let (e_fun, args) = ctx.unfold_apps(e);
+        {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             proof {
                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                 spine_app_decompose(to_model(e_fun), args_model, bound);
-                assert forall|i: int| 0 <= i < args@.len() implies
-                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound) && depth(to_model(args@[i])) <= d
-                by {
+                assert forall|i: int| 0 <= i < args@.len() implies nlbv(to_model(args@[i])) <= 0
+                    && max_var_below(to_model(args@[i]), bound) && depth(to_model(args@[i]))
+                    <= d by {
                     assert(args_model[i] == to_model(args@[i]));
                 }
                 assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
@@ -2518,62 +3146,113 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                             proof {
                                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                                 spine_app_decompose(to_model(e_fun), args_model, bound);
-                                assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
-                                assert(depth(spine_app(to_model(e_fun), args_model)) == depth(to_model(e)));
+                                assert(args_model.len() <= depth(
+                                    spine_app(to_model(e_fun), args_model),
+                                ));
+                                assert(depth(spine_app(to_model(e_fun), args_model)) == depth(
+                                    to_model(e),
+                                ));
                                 assert(args_model.len() <= d);
                                 assert(nlbv(to_model(e_fun)) <= 0);
                                 assert(depth(to_model(e_fun)) <= d);
-                                let ghost n = choose|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
-                                    && spine_bind(to_model(e_fun), n) is Some
-                                    && to_model(r) == spine_app(
-                                        spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
-                                        Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                                let ghost n = choose|n: nat|
+                                    #![trigger spine_bind(to_model(e_fun), n)]
+                                    n <= args.len() && spine_bind(to_model(e_fun), n) is Some
+                                        && to_model(r) == spine_app(
+                                        spine_reduce(
+                                            to_model(e_fun),
+                                            Seq::new(n, |i: int| to_model(args@[i])),
+                                        ),
+                                        Seq::new(
+                                            (args@.len() - n) as nat,
+                                            |i: int| to_model(args@[n as int + i]),
+                                        ),
                                     );
                                 assert(n <= args_model.len());
                                 let ghost prefix = args_model.subrange(0, n as int);
-                                let ghost suffix = args_model.subrange(n as int, args_model.len() as int);
+                                let ghost suffix = args_model.subrange(
+                                    n as int,
+                                    args_model.len() as int,
+                                );
                                 assert(prefix.len() == n);
                                 assert(suffix.len() == args_model.len() - n);
                                 assert(prefix =~= Seq::new(n, |i: int| to_model(args@[i])));
-                                assert(suffix =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
-                                assert(to_model(r) == spine_app(spine_reduce(to_model(e_fun), prefix), suffix));
-                                assert forall|i: int| 0 <= i < prefix.len() implies
-                                    nlbv(prefix[i]) <= 0 && max_var_below(prefix[i], bound) && depth(prefix[i]) <= d
-                                by { assert(prefix[i] == args_model[i]); }
-                                assert forall|i: int| 0 <= i < suffix.len() implies
-                                    nlbv(suffix[i]) <= 0 && max_var_below(suffix[i], bound) && depth(suffix[i]) <= d
-                                by { assert(suffix[i] == args_model[n as int + i]); }
+                                assert(suffix =~= Seq::new(
+                                    (args@.len() - n) as nat,
+                                    |i: int| to_model(args@[n as int + i]),
+                                ));
+                                assert(to_model(r) == spine_app(
+                                    spine_reduce(to_model(e_fun), prefix),
+                                    suffix,
+                                ));
+                                assert forall|i: int| 0 <= i < prefix.len() implies nlbv(prefix[i])
+                                    <= 0 && max_var_below(prefix[i], bound) && depth(prefix[i])
+                                    <= d by {
+                                    assert(prefix[i] == args_model[i]);
+                                }
+                                assert forall|i: int| 0 <= i < suffix.len() implies nlbv(suffix[i])
+                                    <= 0 && max_var_below(suffix[i], bound) && depth(suffix[i])
+                                    <= d by {
+                                    assert(suffix[i] == args_model[n as int + i]);
+                                }
                                 assert(prefix.len() <= d) by (nonlinear_arith)
-                                    requires prefix.len() == n, n <= args_model.len(), args_model.len() <= d
+                                    requires
+                                        prefix.len() == n,
+                                        n <= args_model.len(),
+                                        args_model.len() <= d,
                                 {}
                                 assert(suffix.len() <= d) by (nonlinear_arith)
-                                    requires suffix.len() == args_model.len() - n, n <= args_model.len(), args_model.len() <= d
+                                    requires
+                                        suffix.len() == args_model.len() - n,
+                                        n <= args_model.len(),
+                                        args_model.len() <= d,
                                 {}
-                                assert(bound + prefix.len() * d + prefix.len() * prefix.len() * d + prefix.len() + 1 <= 0xFFFF_0000)
-                                    by (nonlinear_arith)
+                                assert(bound + prefix.len() * d + prefix.len() * prefix.len() * d
+                                    + prefix.len() + 1 <= 0xFFFF_0000) by (nonlinear_arith)
                                     requires
                                         prefix.len() <= d,
                                         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
                                 {}
                                 spine_reduce_bounds(to_model(e_fun), prefix, bound, d, d);
-                                let ghost sr_bound = (bound + prefix.len() * d + prefix.len() * prefix.len() * d) as nat;
+                                let ghost sr_bound = (bound + prefix.len() * d + prefix.len()
+                                    * prefix.len() * d) as nat;
                                 let ghost sr_depth = (d + d * (prefix.len() + 1)) as nat;
-                                assert(max_var_below(spine_reduce(to_model(e_fun), prefix), sr_bound));
+                                assert(max_var_below(
+                                    spine_reduce(to_model(e_fun), prefix),
+                                    sr_bound,
+                                ));
                                 assert(depth(spine_reduce(to_model(e_fun), prefix)) <= sr_depth);
                                 assert(bound <= sr_bound) by (nonlinear_arith)
-                                    requires sr_bound == bound + prefix.len() * d + prefix.len() * prefix.len() * d
+                                    requires
+                                        sr_bound == bound + prefix.len() * d + prefix.len()
+                                            * prefix.len() * d,
                                 {}
-                                assert forall|i: int| 0 <= i < suffix.len() implies max_var_below(suffix[i], sr_bound) by {
+                                assert forall|i: int| 0 <= i < suffix.len() implies max_var_below(
+                                    suffix[i],
+                                    sr_bound,
+                                ) by {
                                     max_var_below_mono(suffix[i], bound, sr_bound);
                                 }
-                                spine_app_bounds(spine_reduce(to_model(e_fun), prefix), suffix, sr_bound, sr_depth, d);
+                                spine_app_bounds(
+                                    spine_reduce(to_model(e_fun), prefix),
+                                    suffix,
+                                    sr_bound,
+                                    sr_depth,
+                                    d,
+                                );
                                 assert(sr_bound <= bound + d * d * d + d * d) by (nonlinear_arith)
                                     requires
                                         prefix.len() <= d,
-                                        sr_bound == bound + prefix.len() * d + prefix.len() * prefix.len() * d,
+                                        sr_bound == bound + prefix.len() * d + prefix.len()
+                                            * prefix.len() * d,
                                 {}
-                                max_var_below_mono(to_model(r), sr_bound, bound + d * d * d + d * d);
-                                assert(sr_depth + d + suffix.len() <= d * d + 4 * d) by (nonlinear_arith)
+                                max_var_below_mono(
+                                    to_model(r),
+                                    sr_bound,
+                                    bound + d * d * d + d * d,
+                                );
+                                assert(sr_depth + d + suffix.len() <= d * d + 4 * d)
+                                    by (nonlinear_arith)
                                     requires
                                         prefix.len() <= d,
                                         suffix.len() <= d,
@@ -2586,21 +3265,42 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                                 spine_bind_nlbv(to_model(e_fun), n, peeled_model, 0);
                                 assert(nlbv(peeled_model) <= n);
                                 subst_full_nlbv_bound_n(peeled_model, prefix, 0);
-                                spine_reduce_eq_subst_full(to_model(e_fun), prefix, peeled_model, bound);
-                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(peeled_model, prefix, 0));
+                                spine_reduce_eq_subst_full(
+                                    to_model(e_fun),
+                                    prefix,
+                                    peeled_model,
+                                    bound,
+                                );
+                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(
+                                    peeled_model,
+                                    prefix,
+                                    0,
+                                ));
                                 assert(nlbv(spine_reduce(to_model(e_fun), prefix)) <= 0);
                                 spine_app_nlbv(spine_reduce(to_model(e_fun), prefix), suffix);
                                 assert(nlbv(to_model(r)) <= 0);
                             }
                             Some(r)
-                        }
+                        },
                         None => None,
                     };
                 }
             }
             if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
-                assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
-                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, Ghost(bound)) {
+                assert(to_model(e_fun) == ExprSpec::Let(
+                    Box::new(to_model(_ty)),
+                    Box::new(to_model(val)),
+                    Box::new(to_model(body)),
+                ));
+                return match verified_whnf_zeta_step(
+                    ctx,
+                    e_fun,
+                    val,
+                    body,
+                    &args,
+                    fuel,
+                    Ghost(bound),
+                ) {
                     Some(r) => {
                         proof {
                             assert(max_var_below(to_model(e_fun), bound));
@@ -2613,30 +3313,56 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                             subst1_max_var_below(bound, to_model(body), to_model(val));
                             subst1_depth_bound(to_model(body), to_model(val));
                             let ghost new_bound = (bound + 1 + depth(to_model(body))) as nat;
-                            let ghost new_hd = (depth(to_model(body)) + depth(to_model(val))) as nat;
+                            let ghost new_hd = (depth(to_model(body)) + depth(
+                                to_model(val),
+                            )) as nat;
                             assert(max_var_below(subst1(to_model(body), to_model(val)), new_bound));
                             assert(depth(subst1(to_model(body), to_model(val))) <= new_hd);
                             assert(new_bound <= bound + d);
                             assert(new_hd <= 2 * d);
                             assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                             spine_app_decompose(to_model(e_fun), args_model, bound);
-                            assert(args_model.len() <= depth(spine_app(to_model(e_fun), args_model)));
-                            assert(depth(spine_app(to_model(e_fun), args_model)) == depth(to_model(e)));
+                            assert(args_model.len() <= depth(
+                                spine_app(to_model(e_fun), args_model),
+                            ));
+                            assert(depth(spine_app(to_model(e_fun), args_model)) == depth(
+                                to_model(e),
+                            ));
                             assert(args_model.len() <= d);
-                            assert forall|i: int| 0 <= i < args_model.len() implies
-                                max_var_below(args_model[i], new_bound) && depth(args_model[i]) <= d
-                            by {
+                            assert forall|i: int| 0 <= i < args_model.len() implies max_var_below(
+                                args_model[i],
+                                new_bound,
+                            ) && depth(args_model[i]) <= d by {
                                 max_var_below_mono(args_model[i], bound, new_bound);
                             }
-                            spine_app_bounds(subst1(to_model(body), to_model(val)), args_model, new_bound, new_hd, d);
-                            assert(to_model(r) == spine_app(subst1(to_model(body), to_model(val)), args_model));
-                            assert(new_bound <= bound + d * d * d + d * d) by (nonlinear_arith) requires new_bound <= bound + d {}
-                            assert(new_hd + d + args_model.len() <= d * d + 4 * d) by (nonlinear_arith)
-                                requires new_hd <= 2 * d, args_model.len() <= d
+                            spine_app_bounds(
+                                subst1(to_model(body), to_model(val)),
+                                args_model,
+                                new_bound,
+                                new_hd,
+                                d,
+                            );
+                            assert(to_model(r) == spine_app(
+                                subst1(to_model(body), to_model(val)),
+                                args_model,
+                            ));
+                            assert(new_bound <= bound + d * d * d + d * d) by (nonlinear_arith)
+                                requires
+                                    new_bound <= bound + d,
+                            {}
+                            assert(new_hd + d + args_model.len() <= d * d + 4 * d)
+                                by (nonlinear_arith)
+                                requires
+                                    new_hd <= 2 * d,
+                                    args_model.len() <= d,
                             {}
                             max_var_below_mono(to_model(r), new_bound, bound + d * d * d + d * d);
                             subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
-                            assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                            assert(subst1(to_model(body), to_model(val)) == subst_c(
+                                to_model(body),
+                                to_model(val),
+                                0,
+                            ));
                             subst_full_nlbv_bound(to_model(body), to_model(val), 0);
                             assert(nlbv(subst_full(to_model(body), seq![to_model(val)], 0)) <= 0);
                             assert(nlbv(subst1(to_model(body), to_model(val))) <= 0);
@@ -2644,7 +3370,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                             assert(nlbv(to_model(r)) <= 0);
                         }
                         Some(r)
-                    }
+                    },
                     None => None,
                 };
             }
@@ -2653,7 +3379,8 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
                 max_var_below_mono(to_model(e), bound, bound + d * d * d + d * d);
             }
             Some(e)
-        } }
+        }
+    }
 }
 
 /// PLAIN (gate-free) beta/zeta step (2026-09-08): the same two primitives
@@ -2662,30 +3389,39 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: E
 /// cubic ceiling on the input. Lets the measured whnf keep reducing terms
 /// above its 1500 size gate (well-founded-recursion unfoldings, large
 /// decidability instances), which was the largest remaining def_eq wall.
-pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<ExprPtr<'t>>)
+pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    e: ExprPtr<'t>,
+    fuel: u32,
+) -> (result: Option<ExprPtr<'t>>)
     requires
         nlbv(to_model(e)) <= 0,
         depth(to_model(e)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r)) && nlbv(to_model(r)) <= 0,
-        None => true,
-    }
+            Some(r) => pstep_star(
+                Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                to_model(e),
+                to_model(r),
+            ) && nlbv(to_model(r)) <= 0,
+            None => true,
+        },
 {
     let ghost bound: nat = 60000;
     proof {
         nlbv_bound_implies_max_var_below(to_model(e), 0);
         max_var_below_mono(to_model(e), (depth(to_model(e)) + 0) as nat, bound);
     }
-    { let (e_fun, args) = ctx.unfold_apps(e); {
+    {
+        let (e_fun, args) = ctx.unfold_apps(e);
+        {
             let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
             proof {
                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                 spine_app_decompose(to_model(e_fun), args_model, bound);
-                assert forall|i: int| 0 <= i < args@.len() implies
-                    nlbv(to_model(args@[i])) <= 0 && max_var_below(to_model(args@[i]), bound)
-                by {
+                assert forall|i: int| 0 <= i < args@.len() implies nlbv(to_model(args@[i])) <= 0
+                    && max_var_below(to_model(args@[i]), bound) by {
                     assert(args_model[i] == to_model(args@[i]));
                 }
             }
@@ -2697,56 +3433,103 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
                             proof {
                                 assert(to_model(e) == spine_app(to_model(e_fun), args_model));
                                 assert(nlbv(to_model(e_fun)) <= 0);
-                                let ghost n = choose|n: nat| #![trigger spine_bind(to_model(e_fun), n)] n <= args.len()
-                                    && spine_bind(to_model(e_fun), n) is Some
-                                    && to_model(r) == spine_app(
-                                        spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
-                                        Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
+                                let ghost n = choose|n: nat|
+                                    #![trigger spine_bind(to_model(e_fun), n)]
+                                    n <= args.len() && spine_bind(to_model(e_fun), n) is Some
+                                        && to_model(r) == spine_app(
+                                        spine_reduce(
+                                            to_model(e_fun),
+                                            Seq::new(n, |i: int| to_model(args@[i])),
+                                        ),
+                                        Seq::new(
+                                            (args@.len() - n) as nat,
+                                            |i: int| to_model(args@[n as int + i]),
+                                        ),
                                     );
                                 assert(n <= args_model.len());
                                 let ghost prefix = args_model.subrange(0, n as int);
-                                let ghost suffix = args_model.subrange(n as int, args_model.len() as int);
+                                let ghost suffix = args_model.subrange(
+                                    n as int,
+                                    args_model.len() as int,
+                                );
                                 assert(prefix =~= Seq::new(n, |i: int| to_model(args@[i])));
-                                assert(suffix =~= Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])));
-                                assert(to_model(r) == spine_app(spine_reduce(to_model(e_fun), prefix), suffix));
-                                assert forall|i: int| 0 <= i < prefix.len() implies
-                                    nlbv(prefix[i]) <= 0 && max_var_below(prefix[i], bound)
-                                by { assert(prefix[i] == args_model[i]); }
-                                assert forall|i: int| 0 <= i < suffix.len() implies nlbv(suffix[i]) <= 0
-                                by { assert(suffix[i] == args_model[n as int + i]); }
+                                assert(suffix =~= Seq::new(
+                                    (args@.len() - n) as nat,
+                                    |i: int| to_model(args@[n as int + i]),
+                                ));
+                                assert(to_model(r) == spine_app(
+                                    spine_reduce(to_model(e_fun), prefix),
+                                    suffix,
+                                ));
+                                assert forall|i: int| 0 <= i < prefix.len() implies nlbv(prefix[i])
+                                    <= 0 && max_var_below(prefix[i], bound) by {
+                                    assert(prefix[i] == args_model[i]);
+                                }
+                                assert forall|i: int| 0 <= i < suffix.len() implies nlbv(suffix[i])
+                                    <= 0 by {
+                                    assert(suffix[i] == args_model[n as int + i]);
+                                }
                                 assert(spine_bind(to_model(e_fun), n) is Some);
                                 let ghost peeled_model = spine_bind(to_model(e_fun), n)->0;
                                 assert(spine_bind(to_model(e_fun), n) == Some(peeled_model));
                                 spine_bind_nlbv(to_model(e_fun), n, peeled_model, 0);
                                 assert(nlbv(peeled_model) <= n);
                                 subst_full_nlbv_bound_n(peeled_model, prefix, 0);
-                                spine_reduce_eq_subst_full(to_model(e_fun), prefix, peeled_model, bound);
-                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(peeled_model, prefix, 0));
+                                spine_reduce_eq_subst_full(
+                                    to_model(e_fun),
+                                    prefix,
+                                    peeled_model,
+                                    bound,
+                                );
+                                assert(spine_reduce(to_model(e_fun), prefix) == subst_full(
+                                    peeled_model,
+                                    prefix,
+                                    0,
+                                ));
                                 assert(nlbv(spine_reduce(to_model(e_fun), prefix)) <= 0);
                                 spine_app_nlbv(spine_reduce(to_model(e_fun), prefix), suffix);
                                 assert(nlbv(to_model(r)) <= 0);
                             }
                             Some(r)
-                        }
+                        },
                         None => None,
                     };
                 }
             }
             if let Some((_, _ty, val, body, _)) = expr_as_let(&e_fun_el) {
-                assert(to_model(e_fun) == ExprSpec::Let(Box::new(to_model(_ty)), Box::new(to_model(val)), Box::new(to_model(body))));
+                assert(to_model(e_fun) == ExprSpec::Let(
+                    Box::new(to_model(_ty)),
+                    Box::new(to_model(val)),
+                    Box::new(to_model(body)),
+                ));
                 proof {
                     assert(nlbv(to_model(val)) <= 0);
                     assert(nlbv(to_model(body)) <= 1);
                     assert(depth(to_model(body)) < depth(to_model(e_fun)));
                     assert(max_var_below(to_model(val), bound));
                 }
-                return match verified_whnf_zeta_step(ctx, e_fun, val, body, &args, fuel, Ghost(bound)) {
+                return match verified_whnf_zeta_step(
+                    ctx,
+                    e_fun,
+                    val,
+                    body,
+                    &args,
+                    fuel,
+                    Ghost(bound),
+                ) {
                     Some(r) => {
                         proof {
                             assert(to_model(e) == spine_app(to_model(e_fun), args_model));
-                            assert(to_model(r) == spine_app(subst1(to_model(body), to_model(val)), args_model));
+                            assert(to_model(r) == spine_app(
+                                subst1(to_model(body), to_model(val)),
+                                args_model,
+                            ));
                             subst_c_eq_subst_full(to_model(body), to_model(val), 0, bound);
-                            assert(subst1(to_model(body), to_model(val)) == subst_c(to_model(body), to_model(val), 0));
+                            assert(subst1(to_model(body), to_model(val)) == subst_c(
+                                to_model(body),
+                                to_model(val),
+                                0,
+                            ));
                             subst_full_nlbv_bound(to_model(body), to_model(val), 0);
                             assert(nlbv(subst_full(to_model(body), seq![to_model(val)], 0)) <= 0);
                             assert(nlbv(subst1(to_model(body), to_model(val))) <= 0);
@@ -2754,7 +3537,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
                             assert(nlbv(to_model(r)) <= 0);
                         }
                         Some(r)
-                    }
+                    },
                     None => None,
                 };
             }
@@ -2762,13 +3545,8 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>
                 pstep_star_refl(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e));
             }
             Some(e)
-        } }
+        }
+    }
 }
 
-
-
-
-
-
-
-}
+} // verus!

@@ -26,9 +26,8 @@
 //! (`binder_type`/`val` at the same offset, `body` shifted -- the one real
 //! constructor that doesn't fit `App`'s or `Bind`'s shape), and `Proj` has
 //! its own one-child variant (`structure`, same offset, no shift at all).
-
-use vstd::prelude::*;
 use crate::level_model::LevelSpec;
+use vstd::prelude::*;
 
 verus! {
 
@@ -209,31 +208,65 @@ pub enum ExprSpec {
 /// `TcCtx::mk_app`/`mk_pi`/`mk_lambda` in `util.rs`): the highest de Bruijn
 /// index referencing "outside" this expression, plus one; 0 if there is none.
 pub open spec fn nlbv(e: ExprSpec) -> nat
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Var(i) => i as nat + 1,
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
-        ExprSpec::App(f, a) => if nlbv(*f) >= nlbv(*a) { nlbv(*f) } else { nlbv(*a) },
+        ExprSpec::Free(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => 0,
+        ExprSpec::App(f, a) => if nlbv(*f) >= nlbv(*a) {
+            nlbv(*f)
+        } else {
+            nlbv(*a)
+        },
         ExprSpec::Bind(t, b) => {
-            let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
-            if nlbv(*t) >= bb { nlbv(*t) } else { bb }
-        }
+            let bb = if nlbv(*b) == 0 {
+                0
+            } else {
+                (nlbv(*b) - 1) as nat
+            };
+            if nlbv(*t) >= bb {
+                nlbv(*t)
+            } else {
+                bb
+            }
+        },
         ExprSpec::Let(t, v, b) => {
-            let bb = if nlbv(*b) == 0 { 0 } else { (nlbv(*b) - 1) as nat };
-            let tv = if nlbv(*t) >= nlbv(*v) { nlbv(*t) } else { nlbv(*v) };
-            if tv >= bb { tv } else { bb }
-        }
+            let bb = if nlbv(*b) == 0 {
+                0
+            } else {
+                (nlbv(*b) - 1) as nat
+            };
+            let tv = if nlbv(*t) >= nlbv(*v) {
+                nlbv(*t)
+            } else {
+                nlbv(*v)
+            };
+            if tv >= bb {
+                tv
+            } else {
+                bb
+            }
+        },
         ExprSpec::Proj(pidx, s) => nlbv(*s),
     }
 }
 
 /// Mirrors the cached `has_fvars` field.
 pub open spec fn has_fv(e: ExprSpec) -> bool
-    decreases e
+    decreases e,
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => false,
+        ExprSpec::Var(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
         ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
@@ -253,55 +286,76 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
 /// inline `nonlinear_arith` blocks in the middle of a big proof are exactly what
 /// this codebase has been bitten by before.
 pub proof fn mul_add_distrib(a: nat, b: nat, k: nat)
-    ensures a * k + b * k == (a + b) * k
+    ensures
+        a * k + b * k == (a + b) * k,
 {
     assert(a * k + b * k == (a + b) * k) by (nonlinear_arith);
 }
 
 pub proof fn mul_mono(a: nat, b: nat, c: nat, d: nat)
-    requires a <= b, c <= d
-    ensures a * c <= b * d
+    requires
+        a <= b,
+        c <= d,
+    ensures
+        a * c <= b * d,
 {
-    assert(a * c <= b * d) by (nonlinear_arith) requires a <= b, c <= d;
+    assert(a * c <= b * d) by (nonlinear_arith)
+        requires
+            a <= b,
+            c <= d,
+    ;
 }
 
 pub proof fn mul_ge_one(n: nat, k: nat)
-    requires n >= 1
-    ensures n * k >= k
+    requires
+        n >= 1,
+    ensures
+        n * k >= k,
 {
-    assert(n * k >= 1 * k) by (nonlinear_arith) requires n >= 1;
+    assert(n * k >= 1 * k) by (nonlinear_arith)
+        requires
+            n >= 1,
+    ;
 }
 
 pub proof fn mul_pred_step(n: nat, k: nat)
-    requires n >= 1
-    ensures (n - 1) as nat * k + k == n * k
+    requires
+        n >= 1,
+    ensures
+        (n - 1) as nat * k + k == n * k,
 {
-    assert((n - 1) as nat * k + k == n * k) by (nonlinear_arith) requires n >= 1;
+    assert((n - 1) as nat * k + k == n * k) by (nonlinear_arith)
+        requires
+            n >= 1,
+    ;
 }
 
 /// Abstraction does not change depth: it rewrites `Free` leaves into `Var`
 /// leaves, and both are depth 0. Needed by any ceiling that has to survive a
 /// telescope of `abstr_pi` steps.
 pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
-    ensures depth(abstr_full(e, locals, offset)) == depth(e)
-    decreases e
+    ensures
+        depth(abstr_full(e, locals, offset)) == depth(e),
+    decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
             abstr_full_depth(*f, locals, offset);
             abstr_full_depth(*a, locals, offset);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             abstr_full_depth(*t, locals, offset);
             abstr_full_depth(*b, locals, offset + 1);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             abstr_full_depth(*t, locals, offset);
             abstr_full_depth(*v, locals, offset);
             abstr_full_depth(*b, locals, offset + 1);
-        }
-        ExprSpec::Proj(_, st) => { abstr_full_depth(*st, locals, offset); }
-        _ => {}
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_depth(*st, locals, offset);
+        },
+        _ => {},
     }
 }
 
@@ -320,37 +374,45 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
 /// together at a `Bind`: the level walk increments its binder count, the list
 /// walk increments its offset.
 pub open spec fn serial_determines_id(ids: Seq<u32>, start_pos: u16) -> bool {
-    forall |id: u32, k: int| #![trigger crate::expr_arena_bridge::dbj_serial(id), ids[k]]
-        0 <= k < ids.len()
-        && crate::expr_arena_bridge::dbj_serial(id) == Some((start_pos + k) as u16)
-        ==> id == ids[k]
+    forall|id: u32, k: int|
+        #![trigger crate::expr_arena_bridge::dbj_serial(id), ids[k]]
+        0 <= k < ids.len() && crate::expr_arena_bridge::dbj_serial(id) == Some(
+            (start_pos + k) as u16,
+        ) ==> id == ids[k]
 }
 
 pub proof fn abstr_levels_full_eq_abstr_full(
-    e: ExprSpec, ids: Seq<u32>, start_pos: u16, nob: u16, offset: nat,
+    e: ExprSpec,
+    ids: Seq<u32>,
+    start_pos: u16,
+    nob: u16,
+    offset: nat,
 )
     requires
         start_pos <= nob,
         ids.len() == nob - start_pos,
-        forall |k: int| 0 <= k < ids.len()
-            ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some((start_pos + k) as u16),
+        forall|k: int|
+            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some(
+                (start_pos + k) as u16,
+            ),
         serial_determines_id(ids, start_pos),
         dbj_serials_below(e, nob),
         // Paired with depth: `offset` grows by one per binder descended, so
         // the sum is what stays bounded -- the same shape the exec side needs.
         nob as nat + offset + depth(e) < 65536,
     ensures
-        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16)
-            == abstr_full(e, ids, offset)
-    decreases e
+        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
+    decreases e,
 {
     match e {
         ExprSpec::Free(id) => {
             match crate::expr_arena_bridge::dbj_serial(id) {
                 Some(s) => {
                     if s < start_pos {
-                        assert forall |j: int| 0 <= j < ids.len() implies ids[j] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some((start_pos + j) as u16));
+                        assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                                (start_pos + j) as u16,
+                            ));
                         }
                         find_from_end_no_match(ids, id);
                     } else {
@@ -360,39 +422,42 @@ pub proof fn abstr_levels_full_eq_abstr_full(
                         assert(id == ids[k]);
                         let pos = (ids.len() - 1 - k) as nat;
                         assert(ids[(ids.len() - 1 - pos) as int] == id);
-                        assert forall |j: int| 0 <= j < pos implies
-                            #[trigger] ids[(ids.len() - 1 - j) as int] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(ids[(ids.len() - 1 - j) as int])
-                                == Some((start_pos + (ids.len() - 1 - j)) as u16));
+                        assert forall|j: int| 0 <= j < pos implies #[trigger] ids[(ids.len() - 1
+                            - j) as int] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(
+                                ids[(ids.len() - 1 - j) as int],
+                            ) == Some((start_pos + (ids.len() - 1 - j)) as u16));
                         }
                         find_from_end_first_match(ids, id, pos);
                     }
-                }
+                },
                 None => {
-                    assert forall |j: int| 0 <= j < ids.len() implies ids[j] != id by {
-                        assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some((start_pos + j) as u16));
+                    assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                        assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                            (start_pos + j) as u16,
+                        ));
                     }
                     find_from_end_no_match(ids, id);
-                }
+                },
             }
-        }
+        },
         ExprSpec::App(f, a) => {
             abstr_levels_full_eq_abstr_full(*f, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(*a, ids, start_pos, nob, offset);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(*v, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
-        }
+        },
         ExprSpec::Proj(_, st) => {
             abstr_levels_full_eq_abstr_full(*st, ids, start_pos, nob, offset);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -404,7 +469,7 @@ pub proof fn abstr_levels_full_eq_abstr_full(
 /// otherwise. `Unique` free variables are unconstrained -- the algorithm leaves
 /// them alone.
 pub open spec fn dbj_serials_below(e: ExprSpec, bound: u16) -> bool
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
@@ -412,11 +477,9 @@ pub open spec fn dbj_serials_below(e: ExprSpec, bound: u16) -> bool
             None => true,
         },
         ExprSpec::App(f, a) => dbj_serials_below(*f, bound) && dbj_serials_below(*a, bound),
-        ExprSpec::Bind(t, b) =>
-            dbj_serials_below(*t, bound) && dbj_serials_below(*b, bound),
-        ExprSpec::Let(t, v, b) =>
-            dbj_serials_below(*t, bound) && dbj_serials_below(*v, bound)
-                && dbj_serials_below(*b, bound),
+        ExprSpec::Bind(t, b) => dbj_serials_below(*t, bound) && dbj_serials_below(*b, bound),
+        ExprSpec::Let(t, v, b) => dbj_serials_below(*t, bound) && dbj_serials_below(*v, bound)
+            && dbj_serials_below(*b, bound),
         ExprSpec::Proj(_, st) => dbj_serials_below(*st, bound),
         _ => true,
     }
@@ -425,26 +488,31 @@ pub open spec fn dbj_serials_below(e: ExprSpec, bound: u16) -> bool
 /// Raising the bound keeps it true -- needed because the recursion descends
 /// under binders with `num_open_binders + 1`.
 pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
-    requires dbj_serials_below(e, b1), b1 <= b2
-    ensures dbj_serials_below(e, b2)
-    decreases e
+    requires
+        dbj_serials_below(e, b1),
+        b1 <= b2,
+    ensures
+        dbj_serials_below(e, b2),
+    decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
             dbj_serials_below_mono(*f, b1, b2);
             dbj_serials_below_mono(*a, b1, b2);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             dbj_serials_below_mono(*t, b1, b2);
             dbj_serials_below_mono(*b, b1, b2);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             dbj_serials_below_mono(*t, b1, b2);
             dbj_serials_below_mono(*v, b1, b2);
             dbj_serials_below_mono(*b, b1, b2);
-        }
-        ExprSpec::Proj(_, st) => { dbj_serials_below_mono(*st, b1, b2); }
-        _ => {}
+        },
+        ExprSpec::Proj(_, st) => {
+            dbj_serials_below_mono(*st, b1, b2);
+        },
+        _ => {},
     }
 }
 
@@ -464,18 +532,17 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
 /// well-formed call produces and `abstr_aux_levels`' eventual contract will have
 /// to carry `serial < num_open_binders` as a precondition.
 pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders: u16) -> ExprSpec
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) =>
-                if s < start_pos {
-                    e
-                } else if (s as int) < (num_open_binders as int) {
-                    ExprSpec::Var((num_open_binders - s - 1) as u32)
-                } else {
-                    ExprSpec::Var(0)
-                },
+            Some(s) => if s < start_pos {
+                e
+            } else if (s as int) < (num_open_binders as int) {
+                ExprSpec::Var((num_open_binders - s - 1) as u32)
+            } else {
+                ExprSpec::Var(0)
+            },
             None => e,
         },
         ExprSpec::App(f, a) => ExprSpec::App(
@@ -491,33 +558,38 @@ pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders
             Box::new(abstr_levels_full(*v, start_pos, num_open_binders)),
             Box::new(abstr_levels_full(*b, start_pos, (num_open_binders + 1) as u16)),
         ),
-        ExprSpec::Proj(pidx, st) => ExprSpec::Proj(pidx,
-            Box::new(abstr_levels_full(*st, start_pos, num_open_binders))),
+        ExprSpec::Proj(pidx, st) => ExprSpec::Proj(
+            pidx,
+            Box::new(abstr_levels_full(*st, start_pos, num_open_binders)),
+        ),
         _ => e,
     }
 }
 
 /// Like `abstr_full`, it rewrites leaves into leaves, so depth is untouched.
 pub proof fn abstr_levels_full_depth(e: ExprSpec, start_pos: u16, num_open_binders: u16)
-    ensures depth(abstr_levels_full(e, start_pos, num_open_binders)) == depth(e)
-    decreases e
+    ensures
+        depth(abstr_levels_full(e, start_pos, num_open_binders)) == depth(e),
+    decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
             abstr_levels_full_depth(*f, start_pos, num_open_binders);
             abstr_levels_full_depth(*a, start_pos, num_open_binders);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             abstr_levels_full_depth(*t, start_pos, num_open_binders);
             abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             abstr_levels_full_depth(*t, start_pos, num_open_binders);
             abstr_levels_full_depth(*v, start_pos, num_open_binders);
             abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
-        }
-        ExprSpec::Proj(_, st) => { abstr_levels_full_depth(*st, start_pos, num_open_binders); }
-        _ => {}
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_levels_full_depth(*st, start_pos, num_open_binders);
+        },
+        _ => {},
     }
 }
 
@@ -525,46 +597,75 @@ pub proof fn abstr_levels_full_depth(e: ExprSpec, start_pos: u16, num_open_binde
 /// `abstr_full_noop`, and what discharges `abstr_aux_levels`' `!has_fvars`
 /// short-circuit.
 pub proof fn abstr_levels_full_noop(e: ExprSpec, start_pos: u16, num_open_binders: u16)
-    requires !has_fv(e)
-    ensures abstr_levels_full(e, start_pos, num_open_binders) == e
-    decreases e
+    requires
+        !has_fv(e),
+    ensures
+        abstr_levels_full(e, start_pos, num_open_binders) == e,
+    decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
             abstr_levels_full_noop(*f, start_pos, num_open_binders);
             abstr_levels_full_noop(*a, start_pos, num_open_binders);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             abstr_levels_full_noop(*t, start_pos, num_open_binders);
             abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             abstr_levels_full_noop(*t, start_pos, num_open_binders);
             abstr_levels_full_noop(*v, start_pos, num_open_binders);
             abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
-        }
-        ExprSpec::Proj(_, st) => { abstr_levels_full_noop(*st, start_pos, num_open_binders); }
-        _ => {}
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_levels_full_noop(*st, start_pos, num_open_binders);
+        },
+        _ => {},
     }
 }
 
 /// The domain of a `Bind` (`Closed` elsewhere -- never consulted). A named
 /// accessor so a contract can name the binder type without an `exists`.
 pub open spec fn bind_dom(e: ExprSpec) -> ExprSpec {
-    match e { ExprSpec::Bind(t, _) => *t, _ => ExprSpec::Closed }
+    match e {
+        ExprSpec::Bind(t, _) => *t,
+        _ => ExprSpec::Closed,
+    }
 }
 
 pub open spec fn depth(e: ExprSpec) -> nat
-    decreases e
+    decreases e,
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => 0,
-        ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) { depth(*f) } else { depth(*a) },
-        ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) { depth(*t) } else { depth(*b) },
+        ExprSpec::Var(_)
+        | ExprSpec::Free(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => 0,
+        ExprSpec::App(f, a) => 1 + if depth(*f) >= depth(*a) {
+            depth(*f)
+        } else {
+            depth(*a)
+        },
+        ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) {
+            depth(*t)
+        } else {
+            depth(*b)
+        },
         ExprSpec::Let(t, v, b) => {
-            let tv = if depth(*t) >= depth(*v) { depth(*t) } else { depth(*v) };
-            1 + if tv >= depth(*b) { tv } else { depth(*b) }
-        }
+            let tv = if depth(*t) >= depth(*v) {
+                depth(*t)
+            } else {
+                depth(*v)
+            };
+            1 + if tv >= depth(*b) {
+                tv
+            } else {
+                depth(*b)
+            }
+        },
         ExprSpec::Proj(pidx, s) => 1 + depth(*s),
     }
 }
@@ -577,7 +678,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
 /// entry, matching `inst_aux`'s `substs.iter().rev().nth(...)`), leave
 /// everything else as-is, and increment `offset` under each `Bind`.
 pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> ExprSpec
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Var(i) => {
@@ -588,8 +689,13 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
             } else {
                 e
             }
-        }
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+        },
+        ExprSpec::Free(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(
             Box::new(subst_full(*f, substs, offset)),
             Box::new(subst_full(*a, substs, offset)),
@@ -613,44 +719,45 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
 /// (used by `inst_model` below to justify returning `e` as-is once
 /// `nlbv_exec(&e) <= offset`).
 pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
-    requires nlbv(e) <= offset
-    ensures subst_full(e, substs, offset) == e
-    decreases e
+    requires
+        nlbv(e) <= offset,
+    ensures
+        subst_full(e, substs, offset) == e,
+    decreases e,
 {
     match e {
-        ExprSpec::Var(_) => {}
-        ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => {}
+        ExprSpec::Var(_) => {},
+        ExprSpec::Free(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => {},
         ExprSpec::App(f, a) => {
             subst_full_noop(*f, substs, offset);
             subst_full_noop(*a, substs, offset);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             subst_full_noop(*t, substs, offset);
             subst_full_noop(*b, substs, (offset + 1) as nat);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             subst_full_noop(*t, substs, offset);
             subst_full_noop(*v, substs, offset);
             subst_full_noop(*b, substs, (offset + 1) as nat);
-        }
+        },
         ExprSpec::Proj(pidx, s) => {
             subst_full_noop(*s, substs, offset);
-        }
+        },
     }
 }
-
-
-
-
-
-
 
 /// Mirrors `.iter().rev().position(...)`: the distance from the *end* of
 /// `locals` to the first (scanning backward) occurrence of `id`, i.e. `Some(0)`
 /// if `locals`'s last element is `id`, `Some(1)` if its second-to-last is,
 /// etc.
 pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
-    decreases locals.len()
+    decreases locals.len(),
 {
     if locals.len() == 0 {
         None
@@ -668,26 +775,30 @@ pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
 /// `subst_full_noop`, and what discharges `abstr_aux`'s `!has_fvars(e)`
 /// short-circuit.
 pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
-    requires !has_fv(e)
-    ensures abstr_full(e, locals, offset) == e
-    decreases e
+    requires
+        !has_fv(e),
+    ensures
+        abstr_full(e, locals, offset) == e,
+    decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
             abstr_full_noop(*f, locals, offset);
             abstr_full_noop(*a, locals, offset);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             abstr_full_noop(*t, locals, offset);
             abstr_full_noop(*b, locals, offset + 1);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             abstr_full_noop(*t, locals, offset);
             abstr_full_noop(*v, locals, offset);
             abstr_full_noop(*b, locals, offset + 1);
-        }
-        ExprSpec::Proj(_, st) => { abstr_full_noop(*st, locals, offset); }
-        _ => {}
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_noop(*st, locals, offset);
+        },
+        _ => {},
     }
 }
 
@@ -700,9 +811,10 @@ pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
     requires
         p < locals.len(),
         locals[(locals.len() - 1 - p) as int] == id,
-        forall |j: int| 0 <= j < p ==> #[trigger] locals[(locals.len() - 1 - j) as int] != id,
-    ensures find_from_end(locals, id) == Some(p)
-    decreases locals.len()
+        forall|j: int| 0 <= j < p ==> #[trigger] locals[(locals.len() - 1 - j) as int] != id,
+    ensures
+        find_from_end(locals, id) == Some(p),
+    decreases locals.len(),
 {
     if p == 0 {
     } else {
@@ -711,9 +823,10 @@ pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
         }
         let rest = locals.subrange(0, locals.len() - 1);
         assert(rest.len() == locals.len() - 1);
-        assert forall |j: int| 0 <= j < p - 1 implies
-            #[trigger] rest[(rest.len() - 1 - j) as int] != id by {
-            assert(rest[(rest.len() - 1 - j) as int] == locals[(locals.len() - 1 - (j + 1)) as int]);
+        assert forall|j: int| 0 <= j < p - 1 implies #[trigger] rest[(rest.len() - 1 - j) as int]
+            != id by {
+            assert(rest[(rest.len() - 1 - j) as int] == locals[(locals.len() - 1 - (j
+                + 1)) as int]);
         }
         assert(rest[(rest.len() - 1 - (p - 1)) as int] == locals[(locals.len() - 1 - p) as int]);
         find_from_end_first_match(rest, id, (p - 1) as nat);
@@ -724,15 +837,17 @@ pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
 /// `None`. Stated over plain indices -- which direction they are counted in
 /// does not matter when the quantifier covers the whole sequence.
 pub proof fn find_from_end_no_match(locals: Seq<u32>, id: u32)
-    requires forall |j: int| 0 <= j < locals.len() ==> locals[j] != id
-    ensures find_from_end(locals, id) is None
-    decreases locals.len()
+    requires
+        forall|j: int| 0 <= j < locals.len() ==> locals[j] != id,
+    ensures
+        find_from_end(locals, id) is None,
+    decreases locals.len(),
 {
     if locals.len() == 0 {
     } else {
         assert(locals[locals.len() - 1] != id);
         let rest = locals.subrange(0, locals.len() - 1);
-        assert forall |j: int| 0 <= j < rest.len() implies rest[j] != id by {
+        assert forall|j: int| 0 <= j < rest.len() implies rest[j] != id by {
             assert(rest[j] == locals[j]);
         }
         find_from_end_no_match(rest, id);
@@ -744,10 +859,15 @@ pub proof fn find_from_end_no_match(locals: Seq<u32>, id: u32)
 /// `locals` with `Var(offset + <id's distance from the end of locals>)`,
 /// leave everything else as-is, and increment `offset` under each `Bind`.
 pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprSpec
-    decreases e
+    decreases e,
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => e,
+        ExprSpec::Var(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => e,
         ExprSpec::Free(id) => match find_from_end(locals, id) {
             Some(p) => ExprSpec::Var((offset + p) as u32),
             None => e,
@@ -769,32 +889,26 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
     }
 }
 
-
-
 /// `k` does not occur as a free variable in `e` -- the freshness a
 /// binder's fresh-instance rule needs (checkable at run time by pointer
 /// comparison, unlike an id ordering).
 pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Free(id) => id != k,
-        ExprSpec::Var(_) | ExprSpec::Closed | ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Const(_, _) | ExprSpec::Sort(_) => true,
+        ExprSpec::Var(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(_)
+        | ExprSpec::Const(_, _)
+        | ExprSpec::Sort(_) => true,
         ExprSpec::App(f, a) => fv_absent(*f, k) && fv_absent(*a, k),
         ExprSpec::Bind(t, bd) => fv_absent(*t, k) && fv_absent(*bd, k),
         ExprSpec::Let(t, v, bd) => fv_absent(*t, k) && fv_absent(*v, k) && fv_absent(*bd, k),
         ExprSpec::Proj(pidx, s) => fv_absent(*s, k),
     }
 }
-
-
-
-
-
-
-
-
-
 
 /// SYNTACTIC level substitution over an expression -- the spec FUNCTION
 /// delta-unfolding's model target is now pinned to (delta-lift L2):
@@ -803,14 +917,27 @@ pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
 /// below is its semantic characterization; `subst_expr_levels_sat_rel`
 /// ties them.
 pub open spec fn subst_expr_levels(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>) -> ExprSpec
-    decreases e
+    decreases e,
 {
     match e {
         ExprSpec::Sort(l) => ExprSpec::Sort(crate::level_model::subst_level_spec(l, ks, vs)),
-        ExprSpec::Const(id, ls) => ExprSpec::Const(id, crate::level_model::subst_levels_spec(ls, ks, vs)),
-        ExprSpec::App(f, a) => ExprSpec::App(Box::new(subst_expr_levels(*f, ks, vs)), Box::new(subst_expr_levels(*a, ks, vs))),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(Box::new(subst_expr_levels(*t, ks, vs)), Box::new(subst_expr_levels(*b, ks, vs))),
-        ExprSpec::Let(t, v, b) => ExprSpec::Let(Box::new(subst_expr_levels(*t, ks, vs)), Box::new(subst_expr_levels(*v, ks, vs)), Box::new(subst_expr_levels(*b, ks, vs))),
+        ExprSpec::Const(id, ls) => ExprSpec::Const(
+            id,
+            crate::level_model::subst_levels_spec(ls, ks, vs),
+        ),
+        ExprSpec::App(f, a) => ExprSpec::App(
+            Box::new(subst_expr_levels(*f, ks, vs)),
+            Box::new(subst_expr_levels(*a, ks, vs)),
+        ),
+        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+            Box::new(subst_expr_levels(*t, ks, vs)),
+            Box::new(subst_expr_levels(*b, ks, vs)),
+        ),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(
+            Box::new(subst_expr_levels(*t, ks, vs)),
+            Box::new(subst_expr_levels(*v, ks, vs)),
+            Box::new(subst_expr_levels(*b, ks, vs)),
+        ),
         ExprSpec::Proj(pidx, st) => ExprSpec::Proj(pidx, Box::new(subst_expr_levels(*st, ks, vs))),
         _ => e,
     }
@@ -818,47 +945,81 @@ pub open spec fn subst_expr_levels(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>
 
 /// Level substitution touches no `Free` node: `has_fv` is preserved exactly.
 pub proof fn subst_expr_levels_has_fv(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
-    ensures has_fv(subst_expr_levels(e, ks, vs)) == has_fv(e)
-    decreases e
+    ensures
+        has_fv(subst_expr_levels(e, ks, vs)) == has_fv(e),
+    decreases e,
 {
     match e {
-        ExprSpec::App(f, a) => { subst_expr_levels_has_fv(*f, ks, vs); subst_expr_levels_has_fv(*a, ks, vs); }
-        ExprSpec::Bind(t, b) => { subst_expr_levels_has_fv(*t, ks, vs); subst_expr_levels_has_fv(*b, ks, vs); }
-        ExprSpec::Let(t, v, b) => { subst_expr_levels_has_fv(*t, ks, vs); subst_expr_levels_has_fv(*v, ks, vs); subst_expr_levels_has_fv(*b, ks, vs); }
-        ExprSpec::Proj(pidx, st) => { subst_expr_levels_has_fv(*st, ks, vs); }
-        _ => {}
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_has_fv(*f, ks, vs);
+            subst_expr_levels_has_fv(*a, ks, vs);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_has_fv(*t, ks, vs);
+            subst_expr_levels_has_fv(*b, ks, vs);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_has_fv(*t, ks, vs);
+            subst_expr_levels_has_fv(*v, ks, vs);
+            subst_expr_levels_has_fv(*b, ks, vs);
+        },
+        ExprSpec::Proj(pidx, st) => {
+            subst_expr_levels_has_fv(*st, ks, vs);
+        },
+        _ => {},
     }
 }
 
 /// The function satisfies the relation (so every `subst_expr_levels_rel_*`
 /// preservation lemma applies to its output for free).
 pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
-    requires ks.len() == vs.len()
-    ensures subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs))
-    decreases e
+    requires
+        ks.len() == vs.len(),
+    ensures
+        subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs)),
+    decreases e,
 {
     match e {
         ExprSpec::Sort(l) => {
-            assert forall |rho: Map<nat, nat>| #[trigger] crate::level_model::interp(crate::level_model::subst_level_spec(l, ks, vs), rho)
-                == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vs)) by {
+            assert forall|rho: Map<nat, nat>| #[trigger]
+                crate::level_model::interp(crate::level_model::subst_level_spec(l, ks, vs), rho)
+                    == crate::level_model::interp(
+                    l,
+                    crate::level_model::subst_env(rho, ks, vs),
+                ) by {
                 crate::level_model::subst_level_spec_interp(l, ks, vs, rho);
             }
-        }
+        },
         ExprSpec::Const(id, ls) => {
             let ls2 = crate::level_model::subst_levels_spec(ls, ks, vs);
             assert(ls2.len() == ls.len());
-            assert forall |j: int, rho: Map<nat, nat>| 0 <= j < ls.len() implies
-                #[trigger] crate::level_model::interp(ls2[j], rho)
-                    == crate::level_model::interp(ls[j], crate::level_model::subst_env(rho, ks, vs)) by {
+            assert forall|j: int, rho: Map<nat, nat>|
+                0 <= j < ls.len() implies #[trigger] crate::level_model::interp(ls2[j], rho)
+                == crate::level_model::interp(
+                ls[j],
+                crate::level_model::subst_env(rho, ks, vs),
+            ) by {
                 assert(ls2[j] == crate::level_model::subst_level_spec(ls[j], ks, vs));
                 crate::level_model::subst_level_spec_interp(ls[j], ks, vs, rho);
             }
-        }
-        ExprSpec::App(f, a) => { subst_expr_levels_sat_rel(*f, ks, vs); subst_expr_levels_sat_rel(*a, ks, vs); }
-        ExprSpec::Bind(t, b) => { subst_expr_levels_sat_rel(*t, ks, vs); subst_expr_levels_sat_rel(*b, ks, vs); }
-        ExprSpec::Let(t, v, b) => { subst_expr_levels_sat_rel(*t, ks, vs); subst_expr_levels_sat_rel(*v, ks, vs); subst_expr_levels_sat_rel(*b, ks, vs); }
-        ExprSpec::Proj(pidx, st) => { subst_expr_levels_sat_rel(*st, ks, vs); }
-        _ => {}
+        },
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_sat_rel(*f, ks, vs);
+            subst_expr_levels_sat_rel(*a, ks, vs);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_sat_rel(*t, ks, vs);
+            subst_expr_levels_sat_rel(*b, ks, vs);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_sat_rel(*t, ks, vs);
+            subst_expr_levels_sat_rel(*v, ks, vs);
+            subst_expr_levels_sat_rel(*b, ks, vs);
+        },
+        ExprSpec::Proj(pidx, st) => {
+            subst_expr_levels_sat_rel(*st, ks, vs);
+        },
+        _ => {},
     }
 }
 
@@ -879,47 +1040,62 @@ pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
 /// what the model's lemmas are stated over, because the mirror was built
 /// against a fuelled search. This connects them.
 pub proof fn subst_expr_levels_fn_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
-    requires ks.len() == vs.len()
-    ensures subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs))
-    decreases e
+    requires
+        ks.len() == vs.len(),
+    ensures
+        subst_expr_levels_rel(e, ks, vs, subst_expr_levels(e, ks, vs)),
+    decreases e,
 {
     match e {
-        ExprSpec::Var(_) | ExprSpec::Free(_) | ExprSpec::Closed | ExprSpec::NatLit(_)
-        | ExprSpec::StringLit(_) => {}
+        ExprSpec::Var(_)
+        | ExprSpec::Free(_)
+        | ExprSpec::Closed
+        | ExprSpec::NatLit(_)
+        | ExprSpec::StringLit(
+            _,
+        ) => {}
         // the two level-bearing arms are where the shapes genuinely differ:
         // the function substitutes SYNTACTICALLY, the relation compares
         // INTERPRETATIONS, and `subst_level_spec_interp` is the bridge
+        ,
         ExprSpec::Sort(l) => {
             crate::level_model::subst_level_spec_interp_forall(l, ks, vs);
-        }
+        },
         ExprSpec::Const(_, ls) => {
-            assert forall |j: int, rho: Map<nat, nat>| 0 <= j < ls.len() implies
-                #[trigger] crate::level_model::interp(
-                    crate::level_model::subst_levels_spec(ls, ks, vs)[j], rho)
-                == crate::level_model::interp(ls[j],
-                    crate::level_model::subst_env(rho, ks, vs)) by {
+            assert forall|j: int, rho: Map<nat, nat>|
+                0 <= j < ls.len() implies #[trigger] crate::level_model::interp(
+                crate::level_model::subst_levels_spec(ls, ks, vs)[j],
+                rho,
+            ) == crate::level_model::interp(ls[j], crate::level_model::subst_env(rho, ks, vs)) by {
                 crate::level_model::subst_level_spec_interp(ls[j], ks, vs, rho);
             }
-        }
+        },
         ExprSpec::App(f, a) => {
             subst_expr_levels_fn_rel(*f, ks, vs);
             subst_expr_levels_fn_rel(*a, ks, vs);
-        }
+        },
         ExprSpec::Bind(t, b) => {
             subst_expr_levels_fn_rel(*t, ks, vs);
             subst_expr_levels_fn_rel(*b, ks, vs);
-        }
+        },
         ExprSpec::Let(t, v, b) => {
             subst_expr_levels_fn_rel(*t, ks, vs);
             subst_expr_levels_fn_rel(*v, ks, vs);
             subst_expr_levels_fn_rel(*b, ks, vs);
-        }
-        ExprSpec::Proj(_, st) => { subst_expr_levels_fn_rel(*st, ks, vs); }
+        },
+        ExprSpec::Proj(_, st) => {
+            subst_expr_levels_fn_rel(*st, ks, vs);
+        },
     }
 }
 
-pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, result: ExprSpec) -> bool
-    decreases e
+pub open spec fn subst_expr_levels_rel(
+    e: ExprSpec,
+    ks: Seq<u64>,
+    vs: Seq<LevelSpec>,
+    result: ExprSpec,
+) -> bool
+    decreases e,
 {
     match (e, result) {
         (ExprSpec::Var(i), ExprSpec::Var(j)) => i == j,
@@ -927,22 +1103,27 @@ pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
         (ExprSpec::Closed, ExprSpec::Closed) => true,
         (ExprSpec::NatLit(n1), ExprSpec::NatLit(n2)) => n1.0@ == n2.0@,
         (ExprSpec::StringLit(n1), ExprSpec::StringLit(n2)) => n1.0@ == n2.0@,
-        (ExprSpec::Sort(l), ExprSpec::Sort(l2)) =>
-            forall |rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, rho)
-                == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vs)),
-        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) =>
-            id1 == id2 && ls1.len() == ls2.len()
-            && forall |j: int, rho: Map<nat, nat>| 0 <= j < ls1.len() ==>
-                #[trigger] crate::level_model::interp(ls2[j], rho)
-                    == crate::level_model::interp(ls1[j], crate::level_model::subst_env(rho, ks, vs)),
-        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) =>
-            subst_expr_levels_rel(*f1, ks, vs, *f2) && subst_expr_levels_rel(*a1, ks, vs, *a2),
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) =>
-            subst_expr_levels_rel(*t1, ks, vs, *t2) && subst_expr_levels_rel(*b1, ks, vs, *b2),
-        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) =>
-            subst_expr_levels_rel(*t1, ks, vs, *t2) && subst_expr_levels_rel(*v1, ks, vs, *v2)
-                && subst_expr_levels_rel(*b1, ks, vs, *b2),
-        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && subst_expr_levels_rel(*s1, ks, vs, *s2),
+        (ExprSpec::Sort(l), ExprSpec::Sort(l2)) => forall|rho: Map<nat, nat>| #[trigger]
+            crate::level_model::interp(l2, rho) == crate::level_model::interp(
+                l,
+                crate::level_model::subst_env(rho, ks, vs),
+            ),
+        (ExprSpec::Const(id1, ls1), ExprSpec::Const(id2, ls2)) => id1 == id2 && ls1.len()
+            == ls2.len() && forall|j: int, rho: Map<nat, nat>|
+            0 <= j < ls1.len() ==> #[trigger] crate::level_model::interp(ls2[j], rho)
+                == crate::level_model::interp(ls1[j], crate::level_model::subst_env(rho, ks, vs)),
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => subst_expr_levels_rel(*f1, ks, vs, *f2)
+            && subst_expr_levels_rel(*a1, ks, vs, *a2),
+        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => subst_expr_levels_rel(*t1, ks, vs, *t2)
+            && subst_expr_levels_rel(*b1, ks, vs, *b2),
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => subst_expr_levels_rel(
+            *t1,
+            ks,
+            vs,
+            *t2,
+        ) && subst_expr_levels_rel(*v1, ks, vs, *v2) && subst_expr_levels_rel(*b1, ks, vs, *b2),
+        (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2
+            && subst_expr_levels_rel(*s1, ks, vs, *s2),
         _ => false,
     }
 }
@@ -953,58 +1134,104 @@ pub open spec fn subst_expr_levels_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
 /// skip the substitution walk for definitions without `uparams`.
 /// Relation form of the same identity (the bound lemmas take the relation).
 pub proof fn subst_expr_levels_rel_empty(e: ExprSpec)
-    ensures subst_expr_levels_rel(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty(), e)
-    decreases e
+    ensures
+        subst_expr_levels_rel(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty(), e),
+    decreases e,
 {
     let ks = Seq::<u64>::empty();
     let vs = Seq::<LevelSpec>::empty();
-    assert forall |rho: Map<nat, nat>| #[trigger] crate::level_model::subst_env(rho, ks, vs) == rho by {
+    assert forall|rho: Map<nat, nat>| #[trigger]
+        crate::level_model::subst_env(rho, ks, vs) == rho by {
         assert(ks.len() == 0);
     }
     match e {
-        ExprSpec::App(f, a) => { subst_expr_levels_rel_empty(*f); subst_expr_levels_rel_empty(*a); }
-        ExprSpec::Bind(t, b) => { subst_expr_levels_rel_empty(*t); subst_expr_levels_rel_empty(*b); }
-        ExprSpec::Let(t, v, b) => { subst_expr_levels_rel_empty(*t); subst_expr_levels_rel_empty(*v); subst_expr_levels_rel_empty(*b); }
-        ExprSpec::Proj(_, s) => { subst_expr_levels_rel_empty(*s); }
-        _ => {}
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_rel_empty(*f);
+            subst_expr_levels_rel_empty(*a);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_rel_empty(*t);
+            subst_expr_levels_rel_empty(*b);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_rel_empty(*t);
+            subst_expr_levels_rel_empty(*v);
+            subst_expr_levels_rel_empty(*b);
+        },
+        ExprSpec::Proj(_, s) => {
+            subst_expr_levels_rel_empty(*s);
+        },
+        _ => {},
     }
 }
 
 pub proof fn subst_level_spec_empty(l: LevelSpec)
-    ensures crate::level_model::subst_level_spec(l, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) == l
-    decreases l
+    ensures
+        crate::level_model::subst_level_spec(l, Seq::<u64>::empty(), Seq::<LevelSpec>::empty())
+            == l,
+    decreases l,
 {
     match l {
-        LevelSpec::Succ(a) => { subst_level_spec_empty(*a); }
-        LevelSpec::Max(a, b) => { subst_level_spec_empty(*a); subst_level_spec_empty(*b); }
-        LevelSpec::IMax(a, b) => { subst_level_spec_empty(*a); subst_level_spec_empty(*b); }
-        _ => {}
+        LevelSpec::Succ(a) => {
+            subst_level_spec_empty(*a);
+        },
+        LevelSpec::Max(a, b) => {
+            subst_level_spec_empty(*a);
+            subst_level_spec_empty(*b);
+        },
+        LevelSpec::IMax(a, b) => {
+            subst_level_spec_empty(*a);
+            subst_level_spec_empty(*b);
+        },
+        _ => {},
     }
 }
 
 pub proof fn subst_levels_spec_empty(ls: Seq<LevelSpec>)
-    ensures crate::level_model::subst_levels_spec(ls, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) =~= ls
+    ensures
+        crate::level_model::subst_levels_spec(ls, Seq::<u64>::empty(), Seq::<LevelSpec>::empty())
+            =~= ls,
 {
-    assert forall |i: int| 0 <= i < ls.len() implies #[trigger] crate::level_model::subst_levels_spec(ls, Seq::<u64>::empty(), Seq::<LevelSpec>::empty())[i] == ls[i] by {
+    assert forall|i: int|
+        0 <= i < ls.len() implies #[trigger] crate::level_model::subst_levels_spec(
+        ls,
+        Seq::<u64>::empty(),
+        Seq::<LevelSpec>::empty(),
+    )[i] == ls[i] by {
         subst_level_spec_empty(ls[i]);
     }
 }
 
 pub proof fn subst_expr_levels_empty(e: ExprSpec)
-    ensures subst_expr_levels(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) == e
-    decreases e
+    ensures
+        subst_expr_levels(e, Seq::<u64>::empty(), Seq::<LevelSpec>::empty()) == e,
+    decreases e,
 {
     match e {
-        ExprSpec::Sort(l) => { subst_level_spec_empty(l); }
-        ExprSpec::Const(id, ls) => { subst_levels_spec_empty(ls); }
-        ExprSpec::App(f, a) => { subst_expr_levels_empty(*f); subst_expr_levels_empty(*a); }
-        ExprSpec::Bind(t, b) => { subst_expr_levels_empty(*t); subst_expr_levels_empty(*b); }
-        ExprSpec::Let(t, v, b) => { subst_expr_levels_empty(*t); subst_expr_levels_empty(*v); subst_expr_levels_empty(*b); }
-        ExprSpec::Proj(_, s) => { subst_expr_levels_empty(*s); }
-        _ => {}
+        ExprSpec::Sort(l) => {
+            subst_level_spec_empty(l);
+        },
+        ExprSpec::Const(id, ls) => {
+            subst_levels_spec_empty(ls);
+        },
+        ExprSpec::App(f, a) => {
+            subst_expr_levels_empty(*f);
+            subst_expr_levels_empty(*a);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_expr_levels_empty(*t);
+            subst_expr_levels_empty(*b);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_expr_levels_empty(*t);
+            subst_expr_levels_empty(*v);
+            subst_expr_levels_empty(*b);
+        },
+        ExprSpec::Proj(_, s) => {
+            subst_expr_levels_empty(*s);
+        },
+        _ => {},
     }
 }
 
-
-}
-
+} // verus!

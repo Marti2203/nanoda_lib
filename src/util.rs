@@ -1,4 +1,4 @@
-use crate::env::{DeclarMap, Env, NotationMap, EnvLimit};
+use crate::env::{DeclarMap, Env, EnvLimit, NotationMap};
 use crate::expr::{BinderStyle, Expr, FVarId};
 use crate::level::Level;
 use crate::name::Name;
@@ -7,9 +7,10 @@ use crate::tc::TypeChecker;
 use crate::unique_hasher::UniqueHasher;
 use indexmap::{IndexMap, IndexSet};
 use num_bigint::BigUint;
-use num_traits::{ Pow, identities::Zero };
 use num_integer::Integer;
+use num_traits::{identities::Zero, Pow};
 use rustc_hash::FxHasher;
+use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -21,9 +22,10 @@ use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use serde::Deserialize;
 
-pub(crate) const fn default_true() -> bool { true }
+pub(crate) const fn default_true() -> bool {
+    true
+}
 
 pub(crate) type UniqueIndexSet<A> = IndexSet<A, BuildHasherDefault<UniqueHasher>>;
 pub(crate) type FxIndexSet<A> = IndexSet<A, BuildHasherDefault<FxHasher>>;
@@ -51,24 +53,31 @@ pub struct Ptr<A> {
 impl<A> Ptr<A> {
     /// The raw 32-bit encoding (marker bit + index) -- for diagnostics-only
     /// caches keyed by pointer identity (see `tc::route_stats`).
-    pub(crate) fn raw_bits(self) -> u32 { self.raw }
+    pub(crate) fn raw_bits(self) -> u32 {
+        self.raw
+    }
 }
 
 // The three pointer accessors, verified in place. `ptr_raw` is DEFINED as the
 // `raw` field (`util_model.rs`), so these prove the bit-packing contract they
 // used to only assert.
 ::vstd::prelude::verus! {
+
 impl<A> Ptr<A> {
     /// Exposes the packed representation for `util_model.rs`'s Verus proof
     /// that `from`/`idx`/`dag_marker`'s bit-packing round-trips correctly.
     /// Purely additive -- no behavior change.
     #[allow(dead_code)]
     pub(crate) fn raw(&self) -> (result: u32)
-        ensures result == crate::util_model::ptr_raw(*self)
-    { self.raw }
+        ensures
+            result == crate::util_model::ptr_raw(*self),
+    {
+        self.raw
+    }
 
     pub(crate) fn idx(&self) -> (result: usize)
-        ensures result == (crate::util_model::ptr_raw(*self) & 0x7FFF_FFFFu32) as usize
+        ensures
+            result == (crate::util_model::ptr_raw(*self) & 0x7FFF_FFFFu32) as usize,
     {
         assert(IDX_MASK == 0x7FFF_FFFFu32) by (bit_vector);
         (self.raw & IDX_MASK) as usize
@@ -77,27 +86,37 @@ impl<A> Ptr<A> {
     /// Verified in place, body unchanged. Needed in spec-land because
     /// `SortedPair::new` orders its two pointers by this.
     pub(crate) fn get_hash(&self) -> (result: u64)
-        ensures result == crate::util_model::ptr_raw(*self) as u64
-    { self.raw as u64 }
+        ensures
+            result == crate::util_model::ptr_raw(*self) as u64,
+    {
+        self.raw as u64
+    }
 
     pub(crate) fn dag_marker(&self) -> (result: DagMarker)
-        ensures crate::util_model::dm_is_tc(result)
-            == (crate::util_model::ptr_raw(*self) & 0x8000_0000u32 != 0)
+        ensures
+            crate::util_model::dm_is_tc(result) == (crate::util_model::ptr_raw(*self)
+                & 0x8000_0000u32 != 0),
     {
         assert(TC_BIT == 0x8000_0000u32) by (bit_vector);
-        if self.raw & TC_BIT == 0 { DagMarker::ExportFile } else { DagMarker::TcCtx }
+        if self.raw & TC_BIT == 0 {
+            DagMarker::ExportFile
+        } else {
+            DagMarker::TcCtx
+        }
     }
 }
-}
 
+} // verus!
 ::vstd::prelude::verus! {
+
 /// Bit 31 set indicates TcCtx; cleared indicates ExportFile.
 /// Inside `verus!` only so the accessors below can name them; values unchanged.
 pub(crate) const TC_BIT: u32 = 1 << 31;
+
 /// Mask for the 31-bit index stored in bits 0-30.
 pub(crate) const IDX_MASK: u32 = !TC_BIT;
-}
 
+} // verus!
 impl<A> Ptr<A> {
     pub(crate) fn from(dag_marker: DagMarker, idx: usize) -> Self {
         let idx_u32 = u32::try_from(idx).unwrap();
@@ -108,15 +127,12 @@ impl<A> Ptr<A> {
         };
         Self { raw: tag | idx_u32, ph: PhantomData }
     }
-
-
-
-
-
 }
 
 impl<A> std::hash::Hash for Ptr<A> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { state.write_u64(self.raw as u64) }
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.raw as u64)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,32 +159,50 @@ pub trait IterSpec {}
 impl<T: ?Sized> IterSpec for T {}
 pub type BigUintPtr<'a> = Ptr<&'a BigUint>;
 
-pub(crate) fn new_fx_index_map<K, V>() -> FxIndexMap<K, V> { FxIndexMap::with_hasher(Default::default()) }
-
-::vstd::prelude::verus! {
-/// Inside `verus!` so the memo caches' reset path is expressible; body unchanged.
-pub(crate) fn new_fx_hash_map<K, V>() -> (result: FxHashMap<K, V>)
-    ensures result@ == vstd::map::Map::<K, V>::empty()
-{ FxHashMap::with_hasher(Default::default()) }
+pub(crate) fn new_fx_index_map<K, V>() -> FxIndexMap<K, V> {
+    FxIndexMap::with_hasher(Default::default())
 }
 
 ::vstd::prelude::verus! {
+
+/// Inside `verus!` so the memo caches' reset path is expressible; body unchanged.
+pub(crate) fn new_fx_hash_map<K, V>() -> (result: FxHashMap<K, V>)
+    ensures
+        result@ == vstd::map::Map::<K, V>::empty(),
+{
+    FxHashMap::with_hasher(Default::default())
+}
+
+} // verus!
+::vstd::prelude::verus! {
+
 /// Verified, not assumed: `HashSet::with_hasher` gained a vstd specification
 /// (fork), which is what this and `TcCache::new` were waiting on.
 pub(crate) fn new_fx_hash_set<K>() -> (result: FxHashSet<K>)
-    ensures result@ == vstd::set::Set::<K>::empty()
-{ FxHashSet::with_hasher(Default::default()) }
+    ensures
+        result@ == vstd::set::Set::<K>::empty(),
+{
+    FxHashSet::with_hasher(Default::default())
 }
 
-pub(crate) fn new_fx_index_set<K>() -> FxIndexSet<K> { FxIndexSet::with_hasher(Default::default()) }
-pub(crate) fn new_unique_index_set<K>() -> UniqueIndexSet<K> { UniqueIndexSet::with_hasher(Default::default()) }
+} // verus!
+pub(crate) fn new_fx_index_set<K>() -> FxIndexSet<K> {
+    FxIndexSet::with_hasher(Default::default())
+}
+pub(crate) fn new_unique_index_set<K>() -> UniqueIndexSet<K> {
+    UniqueIndexSet::with_hasher(Default::default())
+}
 
 ::vstd::prelude::verus! {
+
 pub(crate) fn new_unique_hash_map<K, V>() -> (result: UniqueHashMap<K, V>)
-    ensures result@ == vstd::map::Map::<K, V>::empty()
-{ UniqueHashMap::with_hasher(Default::default()) }
+    ensures
+        result@ == vstd::map::Map::<K, V>::empty(),
+{
+    UniqueHashMap::with_hasher(Default::default())
 }
 
+} // verus!
 /// Convenience macro for creating a 64 bit hash.
 #[macro_export]
 macro_rules! hash64 {
@@ -285,15 +319,18 @@ pub struct ExportFile<'p> {
     pub config: Config,
     // Information used for setting EnvLimit during inductive checking.
     pub mutual_block_sizes: FxHashMap<NamePtr<'p>, (usize, usize)>,
-    pub ind_name_to_recursor_names: FxHashMap<NamePtr<'p>, FxHashSet<NamePtr<'p>>>
+    pub ind_name_to_recursor_names: FxHashMap<NamePtr<'p>, FxHashSet<NamePtr<'p>>>,
 }
 
 impl<'p> ExportFile<'p> {
-    pub fn new_env(&self, env_limit: EnvLimit<'p>) -> Env<'_, '_> { Env::new(&self.declars, &self.notations, env_limit) }
+    pub fn new_env(&self, env_limit: EnvLimit<'p>) -> Env<'_, '_> {
+        Env::new(&self.declars, &self.notations, env_limit)
+    }
 
     pub fn with_ctx<F, A>(&self, f: F) -> A
     where
-        F: FnOnce(&mut TcCtx<'_, 'p>) -> A, {
+        F: FnOnce(&mut TcCtx<'_, 'p>) -> A,
+    {
         let mut dag = LeanDag::new(&self.config);
         let mut ctx = TcCtx::new(self, &mut dag);
         f(&mut ctx)
@@ -301,7 +338,8 @@ impl<'p> ExportFile<'p> {
 
     pub fn with_tc<F, A>(&self, env_limit: EnvLimit, f: F) -> A
     where
-        F: FnOnce(&mut TypeChecker<'_, '_, 'p>) -> A, {
+        F: FnOnce(&mut TypeChecker<'_, '_, 'p>) -> A,
+    {
         let mut dag = LeanDag::new(&self.config);
         let mut ctx = TcCtx::new(self, &mut dag);
         let env = self.new_env(env_limit);
@@ -311,7 +349,8 @@ impl<'p> ExportFile<'p> {
 
     pub fn with_tc_and_declar<F, A>(&self, d: crate::env::DeclarInfo<'p>, f: F) -> A
     where
-        F: FnOnce(&mut TypeChecker<'_, '_, 'p>) -> A, {
+        F: FnOnce(&mut TypeChecker<'_, '_, 'p>) -> A,
+    {
         let mut dag = LeanDag::new(&self.config);
         let mut ctx = TcCtx::new(self, &mut dag);
         let env = self.new_env(EnvLimit::ByName(d.name));
@@ -321,7 +360,8 @@ impl<'p> ExportFile<'p> {
 
     pub fn with_pp<F, A>(&self, f: F) -> A
     where
-        F: FnOnce(&mut PrettyPrinter<'_, '_, 'p>) -> A, {
+        F: FnOnce(&mut PrettyPrinter<'_, '_, 'p>) -> A,
+    {
         self.with_ctx(|ctx| ctx.with_pp(f))
     }
 }
@@ -345,10 +385,11 @@ pub struct TcCtx<'t, 'p> {
     pub unique_counter: u32,
     /// A cache for instantiation, free variable abstraction, and level substitution
     pub expr_cache: ExprCache<'t>,
-    pub eager_mode: bool
+    pub eager_mode: bool,
 }
 
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was the last of fifteen `mk_*`
     /// constructors still carrying its own `assume_specification`; it derives
@@ -366,23 +407,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::Const { name, levels, hash })
     }
 }
-}
 
+} // verus!
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> Self {
-        Self { 
+        Self {
             export_file,
             dag: tdag,
             dbj_level_counter: 0u16,
             unique_counter: 0u32,
             expr_cache: ExprCache::new(),
-            eager_mode: false
+            eager_mode: false,
         }
     }
 
     pub fn with_tc<F, A>(&mut self, env_limit: EnvLimit<'p>, f: F) -> A
     where
-        F: FnOnce(&mut TypeChecker<'_, 't, 'p>) -> A, {
+        F: FnOnce(&mut TypeChecker<'_, 't, 'p>) -> A,
+    {
         let env = self.export_file.new_env(env_limit);
         let mut tc = TypeChecker::new(self, &env, None);
         f(&mut tc)
@@ -390,15 +432,22 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn with_tc_and_env_ext<'x, F, A>(&mut self, env_ext: &'x DeclarMap<'t>, env_limit: EnvLimit<'p>, f: F) -> A
     where
-        F: FnOnce(&mut TypeChecker<'_, 't, 'p>) -> A, {
-        let env = crate::env::Env::new_w_temp_ext(&self.export_file.declars, Some(env_ext), &self.export_file.notations, env_limit);
+        F: FnOnce(&mut TypeChecker<'_, 't, 'p>) -> A,
+    {
+        let env = crate::env::Env::new_w_temp_ext(
+            &self.export_file.declars,
+            Some(env_ext),
+            &self.export_file.notations,
+            env_limit,
+        );
         let mut tc = TypeChecker::new(self, &env, None);
         f(&mut tc)
     }
 
     pub fn with_pp<F, A>(&mut self, f: F) -> A
     where
-        F: FnOnce(&mut PrettyPrinter<'_, 't, 'p>) -> A, {
+        F: FnOnce(&mut PrettyPrinter<'_, 't, 'p>) -> A,
+    {
         f(&mut PrettyPrinter::new(self))
     }
 
@@ -427,7 +476,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             DagMarker::TcCtx => self.dag.exprs.get_index(p.idx()).copied().unwrap(),
         }
     }
-
 
     pub fn read_string(&self, p: StringPtr<'t>) -> &CowStr<'t> {
         match p.dag_marker() {
@@ -531,8 +579,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// A constructor for the anonymous name.
-    pub fn anonymous(&self) -> NamePtr<'t> { self.export_file.dag.anonymous() }
-
+    pub fn anonymous(&self) -> NamePtr<'t> {
+        self.export_file.dag.anonymous()
+    }
 
     pub fn str1_owned(&mut self, s: String) -> NamePtr<'t> {
         let anon = self.alloc_name(Name::Anon);
@@ -554,21 +603,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.str(n, s2)
     }
 
-    pub fn zero(&self) -> LevelPtr<'t> { self.export_file.dag.zero() }
-
-
-
-
-
-
-
-
-
-
+    pub fn zero(&self) -> LevelPtr<'t> {
+        self.export_file.dag.zero()
+    }
 
     pub fn mk_string_lit(&mut self, string_ptr: StringPtr<'t>) -> Option<ExprPtr<'t>> {
         if !self.export_file.config.string_extension {
-            return None
+            return None;
         }
         let hash = hash64!(crate::expr::STRING_LIT_HASH, string_ptr);
         Some(self.alloc_expr(Expr::StringLit { ptr: string_ptr, hash }))
@@ -576,14 +617,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn mk_string_lit_quick(&mut self, s: CowStr<'t>) -> Option<ExprPtr<'t>> {
         if !self.export_file.config.string_extension {
-            return None
+            return None;
         }
         let string_ptr = self.alloc_string(s);
         self.mk_string_lit(string_ptr)
     }
-
-
-
 
     /// Construct a free variable expression representing a deBruijn level, and
     /// increment the context's counter.
@@ -641,10 +679,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             _ => panic!("replace_dbj_level didn't get a Local, got {:?}", self.debug_print(e)),
         }
     }
-
 }
 
 ::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, bodies unchanged. `mk_nat_lit_quick` used to carry
     /// its own `assume_specification`; both now derive from `alloc_expr`'s
@@ -653,7 +691,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             match result {
                 Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
-                    && crate::expr_arena_bridge::nat_lit_value(e) == crate::expr_arena_bridge::bignum_ptr_value(num_ptr),
+                    && crate::expr_arena_bridge::nat_lit_value(e)
+                    == crate::expr_arena_bridge::bignum_ptr_value(num_ptr),
                 None => true,
             },
             final(self).expr_cache == old(self).expr_cache,
@@ -673,7 +712,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
-                    && crate::expr_arena_bridge::nat_lit_value(e) == crate::nat_lit_model::to_nat(n),
+                    && crate::expr_arena_bridge::nat_lit_value(e) == crate::nat_lit_model::to_nat(
+                    n,
+                ),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -682,8 +723,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.mk_nat_lit(num_ptr)
     }
 }
-}
 
+} // verus!
 #[derive(Debug)]
 pub struct LeanDag<'a> {
     pub names: UniqueIndexSet<Name<'a>>,
@@ -741,16 +782,16 @@ impl<'a> LeanDag<'a> {
                 let hash = hash64!(crate::name::NUM_HASH, pfx, num);
                 if let Some(idx) = self.names.get_index_of(&Name::Num(pfx, num, hash)) {
                     pfx = Ptr::from(DagMarker::ExportFile, idx);
-                    continue
+                    continue;
                 }
             } else if let Some(sfx) = self.get_string_ptr(s) {
                 let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
                 if let Some(idx) = self.names.get_index_of(&Name::Str(pfx, sfx, hash)) {
                     pfx = Ptr::from(DagMarker::ExportFile, idx);
-                    continue
+                    continue;
                 }
             }
-            return None
+            return None;
         }
         Some(pfx)
     }
@@ -836,6 +877,7 @@ pub struct NameCache<'p> {
 pub struct SortedPair<'t>(pub ExprPtr<'t>, pub ExprPtr<'t>);
 
 ::vstd::prelude::verus! {
+
 impl<'t> SortedPair<'t> {
     /// Verified in place, body unchanged. The postcondition is deliberately
     /// the DISJUNCTION rather than anything about the hash order: every
@@ -843,7 +885,8 @@ impl<'t> SortedPair<'t> {
     /// some order, and `eq_cache`'s invariant discharges the swapped case with
     /// `deq_any_symm`. Saying less here keeps the hash out of the proofs.
     pub fn new(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: Self)
-        ensures (result.0 == a && result.1 == b) || (result.0 == b && result.1 == a)
+        ensures
+            (result.0 == a && result.1 == b) || (result.0 == b && result.1 == a),
     {
         if a.get_hash() <= b.get_hash() {
             Self(a, b)
@@ -852,8 +895,8 @@ impl<'t> SortedPair<'t> {
         }
     }
 }
-}
 
+} // verus!
 pub struct TcCache<'t> {
     pub infer_cache_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
     pub infer_cache_no_check: UniqueHashMap<ExprPtr<'t>, ExprPtr<'t>>,
@@ -869,6 +912,7 @@ pub struct TcCache<'t> {
 }
 
 ::vstd::prelude::verus! {
+
 impl<'t> TcCache<'t> {
     /// Verified in place, body unchanged. The ensures is what
     /// `TypeChecker::new` needs to establish `tc_wf` on a fresh checker: the
@@ -893,10 +937,9 @@ impl<'t> TcCache<'t> {
         }
     }
 }
-}
 
+} // verus!
 impl<'t> TcCache<'t> {
-
     pub(crate) fn clear(&mut self) {
         self.infer_cache_check.clear();
         self.infer_cache_no_check.clear();
@@ -933,19 +976,19 @@ pub struct Config {
     #[serde(default)]
     pub num_threads: usize,
 
-    #[serde(default)] 
+    #[serde(default)]
     pub nat_extension: bool,
-    #[serde(default)] 
+    #[serde(default)]
     pub string_extension: bool,
 
     /// A list of declaration names the user wants to be pretty-printed back to them on termination.
     pub pp_declars: Option<Vec<String>>,
 
     /// Indicates what the typechecker should do when it's been asked to pretty-print a declaration
-    /// that is not actually in the environment. We give this option because that scenario is 
+    /// that is not actually in the environment. We give this option because that scenario is
     /// strongly indicative of a mismatch between what the user thinks is in the export file and
     /// what is actually in the export file.
-    /// If `true`, the typechecker will fail with a hard error. 
+    /// If `true`, the typechecker will fail with a hard error.
     /// If `false`, the typechecker will not fail just because of this.
     #[serde(default = "default_true")]
     pub unknown_pp_declar_hard_error: bool,
@@ -963,11 +1006,11 @@ pub struct Config {
     pub print_success_message: bool,
 
     /// If `true`, the typechecker will print the axioms actually admitted to the environment
-    /// when typechecking is finished. 
+    /// when typechecking is finished.
     #[serde(default = "default_true")]
     pub print_axioms: bool,
 
-    /// If set to `true`, will allow all axioms to be admitted to the environment. 
+    /// If set to `true`, will allow all axioms to be admitted to the environment.
     /// This is checked so as to be mutually exclusive with any of the axiom allow list/whitelist features.
     #[serde(default)]
     pub unsafe_permit_all_axioms: bool,
@@ -980,10 +1023,14 @@ impl Config {
     /// Specified CLAIM-FREE in `util_model.rs`: the flag only gates an early
     /// `None`, and `None` promises nothing, so nothing needs to be assumed
     /// about its value.
-    pub fn nat_extension_on(&self) -> bool { self.nat_extension }
+    pub fn nat_extension_on(&self) -> bool {
+        self.nat_extension
+    }
 
     /// Sibling of `nat_extension_on`, same reasoning.
-    pub fn string_extension_on(&self) -> bool { self.string_extension }
+    pub fn string_extension_on(&self) -> bool {
+        self.string_extension
+    }
 }
 
 impl TryFrom<&Path> for Config {
@@ -994,17 +1041,25 @@ impl TryFrom<&Path> for Config {
             Ok(config_file) => {
                 let config = serde_json::from_reader::<_, Config>(BufReader::new(config_file)).unwrap();
                 if config.export_file_path.is_none() && !config.use_stdin {
-                    return Err(Box::from(format!("incompatible config options: must specify a path to an export file OR set `use_stdin: true`")))
+                    return Err(Box::from(format!(
+                        "incompatible config options: must specify a path to an export file OR set `use_stdin: true`"
+                    )));
                 }
                 if config.export_file_path.is_some() && config.use_stdin {
-                    return Err(Box::from(format!("incompatible config options: if an export file path is given, `use_stdin` cannot be `true`")))
+                    return Err(Box::from(format!(
+                        "incompatible config options: if an export file path is given, `use_stdin` cannot be `true`"
+                    )));
                 }
                 if config.unsafe_permit_all_axioms {
                     if config.unpermitted_axiom_hard_error {
-                        return Err(Box::from(format!("incompatible config options: unsafe_permit_all_axioms && unpermitted_axioms_hard_error")))
+                        return Err(Box::from(format!(
+                            "incompatible config options: unsafe_permit_all_axioms && unpermitted_axioms_hard_error"
+                        )));
                     }
                     if config.permitted_axioms.is_some() {
-                        return Err(Box::from(format!("incompatible config options: unsafe_permit_all_axioms && nonempty permitted_axioms list")))
+                        return Err(Box::from(format!(
+                            "incompatible config options: unsafe_permit_all_axioms && nonempty permitted_axioms list"
+                        )));
                     }
                 }
                 Ok(config)
@@ -1019,7 +1074,9 @@ pub enum PpDestination {
 }
 
 impl PpDestination {
-    pub(crate) fn stdout() -> Self { Self::Stdout(BufWriter::new(std::io::stdout())) }
+    pub(crate) fn stdout() -> Self {
+        Self::Stdout(BufWriter::new(std::io::stdout()))
+    }
     pub(crate) fn write_line(&mut self, s: String, sep: &str) -> Result<usize, Box<dyn Error>> {
         match self {
             PpDestination::File(f) => f.write(s.as_bytes()).and_then(|_| f.write(sep.as_bytes())).map_err(Box::from),
@@ -1066,9 +1123,8 @@ impl Config {
 #[derive(Debug, Clone)]
 struct ExitStatus {
     tc_err: Option<String>,
-    pp_err: Option<String>
+    pp_err: Option<String>,
 }
-
 
 // ===========================================================================
 // VERIFIED KERNEL CODE. Methods that live here rather than in the plain
@@ -1077,9 +1133,6 @@ struct ExitStatus {
 // method down here is the migration -- one fewer `assume_specification`, one
 // more proof.
 // ===========================================================================
-use vstd::prelude::*;
-#[cfg(verus_only)]
-use crate::level_arena_bridge::{to_model, to_model_of_level};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::to_model as to_model_expr;
 #[cfg(verus_only)]
@@ -1087,13 +1140,16 @@ use crate::expr_arena_bridge::to_model_of_expr;
 #[cfg(verus_only)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
+use crate::level_arena_bridge::name_id;
+#[cfg(verus_only)]
+use crate::level_arena_bridge::{to_model, to_model_of_level};
+#[cfg(verus_only)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
+use crate::name_arena_bridge::{string_id, to_model_name, to_model_of_name};
+#[cfg(verus_only)]
 use crate::name_model::NameSpec;
-#[cfg(verus_only)]
-use crate::name_arena_bridge::{to_model_name, to_model_of_name, string_id};
-#[cfg(verus_only)]
-use crate::level_arena_bridge::name_id;
+use vstd::prelude::*;
 
 verus! {
 
@@ -1124,16 +1180,19 @@ verus! {
 /// this cannot be used to smuggle a fact in. At run time it panics exactly as
 /// the original `panic!` did.
 #[verifier::external_body]
-pub fn kernel_fail<T>(msg: &str) -> (result: T)
-    // It DOES NOT RETURN -- the body is a bare `panic!`. Saying so is what makes
-    // it usable in a function that has a contract: without it the caller must
-    // prove its own postcondition for the arbitrary `T` this appears to hand
-    // back, which is impossible and has nothing to do with the panic path.
-    //
-    // This is a claim, and a small one: it is checkable by reading the three
-    // lines below. The alternative is that every function containing a
-    // rejection path has to go contract-free.
-    ensures false
+pub fn kernel_fail<T>(msg: &str) -> (result:
+    T)
+// It DOES NOT RETURN -- the body is a bare `panic!`. Saying so is what makes
+// it usable in a function that has a contract: without it the caller must
+// prove its own postcondition for the arbitrary `T` this appears to hand
+// back, which is impossible and has nothing to do with the panic path.
+//
+// This is a claim, and a small one: it is checkable by reading the three
+// lines below. The alternative is that every function containing a
+// rejection path has to go contract-free.
+
+    ensures
+        false,
 {
     panic!("{}", msg)
 }
@@ -1145,19 +1204,23 @@ pub fn kernel_fail<T>(msg: &str) -> (result: T)
 /// to be assumed somewhere else instead.
 #[verifier::external_body]
 pub fn kernel_check(cond: bool, msg: &str)
-    ensures cond
+    ensures
+        cond,
 {
     if !cond {
         panic!("{}", msg)
     }
 }
 
-
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN -- body unchanged, and its denotation contract is
     /// now DERIVED from `alloc_expr`'s storage primitive rather than assumed.
     pub fn mk_app(&mut self, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::App(Box::new(to_model_expr(fun)), Box::new(to_model_expr(arg))),
+        ensures
+            to_model_expr(result) == ExprSpec::App(
+                Box::new(to_model_expr(fun)),
+                Box::new(to_model_expr(arg)),
+            ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1167,8 +1230,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::App { fun, arg, num_loose_bvars, has_fvars, hash })
     }
 
-    pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
+    pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result:
+        ExprPtr<'t>)
+        ensures
+            to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1185,14 +1250,30 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
         body: ExprPtr<'t>,
     ) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
+        ensures
+            to_model_expr(result) == ExprSpec::Bind(
+                Box::new(to_model_expr(binder_type)),
+                Box::new(to_model_expr(body)),
+            ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::LAMBDA_HASH, binder_name, binder_style, binder_type, body);
-        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
+        let num_loose_bvars = self.num_loose_bvars(binder_type).max(
+            self.num_loose_bvars(body).saturating_sub(1),
+        );
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
-        self.alloc_expr(Expr::Lambda { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+        self.alloc_expr(
+            Expr::Lambda {
+                binder_name,
+                binder_style,
+                binder_type,
+                body,
+                num_loose_bvars,
+                has_fvars,
+                hash,
+            },
+        )
     }
 
     /// Convenience function for reading two items as a tuple.
@@ -1205,11 +1286,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             to_model_of_expr(result.0) == to_model_expr(a),
             to_model_of_expr(result.1) == to_model_expr(x),
-            result.0 matches Expr::Const { name, levels, .. } ==>
-                crate::expr_arena_bridge::const_name_of(a) == name
+            result.0 matches Expr::Const { name, levels, .. }
+                ==> crate::expr_arena_bridge::const_name_of(a) == name
                 && crate::expr_arena_bridge::const_levels_of(a) == levels,
-            result.1 matches Expr::Const { name, levels, .. } ==>
-                crate::expr_arena_bridge::const_name_of(x) == name
+            result.1 matches Expr::Const { name, levels, .. }
+                ==> crate::expr_arena_bridge::const_name_of(x) == name
                 && crate::expr_arena_bridge::const_levels_of(x) == levels,
     {
         (self.read_expr(a), self.read_expr(x))
@@ -1222,18 +1303,35 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
         body: ExprPtr<'t>,
     ) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body))),
+        ensures
+            to_model_expr(result) == ExprSpec::Bind(
+                Box::new(to_model_expr(binder_type)),
+                Box::new(to_model_expr(body)),
+            ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::PI_HASH, binder_name, binder_style, binder_type, body);
-        let num_loose_bvars = self.num_loose_bvars(binder_type).max(self.num_loose_bvars(body).saturating_sub(1));
+        let num_loose_bvars = self.num_loose_bvars(binder_type).max(
+            self.num_loose_bvars(body).saturating_sub(1),
+        );
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(body);
-        self.alloc_expr(Expr::Pi { binder_name, binder_style, binder_type, body, num_loose_bvars, has_fvars, hash })
+        self.alloc_expr(
+            Expr::Pi {
+                binder_name,
+                binder_style,
+                binder_type,
+                body,
+                num_loose_bvars,
+                has_fvars,
+                hash,
+            },
+        )
     }
 
     pub fn succ(&mut self, l: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
+        ensures
+            to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1242,7 +1340,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn max(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
+        ensures
+            to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1251,7 +1350,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn imax(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
+        ensures
+            to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1260,7 +1360,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn param(&mut self, n: NamePtr<'t>) -> (result: LevelPtr<'t>)
-        ensures to_model(result) == LevelSpec::Param(name_id(n)),
+        ensures
+            to_model(result) == LevelSpec::Param(name_id(n)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1269,7 +1370,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn str(&mut self, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>)
-        ensures to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
+        ensures
+            to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1278,7 +1380,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn num(&mut self, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>)
-        ensures to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
+        ensures
+            to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1292,25 +1395,39 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
         val: ExprPtr<'t>,
         body: ExprPtr<'t>,
-        nondep: bool
+        nondep: bool,
     ) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Let(
-            Box::new(to_model_expr(binder_type)),
-            Box::new(to_model_expr(val)),
-            Box::new(to_model_expr(body))),
+        ensures
+            to_model_expr(result) == ExprSpec::Let(
+                Box::new(to_model_expr(binder_type)),
+                Box::new(to_model_expr(val)),
+                Box::new(to_model_expr(body)),
+            ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         let hash = hash64!(crate::expr::LET_HASH, binder_name, binder_type, val, body, nondep);
-        let num_loose_bvars = self
-            .num_loose_bvars(binder_type)
-            .max(self.num_loose_bvars(val).max(self.num_loose_bvars(body).saturating_sub(1)));
+        let num_loose_bvars = self.num_loose_bvars(binder_type).max(
+            self.num_loose_bvars(val).max(self.num_loose_bvars(body).saturating_sub(1)),
+        );
         let has_fvars = self.has_fvars(binder_type) || self.has_fvars(val) || self.has_fvars(body);
-        self.alloc_expr(Expr::Let { binder_name, binder_type, val, body, num_loose_bvars, has_fvars, hash, nondep })
+        self.alloc_expr(
+            Expr::Let {
+                binder_name,
+                binder_type,
+                val,
+                body,
+                num_loose_bvars,
+                has_fvars,
+                hash,
+                nondep,
+            },
+        )
     }
 
     pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Sort(to_model(level)),
+        ensures
+            to_model_expr(result) == ExprSpec::Sort(to_model(level)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1326,8 +1443,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. The level-to-index flip, and the one place the
     /// `u16` underflow the `dbj_serials_below` precondition exists to prevent
     /// would actually happen.
-    pub(crate) fn fvar_to_bvar(&mut self, num_open_binders: u16, dbj_level: u16) -> (result: ExprPtr<'t>)
-        requires dbj_level < num_open_binders,
+    pub(crate) fn fvar_to_bvar(&mut self, num_open_binders: u16, dbj_level: u16) -> (result:
+        ExprPtr<'t>)
+        requires
+            dbj_level < num_open_binders,
         ensures
             to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
             final(self).expr_cache == old(self).expr_cache,
@@ -1337,7 +1456,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
-        ensures to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
+        ensures
+            to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
@@ -1346,10 +1466,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
-
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Convenience function for reading two items as a tuple.
-    pub fn read_level_pair(&self, a: LevelPtr<'t>, x: LevelPtr<'t>) -> (result: (Level<'t>, Level<'t>))
+    pub fn read_level_pair(&self, a: LevelPtr<'t>, x: LevelPtr<'t>) -> (result: (
+        Level<'t>,
+        Level<'t>,
+    ))
         ensures
             to_model_of_level(result.0) == to_model(a),
             to_model_of_level(result.1) == to_model(x),
@@ -1358,4 +1480,4 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
-}
+} // verus!

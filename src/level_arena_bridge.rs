@@ -26,23 +26,25 @@
 //! So instead of one big contract on `read_level`, the plain (non-`verus!`)
 //! helper functions just below do the real matching, and each gets its own
 //! small trusted contract.
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
-use crate::util::{TcCtx, LevelPtr, LevelsPtr, NamePtr, Ptr};
 use crate::level::Level;
-use crate::name::Name;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::{ptr_index, ptr_is_tc, child_ok};
+use crate::level_model::{
+    case_split_sound, eff, find_level_idx_in_range, imax_imax_distrib, imax_max_distrib, interp, max_nat,
+    subst_level_spec, subst_levels_spec,
+};
 #[cfg(verus_only)]
-use crate::level_model::{interp, max_nat, eff, case_split_sound, imax_imax_distrib, imax_max_distrib, subst_level_spec, subst_levels_spec, find_level_idx_in_range};
+use crate::level_model::{
+    find_level_idx, find_level_idx_first_match, find_level_idx_no_match, level_names, subst_env, subst_env_param,
+    subst_level_spec_interp,
+};
+use crate::name::Name;
 #[cfg(verus_only)]
-use crate::level_model::{level_names, find_level_idx, find_level_idx_first_match, find_level_idx_no_match, subst_env, subst_env_param, subst_level_spec_interp};
-
-
-
+use crate::name_arena_bridge::{child_ok, ptr_index, ptr_is_tc};
+use crate::util::{LevelPtr, LevelsPtr, NamePtr, Ptr, TcCtx};
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 verus! {
 
@@ -97,7 +99,8 @@ pub uninterp spec fn name_id<'a>(n: NamePtr<'a>) -> u64;
 
 #[verifier::external_body]
 pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
-    ensures (n1 == n2) <==> (name_id(n1) == name_id(n2))
+    ensures
+        (n1 == n2) <==> (name_id(n1) == name_id(n2)),
 {
 }
 
@@ -105,11 +108,11 @@ pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
 /// (`util_model.rs`), so both bodies prove their contract.
 #[allow(dead_code)]
 pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
-    ensures result == (a == b)
+    ensures
+        result == (a == b),
 {
     a == b
 }
-
 
 /// Hash-consing's contrapositive for `Param`-shaped levels specifically:
 /// two `Param` pointers denoting DIFFERENT names can never be the same
@@ -132,14 +135,25 @@ pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
 /// DERIVED from it rather than separately assumed.
 #[verifier::external_body]
 pub proof fn level_ptr_eq_iff_same_model_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>)
-    requires to_model(a) is Param, to_model(b) is Param
-    ensures (a == b) <==> (to_model(a) == to_model(b))
+    requires
+        to_model(a) is Param,
+        to_model(b) is Param,
+    ensures
+        (a == b) <==> (to_model(a) == to_model(b)),
 {
 }
 
-pub proof fn level_ptr_eq_iff_same_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>, na: NamePtr<'a>, nb: NamePtr<'a>)
-    requires to_model(a) == LevelSpec::Param(name_id(na)), to_model(b) == LevelSpec::Param(name_id(nb))
-    ensures (a == b) <==> (name_id(na) == name_id(nb))
+pub proof fn level_ptr_eq_iff_same_param<'a>(
+    a: LevelPtr<'a>,
+    b: LevelPtr<'a>,
+    na: NamePtr<'a>,
+    nb: NamePtr<'a>,
+)
+    requires
+        to_model(a) == LevelSpec::Param(name_id(na)),
+        to_model(b) == LevelSpec::Param(name_id(nb)),
+    ensures
+        (a == b) <==> (name_id(na) == name_id(nb)),
 {
     level_ptr_eq_iff_same_model_param(a, b);
 }
@@ -153,40 +167,61 @@ pub uninterp spec fn to_model_of_levels<'a>(ptr: LevelsPtr<'a>) -> Seq<LevelSpec
 /// The `Arc`-returning reader the kernel's own `subst_level` uses -- same
 /// contract as the `Vec` wrapper below, which exists for the mirror. This one
 /// is what lets the kernel function be verified in place rather than around.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_levels] (ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: std::sync::Arc<[LevelPtr<'t>]>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_levels ](
+    ctx: &TcCtx<'t, 'p>,
+    p: LevelsPtr<'t>,
+) -> (result: std::sync::Arc<[LevelPtr<'t>]>) where 'p: 't
     ensures
         result@.len() == to_model_of_levels(p).len(),
-        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i];
+        forall|i: int|
+            0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
+;
 
 /// Was an `assume_specification`. The body is a `collect()` over
 /// `iter().copied()`, which `Copied`'s concretely-defined `remaining()` now
 /// supports, so the contract follows from `read_levels`'s.
-pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<LevelPtr<'t>>)
+pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<
+    LevelPtr<'t>,
+>)
     ensures
         result@.len() == to_model_of_levels(p).len(),
-        forall |i: int| 0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i]
+        forall|i: int|
+            0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
 {
     ctx.read_levels(p).iter().copied().collect()
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_levels_slice] (ctx: &mut TcCtx<'t, 'p>, ls: &[LevelPtr<'t>]) -> (result: LevelsPtr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
+    ctx: &mut TcCtx<'t, 'p>,
+    ls: &[LevelPtr<'t>],
+) -> (result: LevelsPtr<'t>) where 'p: 't
     ensures
         to_model_of_levels(result).len() == ls@.len(),
-        forall |i: int| 0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
+        forall|i: int|
+            0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
         final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
 /// justified the same way by `level_model_at_append` above. The constructor
 /// contracts below are derived from it rather than assumed.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_level] (ctx: &mut TcCtx<'t, 'p>, l: Level<'t>) -> (result: LevelPtr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_level ](
+    ctx: &mut TcCtx<'t, 'p>,
+    l: Level<'t>,
+) -> (result: LevelPtr<'t>) where 'p: 't
     ensures
         to_model(result) == to_model_of_level(l),
         final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::zero] (ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<'t>) where 'p: 't
-    ensures to_model(result) == LevelSpec::Zero;
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::zero ](ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<
+    't,
+>) where 'p: 't
+    ensures
+        to_model(result) == LevelSpec::Zero,
+;
 
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.
@@ -213,7 +248,6 @@ pub open spec fn to_model_of_level<'a>(l: Level<'a>) -> LevelSpec {
 // nothing here: `LevelSpec::Param` carries only the opaque `name_id`, so the
 // recursion stays inside the level storage.
 // ---------------------------------------------------------------------
-
 /// A stored level's children live at strictly smaller indices.
 pub open spec fn level_children_below<'a>(l: Level<'a>, i: nat) -> bool {
     match l {
@@ -231,29 +265,34 @@ pub open spec fn levels_arena_wf<'a>(ls: Seq<Level<'a>>) -> bool {
 
 /// What the level at index `i` denotes, COMPUTED from storage.
 pub open spec fn level_model_at<'a>(ls: Seq<Level<'a>>, i: nat) -> LevelSpec
-    decreases i
+    decreases i,
 {
     if i >= ls.len() {
         LevelSpec::Zero
     } else {
         match ls[i as int] {
             Level::Zero => LevelSpec::Zero,
-            Level::Succ(p, _) =>
-                if ptr_index(p) < i {
-                    LevelSpec::Succ(Box::new(level_model_at(ls, ptr_index(p))))
-                } else { LevelSpec::Zero },
-            Level::Max(a, b, _) =>
-                if ptr_index(a) < i && ptr_index(b) < i {
-                    LevelSpec::Max(
-                        Box::new(level_model_at(ls, ptr_index(a))),
-                        Box::new(level_model_at(ls, ptr_index(b))))
-                } else { LevelSpec::Zero },
-            Level::IMax(a, b, _) =>
-                if ptr_index(a) < i && ptr_index(b) < i {
-                    LevelSpec::IMax(
-                        Box::new(level_model_at(ls, ptr_index(a))),
-                        Box::new(level_model_at(ls, ptr_index(b))))
-                } else { LevelSpec::Zero },
+            Level::Succ(p, _) => if ptr_index(p) < i {
+                LevelSpec::Succ(Box::new(level_model_at(ls, ptr_index(p))))
+            } else {
+                LevelSpec::Zero
+            },
+            Level::Max(a, b, _) => if ptr_index(a) < i && ptr_index(b) < i {
+                LevelSpec::Max(
+                    Box::new(level_model_at(ls, ptr_index(a))),
+                    Box::new(level_model_at(ls, ptr_index(b))),
+                )
+            } else {
+                LevelSpec::Zero
+            },
+            Level::IMax(a, b, _) => if ptr_index(a) < i && ptr_index(b) < i {
+                LevelSpec::IMax(
+                    Box::new(level_model_at(ls, ptr_index(a))),
+                    Box::new(level_model_at(ls, ptr_index(b))),
+                )
+            } else {
+                LevelSpec::Zero
+            },
             Level::Param(n, _) => LevelSpec::Param(name_id(n)),
         }
     }
@@ -261,17 +300,21 @@ pub open spec fn level_model_at<'a>(ls: Seq<Level<'a>>, i: nat) -> LevelSpec
 
 /// Under acyclicity the well-foundedness guards are never taken.
 pub proof fn level_model_at_unfold<'a>(ls: Seq<Level<'a>>, i: nat)
-    requires levels_arena_wf(ls), i < ls.len(),
+    requires
+        levels_arena_wf(ls),
+        i < ls.len(),
     ensures
         level_model_at(ls, i) == match ls[i as int] {
             Level::Zero => LevelSpec::Zero,
             Level::Succ(p, _) => LevelSpec::Succ(Box::new(level_model_at(ls, ptr_index(p)))),
             Level::Max(a, b, _) => LevelSpec::Max(
                 Box::new(level_model_at(ls, ptr_index(a))),
-                Box::new(level_model_at(ls, ptr_index(b)))),
+                Box::new(level_model_at(ls, ptr_index(b))),
+            ),
             Level::IMax(a, b, _) => LevelSpec::IMax(
                 Box::new(level_model_at(ls, ptr_index(a))),
-                Box::new(level_model_at(ls, ptr_index(b)))),
+                Box::new(level_model_at(ls, ptr_index(b))),
+            ),
             Level::Param(n, _) => LevelSpec::Param(name_id(n)),
         },
 {
@@ -281,52 +324,84 @@ pub proof fn level_model_at_unfold<'a>(ls: Seq<Level<'a>>, i: nat)
 /// Two-tier denotation for levels -- same shape as `name_model_at2`, with
 /// `child_ok` carrying the lexicographic (tier, index) condition. `Param`'s
 /// `NamePtr` needs no recursion: the model records only `name_id`.
-pub open spec fn level_model_at2<'a>(ef: Seq<Level<'a>>, tc: Seq<Level<'a>>, is_tc: bool, i: nat) -> LevelSpec
-    decreases if is_tc { 1int } else { 0int }, i
+pub open spec fn level_model_at2<'a>(
+    ef: Seq<Level<'a>>,
+    tc: Seq<Level<'a>>,
+    is_tc: bool,
+    i: nat,
+) -> LevelSpec
+    decreases
+            if is_tc {
+                1int
+            } else {
+                0int
+            },
+            i,
 {
-    let store = if is_tc { tc } else { ef };
+    let store = if is_tc {
+        tc
+    } else {
+        ef
+    };
     if i >= store.len() {
         LevelSpec::Zero
     } else {
         match store[i as int] {
             Level::Zero => LevelSpec::Zero,
             Level::Param(n, _) => LevelSpec::Param(name_id(n)),
-            Level::Succ(p, _) =>
-                if child_ok(p, is_tc, i) {
-                    LevelSpec::Succ(Box::new(level_model_at2(ef, tc, ptr_is_tc(p), ptr_index(p))))
-                } else { LevelSpec::Zero },
-            Level::Max(a, b, _) =>
-                if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
-                    LevelSpec::Max(
-                        Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
-                        Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))))
-                } else { LevelSpec::Zero },
-            Level::IMax(a, b, _) =>
-                if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
-                    LevelSpec::IMax(
-                        Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
-                        Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))))
-                } else { LevelSpec::Zero },
+            Level::Succ(p, _) => if child_ok(p, is_tc, i) {
+                LevelSpec::Succ(Box::new(level_model_at2(ef, tc, ptr_is_tc(p), ptr_index(p))))
+            } else {
+                LevelSpec::Zero
+            },
+            Level::Max(a, b, _) => if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
+                LevelSpec::Max(
+                    Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
+                    Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))),
+                )
+            } else {
+                LevelSpec::Zero
+            },
+            Level::IMax(a, b, _) => if child_ok(a, is_tc, i) && child_ok(b, is_tc, i) {
+                LevelSpec::IMax(
+                    Box::new(level_model_at2(ef, tc, ptr_is_tc(a), ptr_index(a))),
+                    Box::new(level_model_at2(ef, tc, ptr_is_tc(b), ptr_index(b))),
+                )
+            } else {
+                LevelSpec::Zero
+            },
         }
     }
 }
 
 /// Appending to the local tier never changes an export-file pointer's
 /// denotation -- the export file is immutable while the local tier grows.
-pub proof fn level_model_at2_append_tc<'a>(ef: Seq<Level<'a>>, tc: Seq<Level<'a>>, l: Level<'a>, i: nat)
-    ensures level_model_at2(ef, tc.push(l), false, i) == level_model_at2(ef, tc, false, i),
+pub proof fn level_model_at2_append_tc<'a>(
+    ef: Seq<Level<'a>>,
+    tc: Seq<Level<'a>>,
+    l: Level<'a>,
+    i: nat,
+)
+    ensures
+        level_model_at2(ef, tc.push(l), false, i) == level_model_at2(ef, tc, false, i),
     decreases i,
 {
     if i < ef.len() {
         match ef[i as int] {
             Level::Succ(p, _) => {
-                if child_ok(p, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(p)); }
-            }
+                if child_ok(p, false, i) {
+                    level_model_at2_append_tc(ef, tc, l, ptr_index(p));
+                }
+            },
             Level::Max(a, b, _) | Level::IMax(a, b, _) => {
-                if child_ok(a, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(a)); }
-                if child_ok(b, false, i) { level_model_at2_append_tc(ef, tc, l, ptr_index(b)); }
-            }
-            _ => {}
+                if child_ok(a, false, i) {
+                    level_model_at2_append_tc(ef, tc, l, ptr_index(a));
+                }
+                if child_ok(b, false, i) {
+                    level_model_at2_append_tc(ef, tc, l, ptr_index(b));
+                }
+            },
+            _ => {},
         }
     }
 }
@@ -334,19 +409,27 @@ pub proof fn level_model_at2_append_tc<'a>(ef: Seq<Level<'a>>, tc: Seq<Level<'a>
 /// MONOTONICITY: allocating never changes what an existing pointer denotes.
 /// With branching children this needs the induction applied on BOTH sides.
 pub proof fn level_model_at_append<'a>(ls: Seq<Level<'a>>, l: Level<'a>, i: nat)
-    requires i < ls.len(),
-    ensures level_model_at(ls.push(l), i) == level_model_at(ls, i),
+    requires
+        i < ls.len(),
+    ensures
+        level_model_at(ls.push(l), i) == level_model_at(ls, i),
     decreases i,
 {
     match ls[i as int] {
         Level::Succ(p, _) => {
-            if ptr_index(p) < i { level_model_at_append(ls, l, ptr_index(p)); }
-        }
+            if ptr_index(p) < i {
+                level_model_at_append(ls, l, ptr_index(p));
+            }
+        },
         Level::Max(a, b, _) | Level::IMax(a, b, _) => {
-            if ptr_index(a) < i { level_model_at_append(ls, l, ptr_index(a)); }
-            if ptr_index(b) < i { level_model_at_append(ls, l, ptr_index(b)); }
-        }
-        _ => {}
+            if ptr_index(a) < i {
+                level_model_at_append(ls, l, ptr_index(a));
+            }
+            if ptr_index(b) < i {
+                level_model_at_append(ls, l, ptr_index(b));
+            }
+        },
+        _ => {},
     }
     assert(ls.push(l)[i as int] == ls[i as int]);
 }
@@ -354,42 +437,51 @@ pub proof fn level_model_at_append<'a>(ls: Seq<Level<'a>>, l: Level<'a>, i: nat)
 /// Non-degeneracy: `[Zero, Succ(p0)]` must denote `Succ(Zero)`, so the
 /// definitions above cannot be collapsing everything to `Zero`.
 pub proof fn level_model_at_computes_nesting<'a>(p0: LevelPtr<'a>, h: u64)
-    requires ptr_index(p0) == 0,
-    ensures ({
-        let ls = seq![Level::Zero, Level::Succ(p0, h)];
-        &&& levels_arena_wf(ls)
-        &&& level_model_at(ls, 1) == LevelSpec::Succ(Box::new(LevelSpec::Zero))
-    }),
+    requires
+        ptr_index(p0) == 0,
+    ensures
+        ({
+            let ls = seq![Level::Zero, Level::Succ(p0, h)];
+            &&& levels_arena_wf(ls)
+            &&& level_model_at(ls, 1) == LevelSpec::Succ(Box::new(LevelSpec::Zero))
+        }),
 {
     let ls: Seq<Level<'a>> = seq![Level::Zero, Level::Succ(p0, h)];
     assert(ls.len() == 2);
     assert(ls[0] == Level::<'a>::Zero);
     assert(ls[1] == Level::Succ(p0, h));
-    assert forall|i: int| 0 <= i < ls.len() implies level_children_below(#[trigger] ls[i], i as nat) by {
-        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    assert forall|i: int| 0 <= i < ls.len() implies level_children_below(
+        #[trigger] ls[i],
+        i as nat,
+    ) by {
+        if i == 0 {
+        } else {
+            assert(ptr_index(p0) == 0);
+        }
     }
     assert(level_model_at(ls, 0) == LevelSpec::Zero);
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_level] (ctx: &TcCtx<'t, 'p>, ptr: LevelPtr<'t>) -> (result: Level<'t>) where 'p: 't
-    ensures to_model_of_level(result) == to_model(ptr);
-
-
-
-
-
-
-
-
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_level ](
+    ctx: &TcCtx<'t, 'p>,
+    ptr: LevelPtr<'t>,
+) -> (result: Level<'t>) where 'p: 't
+    ensures
+        to_model_of_level(result) == to_model(ptr),
+;
 
 #[allow(dead_code)]
 pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
-    ensures match result {
-        Some(n) => to_model_of_level(*l) == LevelSpec::Param(name_id(n)),
-        None => !matches!(to_model_of_level(*l), LevelSpec::Param(_)),
-    }
+    ensures
+        match result {
+            Some(n) => to_model_of_level(*l) == LevelSpec::Param(name_id(n)),
+            None => !matches!(to_model_of_level(*l), LevelSpec::Param(_)),
+        },
 {
-    match l { Level::Param(n, _) => Some(*n), _ => None }
+    match l {
+        Level::Param(n, _) => Some(*n),
+        _ => None,
+    }
 }
 
 /// A real function operating on the genuine arena (`TcCtx`/`LevelPtr`, not
@@ -407,11 +499,6 @@ pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
 /// (`max` genuinely computes `max_nat`, just without `combining`'s
 /// `Succ`-pushing simplification), so the postcondition holds
 /// unconditionally, for any fuel amount including zero.
-
-
-
-
-
 /// Adapter over the kernel's own `TcCtx::subst_level`, which is verified in
 /// place now (`level.rs`). This used to be a reimplementation -- it read each
 /// `ks` element's own level to get a `NamePtr`, because the model-level form
@@ -420,18 +507,31 @@ pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
 /// contract, so all that is left here is the `interp` half of the postcondition,
 /// which `subst_level_spec_interp` supplies, and the `Option`/`fuel` shape the
 /// five call sites still expect.
-pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<LevelPtr<'t>>)
+pub fn verified_subst_level<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    level: LevelPtr<'t>,
+    ks: LevelsPtr<'t>,
+    vs: LevelsPtr<'t>,
+    fuel: u32,
+) -> (result: Option<LevelPtr<'t>>)
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
-        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        forall|j: int|
+            0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) => (forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
-            == interp(to_model(level), subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))))
-            && to_model(r) == subst_level_spec(to_model(level), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
-        None => true,
-    }
+            Some(r) => (forall|rho: Map<nat, nat>| #[trigger]
+                interp(to_model(r), rho) == interp(
+                    to_model(level),
+                    subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
+                )) && to_model(r) == subst_level_spec(
+                to_model(level),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs),
+            ),
+            None => true,
+        },
 {
     let _ = fuel;
     let r = ctx.subst_level(level, ks, vs);
@@ -439,8 +539,8 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
         let names = level_names(to_model_of_levels(ks));
         let vals = to_model_of_levels(vs);
         assert(names.len() == vals.len());
-        assert forall |rho: Map<nat, nat>| #[trigger] interp(to_model(r), rho)
-            == interp(to_model(level), subst_env(rho, names, vals)) by {
+        assert forall|rho: Map<nat, nat>| #[trigger]
+            interp(to_model(r), rho) == interp(to_model(level), subst_env(rho, names, vals)) by {
             subst_level_spec_interp(to_model(level), names, vals, rho);
         }
     }
@@ -451,21 +551,37 @@ pub fn verified_subst_level<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, level: LevelPtr
 /// place now (`level.rs`). Same story as `verified_subst_level` above: this used
 /// to be a reimplementation, and what is left is the `interp` half of the
 /// postcondition plus the `Option`/`fuel` shape the call site expects.
-pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: LevelsPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>, fuel: u32) -> (result: Option<LevelsPtr<'t>>)
+pub fn verified_subst_levels<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    uparams: LevelsPtr<'t>,
+    ks: LevelsPtr<'t>,
+    vs: LevelsPtr<'t>,
+    fuel: u32,
+) -> (result: Option<LevelsPtr<'t>>)
     requires
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
-        forall |j: int| 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
+        forall|j: int|
+            0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
-        Some(r) =>
-            to_model_of_levels(r).len() == to_model_of_levels(uparams).len()
-            && (forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() ==>
-                #[trigger] interp(to_model_of_levels(r)[i], rho)
-                    == interp(to_model_of_levels(uparams)[i], subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs))))
-            && to_model_of_levels(r) =~= subst_levels_spec(to_model_of_levels(uparams), level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
-        None => true,
-    }
+            Some(r) => to_model_of_levels(r).len() == to_model_of_levels(uparams).len() && (forall|
+                i: int,
+                rho: Map<nat, nat>,
+            |
+                0 <= i < to_model_of_levels(uparams).len() ==> #[trigger] interp(
+                    to_model_of_levels(r)[i],
+                    rho,
+                ) == interp(
+                    to_model_of_levels(uparams)[i],
+                    subst_env(rho, level_names(to_model_of_levels(ks)), to_model_of_levels(vs)),
+                )) && to_model_of_levels(r) =~= subst_levels_spec(
+                to_model_of_levels(uparams),
+                level_names(to_model_of_levels(ks)),
+                to_model_of_levels(vs),
+            ),
+            None => true,
+        },
 {
     let _ = fuel;
     let r = ctx.subst_levels(uparams, ks, vs);
@@ -473,35 +589,28 @@ pub fn verified_subst_levels<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, uparams: Level
         let names = level_names(to_model_of_levels(ks));
         let vals = to_model_of_levels(vs);
         assert(names.len() == vals.len());
-        assert forall |i: int, rho: Map<nat, nat>| 0 <= i < to_model_of_levels(uparams).len() implies
-            #[trigger] interp(to_model_of_levels(r)[i], rho)
-                == interp(to_model_of_levels(uparams)[i], subst_env(rho, names, vals)) by {
+        assert forall|i: int, rho: Map<nat, nat>|
+            0 <= i < to_model_of_levels(uparams).len() implies #[trigger] interp(
+            to_model_of_levels(r)[i],
+            rho,
+        ) == interp(to_model_of_levels(uparams)[i], subst_env(rho, names, vals)) by {
             subst_level_spec_interp(to_model_of_levels(uparams)[i], names, vals, rho);
         }
     }
     Some(r)
 }
 
-
-
-
-
-
-
-
-
-
-
-
 /// Distinct universe parameters (2026-09-11, shadow of `no_dupes_all_params`):
 /// every element is a `Param` and no two share a name.
 pub open spec fn distinct_params(ls: Seq<LevelSpec>) -> bool {
-    (forall |i: int| 0 <= i < ls.len() ==> (#[trigger] ls[i]) is Param)
-    && (forall |i: int, j: int| 0 <= i < ls.len() && 0 <= j < ls.len() && i != j ==> #[trigger] ls[i] != #[trigger] ls[j])
+    (forall|i: int| 0 <= i < ls.len() ==> (#[trigger] ls[i]) is Param) && (forall|i: int, j: int|
+        0 <= i < ls.len() && 0 <= j < ls.len() && i != j ==> #[trigger] ls[i] != #[trigger] ls[j])
 }
 
-pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsPtr<'t>) -> (result: bool)
-    ensures result ==> distinct_params(to_model_of_levels(ls))
+pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsPtr<'t>) -> (result:
+    bool)
+    ensures
+        result ==> distinct_params(to_model_of_levels(ls)),
 {
     let v = read_levels_vec(ctx, ls);
     let ghost m = to_model_of_levels(ls);
@@ -509,11 +618,14 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
     let mut i: usize = 0;
     while i < n
         invariant
-            n == v@.len(), v@.len() == m.len(), i <= n,
-            forall |a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
-            forall |a: int| 0 <= a < i ==> (#[trigger] m[a]) is Param,
-            forall |a: int, b: int| 0 <= a < i && 0 <= b < v@.len() && a != b ==> #[trigger] m[a] != #[trigger] m[b],
-        decreases n - i
+            n == v@.len(),
+            v@.len() == m.len(),
+            i <= n,
+            forall|a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
+            forall|a: int| 0 <= a < i ==> (#[trigger] m[a]) is Param,
+            forall|a: int, b: int|
+                0 <= a < i && 0 <= b < v@.len() && a != b ==> #[trigger] m[a] != #[trigger] m[b],
+        decreases n - i,
     {
         let li = ctx.read_level(v[i]);
         match level_as_param(&li) {
@@ -521,11 +633,14 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
                 let mut j: usize = 0;
                 while j < n
                     invariant
-                        n == v@.len(), v@.len() == m.len(), i < n, j <= n,
-                        forall |a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
+                        n == v@.len(),
+                        v@.len() == m.len(),
+                        i < n,
+                        j <= n,
+                        forall|a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
                         m[i as int] == LevelSpec::Param(name_id(ni)),
-                        forall |b: int| 0 <= b < j && b != i ==> m[i as int] != #[trigger] m[b],
-                    decreases n - j
+                        forall|b: int| 0 <= b < j && b != i ==> m[i as int] != #[trigger] m[b],
+                    decreases n - j,
                 {
                     if j != i {
                         let lj = ctx.read_level(v[j]);
@@ -538,24 +653,22 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
                                     name_id_injective(ni, nj);
                                     assert(m[j as int] == LevelSpec::Param(name_id(nj)));
                                 }
-                            }
-                            None => { return false; }
+                            },
+                            None => {
+                                return false;
+                            },
                         }
                     }
                     j = j + 1;
                 }
-            }
-            None => { return false; }
+            },
+            None => {
+                return false;
+            },
         }
         i = i + 1;
     }
     true
 }
 
-
-
-
-
-
-
-}
+} // verus!

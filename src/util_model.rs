@@ -25,10 +25,9 @@
 //! raw(&self) -> u32` getter exposing `Ptr`'s private packed
 //! representation, since `Ptr<A>` (like `Level`/`Expr`) is registered
 //! `external_body` and Verus can't otherwise see a private field.
-
+use crate::util::{DagMarker, Ptr};
 #[allow(unused_imports)]
 use vstd::prelude::*;
-use crate::util::{Ptr, DagMarker};
 
 /// Real-type counterpart used only by the `assume_specification` below --
 /// `DagMarker`'s two variants have no payload to extract, so this is a
@@ -39,7 +38,6 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 }
 
 verus! {
-
 
 /// `TypeChecker`'s composite field types, registered so `TypeChecker` itself can
 /// be a TRANSPARENT `external_type_specification` -- the same first step that
@@ -82,7 +80,6 @@ use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
 // Both are genuinely small. Contradiction detectors for them are recorded
 // below.
 // ---------------------------------------------------------------------
-
 /// `BuildHasherDefault<H>` builds every hasher from `H::default()`, so the
 /// builder itself contributes no variation -- which is what
 /// `builds_valid_hashers` asserts. vstd can prove this only for `RandomState`.
@@ -94,7 +91,8 @@ use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
 /// about `H` and not a theorem about `BuildHasherDefault`.
 #[verifier::external_body]
 pub proof fn build_hasher_default_valid<H>()
-    ensures builds_valid_hashers::<core::hash::BuildHasherDefault<H>>()
+    ensures
+        builds_valid_hashers::<core::hash::BuildHasherDefault<H>>(),
 {
 }
 
@@ -104,21 +102,24 @@ pub proof fn build_hasher_default_valid<H>()
 /// `Copy`. Stated for the tuple key shapes the kernel's caches actually use.
 #[verifier::external_body]
 pub proof fn ptr_triple_obeys_key_model<A, B, C>()
-    ensures obeys_key_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>()
+    ensures
+        obeys_key_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(),
 {
 }
 
 /// And for the `(pointer, start, open-binders)` triple `abstr_cache_levels` uses.
 #[verifier::external_body]
 pub proof fn ptr_u16_u16_obeys_key_model<A>()
-    ensures obeys_key_model::<(Ptr<A>, u16, u16)>()
+    ensures
+        obeys_key_model::<(Ptr<A>, u16, u16)>(),
 {
 }
 
 /// Same, for the `(pointer, offset)` keys `inst_cache`/`abstr_cache` use.
 #[verifier::external_body]
 pub proof fn ptr_u16_obeys_key_model<A>()
-    ensures obeys_key_model::<(Ptr<A>, u16)>()
+    ensures
+        obeys_key_model::<(Ptr<A>, u16)>(),
 {
 }
 
@@ -128,7 +129,8 @@ pub proof fn ptr_u16_obeys_key_model<A>()
 /// derived over one `u32`, its `==` is spec equality, and `Clone` is `Copy`.
 #[verifier::external_body]
 pub proof fn ptr_obeys_key_model<A>()
-    ensures obeys_key_model::<Ptr<A>>()
+    ensures
+        obeys_key_model::<Ptr<A>>(),
 {
 }
 
@@ -137,10 +139,10 @@ pub proof fn ptr_obeys_key_model<A>()
 /// `Ptr` fields and is `Copy`.
 #[verifier::external_body]
 pub proof fn sorted_pair_obeys_key_model<'t>()
-    ensures obeys_key_model::<crate::util::SortedPair<'t>>()
+    ensures
+        obeys_key_model::<crate::util::SortedPair<'t>>(),
 {
 }
-
 
 // TcCtx's three composite field types, registered so `TcCtx` itself can be a
 // TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay
@@ -185,9 +187,15 @@ pub struct ExPpOptions(crate::pretty_printer::PpOptions);
 
 /// CLAIM-FREE: says only that it returns a `bool`. `nat_bin_op_code` uses it
 /// to bail out early, and its contract promises nothing on the `None` branch.
-pub assume_specification [crate::util::Config::nat_extension_on] (c: &crate::util::Config) -> (result: bool);
+pub assume_specification[ crate::util::Config::nat_extension_on ](
+    c: &crate::util::Config,
+) -> (result: bool)
+;
 
-pub assume_specification [crate::util::Config::string_extension_on] (c: &crate::util::Config) -> (result: bool);
+pub assume_specification[ crate::util::Config::string_extension_on ](
+    c: &crate::util::Config,
+) -> (result: bool)
+;
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]
@@ -220,8 +228,13 @@ pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
 /// the real `==` said nothing -- and the kernel's own code uses `==`, not the
 /// wrappers, so without this no kernel function that compares two pointers can
 /// be verified in place.
-pub assume_specification<A: PartialEq> [<crate::util::Ptr<A> as PartialEq>::eq] (a: &crate::util::Ptr<A>, b: &crate::util::Ptr<A>) -> (result: bool)
-    ensures result == (*a == *b);
+pub assume_specification<A: PartialEq>[ <crate::util::Ptr<A> as PartialEq>::eq ](
+    a: &crate::util::Ptr<A>,
+    b: &crate::util::Ptr<A>,
+) -> (result: bool)
+    ensures
+        result == (*a == *b),
+;
 
 /// `Ptr`'s equality, registered through vstd's `PartialEqSpec` extension as
 /// well as the plain `assume_specification` above.
@@ -240,7 +253,9 @@ pub assume_specification<A: PartialEq> [<crate::util::Ptr<A> as PartialEq>::eq] 
 /// needs.
 #[cfg(verus_only)]
 impl<A: PartialEq> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
-    open spec fn obeys_eq_spec() -> bool { true }
+    open spec fn obeys_eq_spec() -> bool {
+        true
+    }
 
     open spec fn eq_spec(&self, other: &crate::util::Ptr<A>) -> bool {
         *self == *other
@@ -261,7 +276,6 @@ pub open spec fn dm_is_tc(m: DagMarker) -> bool {
 // `Ptr<A>` is already registered `external_type_specification` (as `ExPtr<A>`)
 // in `level_arena_bridge.rs` -- re-registering it here would conflict, so
 // this file just adds more `assume_specification`s for its methods.
-
 // HASHING, registered so the kernel's `hash64!` macro is expressible inside
 // `verus!`. Every item here is CLAIM-FREE by design: the hash is a cache
 // field that no model function reads, so nothing about its value is needed --
@@ -271,28 +285,51 @@ pub open spec fn dm_is_tc(m: DagMarker) -> bool {
 #[verifier::external_body]
 pub struct ExFxHasher(rustc_hash::FxHasher);
 
-pub assume_specification [rustc_hash::FxHasher::default] () -> (result: rustc_hash::FxHasher);
+pub assume_specification[ rustc_hash::FxHasher::default ]() -> (result: rustc_hash::FxHasher)
+;
 
-pub assume_specification<H: core::hash::Hasher> [<u64 as core::hash::Hash>::hash::<H>] (
-    x: &u64, state: &mut H);
+pub assume_specification<H: core::hash::Hasher>[ <u64 as core::hash::Hash>::hash::<H> ](
+    x: &u64,
+    state: &mut H,
+)
+;
 
-pub assume_specification<H: core::hash::Hasher> [<u16 as core::hash::Hash>::hash::<H>] (
-    x: &u16, state: &mut H);
+pub assume_specification<H: core::hash::Hasher>[ <u16 as core::hash::Hash>::hash::<H> ](
+    x: &u16,
+    state: &mut H,
+)
+;
 
-pub assume_specification<A, H: core::hash::Hasher> [<Ptr<A> as core::hash::Hash>::hash::<H>] (
-    x: &Ptr<A>, state: &mut H);
+pub assume_specification<A, H: core::hash::Hasher>[ <Ptr<A> as core::hash::Hash>::hash::<H> ](
+    x: &Ptr<A>,
+    state: &mut H,
+)
+;
 
-pub assume_specification<H: core::hash::Hasher> [<crate::expr::BinderStyle as core::hash::Hash>::hash::<H>] (
-    x: &crate::expr::BinderStyle, state: &mut H);
+pub assume_specification<
+    H: core::hash::Hasher,
+>[ <crate::expr::BinderStyle as core::hash::Hash>::hash::<H> ](
+    x: &crate::expr::BinderStyle,
+    state: &mut H,
+)
+;
 
-pub assume_specification<H: core::hash::Hasher> [<bool as core::hash::Hash>::hash::<H>] (
-    x: &bool, state: &mut H);
+pub assume_specification<H: core::hash::Hasher>[ <bool as core::hash::Hash>::hash::<H> ](
+    x: &bool,
+    state: &mut H,
+)
+;
 
-pub assume_specification<H: core::hash::Hasher> [<usize as core::hash::Hash>::hash::<H>] (
-    x: &usize, state: &mut H);
+pub assume_specification<H: core::hash::Hasher>[ <usize as core::hash::Hash>::hash::<H> ](
+    x: &usize,
+    state: &mut H,
+)
+;
 
-pub assume_specification [<rustc_hash::FxHasher as core::hash::Hasher>::finish] (
-    state: &rustc_hash::FxHasher) -> (result: u64);
+pub assume_specification[ <rustc_hash::FxHasher as core::hash::Hasher>::finish ](
+    state: &rustc_hash::FxHasher,
+) -> (result: u64)
+;
 
 /// Ghost counterpart to the real (exec) `Ptr::raw` accessor -- needed
 /// because an exec function's return value can't itself be referenced
@@ -308,7 +345,6 @@ pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
     p.raw
 }
 
-
 // ---------------------------------------------------------------------
 // `indexmap::IndexSet`, modelled by its DOCUMENTED observable contract: an
 // insertion-ordered sequence of distinct elements. `get_index` retrieves by
@@ -321,7 +357,6 @@ pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
 // wrong-index or stale-entry bug contradicts these, whereas a free-floating
 // `to_model` cannot notice one.
 // ---------------------------------------------------------------------
-
 #[verifier::external_type_specification]
 #[verifier::external_body]
 #[verifier::reject_recursive_types(T)]
@@ -336,31 +371,44 @@ pub uninterp spec fn index_set_seq<T, S>(s: indexmap::IndexSet<T, S>) -> Seq<T>;
 pub open spec fn index_set_distinct<T, S>(s: indexmap::IndexSet<T, S>) -> bool {
     forall|i: int, j: int|
         0 <= i < index_set_seq(s).len() && 0 <= j < index_set_seq(s).len()
-        && #[trigger] index_set_seq(s)[i] == #[trigger] index_set_seq(s)[j] ==> i == j
+            && #[trigger] index_set_seq(s)[i] == #[trigger] index_set_seq(s)[j] ==> i == j
 }
 
 /// `get_index`: retrieve by position.
-pub assume_specification<T, S> [indexmap::IndexSet::<T, S>::get_index] (
-    s: &indexmap::IndexSet<T, S>, index: usize) -> (r: Option<&T>)
+pub assume_specification<T, S>[ indexmap::IndexSet::<T, S>::get_index ](
+    s: &indexmap::IndexSet<T, S>,
+    index: usize,
+) -> (r: Option<&T>)
     ensures
         (index < index_set_seq(*s).len()) == (r is Some),
-        r matches Some(x) ==> *x == index_set_seq(*s)[index as int];
+        r matches Some(x) ==> *x == index_set_seq(*s)[index as int],
+;
 
 /// `insert_full`: append when absent, no-op when present. Together with
 /// `get_index` this is what makes hash-consing observable -- the returned
 /// index always locates the value afterwards, whichever branch was taken.
-pub assume_specification<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> [indexmap::IndexSet::<T, S>::insert_full] (
-    s: &mut indexmap::IndexSet<T, S>, value: T) -> (r: (usize, bool))
+pub assume_specification<
+    T: core::hash::Hash + Eq,
+    S: core::hash::BuildHasher,
+>[ indexmap::IndexSet::<T, S>::insert_full ](s: &mut indexmap::IndexSet<T, S>, value: T) -> (r: (
+    usize,
+    bool,
+))
     ensures
         ({
             let before = index_set_seq(*old(s));
             let after = index_set_seq(*final(s));
             &&& r.0 < after.len()
-            &&& after[r.0 as int] == value
+            &&& after[r.0 as int]
+                == value
             // appended when absent, unchanged when already present
-            &&& if r.1 { after =~= before.push(value) && r.0 == before.len() }
-                else   { after =~= before }
-        });
+            &&& if r.1 {
+                after =~= before.push(value) && r.0 == before.len()
+            } else {
+                after =~= before
+            }
+        }),
+;
 
 // `get_index_of` is deliberately NOT specified. indexmap's signature is
 // generic over any `Q: Equivalent<T>`, Verus requires an
@@ -372,7 +420,6 @@ pub assume_specification<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> [
 // It is not needed for the readers, which only index by position. It would
 // be needed to verify `alloc_*`'s hash-consing LOOKUP branch, so that stays
 // out of reach until Verus can express the instantiation.
-
 /// Abstract model of the two-tier "hash-consing" pattern every
 /// `alloc_X`/`read_X` pair in `util.rs` follows (`alloc_name`/`alloc_level`/
 /// `alloc_expr`/`alloc_string`/`alloc_bignum`/`alloc_levels`, paired with
@@ -397,7 +444,7 @@ pub assume_specification<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> [
 /// state. This proof closes exactly that gap, modulo trusting `IndexSet`'s
 /// documented API.
 pub open spec fn find_index<T>(s: Seq<T>, v: T) -> Option<nat>
-    decreases s.len()
+    decreases s.len(),
 {
     if s.len() == 0 {
         None
@@ -412,11 +459,12 @@ pub open spec fn find_index<T>(s: Seq<T>, v: T) -> Option<nat>
 }
 
 pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
-    ensures match find_index(s, v) {
-        Some(i) => i < s.len() && s[i as int] == v,
-        None => forall |i: int| 0 <= i < s.len() ==> s[i] != v,
-    }
-    decreases s.len()
+    ensures
+        match find_index(s, v) {
+            Some(i) => i < s.len() && s[i as int] == v,
+            None => forall|i: int| 0 <= i < s.len() ==> s[i] != v,
+        },
+    decreases s.len(),
 {
     if s.len() == 0 {
     } else if s[0] == v {
@@ -425,7 +473,7 @@ pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
         if let Some(i) = find_index(s.subrange(1, s.len() as int), v) {
             assert(s.subrange(1, s.len() as int)[i as int] == s[(i + 1) as int]);
         } else {
-            assert forall |i: int| 0 <= i < s.len() implies s[i] != v by {
+            assert forall|i: int| 0 <= i < s.len() implies s[i] != v by {
                 if i > 0 {
                     assert(s.subrange(1, s.len() as int)[i - 1] == s[i]);
                 }
@@ -434,11 +482,7 @@ pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
     }
 }
 
-
-
-
-}
-
+} // verus!
 #[cfg(test)]
 mod tests {
     use super::*;

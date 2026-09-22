@@ -32,23 +32,21 @@
 //! fuel-based bridge in this crate (`verified_inst`, `verified_unfold_apps`,
 //! etc.) -- `None` means "ran out of fuel", honestly incomplete, not
 //! unsound.
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
-use crate::util::{TcCtx, NamePtr, StringPtr};
-use crate::name::Name;
-#[allow(unused_imports)]
-use crate::name_model::NameSpec;
-#[cfg(verus_only)]
-use crate::name_model::{replace_pfx_full, root_of, concat_full};
 use crate::level_arena_bridge::name_ptr_eq;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::{name_id, name_id_injective};
 #[cfg(verus_only)]
 use crate::level_model::LevelSpec;
+use crate::name::Name;
+#[allow(unused_imports)]
+use crate::name_model::NameSpec;
+#[cfg(verus_only)]
+use crate::name_model::{concat_full, replace_pfx_full, root_of};
+use crate::util::{NamePtr, StringPtr, TcCtx};
+#[allow(unused_imports)]
+use vstd::prelude::*;
 #[cfg(verus_only)]
 use vstd::set_lib::*;
-
 
 verus! {
 
@@ -78,7 +76,6 @@ pub open spec fn to_model_of_name<'a>(n: Name<'a>) -> NameSpec {
 /// `name_id`/`expr_id`/`const_id`.
 pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 
-
 // ---------------------------------------------------------------------
 // ARENA STORAGE MODEL (2026-09-17). First step toward discharging the
 // `to_model_name` axioms rather than assuming them.
@@ -98,7 +95,6 @@ pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 // Both are proven below over an explicit `Seq<Name>` storage model. The
 // second is the one that licenses the context-free `to_model_name`.
 // ---------------------------------------------------------------------
-
 // WHY `to_model_name` KEEPS ITS CONTEXT-FREE SIGNATURE (measured 2026-09-17).
 //
 // The obvious way to discharge these axioms is to define the denotation from
@@ -121,7 +117,6 @@ pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
 // `assume_specification`s, many of them `mk_*` contracts that would follow
 // from a single "allocation appends the node you asked for" primitive once
 // the constructor bodies are verified in place.
-
 /// A pointer's index into its arena (`Ptr::idx`'s formula, in spec).
 pub open spec fn ptr_index<A>(p: crate::util::Ptr<A>) -> nat {
     (crate::util_model::ptr_raw(p) & 0x7FFF_FFFFu32) as nat
@@ -146,25 +141,23 @@ pub open spec fn names_arena_wf<'a>(ns: Seq<Name<'a>>) -> bool {
 /// needing `names_arena_wf` as a precondition; under that invariant the
 /// guard always holds, which is what `name_model_at_unfold` says.
 pub open spec fn name_model_at<'a>(ns: Seq<Name<'a>>, i: nat) -> NameSpec
-    decreases i
+    decreases i,
 {
     if i >= ns.len() {
         NameSpec::Anon
     } else {
         match ns[i as int] {
             Name::Anon => NameSpec::Anon,
-            Name::Str(pfx, sfx, _) =>
-                if ptr_index(pfx) < i {
-                    NameSpec::Str(Box::new(name_model_at(ns, ptr_index(pfx))), string_id(sfx))
-                } else {
-                    NameSpec::Anon
-                },
-            Name::Num(pfx, sfx, _) =>
-                if ptr_index(pfx) < i {
-                    NameSpec::Num(Box::new(name_model_at(ns, ptr_index(pfx))), sfx)
-                } else {
-                    NameSpec::Anon
-                },
+            Name::Str(pfx, sfx, _) => if ptr_index(pfx) < i {
+                NameSpec::Str(Box::new(name_model_at(ns, ptr_index(pfx))), string_id(sfx))
+            } else {
+                NameSpec::Anon
+            },
+            Name::Num(pfx, sfx, _) => if ptr_index(pfx) < i {
+                NameSpec::Num(Box::new(name_model_at(ns, ptr_index(pfx))), sfx)
+            } else {
+                NameSpec::Anon
+            },
         }
     }
 }
@@ -172,14 +165,20 @@ pub open spec fn name_model_at<'a>(ns: Seq<Name<'a>>, i: nat) -> NameSpec
 /// Under acyclicity the computed denotation agrees with the structural
 /// reading of the stored node -- i.e. the guard above is never taken.
 pub proof fn name_model_at_unfold<'a>(ns: Seq<Name<'a>>, i: nat)
-    requires names_arena_wf(ns), i < ns.len(),
+    requires
+        names_arena_wf(ns),
+        i < ns.len(),
     ensures
         name_model_at(ns, i) == match ns[i as int] {
             Name::Anon => NameSpec::Anon,
-            Name::Str(pfx, sfx, _) =>
-                NameSpec::Str(Box::new(name_model_at(ns, ptr_index(pfx))), string_id(sfx)),
-            Name::Num(pfx, sfx, _) =>
-                NameSpec::Num(Box::new(name_model_at(ns, ptr_index(pfx))), sfx),
+            Name::Str(pfx, sfx, _) => NameSpec::Str(
+                Box::new(name_model_at(ns, ptr_index(pfx))),
+                string_id(sfx),
+            ),
+            Name::Num(pfx, sfx, _) => NameSpec::Num(
+                Box::new(name_model_at(ns, ptr_index(pfx))),
+                sfx,
+            ),
         },
 {
     assert(name_children_below(ns[i as int], i));
@@ -190,19 +189,27 @@ pub proof fn name_model_at_unfold<'a>(ns: Seq<Name<'a>>, i: nat)
 /// where it must compute a NESTED denotation: storage `[Anon, Str(p0, s)]`
 /// with `p0` pointing at index 0 denotes `Str(Anon, s)`.
 pub proof fn name_model_at_computes_nesting<'a>(p0: NamePtr<'a>, s: StringPtr<'a>, h: u64)
-    requires ptr_index(p0) == 0,
-    ensures ({
-        let ns = seq![Name::Anon, Name::Str(p0, s, h)];
-        &&& names_arena_wf(ns)
-        &&& name_model_at(ns, 1) == NameSpec::Str(Box::new(NameSpec::Anon), string_id(s))
-    }),
+    requires
+        ptr_index(p0) == 0,
+    ensures
+        ({
+            let ns = seq![Name::Anon, Name::Str(p0, s, h)];
+            &&& names_arena_wf(ns)
+            &&& name_model_at(ns, 1) == NameSpec::Str(Box::new(NameSpec::Anon), string_id(s))
+        }),
 {
     let ns: Seq<Name<'a>> = seq![Name::Anon, Name::Str(p0, s, h)];
     assert(ns.len() == 2);
     assert(ns[0] == Name::<'a>::Anon);
     assert(ns[1] == Name::Str(p0, s, h));
-    assert forall|i: int| 0 <= i < ns.len() implies name_children_below(#[trigger] ns[i], i as nat) by {
-        if i == 0 { } else { assert(ptr_index(p0) == 0); }
+    assert forall|i: int| 0 <= i < ns.len() implies name_children_below(
+        #[trigger] ns[i],
+        i as nat,
+    ) by {
+        if i == 0 {
+        } else {
+            assert(ptr_index(p0) == 0);
+        }
     }
     assert(name_model_at(ns, 0) == NameSpec::Anon);
 }
@@ -217,7 +224,6 @@ pub proof fn name_model_at_computes_nesting<'a>(p0: NamePtr<'a>, s: StringPtr<'a
 // is built first and its nodes reference only each other, so an
 // `ExportFile` node is always "smaller" than any `TcCtx` node. The measure
 // below is lexicographic on (tier, index).
-
 /// Is this pointer into the local (`TcCtx`) tier rather than the export file?
 pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
     crate::util_model::ptr_raw(p) & 0x8000_0000u32 != 0
@@ -228,7 +234,11 @@ pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
 /// export file drops the tier, so it needs no index condition; staying within
 /// a tier needs the index to shrink.
 pub open spec fn child_ok<A>(c: crate::util::Ptr<A>, is_tc: bool, i: nat) -> bool {
-    if ptr_is_tc(c) { is_tc && ptr_index(c) < i } else { is_tc || ptr_index(c) < i }
+    if ptr_is_tc(c) {
+        is_tc && ptr_index(c) < i
+    } else {
+        is_tc || ptr_index(c) < i
+    }
 }
 
 /// Acyclicity across both tiers: within a tier, children sit at smaller
@@ -252,31 +262,58 @@ pub open spec fn names_two_tier_wf<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>) -> 
 /// The denotation of a (tier, index) node, computed across both tiers.
 /// `decreases (tier, index)`: descending into the export file from the local
 /// tier drops the first component, and staying within a tier drops the second.
-pub open spec fn name_model_at2<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc: bool, i: nat) -> NameSpec
-    decreases if is_tc { 1int } else { 0int }, i
+pub open spec fn name_model_at2<'a>(
+    ef: Seq<Name<'a>>,
+    tc: Seq<Name<'a>>,
+    is_tc: bool,
+    i: nat,
+) -> NameSpec
+    decreases
+            if is_tc {
+                1int
+            } else {
+                0int
+            },
+            i,
 {
-    let store = if is_tc { tc } else { ef };
+    let store = if is_tc {
+        tc
+    } else {
+        ef
+    };
     if i >= store.len() {
         NameSpec::Anon
     } else {
         match store[i as int] {
             Name::Anon => NameSpec::Anon,
-            Name::Str(pfx, sfx, _) =>
-                if ptr_is_tc(pfx) {
-                    if is_tc && ptr_index(pfx) < i {
-                        NameSpec::Str(Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))), string_id(sfx))
-                    } else { NameSpec::Anon }
-                } else if is_tc || ptr_index(pfx) < i {
-                    NameSpec::Str(Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))), string_id(sfx))
-                } else { NameSpec::Anon },
-            Name::Num(pfx, sfx, _) =>
-                if ptr_is_tc(pfx) {
-                    if is_tc && ptr_index(pfx) < i {
-                        NameSpec::Num(Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))), sfx)
-                    } else { NameSpec::Anon }
-                } else if is_tc || ptr_index(pfx) < i {
-                    NameSpec::Num(Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))), sfx)
-                } else { NameSpec::Anon },
+            Name::Str(pfx, sfx, _) => if ptr_is_tc(pfx) {
+                if is_tc && ptr_index(pfx) < i {
+                    NameSpec::Str(
+                        Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))),
+                        string_id(sfx),
+                    )
+                } else {
+                    NameSpec::Anon
+                }
+            } else if is_tc || ptr_index(pfx) < i {
+                NameSpec::Str(
+                    Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))),
+                    string_id(sfx),
+                )
+            } else {
+                NameSpec::Anon
+            },
+            Name::Num(pfx, sfx, _) => if ptr_is_tc(pfx) {
+                if is_tc && ptr_index(pfx) < i {
+                    NameSpec::Num(Box::new(name_model_at2(ef, tc, true, ptr_index(pfx))), sfx)
+                } else {
+                    NameSpec::Anon
+                }
+            } else if is_tc || ptr_index(pfx) < i {
+                NameSpec::Num(Box::new(name_model_at2(ef, tc, false, ptr_index(pfx))), sfx)
+            } else {
+                NameSpec::Anon
+            },
         }
     }
 }
@@ -288,20 +325,36 @@ pub open spec fn name_model_at2<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc:
 pub proof fn name_model_at2_unfold<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_tc: bool, i: nat)
     requires
         names_two_tier_wf(ef, tc),
-        i < (if is_tc { tc.len() } else { ef.len() }),
+        i < (if is_tc {
+            tc.len()
+        } else {
+            ef.len()
+        }),
     ensures
         ({
-            let store = if is_tc { tc } else { ef };
+            let store = if is_tc {
+                tc
+            } else {
+                ef
+            };
             match store[i as int] {
                 Name::Anon => name_model_at2(ef, tc, is_tc, i) == NameSpec::Anon,
-                Name::Str(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i)
-                    == NameSpec::Str(Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))), string_id(sfx)),
-                Name::Num(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i)
-                    == NameSpec::Num(Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))), sfx),
+                Name::Str(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i) == NameSpec::Str(
+                    Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))),
+                    string_id(sfx),
+                ),
+                Name::Num(pfx, sfx, _) => name_model_at2(ef, tc, is_tc, i) == NameSpec::Num(
+                    Box::new(name_model_at2(ef, tc, ptr_is_tc(pfx), ptr_index(pfx))),
+                    sfx,
+                ),
             }
         }),
 {
-    let store = if is_tc { tc } else { ef };
+    let store = if is_tc {
+        tc
+    } else {
+        ef
+    };
     assert(name_children_below2(store[i as int], is_tc, i));
 }
 
@@ -309,7 +362,8 @@ pub proof fn name_model_at2_unfold<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, is_
 /// an export-file pointer denotes. This is the property the two-tier arena
 /// actually needs -- the export file is immutable while the local tier grows.
 pub proof fn name_model_at2_append_tc<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, n: Name<'a>, i: nat)
-    ensures name_model_at2(ef, tc.push(n), false, i) == name_model_at2(ef, tc, false, i),
+    ensures
+        name_model_at2(ef, tc.push(n), false, i) == name_model_at2(ef, tc, false, i),
     decreases i,
 {
     if i < ef.len() {
@@ -318,8 +372,8 @@ pub proof fn name_model_at2_append_tc<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, 
                 if !ptr_is_tc(pfx) && ptr_index(pfx) < i {
                     name_model_at2_append_tc(ef, tc, n, ptr_index(pfx));
                 }
-            }
-            Name::Anon => {}
+            },
+            Name::Anon => {},
         }
     }
 }
@@ -329,8 +383,10 @@ pub proof fn name_model_at2_append_tc<'a>(ef: Seq<Name<'a>>, tc: Seq<Name<'a>>, 
 /// -- the whole crate's contracts rest on it, and it has been assumed until
 /// now.
 pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
-    requires i < ns.len(),
-    ensures name_model_at(ns.push(n), i) == name_model_at(ns, i),
+    requires
+        i < ns.len(),
+    ensures
+        name_model_at(ns.push(n), i) == name_model_at(ns, i),
     decreases i,
 {
     if i < ns.len() {
@@ -339,13 +395,13 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
                 if ptr_index(pfx) < i {
                     name_model_at_append(ns, n, ptr_index(pfx));
                 }
-            }
+            },
             Name::Num(pfx, _, _) => {
                 if ptr_index(pfx) < i {
                     name_model_at_append(ns, n, ptr_index(pfx));
                 }
-            }
-            Name::Anon => {}
+            },
+            Name::Anon => {},
         }
     }
     assert(ns.push(n)[i as int] == ns[i as int]);
@@ -353,19 +409,25 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
 
 /// THE storage primitive for names -- the analogue of `alloc_expr`'s and
 /// `alloc_level`'s, justified the same way by `name_model_at_append` above.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::alloc_name] (ctx: &mut TcCtx<'t, 'p>, n: Name<'t>) -> (result: NamePtr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
+    ctx: &mut TcCtx<'t, 'p>,
+    n: Name<'t>,
+) -> (result: NamePtr<'t>) where 'p: 't
     ensures
         to_model_name(result) == to_model_of_name(n),
         // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
         // dag, never the memo caches.
         final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, 'p>, ptr: NamePtr<'t>) -> (result: Name<'t>) where 'p: 't
-    ensures to_model_of_name(result) == to_model_name(ptr);
-
-
-
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
+    ctx: &TcCtx<'t, 'p>,
+    ptr: NamePtr<'t>,
+) -> (result: Name<'t>) where 'p: 't
+    ensures
+        to_model_of_name(result) == to_model_name(ptr),
+;
 
 // Contradiction detector, run and removed: a `proof fn` assuming exactly the
 // biconditional below and claiming `ensures false` FAILS to verify, as it must.
@@ -388,19 +450,28 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::read_name] (ctx: &TcCtx<'t, '
 /// the converse.
 #[verifier::external_body]
 pub proof fn to_model_name_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
-    ensures (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2))
+    ensures
+        (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2)),
 {
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::anonymous] (ctx: &TcCtx<'t, 'p>) -> (result: NamePtr<'t>) where 'p: 't
-    ensures to_model_name(result) == NameSpec::Anon;
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::anonymous ](ctx: &TcCtx<'t, 'p>) -> (result:
+    NamePtr<'t>) where 'p: 't
+    ensures
+        to_model_name(result) == NameSpec::Anon,
+;
 
 /// `TcCtx::str1` (`util.rs:469-473`): a fresh `Str(Anon, "u")`-shaped
 /// name -- callers needing `gen_elim_level`'s search loop (`verified_
 /// gen_elim_level` above) don't need anything about ITS specific model
 /// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p>, s: &'static str) -> (result: NamePtr<'t>) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
+    ctx: &mut TcCtx<'t, 'p>,
+    s: &'static str,
+) -> (result: NamePtr<'t>) where 'p: 't
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
@@ -417,14 +488,22 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str1] (ctx: &mut TcCtx<'t, 'p
 /// in `idx` for a FIXED prefix name, nothing about `format!` in general.
 pub uninterp spec fn append_index_after_id<'a>(n: NamePtr<'a>, idx: u64) -> u64;
 
-pub assume_specification<'x, 't: 'x, 'p: 't> [TcCtx::<'t, 'p>::append_index_after] (ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>, idx: u64) -> (result: NamePtr<'t>)
-    ensures name_id(result) == append_index_after_id(n, idx),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_after ](
+    ctx: &mut TcCtx<'t, 'p>,
+    n: NamePtr<'t>,
+    idx: u64,
+) -> (result: NamePtr<'t>)
+    ensures
+        name_id(result) == append_index_after_id(n, idx),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 #[verifier::external_body]
 pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2: u64)
-    requires idx1 != idx2
-    ensures append_index_after_id(n, idx1) != append_index_after_id(n, idx2)
+    requires
+        idx1 != idx2,
+    ensures
+        append_index_after_id(n, idx1) != append_index_after_id(n, idx2),
 {
 }
 
@@ -454,24 +533,38 @@ pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2
 /// flagged as needing either heavier string-content modeling or a bare
 /// trusted axiom) -- turned out to need neither, just the injectivity
 /// facts already available plus stock `vstd` set lemmas.
-pub proof fn gen_elim_level_collision_bound<'a>(p: NamePtr<'a>, uparams_model: Seq<LevelSpec>, k: nat)
+pub proof fn gen_elim_level_collision_bound<'a>(
+    p: NamePtr<'a>,
+    uparams_model: Seq<LevelSpec>,
+    k: nat,
+)
     requires
         uparams_model.len() + 1 <= u64::MAX as nat,
         k <= u64::MAX as nat,
-        forall |i: int| #![trigger append_index_after_id(p, i as u64)] 1 <= i <= k ==> exists |j: int| 0 <= j < uparams_model.len() && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64)),
-    ensures k <= uparams_model.len()
+        forall|i: int|
+            #![trigger append_index_after_id(p, i as u64)]
+            1 <= i <= k ==> exists|j: int|
+                0 <= j < uparams_model.len() && uparams_model[j] == LevelSpec::Param(
+                    append_index_after_id(p, i as u64),
+                ),
+    ensures
+        k <= uparams_model.len(),
 {
     broadcast use group_set_properties;
     broadcast use Set::lemma_map_contains;
 
     let l = uparams_model.len() as int;
-    let f = |i: int| choose |j: int| 0 <= j < l && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64));
+    let f = |i: int|
+        choose|j: int|
+            0 <= j < l && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64));
     let x = set_int_range(1, k as int + 1);
     let y = set_int_range(0, l);
     lemma_int_range(1, k as int + 1);
     lemma_int_range(0, l);
     assert(x.injective_on(f)) by {
-        assert forall |i1: int, i2: int| x.contains(i1) && x.contains(i2) && #[trigger] f(i1) == #[trigger] f(i2) implies i1 == i2 by {
+        assert forall|i1: int, i2: int|
+            x.contains(i1) && x.contains(i2) && #[trigger] f(i1) == #[trigger] f(i2) implies i1
+            == i2 by {
             if i1 != i2 {
                 assert(1 <= i1 <= k as int);
                 assert(1 <= i2 <= k as int);
@@ -479,15 +572,18 @@ pub proof fn gen_elim_level_collision_bound<'a>(p: NamePtr<'a>, uparams_model: S
                 assert((i2 as u64) as int == i2);
                 assert(i1 as u64 != i2 as u64);
                 append_index_after_id_injective(p, i1 as u64, i2 as u64);
-                assert(uparams_model[f(i1)] == LevelSpec::Param(append_index_after_id(p, i1 as u64)));
-                assert(uparams_model[f(i2)] == LevelSpec::Param(append_index_after_id(p, i2 as u64)));
+                assert(uparams_model[f(i1)] == LevelSpec::Param(
+                    append_index_after_id(p, i1 as u64),
+                ));
+                assert(uparams_model[f(i2)] == LevelSpec::Param(
+                    append_index_after_id(p, i2 as u64),
+                ));
                 assert(false);
             }
         }
     }
     assert(x.map(f).subset_of(y)) by {
-        assert forall |b: int| #[trigger] x.map(f).contains(b) implies y.contains(b) by {
-        }
+        assert forall|b: int| #[trigger] x.map(f).contains(b) implies y.contains(b) by {}
     }
     lemma_map_size(x, x.map(f), f);
     lemma_len_subset(x.map(f), y);
@@ -495,8 +591,4 @@ pub proof fn gen_elim_level_collision_bound<'a>(p: NamePtr<'a>, uparams_model: S
     assert(y.len() == l);
 }
 
-
-
-
-
-}
+} // verus!

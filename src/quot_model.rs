@@ -32,22 +32,21 @@
 //! `Quot.ind`, each 2-4 binders deep) follow the exact same pattern --
 //! chaining more `abstr_pi`/`mk_pi` calls, each already covered by the
 //! axioms below -- just not traced through here.
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
-use crate::util::TcCtx;
 use crate::expr::BinderStyle;
-use crate::util::{ExprPtr, LevelPtr, NamePtr};
-#[allow(unused_imports)]
-use crate::expr_model::ExprSpec;
-#[allow(unused_imports)]
-use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{to_model, expr_id, local_binder_type_of};
+use crate::expr_arena_bridge::{expr_id, local_binder_type_of, to_model};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
+#[allow(unused_imports)]
+use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model as level_to_model;
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+use crate::util::TcCtx;
+use crate::util::{ExprPtr, LevelPtr, NamePtr};
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 verus! {
 
@@ -64,11 +63,17 @@ pub open spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec {
     to_model(local_binder_type_of(ptr))
 }
 
-pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'t, 'p>, binder_name: NamePtr<'t>, binder_style: BinderStyle, binder_type: ExprPtr<'t>) -> (result: ExprPtr<'t>) where 'p: 't
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
+    ctx: &mut TcCtx<'t, 'p>,
+    binder_name: NamePtr<'t>,
+    binder_style: BinderStyle,
+    binder_type: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>) where 'p: 't
     ensures
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_binder_type_of(result) == binder_type,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+;
 
 // `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
 // (`expr.rs`); they used to be assumed here. Their old doc comments argued the
@@ -80,7 +85,6 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'
 // `local_binder_type_of` were two unrelated uninterpreted views of the SAME
 // field, so `local_type` is defined as the other now. The depth ceiling the
 // verified versions carry is real -- see `abstr_pi`'s doc comment.
-
 /// The concrete claim: `check_eq`'s construction of `Eq`'s expected type
 /// (`quot.rs:85-87`) really does represent `Π (α : Sort u), α → α → Prop`
 /// -- domain `Closed` (erased `Sort u`), then two correctly de-Bruijn-
@@ -91,18 +95,29 @@ pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::mk_unique] (ctx: &mut TcCtx<'
 /// established by composing the real exec calls' own contracts, not
 /// assumed as a hypothesis.
 pub fn verified_check_eq_type_shape<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, alpha_name: NamePtr<'t>, anon: NamePtr<'t>,
-    alpha_style: BinderStyle, arrow_style: BinderStyle,
+    ctx: &mut TcCtx<'t, 'p>,
+    u: LevelPtr<'t>,
+    alpha_name: NamePtr<'t>,
+    anon: NamePtr<'t>,
+    alpha_style: BinderStyle,
+    arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         to_model(expected) == ExprSpec::Bind(
-        Box::new(ExprSpec::Sort(level_to_model(u))),
-        Box::new(ExprSpec::Bind(
-            Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
-        )),
-    )
+            Box::new(ExprSpec::Sort(level_to_model(u))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Var(0)),
+                    Box::new(
+                        ExprSpec::Bind(
+                            Box::new(ExprSpec::Var(1)),
+                            Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
 {
     let uparam = ctx.mk_sort(u);
     assert(to_model(uparam) == ExprSpec::Sort(level_to_model(u)));
@@ -112,7 +127,10 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     let inner1 = ctx.mk_pi(anon, arrow_style, alpha, prop);
     assert(to_model(inner1) == ExprSpec::Bind(Box::new(to_model(alpha)), Box::new(to_model(prop))));
     let inner = ctx.mk_pi(anon, arrow_style, alpha, inner1);
-    assert(to_model(inner) == ExprSpec::Bind(Box::new(to_model(alpha)), Box::new(to_model(inner1))));
+    assert(to_model(inner) == ExprSpec::Bind(
+        Box::new(to_model(alpha)),
+        Box::new(to_model(inner1)),
+    ));
 
     proof {
         // Concrete shape, so the depth ceiling is arithmetic: `alpha` and
@@ -133,25 +151,44 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
         let id_alpha = expr_id(alpha);
         assert(to_model(inner) == ExprSpec::Bind(
             Box::new(ExprSpec::Free(id_alpha)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Free(id_alpha)),
+                    Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                ),
+            ),
         ));
 
         // Unfold abstr_full one Bind-layer at a time, matching its recursive
         // definition exactly (same pattern used throughout expr_model.rs's
         // own abstr_full proofs).
         let inner_t = ExprSpec::Free(id_alpha);
-        let inner_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_alpha)), Box::new(ExprSpec::Sort(LevelSpec::Zero)));
+        let inner_b = ExprSpec::Bind(
+            Box::new(ExprSpec::Free(id_alpha)),
+            Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+        );
         assert(to_model(inner) == ExprSpec::Bind(Box::new(inner_t), Box::new(inner_b)));
-        assert(abstr_full(to_model(inner), seq![id_alpha], 0)
-            == ExprSpec::Bind(Box::new(abstr_full(inner_t, seq![id_alpha], 0)), Box::new(abstr_full(inner_b, seq![id_alpha], 1))));
+        assert(abstr_full(to_model(inner), seq![id_alpha], 0) == ExprSpec::Bind(
+            Box::new(abstr_full(inner_t, seq![id_alpha], 0)),
+            Box::new(abstr_full(inner_b, seq![id_alpha], 1)),
+        ));
         assert(abstr_full(inner_t, seq![id_alpha], 0) == ExprSpec::Var(0));
-        assert(abstr_full(inner_b, seq![id_alpha], 1)
-            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1)), Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2))));
+        assert(abstr_full(inner_b, seq![id_alpha], 1) == ExprSpec::Bind(
+            Box::new(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1)),
+            Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2)),
+        ));
         assert(abstr_full(ExprSpec::Free(id_alpha), seq![id_alpha], 1) == ExprSpec::Var(1));
-        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2) == ExprSpec::Sort(LevelSpec::Zero));
+        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_alpha], 2) == ExprSpec::Sort(
+            LevelSpec::Zero,
+        ));
         assert(abstr_full(to_model(inner), seq![id_alpha], 0) == ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Var(1)),
+                    Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                ),
+            ),
         ));
     }
 
@@ -167,21 +204,36 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
 /// ...)` has to correctly shift the already-abstracted-once inner
 /// structure's bound variables.
 pub fn verified_check_quot_type_shape<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, a_name: NamePtr<'t>, r_name: NamePtr<'t>, anon: NamePtr<'t>,
-    a_style: BinderStyle, r_style: BinderStyle, arrow_style: BinderStyle,
+    ctx: &mut TcCtx<'t, 'p>,
+    u: LevelPtr<'t>,
+    a_name: NamePtr<'t>,
+    r_name: NamePtr<'t>,
+    anon: NamePtr<'t>,
+    a_style: BinderStyle,
+    r_style: BinderStyle,
+    arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         to_model(expected) == ExprSpec::Bind(
-        Box::new(ExprSpec::Sort(level_to_model(u))),
-        Box::new(ExprSpec::Bind(
-            Box::new(ExprSpec::Bind(
-                Box::new(ExprSpec::Var(0)),
-                Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
-            )),
             Box::new(ExprSpec::Sort(level_to_model(u))),
-        )),
-    )
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(
+                        ExprSpec::Bind(
+                            Box::new(ExprSpec::Var(0)),
+                            Box::new(
+                                ExprSpec::Bind(
+                                    Box::new(ExprSpec::Var(1)),
+                                    Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                                ),
+                            ),
+                        ),
+                    ),
+                    Box::new(ExprSpec::Sort(level_to_model(u))),
+                ),
+            ),
+        ),
 {
     let sort_u = ctx.mk_sort(u);
     assert(to_model(sort_u) == ExprSpec::Sort(level_to_model(u)));
@@ -194,7 +246,9 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     assert(to_model(a_a_prop) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(aa1))));
     let r = ctx.mk_unique(r_name, r_style, a_a_prop);
 
-    proof { assert(crate::expr_model::depth(to_model(sort_u)) == 0); }
+    proof {
+        assert(crate::expr_model::depth(to_model(sort_u)) == 0);
+    }
     let inner = ctx.abstr_pi(r, sort_u);
     assert(to_model(inner) == ExprSpec::Bind(
         Box::new(local_type(r)),
@@ -222,37 +276,81 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     proof {
         let id_a = expr_id(a);
         assert(to_model(inner) == ExprSpec::Bind(
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Free(id_a)),
+                    Box::new(
+                        ExprSpec::Bind(
+                            Box::new(ExprSpec::Free(id_a)),
+                            Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                        ),
+                    ),
+                ),
+            ),
             Box::new(ExprSpec::Sort(level_to_model(u))),
         ));
 
-        let t = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))));
+        let t = ExprSpec::Bind(
+            Box::new(ExprSpec::Free(id_a)),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Free(id_a)),
+                    Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                ),
+            ),
+        );
         let b = ExprSpec::Sort(level_to_model(u));
         assert(to_model(inner) == ExprSpec::Bind(Box::new(t), Box::new(b)));
 
         // Outer unfold: abstr_full(Bind(t, b), [id_a], 0) == Bind(abstr_full(t, [id_a], 0), abstr_full(b, [id_a], 1))
-        assert(abstr_full(to_model(inner), seq![id_a], 0)
-            == ExprSpec::Bind(Box::new(abstr_full(t, seq![id_a], 0)), Box::new(abstr_full(b, seq![id_a], 1))));
+        assert(abstr_full(to_model(inner), seq![id_a], 0) == ExprSpec::Bind(
+            Box::new(abstr_full(t, seq![id_a], 0)),
+            Box::new(abstr_full(b, seq![id_a], 1)),
+        ));
         assert(abstr_full(b, seq![id_a], 1) == ExprSpec::Sort(level_to_model(u)));
 
         // Inner unfold: abstr_full(t, [id_a], 0), where t = Bind(Free(id_a), Bind(Free(id_a), Sort(Zero)))
         let t_t = ExprSpec::Free(id_a);
-        let t_b = ExprSpec::Bind(Box::new(ExprSpec::Free(id_a)), Box::new(ExprSpec::Sort(LevelSpec::Zero)));
+        let t_b = ExprSpec::Bind(
+            Box::new(ExprSpec::Free(id_a)),
+            Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+        );
         assert(t == ExprSpec::Bind(Box::new(t_t), Box::new(t_b)));
-        assert(abstr_full(t, seq![id_a], 0)
-            == ExprSpec::Bind(Box::new(abstr_full(t_t, seq![id_a], 0)), Box::new(abstr_full(t_b, seq![id_a], 1))));
+        assert(abstr_full(t, seq![id_a], 0) == ExprSpec::Bind(
+            Box::new(abstr_full(t_t, seq![id_a], 0)),
+            Box::new(abstr_full(t_b, seq![id_a], 1)),
+        ));
         assert(abstr_full(t_t, seq![id_a], 0) == ExprSpec::Var(0));
-        assert(abstr_full(t_b, seq![id_a], 1)
-            == ExprSpec::Bind(Box::new(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1)), Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2))));
+        assert(abstr_full(t_b, seq![id_a], 1) == ExprSpec::Bind(
+            Box::new(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1)),
+            Box::new(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2)),
+        ));
         assert(abstr_full(ExprSpec::Free(id_a), seq![id_a], 1) == ExprSpec::Var(1));
-        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2) == ExprSpec::Sort(LevelSpec::Zero));
+        assert(abstr_full(ExprSpec::Sort(LevelSpec::Zero), seq![id_a], 2) == ExprSpec::Sort(
+            LevelSpec::Zero,
+        ));
         assert(abstr_full(t, seq![id_a], 0) == ExprSpec::Bind(
             Box::new(ExprSpec::Var(0)),
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Var(1)),
+                    Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                ),
+            ),
         ));
 
         assert(abstr_full(to_model(inner), seq![id_a], 0) == ExprSpec::Bind(
-            Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(0)), Box::new(ExprSpec::Bind(Box::new(ExprSpec::Var(1)), Box::new(ExprSpec::Sort(LevelSpec::Zero)))))),
+            Box::new(
+                ExprSpec::Bind(
+                    Box::new(ExprSpec::Var(0)),
+                    Box::new(
+                        ExprSpec::Bind(
+                            Box::new(ExprSpec::Var(1)),
+                            Box::new(ExprSpec::Sort(LevelSpec::Zero)),
+                        ),
+                    ),
+                ),
+            ),
             Box::new(ExprSpec::Sort(level_to_model(u))),
         ));
     }
@@ -260,4 +358,4 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     expected
 }
 
-}
+} // verus!
