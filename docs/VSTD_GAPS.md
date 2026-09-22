@@ -239,3 +239,30 @@ map side; this mirrors it.
 Three vstd commits now sit on the fork, each independent: `Arc`'s `Deref`,
 `core::panicking::assert_failed`, and this.
 
+## Check for prior art before writing a spec
+
+Writing `Iterator::position` and `Iterator::enumerate` for the fork turned out
+to duplicate two open upstream PRs — #2849 (wood-ghost) and #2904 (Ganxiang
+Yang) — whose designs were essentially identical, down to their
+`enumerate_count` for my `enumerate_offset`. Both are now the PR authors' own
+text on the fork, noted as such; only `nth` is ours, because nothing upstream
+covers it.
+
+**So the check is part of the job, not an afterthought.** A missing
+specification in the release is not evidence that nobody has written one:
+
+```
+git fetch upstream '+refs/pull/*/head:refs/remotes/upstream-pr/*'
+git log --all --oneline -S'<the symbol>' -- source/vstd/
+git for-each-ref --contains <commit> 'refs/remotes/upstream-pr/*'
+```
+
+That last line is what turns a commit into a PR number.
+
+Two things to expect when adopting one. A PR written against an older tree may
+not cherry-pick — #2849 predates the #2956 iterator reorganisation, so its
+`position` had to be placed into the current block by hand. And a PR may carry
+a second change that has since landed independently — #2904 included an
+`impl IteratorSpecImpl for &mut I` that is now upstream, and keeping it gives
+`E0119 conflicting implementations`.
+
