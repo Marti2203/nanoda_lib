@@ -1149,7 +1149,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.tc_cache.infer_cache_no_check.insert(e, r);
             }
             InferFlag::Check => {
-                self.tc_cache.infer_cache_check.insert(e, r);
+                self.cache_infer_check(e, r);
             }
         }
         r
@@ -1349,7 +1349,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             } else if let Some(next_term) = self.unfold_def(whnfd) {
                 cursor = next_term;
             } else {
-                self.tc_cache.whnf_cache.insert(e, whnfd);
+                self.cache_whnf(e, whnfd);
                 return whnfd
             }
         }
@@ -1460,7 +1460,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Local { .. } | NatLit { .. } | StringLit { .. } => (false, self.ctx.foldl_apps(e_fun, args.into_iter())),
         };
         if should_cache && !cheap_proj {
-            self.tc_cache.whnf_no_unfolding_cache.insert(e, eprime);
+            self.cache_whnf_no_unfolding(e, eprime);
         }
         eprime
     }
@@ -1752,7 +1752,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
         if result {
             route_stats::bump_legacy_true();
-            self.tc_cache.eq_cache.insert(SortedPair::new(x, y));
+            self.cache_eq(x, y);
         } else {
             route_stats::bump_legacy_false();
             self.tc_cache.defeq_fail_cache.insert(defeq_fail_cache_key);
