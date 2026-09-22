@@ -1379,12 +1379,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// contradicts the guard. The kernel says as much in the second one's
     /// message ("should flag as no locals"); it is a proof now.
     ///
-    /// VERUS-REWRITE(closure-in-position-and-map): the `Local` arm's original
+    /// VERUS-REWRITE(closure-captures-mut-self): the `Local` arm's original
     /// body is
-    /// `locals.iter().rev().position(|x| *x == e).map(|pos| self.mk_var(...)).unwrap_or(e)`
-    /// -- a predicate closure inside `position` and a `&mut self`-capturing
-    /// closure inside `map`, neither of which Verus can take. It is an explicit
-    /// backwards scan now. See `docs/VERUS_REWRITES.md`.
+    /// `locals.iter().rev().position(|x| *x == e).map(|pos| self.mk_var(...)).unwrap_or(e)`.
+    /// The `position` call is the kernel's, restored -- its predicate closure
+    /// carries a spec annotation, nothing more. Only the `.map` is rewritten,
+    /// as the `match` it stands for: that closure captures `&mut self`, which
+    /// Verus rejects outright.
     #[verifier::exec_allows_no_decreases_clause]
     fn abstr_aux(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
         requires
@@ -1421,21 +1422,27 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Local { .. } => {
                     proof { assert(crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(e))); }
                     let n = locals.len();
-                    let mut pos: usize = 0;
-                    while pos < n && locals[n - 1 - pos] != e
-                        invariant
-                            pos <= n,
-                            n == locals@.len(),
-                            ids == crate::expr_arena_bridge::local_ids(locals@),
-                            forall |j: int| 0 <= j < pos
-                                ==> #[trigger] ids[(ids.len() - 1 - j) as int] != crate::expr_arena_bridge::expr_id(e),
-                        decreases n - pos
-                    {
-                        proof {
-                            crate::expr_arena_bridge::expr_id_injective(locals@[(n - 1 - pos) as int], e);
-                            assert(ids[(ids.len() - 1 - pos) as int] != crate::expr_arena_bridge::expr_id(e));
+                    let ghost lv = locals@;
+                    let mut it = locals.iter().rev();
+                    let ghost it0 = it;
+                    let found = it.position(
+                        |x: &ExprPtr<'t>| -> (r: bool)
+                            ensures r == (*x == e)
+                        { *x == e });
+                    proof {
+                        broadcast use vstd::std_specs::iter::group_iter_axioms;
+                    }
+                    let pos = match found { Some(k) => k, None => n };
+                    proof {
+                        assert forall |j: int| 0 <= j < pos implies
+                            #[trigger] ids[(ids.len() - 1 - j) as int] != crate::expr_arena_bridge::expr_id(e) by {
+                            // `position`'s "everything before it failed" clause
+                            // is triggered on `old(self).remaining()[j]`, and
+                            // `.rev()` makes that the slice read backwards.
+                            assert(*vstd::std_specs::iter::IteratorSpec::remaining(&it0)[j]
+                                == lv[(n - 1 - j) as int]);
+                            crate::expr_arena_bridge::expr_id_injective(lv[(n - 1 - j) as int], e);
                         }
-                        pos = pos + 1;
                     }
                     if pos < n {
                         proof { assert(ids[(ids.len() - 1 - pos) as int] == crate::expr_arena_bridge::expr_id(e)); }

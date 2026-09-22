@@ -68,24 +68,25 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate` and `position` — 2 rewrites
+### `Iterator::enumerate` — 1 rewrite
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
-| `abstr_aux` (`Local` arm) | `src/expr.rs` | `position` + `Option::map` |
 
 All three of `nth`, `position` and `enumerate` have now been **specified on the
 fork** (`d5d5e80fa`) — they genuinely had none, checked directly rather than
 taken from the comments.
 
-`inst_aux` is already reverted on the strength of it: the `Var` arm is back to
-the kernel's
-`substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`.
+Two of the three reverted on the strength of it. `inst_aux`'s `Var` arm is back
+to the kernel's
+`substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`,
+and `abstr_aux`'s `Local` arm has its `position(|x| *x == e)` back — only the
+`.map` is still rewritten, because *that* closure captures `&mut self` (it is
+counted under the `&mut self` heading above, not here).
 
-The other two need their consumers revisited before they revert — `mk_majors`
-also has an unguarded index to keep, and `abstr_aux` needs `Option::map` with a
-closure as well as `position`.
+`mk_majors` keeps its rewrite regardless: it also has an unguarded index worth
+guarding.
 
 ### An unspecified `alloc` variant — 1 rewrite
 
@@ -120,6 +121,7 @@ Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 | `subst_levels` | `src/level.rs` |
 | `eq_antisymm_many` | `src/level.rs` |
 | `str_lit_to_ctor_reducing` | `src/tc.rs` |
+| `abstr_aux` (`.map` only) | `src/expr.rs` |
 
 Rejected outright, and the message is explicit:
 
