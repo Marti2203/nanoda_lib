@@ -803,7 +803,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let (_, name, _, args) = self.ctx.unfold_const_apps(y)?;
         let ConstructorData { inductive_name, num_params, num_fields, .. } = self.env.get_constructor(&name)?;
-        if args.len() == (*num_params + *num_fields) as usize && self.env.can_be_struct(inductive_name) {
+        // VERUS-REWRITE(u16-widen): was `(*num_params + *num_fields) as usize`,
+        // which adds two `u16`s and only then widens -- it wraps in release on
+        // a sum past 65535, and a wrapped sum can equal `args.len()` and take
+        // this branch. Widening first is the sum the comparison meant.
+        if args.len() == (*num_params as usize) + (*num_fields as usize)
+            && self.env.can_be_struct(inductive_name) {
             let (x_type, y_type) = (self.infer(x, InferOnly), self.infer(y, InferOnly));
             if self.def_eq(x_type, y_type) {
                 for i in (*num_params as usize)..args.len()
@@ -1009,7 +1014,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let (_, name, _, args) = self.ctx.unfold_const_apps(structure)?;
         let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;
-        let i = (*num_params as usize) + idx;
+        // VERUS-REWRITE(unchecked-add): `num_params + idx` is a `usize` sum
+        // with nothing bounding either side. It is guarded rather than widened
+        // because there is nothing wider to widen to; the index test below
+        // would reject anyway, so this only replaces a wrap with a decline.
+        let i = match (*num_params as usize).checked_add(idx) {
+            Some(i) => i,
+            None => return None,
+        };
         // VERUS-REWRITE(unchecked-unwrap): was `args.get(i).copied().unwrap()`.
         // Same panic on the same condition, now with a message. Declining
         // instead would be a soundness change, not a robustness fix: `None`
@@ -1905,7 +1917,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             major_ctor_args.len().checked_sub(rec_rule.ctor_telescope_size_wo_params as usize)?;
         let major_ctor_args_wo_params = major_ctor_args.into_iter().skip(num_extra_params_to_major).collect::<Vec<_>>();
         let r = self.ctx.subst_expr_levels(rec_rule.val, info.uparams, const_levels);
-        let r = self.ctx.foldl_apps(r, args.iter().copied().take((num_params + num_motives + num_minors) as usize));
+        // VERUS-REWRITE(u16-widen): as above -- three `u16`s summed before
+        // the widening, so a wrapped total would `take` the wrong prefix.
+        let r = self.ctx.foldl_apps(r, args.iter().copied()
+            .take((*num_params as usize) + (*num_motives as usize) + (*num_minors as usize)));
         let r = self.ctx.foldl_apps(r, major_ctor_args_wo_params.into_iter());
         Some(self.ctx.foldl_apps(r, args.iter().skip(rec.major_idx() + 1).copied()))
     }
