@@ -1158,7 +1158,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
         match flag {
             InferFlag::InferOnly => {
-                self.tc_cache.infer_cache_no_check.insert(e, r);
+                self.cache_infer_no_check(e, r);
             }
             InferFlag::Check => {
                 self.cache_infer_check(e, r);
@@ -1265,6 +1265,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // reads `counter == start_pos + locals@.len() + 1` -- which is
                 // what discharges `replace_dbj_level`'s `> 0`.
                 self.ctx.dbj_level_counter == start_pos + locals@.len(),
+            // The loop drains `locals`, so on exit the counter is back at
+            // `start_pos` -- but a `while let` carries no exit reason, so
+            // without this the function's counter frame has nothing to stand on.
+            ensures locals@.len() == 0,
+                (*self).env == old(self).env,
+                tc_wf(*self),
+                self.ctx.dbj_level_counter == start_pos,
         {
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
@@ -2843,6 +2850,27 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// counterpart for `infer_cache_no_check`: `InferOnly` promises nothing,
     /// so that cache carries no claim and needs no guarded writer.
     #[verifier::exec_allows_no_decreases_clause]
+    /// The claim-free sibling of `cache_infer_check`. `infer_cache_no_check`
+    /// records what `InferOnly` produced, which promises nothing and is not in
+    /// `tc_wf` -- but the insert still needs the `obeys_key_model` /
+    /// `builds_valid_hashers` pair, because without it vstd gives the `HashMap`
+    /// no usable `Map` view at all and the write says nothing about the OTHER
+    /// maps either, which is what made `infer` lose `tc_wf`.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn cache_infer_no_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
+        requires tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+    {
+        proof {
+            crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+        }
+        self.tc_cache.infer_cache_no_check.insert(e, r);
+    }
+
     pub fn cache_infer_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
@@ -3115,7 +3143,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// to decline to. Same abort, same message channel.
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_const(&mut self, c_name: NamePtr<'t>, c_uparams: LevelsPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
-        requires crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match crate::env_model::get_declar_info_ty(self.env, &c_name) {
             Some((d_uparams, d_ty)) => {
