@@ -1137,8 +1137,15 @@ pub fn kernel_fail<T>(msg: &str) -> (result: T)
     panic!("{}", msg)
 }
 
+/// The same claim as `kernel_fail`'s `ensures false`, and checkable the same
+/// way -- by reading the three lines below. Without it this was claim-free:
+/// 21 rejection sites went through a function that told the verifier nothing,
+/// so a guard written to establish a fact established nothing and the fact had
+/// to be assumed somewhere else instead.
 #[verifier::external_body]
-pub fn kernel_check(cond: bool, msg: &str) {
+pub fn kernel_check(cond: bool, msg: &str)
+    ensures cond
+{
     if !cond {
         panic!("{}", msg)
     }

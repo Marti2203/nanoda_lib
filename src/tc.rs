@@ -761,6 +761,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn ensure_pi(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Pi { .. } = self.ctx.read_expr(e) {
             return e
@@ -776,6 +777,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> LevelPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let whnfd = self.infer_then_whnf(e, flag);
         match self.ctx.read_expr(whnfd) {
@@ -788,6 +790,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_eta_struct(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         matches!(self.try_eta_struct_aux(x, y), Some(true)) || matches!(self.try_eta_struct_aux(y, x), Some(true))
     }
@@ -796,6 +799,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_eta_struct_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let (_, name, _, args) = self.ctx.unfold_const_apps(y)?;
         let ConstructorData { inductive_name, num_params, num_fields, .. } = self.env.get_constructor(&name)?;
@@ -804,6 +808,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if self.def_eq(x_type, y_type) {
                 for i in (*num_params as usize)..args.len()
                     invariant tc_wf(*self),
+                    self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 {
                     let proj = self.ctx.mk_proj(*inductive_name, i - *num_params as usize, x);
                     let rhs = args[i];
@@ -827,6 +832,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.ctx.str_lit_to_constructor(x) {
             Some(c) => Some(self.whnf(c)),
@@ -838,6 +844,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let (StringLit { ptr, .. }, App { fun, .. }) = self.ctx.read_expr_pair(x, y) {
             if let Some((name, _levels)) = self.ctx.try_const_info(fun) {
@@ -855,6 +862,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if !self.ctx.export_file.config.string_extension_on() {
             return false
@@ -868,6 +876,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_unit(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let x_ty = self.infer_then_whnf(x, InferOnly);
         let (_, name, _levels, _) = self.ctx.unfold_const_apps(x_ty)?;
@@ -885,6 +894,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn do_nat_bin(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, op: NatBinOp) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         use NatBinOp::*;
         let (x, y) = (self.whnf(x), self.whnf(y));
@@ -914,6 +924,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if !self.ctx.export_file.config.nat_extension_on() {
             return None
@@ -978,6 +989,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn reduce_proj(&mut self, idx: usize, structure: ExprPtr<'t>, cheap: bool) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let mut structure = if cheap { self.whnf_no_unfolding_cheap_proj(structure) } else { self.whnf(structure) };
         if let StringLit { ptr, .. } = self.ctx.read_expr(structure) {
@@ -995,6 +1007,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub(crate) fn infer_then_whnf(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let ty = self.infer(e, flag);
         self.whnf(ty)
@@ -1004,6 +1017,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_proj(&mut self, _ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let structure_ty = self.infer_then_whnf(structure, flag);
         let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
@@ -1060,6 +1074,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Some(cached) = self.tc_cache.infer_cache_check.get(&e).copied() {
             return cached
@@ -1117,12 +1132,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
         let mut ctx = Vec::new();
         fun = self.infer(fun, flag);
         while !args.is_empty()
             invariant tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 ctx@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun)) < 60000,
         {
             match self.ctx.read_expr(fun) {
@@ -1169,18 +1186,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
         while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+                self.ctx.dbj_level_counter == start_pos + locals@.len(),
         {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             if let Check = flag {
                 self.infer_sort_of(binder_type, flag);
             }
 
+            crate::util::kernel_check(self.ctx.dbj_level_counter < u16::MAX,
+                "infer_lambda: too many open de Bruijn levels");
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
             locals.push(local);
             proof {
@@ -1198,6 +1219,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
         while let Some(local) = locals.pop()
             invariant tc_wf(*self),
+                // The pop happens in the condition, so inside the body this
+                // reads `counter == start_pos + locals@.len() + 1` -- which is
+                // what discharges `replace_dbj_level`'s `> 0`.
+                self.ctx.dbj_level_counter == start_pos + locals@.len(),
         {
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
@@ -1215,6 +1240,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let mut universes = Vec::new();
         let mut locals = Vec::new();
@@ -1222,10 +1248,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+                self.ctx.dbj_level_counter == c0 + locals@.len(),
+                universes@.len() == locals@.len(),
         {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             let dom_univ = self.infer_sort_of(binder_type, flag);
             universes.push(dom_univ);
+            crate::util::kernel_check(self.ctx.dbj_level_counter < u16::MAX,
+                "infer_pi: too many open de Bruijn levels");
             locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
             proof {
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)));
@@ -1236,6 +1266,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut infd = self.infer_sort_of(instd, flag);
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant tc_wf(*self),
+                self.ctx.dbj_level_counter == c0 + locals@.len(),
+                universes@.len() == locals@.len(),
         {
             infd = self.ctx.imax(universe, infd);
             self.ctx.replace_dbj_level(local);
@@ -1255,6 +1287,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if flag == Check {
             // The binder type has to be a type
@@ -1271,6 +1304,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
             return e
@@ -1298,18 +1332,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     { self.whnf_no_unfolding_aux(e, true) }
 
     #[verifier::exec_allows_no_decreases_clause]
     pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     { self.whnf_no_unfolding_aux(e, false) }
 
     #[verifier::exec_allows_no_decreases_clause]
     fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Some(cached) = self.tc_cache.whnf_no_unfolding_cache.get(&e).copied() {
             return cached
@@ -1386,6 +1423,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if self.ctx.is_nat_zero(x) && self.ctx.is_nat_zero(y) {
             return Some(true)
@@ -1406,6 +1444,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_binder_multi(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if matches!(self.ctx.read_expr_pair(x, y), (Pi { .. }, Pi { .. }) | (Lambda { .. }, Lambda { .. })) {
             self.def_eq_binder_aux(x, y)
@@ -1419,6 +1458,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let mut locals = Vec::new();
         loop
@@ -1447,6 +1487,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let t1 = self.ctx.inst(t1, locals.as_slice());
             let t2 = self.ctx.inst(t2, locals.as_slice());
             if self.def_eq(t1, t2) {
+                crate::util::kernel_check(self.ctx.dbj_level_counter < u16::MAX,
+                    "def_eq_binder_aux: too many open de Bruijn levels");
                 locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, t1));
                 proof {
                     assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body1)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)));
@@ -1485,6 +1527,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.ctx.read_expr_pair(x, y) {
             (
@@ -1499,6 +1542,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.ctx.read_expr_pair(x, y) {
             (Local { id: x_id, binder_type: tx, .. }, Local { id: y_id, binder_type: ty, .. }) =>
@@ -1511,6 +1555,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let (f1, args1) = self.ctx.unfold_apps(x);
         if args1.is_empty() {
@@ -1536,6 +1581,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < args1.len()
             invariant tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
         {
             if !self.def_eq(args1[i], args2[i]) { args_eq = false; break }
             i += 1;
@@ -1555,6 +1601,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>)
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         crate::util::kernel_check(self.def_eq(u, v), "assert_def_eq: terms are not definitionally equal")
     }
@@ -1569,6 +1616,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let entry_uncert = route_stats::uncert_events();
         if let Some(easy) = self.def_eq_quick_check(x, y) {
@@ -1672,6 +1720,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if !rec.is_k {
             return None
@@ -1697,6 +1746,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn iota_try_eta_struct(&mut self, ind_name: NamePtr<'t>, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if (!self.env.can_be_struct(&ind_name)) || self.is_ctor_app(e).is_some() {
             e
@@ -1727,6 +1777,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let rec @ RecursorData { info, rec_rules, num_params, num_motives, num_minors, .. } =
             self.env.get_recursor(&const_name)?;
@@ -1763,6 +1814,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn reduce_quot(&mut self, c_name: NamePtr<'t>, args: &[ExprPtr<'t>]) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if !matches!(self.env.get_declar(&c_name), Some(Declar::Quot {..})) {
             return None
@@ -1797,6 +1849,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn delta(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let unfolded = self.unfold_def(e).unwrap();
         self.whnf_no_unfolding_cheap_proj(unfolded)
@@ -1806,6 +1859,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if x == y {
             return Some(true)
@@ -1834,6 +1888,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ) -> Option<DeltaResult<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if x_defname != y_defname {
             return None
@@ -1874,6 +1929,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_unfold_proj_app(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Proj { .. } = self.ctx.read_expr(self.ctx.unfold_apps_fun(e)) {
             let eprime = self.whnf_no_unfolding(e);
@@ -1888,6 +1944,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn delta_try_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<DeltaResult<'t>>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Some(short) = self.def_eq_nat(x, y) {
             return Some(DeltaResult::FoundEqResult(short))
@@ -1912,11 +1969,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn args_def_eq_rev(&mut self, l_args: &Vec<ExprPtr<'t>>, r_args: &Vec<ExprPtr<'t>>) -> (result: bool)
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if l_args.len() != r_args.len() { return false }
         let mut i = l_args.len();
         while i > 0
-            invariant i <= l_args.len(), l_args.len() == r_args.len(),
+            invariant tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                i <= l_args.len(), l_args.len() == r_args.len(),
             decreases i
         {
             i -= 1;
@@ -1935,9 +1995,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn lazy_delta_step(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> DeltaResult<'t>
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         loop
             invariant tc_wf(*self),
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
         {
             if let Some(r) = self.delta_try_nat(x, y) {
                 return r
@@ -1982,6 +2044,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn is_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -1994,6 +2057,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn may_be_prop(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -2006,6 +2070,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn is_proof(&mut self, e: ExprPtr<'t>) -> (bool, ExprPtr<'t>)
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let infd = self.infer(e, InferOnly);
         (self.is_prop(infd).0, infd)
@@ -2015,6 +2080,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.is_proof(x) {
             (false, _) => false,
@@ -2029,6 +2095,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_eta_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         self.try_eta_expansion_aux(x, y) || self.try_eta_expansion_aux(y, x)
     }
@@ -2037,6 +2104,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn try_eta_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let Lambda { .. } = self.ctx.read_expr(x) {
             let y_ty = self.infer_then_whnf(y, InferOnly);
@@ -2512,6 +2580,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         proof {
             crate::util_model::sorted_pair_obeys_key_model();
@@ -2630,6 +2699,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
@@ -2649,6 +2719,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
@@ -2672,6 +2743,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
@@ -2701,6 +2773,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let p = crate::util::SortedPair::new(x, y);
         proof {
@@ -2818,6 +2891,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// VERUS-REWRITE(match-as-tail): arm result bound to a local, as in
     /// `level.rs`'s predicates (register entry 10). Arms unchanged.
     fn def_eq_sort(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
+        requires tc_wf(*old(self)),
         ensures result == Some(true) ==> exists |l: LevelPtr<'t>, r: LevelPtr<'t>|
             #![trigger to_model_level(l), to_model_level(r)]
             to_model_expr(x) == ExprSpec::Sort(to_model_level(l))
@@ -2825,6 +2899,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             && forall |rho: vstd::map::Map<nat, nat>|
                 #[trigger] crate::level_model::interp(to_model_level(l), rho)
                     == crate::level_model::interp(to_model_level(r), rho),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.ctx.read_expr_pair(x, y) {
             (Sort { level: l, .. }, Sort { level: r, .. }) => {
@@ -2845,10 +2922,14 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// VERUS-REWRITE(match-as-tail): arm result bound to a local.
     fn def_eq_const(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+        requires tc_wf(*old(self)),
         ensures result ==>
             crate::expr_arena_bridge::is_const_shape(x)
             && crate::expr_arena_bridge::is_const_shape(y)
             && crate::expr_arena_bridge::const_name_of(x) == crate::expr_arena_bridge::const_name_of(y),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         match self.ctx.read_expr_pair(x, y) {
             (Const { name: x_name, levels: x_levels, .. }, Const { name: y_name, levels: y_levels, .. }) => {
@@ -3000,6 +3081,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            tc_wf(*old(self)),
             crate::expr_model::nlbv(to_model_expr(e)) <= 0,
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
         ensures
@@ -3009,7 +3091,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                         to_model_expr(e), to_model_expr(r))
                     && crate::expr_model::nlbv(to_model_expr(r)) <= 0,
                 None => true,
-            }
+            },
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let (fun, args) = self.ctx.unfold_apps(e);
         proof { crate::beta_model::spine_app_nlbv_decompose(to_model_expr(fun),
@@ -3095,7 +3180,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// function, so it is not claimed here. One-directional as everywhere else:
     /// `None` says nothing.
     fn get_applied_def(&mut self, e: ExprPtr<'t>) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
+        requires tc_wf(*old(self)),
         ensures result is Some ==> crate::beta_model::spine_head(to_model_expr(e)) is Const,
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let head = self.ctx.unfold_apps_fun(e);
         let head_el = self.ctx.read_expr(head);
@@ -3158,8 +3247,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// parameters (`all_uparams_defined`, verified in `level.rs`), and the type
     /// returned is the same either way.
     fn infer_sort(&mut self, l: LevelPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
+        requires tc_wf(*old(self)),
         ensures to_model_expr(result)
             == ExprSpec::Sort(LevelSpec::Succ(Box::new(to_model_level(l)))),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         if let (Check, Some(declar_info)) = (flag, self.declar_info) {
             // VERUS-REWRITE(assert-macro): was `assert!(..)`. Same check, same
