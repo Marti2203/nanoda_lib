@@ -808,6 +808,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if self.def_eq(x_type, y_type) {
                 for i in (*num_params as usize)..args.len()
                     invariant tc_wf(*self),
+                        (*self).env == old(self).env,
                     self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 {
                     let proj = self.ctx.mk_proj(*inductive_name, i - *num_params as usize, x);
@@ -937,14 +938,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `args.as_slice()` with `[arg]` and `[arg1, arg2]`. Slice patterns are
         // unsupported outright, so the arity is tested and the elements
         // indexed; same three cases, same order.
+        // VERUS-REWRITE(guarded-arm): the two `Const` arms had guards
+        // (`if args.len() == 1 && ..`, `if args.len() == 2`). A guarded arm
+        // whose body makes `&mut self` calls makes this function's frame
+        // postcondition unprovable -- every assert inside passes, the
+        // postcondition still fails. Collapsed into one arm with the same
+        // conditions tested in the same order by an if/else-if chain.
         let out = match self.ctx.read_expr(f) {
-            Const { name, .. } if args.len() == 1
-                && Some(name) == self.ctx.export_file.name_cache.nat_succ => {
+            Const { name, .. } => {
+                if args.len() == 1
+                    && Some(name) == self.ctx.export_file.name_cache.nat_succ {
                 let arg = args[0];
                 let v_expr = self.whnf(arg);
                 self.ctx.get_bignum_succ_from_expr(v_expr)
-            }
-            Const { name, .. } if args.len() == 2 => {
+                } else if args.len() == 2 {
                 let arg1 = args[0];
                 let arg2 = args[1];
                 let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
@@ -979,6 +986,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     return None
                 };
                 self.do_nat_bin(arg1, arg2, op)
+                } else {
+                    None
+                }
             }
             _ => None,
         };
@@ -1056,6 +1066,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             "infer_proj: the structure's type has fewer arguments than the inductive has parameters");
         for i in 0..(*num_params)
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 (*num_params as usize) <= struct_ty_args.len(),
         {
             ctor_ty = self.whnf(ctor_ty);
@@ -1068,6 +1079,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for i in 0..idx
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
         {
             ctor_ty = self.whnf(ctor_ty);
             match self.ctx.read_expr(ctor_ty) {
@@ -1166,6 +1178,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         fun = self.infer(fun, flag);
         while !args.is_empty()
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 ctx@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun)) < 60000,
         {
@@ -1219,6 +1232,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let start_pos = self.ctx.dbj_level_counter;
         while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
                 self.ctx.dbj_level_counter == start_pos + locals@.len(),
         {
@@ -1246,6 +1260,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
         while let Some(local) = locals.pop()
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 // The pop happens in the condition, so inside the body this
                 // reads `counter == start_pos + locals@.len() + 1` -- which is
                 // what discharges `replace_dbj_level`'s `> 0`.
@@ -1274,6 +1289,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let c0 = self.ctx.dbj_level_counter;
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
                 universes@.len() == locals@.len(),
@@ -1293,6 +1309,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut infd = self.infer_sort_of(instd, flag);
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
                 universes@.len() == locals@.len(),
         {
@@ -1342,6 +1359,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut cursor = e;
         loop
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
         {
             let whnfd = self.whnf_no_unfolding(cursor);
             if let Some(reduce_nat_ok) = self.try_reduce_nat(whnfd) {
@@ -1404,6 +1422,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant tc_wf(*self),
+                        (*self).env == old(self).env,
                         n_args <= args.len(),
                         n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
                     // A bare `loop` carries no exit reason, so without this
@@ -1509,6 +1528,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut locals = Vec::new();
         loop
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) < 60000,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)) < 60000,
             // A bare `loop` carries no exit reason: without these the `break`
@@ -1627,6 +1647,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < args1.len()
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 // checked immediately above; the index walk needs it to reach
                 // `args2[i]` at all.
@@ -1960,20 +1981,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return None
         }
 
+        // VERUS-REWRITE(guarded-arm): both arms below carried guards -- the
+        // inner one made `&mut self` calls from inside the guard itself. A
+        // guarded arm whose body calls `&mut self` makes this function's frame
+        // postcondition unprovable. Same conditions, same order, same
+        // short-circuit; the guard's false case is the arm that followed it.
         match self.ctx.read_expr_pair(x, y) {
-            (App { .. }, App { .. }) if (x_defname == y_defname) => {
+            (App { .. }, App { .. }) => {
+                if x_defname != y_defname {
+                    return None
+                }
                 let (l_fun, l_args) = self.ctx.unfold_apps(x);
                 let (r_fun, r_args) = self.ctx.unfold_apps(y);
                 match self.ctx.read_expr_pair(l_fun, r_fun) {
-                    (Const { levels: l_levels, .. }, Const { levels: r_levels, .. })
+                    (Const { levels: l_levels, .. }, Const { levels: r_levels, .. }) => {
                         if l_args.len() == r_args.len()
                             && !self.failure_cache_contains(x, y)
                             && self.args_def_eq_rev(&l_args, &r_args)
-                            && self.ctx.eq_antisymm_many(l_levels, r_levels) =>
-                        Some(FoundEqResult(true)),
-                    (Const { .. }, Const { .. }) => {
-                        self.failure_cache_insert(x, y);
-                        None
+                            && self.ctx.eq_antisymm_many(l_levels, r_levels) {
+                            Some(FoundEqResult(true))
+                        } else {
+                            self.failure_cache_insert(x, y);
+                            None
+                        }
                     }
             _ => crate::util::kernel_fail("try_eq_const_app: expected a constant head"),
                 }
@@ -2032,6 +2062,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = l_args.len();
         while i > 0
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 i <= l_args.len(), l_args.len() == r_args.len(),
             decreases i
@@ -2056,6 +2087,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         loop
             invariant tc_wf(*self),
+                (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
         {
             if let Some(r) = self.delta_try_nat(x, y) {
@@ -2076,14 +2108,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     } else {
                         y = self.delta(y);
                     },
-                (Some((_, l_hint)), Some((_, r_hint))) if l_hint.is_lt(&r_hint) => {
-                    y = self.delta(y);
-                }
-                (Some((_, l_hint)), Some((_, r_hint))) if r_hint.is_lt(&l_hint) => {
-                    x = self.delta(x);
-                }
+                // VERUS-REWRITE(guarded-arm): the two `is_lt` guards became the
+                // head of this arm's if/else chain. Same three cases in the
+                // same order -- the third arm was already the guards' false
+                // case.
                 (Some((x_name, l_hint)), Some((y_name, r_hint))) => {
-                    if let Some(r) = self.try_eq_const_app(x, x_name, l_hint, y, y_name, r_hint) {
+                    if l_hint.is_lt(&r_hint) {
+                        y = self.delta(y);
+                    } else if r_hint.is_lt(&l_hint) {
+                        x = self.delta(x);
+                    } else if let Some(r) =
+                        self.try_eq_const_app(x, x_name, l_hint, y, y_name, r_hint) {
                         return r
                     } else {
                         x = self.delta(x);
