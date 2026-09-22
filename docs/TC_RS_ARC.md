@@ -830,7 +830,7 @@ multi-line. Five older verified functions had their own contracts and no
 `tc_wf` clause at all. Every one of these was found by re-deriving the list
 mechanically instead of trusting the previous list.
 
-### The open piece: `dsubst_cache_sound` belongs in `tc_wf`, and cannot go there yet
+### `dsubst_cache_sound` in `tc_wf` — done, and what it cost (superseded below)
 
 It is a cache-soundness invariant exactly like the four `tc_wf` already
 carries, and `infer_const` plus both `subst_*_levels` take it as a
@@ -849,3 +849,31 @@ before it is done, not after.
 That is the next self-contained piece. It is worth doing: it is what unblocks
 `infer_const`, both `subst_*_levels` call sites, and it removes a precondition
 from most of the cycle rather than adding one.
+
+
+**Resolved.** The sweep costs nothing once done properly: 34 frame clauses
+across level.rs and expr.rs, every one of which *proves*. None is a new claim,
+and the eight sitting on `assume_specification`s strengthen an existing claim
+rather than adding a site, so the trust surface is unchanged at 92/48. Four of
+the 34 also needed the frame restated as a loop invariant, which is the counter
+frame's lesson again: a loop havocs `self`.
+
+The estimate above was wrong in the direction that matters -- it priced the
+sweep as expensive and it was free. What made it look expensive was measuring
+the helper list with a regex that missed `assume_specification` contracts, so
+the classification "20 helpers, some of them new claims" was built on a bad
+list. The corrected list has no new claims in it at all.
+
+**What it exposed, which is the part worth keeping.** With the invariant in
+`tc_wf`, `pair_certified` stopped verifying: it runs the five verified shadow
+routes, and not one of them says what it leaves in the level-substitution
+cache. The shadow shares its `TcCtx` with the verdict path, so an entry those
+routes leave behind is an entry the kernel may later trust -- the same class of
+issue as the binder leak the counter frame found.
+
+Framing the five made things worse (26 -> 31 errors): the shadow closure is
+deep, and it is scaffolding due for retirement anyway. So `pair_certified`
+drops the cache on exit instead, which re-establishes the invariant vacuously
+the way `subst_expr_levels` already clears its scratch cache to establish its
+own. That is the conservative reading of the routes' silence rather than a way
+around it, and it costs a cold cache only under `NANODA_SHADOW=1`.
