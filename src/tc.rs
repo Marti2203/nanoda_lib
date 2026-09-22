@@ -1048,8 +1048,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
             };
         let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
+        // VERUS-REWRITE(unchecked-index): `struct_ty_args[i]` below walks to
+        // `num_params`, which nothing relates to the number of arguments the
+        // structure's type was actually applied to. The original panics on the
+        // index; this panics on the guard, with a message.
+        crate::util::kernel_check((*num_params as usize) <= struct_ty_args.len(),
+            "infer_proj: the structure's type has fewer arguments than the inductive has parameters");
         for i in 0..(*num_params)
             invariant tc_wf(*self),
+                (*num_params as usize) <= struct_ty_args.len(),
         {
             ctor_ty = self.whnf(ctor_ty);
             match self.ctx.read_expr(ctor_ty) {
@@ -1382,7 +1389,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     (false, self.ctx.foldl_apps(e_fun, args.into_iter()))
                 },
             Sort { level, .. } => {
-                debug_assert!(args.is_empty());
+                // VERUS-REWRITE(debug-assert): was `debug_assert!`, which is a
+                // no-op in release. Not provable -- `Sort u` applied to
+                // arguments is a malformed but representable term -- and the
+                // release path below DROPS those arguments, returning
+                // `Sort u` for `(Sort u) x y`. The assertion is the author's,
+                // and this makes release enforce it rather than proceed.
+                crate::util::kernel_check(args.is_empty(),
+                    "whnf_no_unfolding_aux: a sort applied to arguments");
                 let level = self.ctx.simplify(level);
                 (false, self.ctx.mk_sort(level))
             }
@@ -1427,7 +1441,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 },
             Var { .. } => crate::util::kernel_fail("Loose bvars are not allowed"),
             Pi { .. } => {
-                debug_assert!(args.is_empty());
+                // VERUS-REWRITE(debug-assert): as for the `Sort` arm above.
+                crate::util::kernel_check(args.is_empty(),
+                    "whnf_no_unfolding_aux: a pi applied to arguments");
                 (false, e_fun)
             }
             App { .. } => crate::util::kernel_fail("whnf_no_unfolding_aux: unreduced application"),
@@ -1602,6 +1618,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         while i < args1.len()
             invariant tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                // checked immediately above; the index walk needs it to reach
+                // `args2[i]` at all.
+                args1.len() == args2.len(),
         {
             if !self.def_eq(args1[i], args2[i]) { args_eq = false; break }
             i += 1;
