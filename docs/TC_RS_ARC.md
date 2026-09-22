@@ -791,3 +791,61 @@ attempt starts from it:
 step, 46 functions, frames *and* the three core contracts of §13 lifted from
 the proven mirrors, on prerequisites and a cache layer that are all in place.
 
+
+## 19. What the cycle actually cost, measured rather than estimated
+
+The cycle went from 74 failures to 26 in one pass, and almost none of it was
+the "three core contracts" §18 priced. What it was instead:
+
+**A ceiling threaded as a precondition is a ceiling in the wrong place.** The
+`depth(e) <= 60000` that `inst`/`abstr` need was on six cycle functions and
+generating 30 of the 49 failing preconditions. It can never close there --
+`whnf` and `inst` *build* terms, so no bound on their inputs bounds their
+output. It is a fact about the arena, it reads like the `dbj_idx < u16::MAX`
+clause already sitting in `node_cache_ok`, and stated once as
+`axiom_arena_depth_bounded` it took all 30 with it. That is the fifth time the
+answer has been "find the one fact about DATA that N functions each need, and
+state it at the boundary instead of N times".
+
+**But not every ceiling wants an axiom.** The `substs@.len() < 60000` that
+surfaced next looks identical and is not: those `Vec`s accumulate one entry per
+binder peeled off the term, so `locals@.len() + depth(e) < 60000` is an honest
+loop invariant, paid for by `depth(Bind(t,b)) = 1 + max(..)`. It closed all 11.
+The two cases are told apart by asking whether the quantity is bounded by
+something the code already tracks. Four separate loops wanted this pairing, and
+`n_args` wanted it a fifth time.
+
+**The counter frame was the load-bearing one.** `final(self).ctx
+.dbj_level_counter == old(self).ctx.dbj_level_counter` on all 52 `&mut self`
+functions. It is not a new fact -- `infer_pi` already ends with a runtime
+`kernel_check` asserting exactly it -- and adding 52 obligations *lowered* the
+error count, which is how you can tell a frame was load-bearing rather than
+decorative.
+
+**Three ways functions got silently skipped**, all the same shape: a sweep that
+matches the common form and passes over the rest. Four functions had no frame
+at all because the catalogue looked for `&mut self` on the signature line and
+theirs were multi-line. Five more were missed because their `ensures` was
+multi-line. Five older verified functions had their own contracts and no
+`tc_wf` clause at all. Every one of these was found by re-deriving the list
+mechanically instead of trusting the previous list.
+
+### The open piece: `dsubst_cache_sound` belongs in `tc_wf`, and cannot go there yet
+
+It is a cache-soundness invariant exactly like the four `tc_wf` already
+carries, and `infer_const` plus both `subst_*_levels` take it as a
+precondition -- so without it in `tc_wf`, it has to ride in the signature of
+every cycle function that can reach a constant, which is most of them.
+
+Putting it in `tc_wf` was tried and backed out: 63 verified / 26 errors became
+54 / 35. The reason is not that the invariant is wrong, it is that roughly
+twenty `TcCtx` helpers -- `str_lit_to_constructor`, `foldl_apps`, `simplify`,
+`mk_nat_lit_quick` and the rest -- have an `ensures` but no frame saying they
+leave `expr_cache.dsubst_cache` alone, so `tc_wf` dies at each of them. For the
+verified ones that frame is provable; for the `assume_specification` ones it is
+a new claim, so the sweep has a trust-surface price and should be counted
+before it is done, not after.
+
+That is the next self-contained piece. It is worth doing: it is what unblocks
+`infer_const`, both `subst_*_levels` call sites, and it removes a precondition
+from most of the cycle rather than adding one.
