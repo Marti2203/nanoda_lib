@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **30 rewrites across 26 functions.**
+Current: **29 rewrites across 25 functions.**
 
 ---
 
@@ -68,29 +68,24 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate`, `nth`, `position` — 3 rewrites
+### `Iterator::enumerate` and `position` — 2 rewrites
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
-| `inst_aux` (`Var` arm) | `src/expr.rs` | `nth` |
 | `abstr_aux` (`Local` arm) | `src/expr.rs` | `position` + `Option::map` |
 
-Checked directly against the fork: `Iterator::nth`, `Iterator::position` and
-`Iterator::enumerate` have no specification at all — `Enumerate` is not even a
-registered type. Supplying one reverts the rewrite.
+All three of `nth`, `position` and `enumerate` have now been **specified on the
+fork** (`d5d5e80fa`) — they genuinely had none, checked directly rather than
+taken from the comments.
 
-`Vec::into_iter` **was** on this list and is not any more: it is specified now,
-and `unfold_def` is back to the kernel's
-`self.ctx.foldl_apps(def_val, args.into_iter())`. The only proof it needs is
-one line bridging the iterator to the vector's view, captured as a ghost before
-the move:
+`inst_aux` is already reverted on the strength of it: the `Var` arm is back to
+the kernel's
+`substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`.
 
-```ignore
-let ghost argv = args@;
-let it = args.into_iter();
-proof { assert(IteratorSpec::remaining(&it) =~= argv); }
-```
+The other two need their consumers revisited before they revert — `mk_majors`
+also has an unguarded index to keep, and `abstr_aux` needs `Option::map` with a
+closure as well as `position`.
 
 ### An unspecified `alloc` variant — 1 rewrite
 

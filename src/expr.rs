@@ -1581,9 +1581,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `n_loose_bvars() == 0`", and past the short-circuit `nlbv > offset >= 0`,
     /// so a zero-`nlbv` shape is a contradiction.
     ///
-    /// VERUS-REWRITE(iterator-nth): the `Var` arm's original body is
-    /// `substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`.
-    /// Verus has no spec for `nth`. See `docs/VERUS_REWRITES.md`.
     #[verifier::exec_allows_no_decreases_clause]
     fn inst_aux(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>], offset: u16) -> (result: ExprPtr<'t>)
         requires
@@ -1630,7 +1627,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == dbj_idx as nat + 1);
                     }
                     let k = (dbj_idx - offset) as usize;
-                    let res = if k < substs.len() { substs[substs.len() - 1 - k] } else { e };
+                    let ghost sv = substs@;
+                    let mut it = substs.iter().rev();
+                    let ghost it0 = it;
+                    proof { broadcast use vstd::std_specs::iter::group_iter_axioms; }
+                    let res = it.nth(k).copied().unwrap_or(e);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
                             == crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(e), sm, offset as nat));
