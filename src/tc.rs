@@ -2512,15 +2512,21 @@ pub assume_specification [route_stats::bump_legacy_false] ();
 // need to be callable, not to promise anything. Each gets a real contract when
 // the function that consumes it does.
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::nat_lit_to_constructor] (ctx: &mut TcCtx<'t, 'p>, n: crate::util::BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_major_induct] (ctx: &TcCtx<'t, 'p>, rec: &crate::env::RecursorData<'t>) -> (result: Option<NamePtr<'t>>) where 'p: 't;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_bignum_succ_from_expr] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::get_bignum_from_expr] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<num_bigint::BigUint>) where 'p: 't
-    ensures final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'a> [crate::env::RecursorData::<'a>::major_idx] (rd: &crate::env::RecursorData<'a>) -> (result: usize);
 
@@ -2605,6 +2611,12 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     // reaches a verified route.
     &&& tc.shadow_memo.wf()
     &&& tc.shadow_memo.spec_env() == *tc.env
+    // The level-substitution cache's soundness. Same kind of fact as the four
+    // above -- a cache whose entries carry a claim -- and it belongs here for
+    // the same reason: `infer_const` and both `subst_*_levels` take it as a
+    // precondition, so without it here every cycle function that can reach a
+    // constant has to carry it in its own signature.
+    &&& crate::expr_arena_bridge::dsubst_cache_sound(*tc.ctx)
 }
 
 /// The four claim-carrying caches' WRITE side, verified.
@@ -2656,6 +2668,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// `wf()` and `spec_env()` directly.
     pub fn new(dag: &'x mut TcCtx<'t, 'p>, env: &'x Env<'x, 't>, declar_info: Option<DeclarInfo<'t>>) -> (result: Self)
         requires old(dag).dbj_level_counter == 0,
+            // Vacuous for a freshly built `TcCtx` -- the cache is empty -- but
+            // it has to be said, because `tc_wf` now carries it.
+            crate::expr_arena_bridge::dsubst_cache_sound(*old(dag)),
         ensures tc_wf(result), result.env == env,
     {
         crate::util::kernel_check(dag.dbj_level_counter == 0,
@@ -2682,15 +2697,33 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
-        if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { return 1; }
-        if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 2; }
-        if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { return 3; }
-        if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { return 4; }
-        if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
-            route_stats::bump_proof_irrel();
-            return 5;
+        // Same five routes in the same order, short-circuiting the same way;
+        // the early returns become a `which` so that every exit passes through
+        // the cache drop below.
+        let which =
+            if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) { 1 }
+            else if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { 2 }
+            else if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) { 3 }
+            else if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) { 4 }
+            else if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
+                route_stats::bump_proof_irrel();
+                5
+            } else { 0 };
+
+        // The shadow shares its `TcCtx` with the verdict path, and these five
+        // routes do not say what they leave in the level-substitution cache.
+        // Dropping it is the conservative reading of that silence, not a
+        // workaround for it: an entry this function cannot vouch for is an
+        // entry the kernel must not later trust. It also re-establishes
+        // `dsubst_cache_sound` vacuously, the same way `subst_expr_levels`
+        // clears its scratch cache to establish its own invariant.
+        //
+        // The cost is a cold cache, and only under `NANODA_SHADOW=1`.
+        self.ctx.expr_cache.dsubst_cache.clear();
+        proof {
+            assert(self.ctx.expr_cache.dsubst_cache@ =~= vstd::map::Map::empty());
         }
-        0
+        which
     }
 
     fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool)

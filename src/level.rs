@@ -135,6 +135,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             forall |j: int| 0 <= j < to_model_of_levels(ks).len()
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             // it ends with `simplify`, so the result is in simplified form --
             // which is what `leq_core` requires of both its arguments
@@ -194,6 +195,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn leq(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             // TWO trigger groups, for the same reason the retired axiom had
             // them: `is_zero` holds its level on the left, `is_nonzero` on the
@@ -242,6 +244,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             diff as int + crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int <= 1_000_000_000,
             diff as int - crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int >= -1_000_000_000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>|
                 #[trigger] interp(to_model(lhs), rho) as int
@@ -382,6 +385,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             diff as int + crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int <= 1_000_000_000,
             diff as int - crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int >= -1_000_000_000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>|
                 #[trigger] interp(to_model(l_in), rho) as int
@@ -591,6 +595,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 #[verifier::exec_allows_no_decreases_clause]
     pub fn is_zero(&mut self, level: LevelPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) == 0,
     {
@@ -603,6 +608,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 #[verifier::exec_allows_no_decreases_clause]
     fn is_one(&mut self, l: LevelPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == 1,
     {
@@ -625,6 +631,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 #[verifier::exec_allows_no_decreases_clause]
     pub fn is_nonzero(&mut self, level: LevelPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) >= 1,
     {
@@ -646,6 +653,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 #[verifier::exec_allows_no_decreases_clause]
     pub fn eq_antisymm(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> forall |rho: Map<nat, nat>|
                 #[trigger] interp(to_model(l), rho) == interp(to_model(r), rho),
@@ -665,6 +673,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn eq_antisymm_many(&mut self, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>) -> (result: bool)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len()
                 && forall |i: int| #![trigger to_model_of_levels(xs)[i]]
@@ -682,6 +691,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut out = true;
         while i < n
             invariant
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 n == xs_v@.len(),
                 xs_v@.len() == ys_v@.len(),
@@ -918,7 +928,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// unchanged; only the contract is new.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
-        ensures final(self).dbj_level_counter == old(self).dbj_level_counter,
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
             forall |rho: Map<nat, nat>| #[trigger] interp(to_model(result), rho)
             == max_nat(interp(to_model(l), rho), interp(to_model(r), rho)),
             // preserves the simplified form: every arm returns an input, a
@@ -998,6 +1010,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             // The DENOTATION is preserved. This could not be stated while
             // `is_zero`/`is_one` were contract-free: the `IMax` arm's shortcut
@@ -1156,6 +1169,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             forall |j: int| 0 <= j < to_model_of_levels(ks).len()
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             to_model_of_levels(result) =~= subst_levels_spec(
                 to_model_of_levels(uparams),
                 level_names(to_model_of_levels(ks)),
@@ -1212,6 +1226,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             forall |j: int| 0 <= j < to_model_of_levels(ks).len()
                 ==> #[trigger] to_model_of_levels(ks)[j] is Param,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             to_model(result) == subst_level_spec(
                 to_model(level),
                 level_names(to_model_of_levels(ks)),

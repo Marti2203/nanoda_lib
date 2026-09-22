@@ -670,6 +670,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// going `alloc_bignum` and `mk_nat_lit`
     pub fn mk_nat_lit_quick(&mut self, n: BigUint) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
                     && crate::expr_arena_bridge::nat_lit_value(e) == crate::nat_lit_model::to_nat(n),

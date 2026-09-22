@@ -1023,7 +1023,9 @@ pub uninterp spec fn bool_true_id() -> u64;
 pub uninterp spec fn bool_false_id() -> u64;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::bool_to_expr] (ctx: &mut TcCtx<'t, 'p>, b: bool) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        match result {
         Some(e) => is_const_shape(e) && const_id(e) == if b { bool_true_id() } else { bool_false_id() },
         None => true,
     },
@@ -1416,11 +1418,15 @@ pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
 }
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::is_nat_zero] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: bool) where 'p: 't
-    ensures result == nat_repr_is_zero(e),
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        result == nat_repr_is_zero(e),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter;
 
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::pred_of_nat_succ] (ctx: &mut TcCtx<'t, 'p>, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        match result {
         Some(r) => nat_repr_pred(e, r),
         None => true,
     },
@@ -1624,7 +1630,9 @@ pub uninterp spec fn string_len<'a>(s: StringPtr<'a>) -> nat;
 /// hold unconditionally (bound `0` suffices for `max_var_below`,
 /// weakened to whatever the caller needs via `max_var_below_mono`).
 pub assume_specification<'t, 'p> [TcCtx::<'t, 'p>::str_lit_to_constructor] (ctx: &mut TcCtx<'t, 'p>, s: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures match result {
+    ensures
+        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
+        match result {
         Some(r) => {
             &&& nlbv(to_model(r)) <= 0
             &&& max_var_below(to_model(r), 0)

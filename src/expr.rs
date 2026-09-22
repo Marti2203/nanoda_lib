@@ -105,6 +105,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// name-cache invariant.
     pub(crate) fn c_bool_false(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_false_id(),
@@ -122,6 +123,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_bool_true(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::bool_true_id(),
@@ -139,6 +141,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_nat_zero(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_zero_id()
@@ -157,6 +160,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_nat_succ(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_succ_id()
@@ -175,6 +179,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn nat_type(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::nat_type_id(),
@@ -192,6 +197,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn string_type(&mut self) -> (result: Option<ExprPtr<'t>>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == crate::expr_arena_bridge::string_type_id(),
@@ -695,6 +701,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             outgoing@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
             ingoing@.len() < 60000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
                 crate::expr_model::abstr_full(
                     crate::expr_arena_bridge::to_model(e),
@@ -719,6 +726,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// functions rather than assumed outright.
     pub(crate) fn prop(&mut self) -> (result: ExprPtr<'t>)
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result)
             == crate::expr_model::ExprSpec::Sort(crate::level_model::LevelSpec::Zero),
@@ -991,6 +999,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
             Box::new(crate::quot_model::local_type(binder)),
@@ -1029,6 +1038,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
             1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
             Box::new(crate::quot_model::local_type(binder)),
@@ -1076,6 +1086,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                       matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
             binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
            
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
@@ -1085,6 +1096,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut n = binders.len();
         while n > 0
             invariant
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
                 (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
@@ -1128,6 +1140,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                       matches!(m, crate::expr_model::ExprSpec::Free(_)) }),
             binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
            
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
@@ -1137,6 +1150,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut n = binders.len();
         while n > 0
             invariant
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 n <= binders@.len(),
                 (forall |i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
@@ -2033,6 +2047,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires args.obeys_prophetic_iter_laws(),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             crate::expr_arena_bridge::to_model(result)
             == crate::beta_model::spine_app(
                 crate::expr_arena_bridge::to_model(fun0),
@@ -2041,6 +2056,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut fun = fun0;
         for arg in it: args
             invariant
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 // The for-loop desugaring havocs the ghost wrapper, so the
                 // link back to the ORIGINAL iterator has to be carried
