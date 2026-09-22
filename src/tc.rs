@@ -887,6 +887,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let x_ty = self.infer_then_whnf(x, InferOnly);
         let (_, name, _levels, _) = self.ctx.unfold_const_apps(x_ty)?;
         let InductiveData { all_ctor_names, .. } = self.env.get_structure(&name, false)?;
+        // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded. An
+        // inductive with no constructors (`False`, `Empty`) would panic. This
+        // function already declines all the way down, so it declines here too.
+        if all_ctor_names.len() == 0 {
+            return None
+        }
         let ctor_name = &all_ctor_names[0];
         let ctor = self.env.get_constructor(ctor_name)?;
         if ctor.num_fields != 0 {
@@ -1064,6 +1070,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => crate::util::kernel_fail("infer_proj: the structure's type is not a structure"),
             };
 
+        // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded, as
+        // in `def_eq_unit`. `infer_proj` returns an `ExprPtr` and has nothing
+        // to decline to, so the empty case takes the same rejection the lookup
+        // failure below already takes.
+        crate::util::kernel_check(all_ctor_names.len() > 0,
+            "infer_proj: the structure has no constructor");
         let ConstructorData { info: ctor_info, .. } =
             match self.env.get_constructor(&all_ctor_names[0]) {
                 Some(d) => d,
@@ -1922,7 +1934,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let r = self.ctx.foldl_apps(r, args.iter().copied()
             .take((*num_params as usize) + (*num_motives as usize) + (*num_minors as usize)));
         let r = self.ctx.foldl_apps(r, major_ctor_args_wo_params.into_iter());
-        Some(self.ctx.foldl_apps(r, args.iter().skip(rec.major_idx() + 1).copied()))
+        // VERUS-REWRITE(unchecked-add): `major_idx() + 1` is an unbounded
+        // `usize` sum. `skip` past the end yields nothing, which is what a
+        // saturating add gives at the boundary too -- so this only removes the
+        // wrap, it does not change any reachable result.
+        Some(self.ctx.foldl_apps(r, args.iter().skip(rec.major_idx().saturating_add(1)).copied()))
     }
 
     #[verifier::exec_allows_no_decreases_clause]
