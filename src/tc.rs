@@ -3641,7 +3641,14 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn expand_eta_struct_aux(&mut self, e_type: ExprPtr<'t>, e: ExprPtr<'t>) -> (result: Option<
         ExprPtr<'t>,
-    >) {
+    >)
+        requires
+            tc_wf(*old(self)),
+        ensures
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+    {
         // `c_name = Point`
         let (_f, c_name, c_levels, args) = self.ctx.unfold_const_apps(e_type)?;
         // `Point` declaration
@@ -3672,6 +3679,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         for i in 0..np
             invariant
                 np <= args.len(),
+                tc_wf(*self),
+                (*self).env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
         {
             out = self.ctx.mk_app(out, args[i]);
         }
@@ -3679,7 +3689,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `Proj {idx := 0, struct := e}`
         // `Point.mk A B (Point.0 e) (Point.1 e)`
         let nf = (*num_fields) as usize;
-        for j in 0..nf {
+        for j in 0..nf
+            invariant
+                tc_wf(*self),
+                (*self).env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+        {
             let proj = self.ctx.mk_proj(c_name, j, e);
             out = self.ctx.mk_app(out, proj);
         }
