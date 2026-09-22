@@ -63,32 +63,10 @@ use crate::quot_model::local_type;
 
 
 
-/// `Local`'s `binder_name`/`binder_style`/`binder_type` fields, needed only
-/// to re-supply `mk_pi`'s exec-level parameter list when popping a
-/// telescoped binder back off (`infer_lambda`/`infer_pi`'s own reverse
-/// loop, `tc.rs:639-648`, re-reads exactly these three fields off the
-/// popped `local`). Unlike `expr_as_local`, the model never needs to
-/// reason about `binder_name`/`binder_style` (`ExprSpec::Bind` elides
-/// them entirely), so this carries only the one fact downstream proofs
-/// actually use -- the same `local_binder_type_of` link `expr_as_local`
-/// already states.
-#[allow(dead_code)]
-pub(crate) fn expr_as_local_named<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<(NamePtr<'t>, BinderStyle, ExprPtr<'t>)> {
-    match e { Expr::Local { binder_name, binder_style, binder_type, .. } => Some((*binder_name, *binder_style, *binder_type)), _ => None }
-}
 
 
 
 
-/// `StringLit`'s `ptr: StringPtr` payload -- needed only by `try_string_
-/// lit_expansion_aux` (`tc.rs:335-346`), which reads `StringLit { ptr,
-/// .. }` off the arena directly to feed `str_lit_to_constructor`.
-/// `expr_as_string_lit` above stays payload-free (nothing else in this
-/// arc needs the string's identity, only its shape).
-#[allow(dead_code)]
-pub(crate) fn expr_as_string_lit_ptr<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> Option<StringPtr<'t>> {
-    match e { Expr::StringLit { ptr, .. } => Some(*ptr), _ => None }
-}
 
 
 
@@ -101,45 +79,10 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, p: crate::util:
     ctx.read_bignum(p).cloned()
 }
 
-/// `TcCtx`'s `eager_mode` field, read directly -- `TcCtx` is registered as
-/// `external_body` (`level_arena_bridge.rs`'s `ExTcCtx`), so a plain
-/// wrapper is needed the same way `read_bignum_value` wraps `read_bignum`.
-/// Needed by `def_eq`'s `c_bool_true` short-circuit (`tc.rs:965`), the one
-/// real control-flow branch this whole arc's `def_eq` bridging touches
-/// that reads real `TcCtx` STATE (not just calls a method on it).
-#[allow(dead_code)]
-pub(crate) fn get_eager_mode<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
-    ctx.eager_mode
-}
 
 
-/// `export_file.name_cache.string_of_list`, read directly -- same
-/// "plain field-read wrapper, `TcCtx` is `external_body`" convention as
-/// `get_eager_mode`/`get_dbj_level_counter` above.
-#[allow(dead_code)]
-pub(crate) fn get_string_of_list_name<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> Option<NamePtr<'t>> {
-    ctx.export_file.name_cache.string_of_list
-}
 
-/// `export_file.config.string_extension`, read directly -- same
-/// convention as `get_string_of_list_name` above.
-#[allow(dead_code)]
-pub(crate) fn get_string_extension_flag<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> bool {
-    ctx.export_file.config.string_extension
-}
 
-/// The real character count behind `string_len`'s uninterpreted spec
-/// value -- needed because `string_len` itself, having NO body, can
-/// never be called from exec code (not even to check a ceiling at
-/// runtime, unlike an `open spec fn`). This gives callers a REAL,
-/// checkable `usize` tied to `string_len(s)` by the assume_specification
-/// below, the same "read the real value, bridge it to the spec
-/// quantity" pattern `read_bignum_value`/`nat_lit_value` already use for
-/// `NatLit`'s payload.
-#[allow(dead_code)]
-pub(crate) fn read_string_len<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, s: StringPtr<'t>) -> usize {
-    ctx.read_string(s).chars().count()
-}
 
 /// `expr.rs::TcCtx::abstr_levels`, wrapped with an EXPLICIT `locals_hint`
 /// slice purely for the assume_specification below to reference -- the

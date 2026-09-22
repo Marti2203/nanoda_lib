@@ -61,13 +61,6 @@ pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
     env.get_constructor(n).map(|cd| cd.num_params)
 }
 
-/// `try_eta_struct_aux`'s (`tc.rs:312-329`) other two `ConstructorData`
-/// field reads, sibling to `get_constructor_num_params`/`get_constructor_
-/// num_fields` (same struct, different fields).
-#[allow(dead_code)]
-pub(crate) fn get_constructor_inductive_name<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<NamePtr<'a>> {
-    env.get_constructor(n).map(|cd| cd.inductive_name)
-}
 
 /// `Env::get_recursor` returns `Option<&RecursorData>`; this wrapper
 /// extracts exactly the fields `reduce_rec` (`tc.rs:1070-1102`) actually
@@ -134,75 +127,11 @@ pub(crate) fn get_structure_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a
     env.get_structure(n, rec_ok).map(|i| i.all_ctor_names[0])
 }
 
-/// `mk_nullary_ctor`'s (`tc.rs:1006-1013`) own lookup: `Env::get_inductive`
-/// (unlike `get_structure`, no single-constructor/no-indices/non-
-/// recursive gate) followed by `all_ctor_names[0]`. Real callers only
-/// ever reach this via `to_ctor_when_k`, itself gated on the recursor's
-/// own `is_k` flag -- which real Lean only ever sets for an inductive
-/// with EXACTLY one constructor, so the real `[0]` index never panics in
-/// practice -- but that gating isn't tracked here (same "plain per-call
-/// fact, no keyed map, no cross-call semantic content" convention as
-/// `get_structure_first_ctor` itself): the model doesn't need `is_k`'s
-/// real meaning, just an honest `None` whenever `all_ctor_names` happens
-/// to be empty, mirrored via a `.get(0)` rather than the real code's raw
-/// index.
-#[allow(dead_code)]
-pub(crate) fn get_inductive_first_ctor<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<NamePtr<'a>> {
-    env.get_inductive(n).and_then(|i| i.all_ctor_names.get(0).copied())
-}
 
-/// `is_recursive`'s (`inductive.rs:8-32`) own lookup: unlike `get_inductive_
-/// first_ctor` above (just the first element), this needs BOTH full name
-/// lists (`all_ind_names`, to check self-reference against; `all_ctor_names`,
-/// to iterate over) -- still "extract only what's needed", just two whole
-/// `Vec`s instead of one scalar/first-element, same shape `ctor_app_params_
-/// ok`/`find_const`'s own bridges already take real `&[[NamePtr]]` slices.
-#[allow(dead_code)]
-pub(crate) fn get_inductive_all_names<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
-    env.get_inductive(n).map(|i| (i.all_ind_names.to_vec(), i.all_ctor_names.to_vec()))
-}
 
-/// `is_nested_ind_app`'s (`inductive.rs:528-559`) own lookup: `Env::get_
-/// inductive` followed by just `num_params` -- the ONE scalar field it
-/// reads off the returned `InductiveData` before deciding whether `e` is
-/// an application of a real environment inductive at all, same "extract
-/// only what's needed" shape as `get_inductive_first_ctor` above.
-#[allow(dead_code)]
-pub(crate) fn get_inductive_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
-    env.get_inductive(n).map(|i| i.num_params)
-}
 
-/// `assert_nonnested_tys_def_eq`'s (`inductive.rs:1271-1284`) own lookup:
-/// unlike `get_inductive_all_names` (searches BOTH old+temp via `Env::get_
-/// inductive`), this needs the OLD and NEW (temp-extension) `InductiveData`
-/// SEPARATELY, and the full field set `InductiveData::aux_data_ck`
-/// (`env.rs:88-100`) compares (`name`/`num_params`/`num_indices`/
-/// `is_nested`/both name lists) plus `info.ty` (for the `def_eq` call
-/// afterward) -- `ensures true`, same "plain per-call fact, no keyed map"
-/// convention as `get_recursor_data`, since nothing downstream relates two
-/// separate calls to a shared ground truth.
-/// `mk_unique_name`'s (`inductive.rs:588-597`) own membership check --
-/// only the `is_some`, none of `Declar`'s fields.
-#[allow(dead_code)]
-pub(crate) fn old_declar_is_some<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> bool {
-    env.get_old_declar(n).is_some()
-}
 
-#[allow(dead_code)]
-pub(crate) fn get_old_declar_inductive_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
-    match env.get_old_declar(n) {
-        Some(Declar::Inductive(i)) => Some((i.info.name, i.info.ty, i.num_params, i.num_indices, i.is_nested, i.all_ind_names.to_vec(), i.all_ctor_names.to_vec())),
-        _ => None,
-    }
-}
 
-#[allow(dead_code)]
-pub(crate) fn get_temp_declar_inductive_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ExprPtr<'a>, u16, u16, bool, Vec<NamePtr<'a>>, Vec<NamePtr<'a>>)> {
-    match env.get_temp_declar(n) {
-        Some(Declar::Inductive(i)) => Some((i.info.name, i.info.ty, i.num_params, i.num_indices, i.is_nested, i.all_ind_names.to_vec(), i.all_ctor_names.to_vec())),
-        _ => None,
-    }
-}
 
 /// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
 /// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to

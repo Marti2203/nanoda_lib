@@ -41,7 +41,7 @@ use crate::expr_arena_bridge::{to_model, is_const_shape_model, is_const_shape, c
 use crate::beta_model::spine_app;
 use crate::expr_arena_bridge::{expr_as_app, expr_as_pi, expr_as_lambda, expr_as_let, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::env::{Env, RecRule, Declar};
-use crate::env_model::{get_inductive_all_names, get_inductive_num_params, get_declar_info_ty, get_old_declar_inductive_fields, get_temp_declar_inductive_fields, old_declar_is_some, get_constructor_inductive_name};
+use crate::env_model::{get_declar_info_ty};
 #[cfg(verus_only)]
 #[cfg(verus_only)]
 use crate::env_model::env_global_cap;
@@ -76,7 +76,6 @@ use crate::level_arena_bridge::to_model_of_levels;
 use crate::level_arena_bridge::read_levels_vec;
 #[cfg(verus_only)]
 use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound};
-use crate::name_arena_bridge::{alloc_string_rec};
 use crate::name::Name;
 use crate::env::{DeclarInfo, RecursorData};
 use crate::expr_arena_bridge::{verified_subst_expr_levels};
@@ -91,37 +90,6 @@ use crate::expr_model::subst_expr_levels_rel;
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 
-/// `Declar`'s recursor-branch constructor, flattened to avoid needing
-/// `DeclarInfo`/`RecursorData` registered with Verus at all -- ONLY
-/// `Declar` itself (the RETURN type) needs `external_body` registration
-/// (`ExDeclar` below); this plain function builds the nested `RecursorData`/
-/// `DeclarInfo`/`Arc::from` structure entirely in real Rust, invisible to
-/// Verus, exactly like `mk_rec_rule`'s own "flatten instead of registering
-/// every nested struct" choice for the (smaller) `RecRule` case.
-#[allow(dead_code)]
-pub(crate) fn mk_recursor_declar<'t>(
-    name: NamePtr<'t>,
-    uparams: LevelsPtr<'t>,
-    ty: ExprPtr<'t>,
-    all_inductives: Vec<NamePtr<'t>>,
-    num_params: u16,
-    num_indices: u16,
-    num_motives: u16,
-    num_minors: u16,
-    rec_rules: Vec<RecRule<'t>>,
-    is_k: bool,
-) -> Declar<'t> {
-    Declar::Recursor(RecursorData {
-        info: DeclarInfo { name, uparams, ty },
-        all_inductives: std::sync::Arc::from(all_inductives),
-        num_params,
-        num_indices,
-        num_motives,
-        num_minors,
-        rec_rules: std::sync::Arc::from(rec_rules),
-        is_k,
-    })
-}
 
 verus! {
 

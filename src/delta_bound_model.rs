@@ -54,7 +54,7 @@ use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, const_name_
 use crate::expr_model::{NatLitPayload, StringLitPayload};
 #[cfg(verus_only)]
 use crate::beta_model::string_lit_expand_model;
-use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_local_named, expr_as_pi};
+use crate::expr_arena_bridge::{expr_as_lambda, get_dbj_level_counter, abstr_levels_with_locals, expr_as_pi};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
 #[cfg(verus_only)]
@@ -63,8 +63,6 @@ use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_mode
 use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
-use crate::expr_arena_bridge::get_eager_mode;
-use crate::expr_arena_bridge::{expr_as_string_lit_ptr, get_string_of_list_name, get_string_extension_flag, read_string_len};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{string_len, is_string_lit_shape_model, string_lit_ptr_of};
 use crate::level_arena_bridge::name_ptr_eq;
@@ -170,7 +168,7 @@ use crate::expr_model::has_fv;
 use crate::beta_model::defeq;
 use crate::tc_model::{WhnfMemo, WhnfCert, verified_whnf_free, verified_whnf_no_unfolding_free, verified_unfold_def_step_free};
 use crate::env_model::get_declar_info_ty;
-use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_inductive_name, get_constructor_num_params, get_inductive_first_ctor, get_recursor_data, get_recursor_is_k};
+use crate::env_model::{get_structure_first_ctor, get_constructor_num_fields, get_constructor_num_params, get_recursor_data, get_recursor_is_k};
 
 verus! {
 

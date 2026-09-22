@@ -49,24 +49,6 @@ use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
 use vstd::set_lib::*;
 
-// These accessors' only "caller" is the `assume_specification` attributes
-// below, erased under plain compilation -- hence `allow(dead_code)`.
-/// `TcCtx::alloc_string(Cow::Borrowed("rec"))`, wrapped so Verus never
-/// needs a `Cow` parameter type at all (`Cow` isn't registered with this
-/// vstd fork, and doing so just to move ONE hardcoded literal through
-/// isn't worth it) -- same "give it a `&'static str`-free real-Rust
-/// signature, bridge that instead" choice `str1` already made for `TcCtx::
-/// str1`. Used by `mk_base_rec_names`/`handle_rec_ctor_args_rec_rule`/
-/// `mk_specialized_rec_to_unspecialized_map` (`inductive.rs:147, 1207,
-/// 1368, 1425`), all of which alloc the SAME literal `"rec"` suffix for
-/// building a recursor's own name (`T.rec`). Callers never need to know
-/// WHAT `string_id` this produces (only that `ctx.str(some_name, this)`
-/// then denotes `NameSpec::Str(_, string_id(this))`, `TcCtx::str`'s own
-/// pre-existing axiom) -- fully opaque, no `ensures` needed.
-#[allow(dead_code)]
-pub(crate) fn alloc_string_rec<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>) -> StringPtr<'t> {
-    ctx.alloc_string(std::borrow::Cow::Borrowed("rec"))
-}
 
 verus! {
 

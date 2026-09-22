@@ -110,12 +110,6 @@ pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
     a == b
 }
 
-#[allow(dead_code)]
-pub(crate) fn level_ptr_eq<'t>(a: LevelPtr<'t>, b: LevelPtr<'t>) -> (result: bool)
-    ensures result == (a == b)
-{
-    a == b
-}
 
 /// Hash-consing's contrapositive for `Param`-shaped levels specifically:
 /// two `Param` pointers denoting DIFFERENT names can never be the same
