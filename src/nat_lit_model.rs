@@ -78,7 +78,6 @@ pub(crate) fn biguint_add(x: BigUint, y: BigUint) -> BigUint {
 
 /// `tc.rs::do_nat_bin`'s `Mul` case (`arg1 * arg2`) -- also a plain
 /// delegation, no custom branching.
-#[allow(dead_code)]
 pub(crate) fn biguint_mul(x: BigUint, y: BigUint) -> BigUint {
     x * y
 }

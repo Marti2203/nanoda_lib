@@ -900,9 +900,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (x, y) = (self.whnf(x), self.whnf(y));
         let (arg1, arg2) = (self.ctx.get_bignum_from_expr(x)?, self.ctx.get_bignum_from_expr(y)?);
         match op {
-            Add => self.ctx.mk_nat_lit_quick(arg1 + arg2),
+            Add => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_add(arg1, arg2)),
             Sub => self.ctx.mk_nat_lit_quick(nat_sub(arg1, arg2)),
-            Mul => self.ctx.mk_nat_lit_quick(arg1 * arg2),
+            Mul => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_mul(arg1, arg2)),
             Pow => self.ctx.mk_nat_lit_quick(arg1.pow(arg2)),
             Div => self.ctx.mk_nat_lit_quick(nat_div(arg1, arg2)),
             Mod => self.ctx.mk_nat_lit_quick(nat_mod(arg1, arg2)),
@@ -1404,6 +1404,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant tc_wf(*self),
+                        n_args <= args.len(),
+                        n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
+                    // A bare `loop` carries no exit reason, so without this
+                    // `ensures` the `break` below reaches the slice with
+                    // nothing known about `n_args`.
+                    ensures n_args <= args.len(),
+                        n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) < 60000,
                 {
                     // `[_arg, _rest @ ..]` on `&args[n_args..]` is exactly
                     // "there is another argument left"; both operands of the
@@ -1413,6 +1420,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     match self.ctx.read_expr(e) {
                         Lambda { body, .. } => {
                             n_args += 1;
+                            proof {
+                                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) < crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)));
+                            }
                             e = body;
                         }
                         _ => break,
