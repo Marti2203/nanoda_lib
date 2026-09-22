@@ -1531,12 +1531,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (*self).env == old(self).env,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) < 60000,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)) < 60000,
+                // This loop OPENS a binder per iteration and closes none; the
+                // exits below close them all at once by subtracting
+                // `locals.len()`. That subtraction is only the counter frame if
+                // the two are tied together here.
+                self.ctx.dbj_level_counter
+                    == old(self).ctx.dbj_level_counter + locals@.len(),
             // A bare `loop` carries no exit reason: without these the `break`
             // arrives with nothing known, and the two `inst` calls below it
             // have no bound to discharge.
             ensures tc_wf(*self),
+                (*self).env == old(self).env,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)) < 60000,
                 locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)) < 60000,
+                self.ctx.dbj_level_counter
+                    == old(self).ctx.dbj_level_counter + locals@.len(),
         {
             let (binder_name, binder_style, t1, body1, t2, body2) =
                 match self.ctx.read_expr_pair(x, y) {
@@ -3195,6 +3204,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// `e`'s first `num_params` arguments, at `e`'s universe levels.
     #[verifier::exec_allows_no_decreases_clause]
     fn mk_nullary_ctor(&mut self, e: ExprPtr<'t>, num_params: usize) -> (result: Option<ExprPtr<'t>>)
+        requires tc_wf(*old(self)),
+        ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
         let (_fun, name, levels, args) = self.ctx.unfold_const_apps(e)?;
         let InductiveData { all_ctor_names, .. } = self.env.get_inductive(&name)?;
