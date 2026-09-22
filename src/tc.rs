@@ -800,7 +800,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if args.len() == (*num_params + *num_fields) as usize && self.env.can_be_struct(inductive_name) {
             let (x_type, y_type) = (self.infer(x, InferOnly), self.infer(y, InferOnly));
             if self.def_eq(x_type, y_type) {
-                for i in (*num_params as usize)..args.len() {
+                for i in (*num_params as usize)..args.len()
+                    invariant tc_wf(*self),
+                {
                     let proj = self.ctx.mk_proj(*inductive_name, i - *num_params as usize, x);
                     let rhs = args[i];
                     if !self.def_eq(proj, rhs) {
@@ -1010,7 +1012,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let ConstructorData { info: ctor_info, .. } = self.env.get_constructor(&all_ctor_names[0]).unwrap();
         let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
-        for i in 0..(*num_params) {
+        for i in 0..(*num_params)
+            invariant tc_wf(*self),
+        {
             ctor_ty = self.whnf(ctor_ty);
             match self.ctx.read_expr(ctor_ty) {
                 Pi { body, .. } => {
@@ -1019,7 +1023,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             _ => crate::util::kernel_fail("Ran out of param telescope"),
             }
         }
-        for i in 0..idx {
+        for i in 0..idx
+            invariant tc_wf(*self),
+        {
             ctor_ty = self.whnf(ctor_ty);
             match self.ctx.read_expr(ctor_ty) {
                 Pi { binder_type, body, .. } => {
@@ -1113,7 +1119,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
         let mut ctx = Vec::new();
         fun = self.infer(fun, flag);
-        while !args.is_empty() {
+        while !args.is_empty()
+            invariant tc_wf(*self),
+        {
             match self.ctx.read_expr(fun) {
                 Pi { binder_type, body, .. } => {
                     let arg = args.pop().unwrap();
@@ -1157,7 +1165,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
-        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+        while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
+            invariant tc_wf(*self),
+        {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             if let Check = flag {
                 self.infer_sort_of(binder_type, flag);
@@ -1171,7 +1181,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let instd = self.ctx.inst(e, locals.as_slice());
         let infd = self.infer(instd, flag);
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
-        while let Some(local) = locals.pop() {
+        while let Some(local) = locals.pop()
+            invariant tc_wf(*self),
+        {
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
                     self.ctx.replace_dbj_level(local);
@@ -1192,7 +1204,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut universes = Vec::new();
         let mut locals = Vec::new();
         let c0 = self.ctx.dbj_level_counter;
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e) {
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
+            invariant tc_wf(*self),
+        {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             let dom_univ = self.infer_sort_of(binder_type, flag);
             universes.push(dom_univ);
@@ -1201,7 +1215,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let instd = self.ctx.inst(e, locals.as_slice());
         let mut infd = self.infer_sort_of(instd, flag);
-        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop()) {
+        while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
+            invariant tc_wf(*self),
+        {
             infd = self.ctx.imax(universe, infd);
             self.ctx.replace_dbj_level(local);
         }
@@ -1241,7 +1257,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return cached
         }
         let mut cursor = e;
-        loop {
+        loop
+            invariant tc_wf(*self),
+        {
             let whnfd = self.whnf_no_unfolding(cursor);
             if let Some(reduce_nat_ok) = self.try_reduce_nat(whnfd) {
                 cursor = reduce_nat_ok;
@@ -1291,7 +1309,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             Lambda { .. } if !args.is_empty() => {
                 let (mut e, mut n_args) = (e_fun, 0usize);
-                loop {
+                loop
+                    invariant tc_wf(*self),
+                {
                     // `[_arg, _rest @ ..]` on `&args[n_args..]` is exactly
                     // "there is another argument left"; both operands of the
                     // original tuple are reads, so testing it first is the same
@@ -1379,7 +1399,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
         let mut locals = Vec::new();
-        loop {
+        loop
+            invariant tc_wf(*self),
+        {
             let (binder_name, binder_style, t1, body1, t2, body2) =
                 match self.ctx.read_expr_pair(x, y) {
                     (
@@ -1478,7 +1500,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // pairs, same order, same short-circuit.
         let mut args_eq = true;
         let mut i: usize = 0;
-        while i < args1.len() {
+        while i < args1.len()
+            invariant tc_wf(*self),
+        {
             if !self.def_eq(args1[i], args2[i]) { args_eq = false; break }
             i += 1;
         }
@@ -1869,7 +1893,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires tc_wf(*old(self)),
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
     {
-        loop {
+        loop
+            invariant tc_wf(*self),
+        {
             if let Some(r) = self.delta_try_nat(x, y) {
                 return r
             }
