@@ -2173,6 +2173,40 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let major_ctor_args_wo_params = major_ctor_args.into_iter().skip(
             num_extra_params_to_major,
         ).collect::<Vec<_>>();
+        // `subst_expr_levels` needs three facts about what it substitutes into,
+        // and this function reaches the recursor through `Env::get_recursor`,
+        // which is claim-free. All three are obtained WITHOUT a new axiom:
+        //
+        // (1) every uparam is a `Param`. `get_recursor_data` already claims
+        //     this, but returns a tuple, and `rec` is passed whole to
+        //     `to_ctor_when_k` and `get_major_induct`, so it cannot simply be
+        //     swapped in. Calling it alongside and tying the two by POINTER
+        //     equality transfers the claim to `info.uparams`: `to_model_of_
+        //     levels` is a function of the pointer, so equal pointers have
+        //     equal models. Duplicating the axiom on `Env::get_recursor`
+        //     instead would make two axioms speak about the same data, which
+        //     is how they silently drift apart.
+        let rd_uparams = match crate::env_model::get_recursor_data(self.env, &const_name) {
+            Some((_, _, _, _, u, _)) => u,
+            None => return None,
+        };
+        if rd_uparams != info.uparams {
+            return None
+        }
+        // (2) the universe arity matches. VERUS-REWRITE(hoisted-arity-check):
+        //     the kernel panics on the mismatch inside `subst_expr_levels`.
+        if self.ctx.read_levels(info.uparams).len() != self.ctx.read_levels(
+            const_levels,
+        ).len() {
+            return None
+        }
+        // (3) the rule's right-hand side is closed. No environment claim covers
+        //     RULE rhs's -- `env_global_closed`/`_ty` cover declaration values
+        //     and types -- so this is TESTED rather than assumed, which costs a
+        //     `has_fvars` read and no trust at all.
+        if self.ctx.has_fvars(rec_rule.val) {
+            return None
+        }
         let r = self.ctx.subst_expr_levels(rec_rule.val, info.uparams, const_levels);
         // VERUS-REWRITE(u16-widen): as above -- three `u16`s summed before
         // the widening, so a wrapped total would `take` the wrong prefix.
