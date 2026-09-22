@@ -2627,9 +2627,6 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// so this is the kernel proving what a hand-written twin was standing in
     /// for.
     ///
-    /// VERUS-REWRITE(vec-into-iter): `args.into_iter()` as a slice, because
-    /// `Vec::into_iter` has no vstd spec while `verified_foldl_apps`' slice
-    /// form does.
     #[verifier::exec_allows_no_decreases_clause]
     fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
@@ -2675,7 +2672,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::level_arena_bridge::to_model_of_levels(levels),
                     to_model_expr(def_val));
             }
-            let r = crate::expr_arena_bridge::verified_foldl_apps(self.ctx, def_val, args.as_slice());
+            let ghost argv = args@;
+            let it = args.into_iter();
+            proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&it) =~= argv); }
+            let r = self.ctx.foldl_apps(def_val, it);
             proof { crate::beta_model::spine_app_nlbv(to_model_expr(def_val), am); }
             Some(r)
         } else {

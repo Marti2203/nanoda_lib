@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **31 rewrites across 27 functions.**
+Current: **30 rewrites across 26 functions.**
 
 ---
 
@@ -68,17 +68,29 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate`, `Iterator::nth`, `Iterator::position`, `Vec::into_iter` — 4 rewrites
+### `Iterator::enumerate`, `nth`, `position` — 3 rewrites
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
 | `inst_aux` (`Var` arm) | `src/expr.rs` | `nth` |
 | `abstr_aux` (`Local` arm) | `src/expr.rs` | `position` + `Option::map` |
-| `unfold_def` | `src/tc.rs` | `Vec::into_iter` |
 
-Straightforward gaps: no vstd specification at all. Supplying one reverts the
-rewrite.
+Checked directly against the fork: `Iterator::nth`, `Iterator::position` and
+`Iterator::enumerate` have no specification at all — `Enumerate` is not even a
+registered type. Supplying one reverts the rewrite.
+
+`Vec::into_iter` **was** on this list and is not any more: it is specified now,
+and `unfold_def` is back to the kernel's
+`self.ctx.foldl_apps(def_val, args.into_iter())`. The only proof it needs is
+one line bridging the iterator to the vector's view, captured as a ghost before
+the move:
+
+```ignore
+let ghost argv = args@;
+let it = args.into_iter();
+proof { assert(IteratorSpec::remaining(&it) =~= argv); }
+```
 
 ### An unspecified `alloc` variant — 1 rewrite
 
