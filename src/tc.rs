@@ -1000,7 +1000,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (_, name, _, args) = self.ctx.unfold_const_apps(structure)?;
         let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;
         let i = (*num_params as usize) + idx;
-        Some(args.get(i).copied().unwrap())
+        // VERUS-REWRITE(unchecked-unwrap): was `args.get(i).copied().unwrap()`.
+        // Same panic on the same condition, now with a message. Declining
+        // instead would be a soundness change, not a robustness fix: `None`
+        // here routes to a path that can accept.
+        match args.get(i).copied() {
+            Some(a) => Some(a),
+            None => crate::util::kernel_fail("reduce_proj: projection index is past the end of the constructor's arguments"),
+        }
     }
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -1021,12 +1028,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let structure_ty = self.infer_then_whnf(structure, flag);
         let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
-        let (_, struct_ty_name, struct_ty_levels, struct_ty_args) = self.ctx.unfold_const_apps(structure_ty).unwrap();
+        // VERUS-REWRITE(unchecked-unwrap): the three `.unwrap()` calls below
+        // were written as such. Each keeps its panic, and gains a message.
+        let (_, struct_ty_name, struct_ty_levels, struct_ty_args) =
+            match self.ctx.unfold_const_apps(structure_ty) {
+                Some(t) => t,
+                None => crate::util::kernel_fail("infer_proj: the structure's type is not an applied constant"),
+            };
 
         let InductiveData { info: inductive_info, all_ctor_names, num_params, .. } =
-            self.env.get_structure(&struct_ty_name, true).unwrap();
+            match self.env.get_structure(&struct_ty_name, true) {
+                Some(d) => d,
+                None => crate::util::kernel_fail("infer_proj: the structure's type is not a structure"),
+            };
 
-        let ConstructorData { info: ctor_info, .. } = self.env.get_constructor(&all_ctor_names[0]).unwrap();
+        let ConstructorData { info: ctor_info, .. } =
+            match self.env.get_constructor(&all_ctor_names[0]) {
+                Some(d) => d,
+                None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
+            };
         let mut ctor_ty = self.ctx.subst_declar_info_levels(*ctor_info, struct_ty_levels);
         for i in 0..(*num_params)
             invariant tc_wf(*self),
@@ -1788,7 +1808,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             NatLit { ptr, .. } => self.ctx.nat_lit_to_constructor(ptr).unwrap_or(major),
             StringLit { ptr, .. } => self.str_lit_to_ctor_reducing(ptr).unwrap_or(major),
             _ => {
-                let ind_rec_name_prefix = self.ctx.get_major_induct(rec).unwrap();
+                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. Same panic.
+                let ind_rec_name_prefix = match self.ctx.get_major_induct(rec) {
+                    Some(n) => n,
+                    None => crate::util::kernel_fail("reduce_rec: recursor has no major premise inductive"),
+                };
                 self.iota_try_eta_struct(ind_rec_name_prefix, major)
             }
         };
@@ -1851,7 +1875,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures tc_wf(*final(self)), (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
     {
-        let unfolded = self.unfold_def(e).unwrap();
+        // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. Same panic.
+        let unfolded = match self.unfold_def(e) {
+            Some(u) => u,
+            None => crate::util::kernel_fail("delta: expression is not an unfoldable definition"),
+        };
         self.whnf_no_unfolding_cheap_proj(unfolded)
     }
 
