@@ -225,6 +225,14 @@ guessed at. vstd 2059 / 0, nanoda 739 / 0, 79 tests.
 
 ## Closed: `HashSet::with_hasher`
 
+*(Follow-up: this unblocked `no_dupes_all_params` as far as the frontier — it
+is now reachable, where before its set could not even be constructed in
+`verus!`. It still does not verify, for an unrelated reason: its body is a
+`for` over an ITERATOR with an accumulating postcondition, and the crate has no
+example of that invariant yet — every verified `for` here is a range `for`. It
+would take either that machinery or a registered rewrite to an index walk,
+which is not worth spending on one predicate.)*
+
 Fork commit `3b05ee1b4`. This one had been sitting in the running gap list for
 a while.
 
