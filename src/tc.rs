@@ -1647,6 +1647,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (e_fun, args) = self.ctx.unfold_apps(e);
         // Several arms below shadow `e`; the proofs refer to the input by this.
         let ghost em0 = to_model_expr(e);
+        let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         let (should_cache, eprime) = match self.ctx.read_expr(e_fun) {
             Proj { idx, structure, .. } => if let Some(e) = self.reduce_proj(
                 idx,
@@ -1754,10 +1755,60 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 (false, r)
             },
-            Let { val, body, .. } => {
-                let e = self.ctx.inst(body, &[val]);
-                let e = self.ctx.foldl_apps(e, args.into_iter());
-                (true, self.whnf_no_unfolding_aux(e, cheap_proj))
+            Let { binder_type, val, body, .. } => {
+                // Bound to a local only so the proof can name its view; the
+                // same one-element slice goes to the same call.
+                let sv = [val];
+                let e1 = self.ctx.inst(body, &sv);
+                let e2 = self.ctx.foldl_apps(e1, args.into_iter());
+                proof {
+                    // ONE ZETA STEP. `e` is `Let(t, v, b)` applied to `am`; the
+                    // model's rule takes `Let(t, v, b)` to `subst1(b, v)`, and the
+                    // kernel's `inst` computes `subst_full(b, [v], 0)`. The two
+                    // agree on a closed term (`subst_c_eq_subst_full`), which is
+                    // the condition `whnf_claim` carries.
+                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    let tm = to_model_expr(binder_type);
+                    let vm = to_model_expr(val);
+                    let bm = to_model_expr(body);
+                    let lm = to_model_expr(e_fun);
+                    assert(lm == ExprSpec::Let(Box::new(tm), Box::new(vm), Box::new(bm)));
+                    assert(em0 == crate::beta_model::spine_app(lm, am));
+                    assert(sv@ =~= seq![val]);
+                    assert(crate::expr_arena_bridge::ptr_models(sv@) =~= seq![vm]);
+                    assert(to_model_expr(e1) == crate::expr_model::subst_full(bm, seq![vm], 0));
+                    assert(to_model_expr(e2) == crate::beta_model::spine_app(to_model_expr(e1), am));
+                    if crate::expr_model::nlbv(em0) <= 0 {
+                        crate::beta_model::spine_app_nlbv_decompose(lm, am);
+                        assert(crate::expr_model::nlbv(vm) <= 0);
+                        assert(crate::expr_model::nlbv(bm) <= 1);
+                        crate::beta_model::nlbv_bound_implies_max_var_below(vm, 0);
+                        crate::beta_model::subst_c_eq_subst_full(
+                            bm,
+                            vm,
+                            0,
+                            crate::expr_model::depth(vm),
+                        );
+                        let rm = crate::beta_model::subst1(bm, vm);
+                        assert(rm == crate::beta_model::subst_c(bm, vm, 0));
+                        assert(rm == to_model_expr(e1));
+                        assert(crate::beta_model::pstep(fm, bm, bm));
+                        assert(crate::beta_model::pstep(fm, vm, vm));
+                        assert(crate::beta_model::pstep(fm, lm, rm));
+                        crate::beta_model::pstep_star_one(fm, lm, rm);
+                        crate::beta_model::pstep_spine_app_star(fm, lm, rm, am);
+                        crate::beta_model::defeq_of_pstep_star(fm, em0, to_model_expr(e2));
+                        crate::tc_model::deq_any_of_defeq(fm, em0, to_model_expr(e2));
+                        crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
+                        crate::beta_model::spine_app_nlbv(to_model_expr(e1), am);
+                    }
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e2)));
+                }
+                let r = self.whnf_no_unfolding_aux(e2, cheap_proj);
+                proof {
+                    whnf_claim_trans(*old(self).env, em0, to_model_expr(e2), to_model_expr(r));
+                }
+                (true, r)
             },
             Const { name, levels, .. } => if let Some(reduced) = self.reduce_quot(name, &args) {
                 (true, self.whnf_no_unfolding_aux(reduced, cheap_proj))
