@@ -1214,23 +1214,6 @@ pub uninterp spec fn bool_true_id() -> u64;
 
 pub uninterp spec fn bool_false_id() -> u64;
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::bool_to_expr ](
-    ctx: &mut TcCtx<'t, 'p>,
-    b: bool,
-) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        match result {
-            Some(e) => is_const_shape(e) && const_id(e) == if b {
-                bool_true_id()
-            } else {
-                bool_false_id()
-            },
-            None => true,
-        },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
-
 /// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
 /// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
 /// `c_bool_true`/`c_bool_false` construct the SAME `Bool.true`/`Bool.

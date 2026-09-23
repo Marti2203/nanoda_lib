@@ -147,7 +147,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::bool_false_id(),
+                    == crate::expr_arena_bridge::bool_false_id()
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -168,7 +169,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::bool_true_id(),
+                    == crate::expr_arena_bridge::bool_true_id()
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -543,13 +545,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     /// Return the expression representing either `true` or `false`
-    pub(crate) fn bool_to_expr(&mut self, b: bool) -> Option<ExprPtr<'t>> {
-        if b {
-            self.c_bool_true()
-        } else {
-            self.c_bool_false()
-        }
-    }
 
     /// Make `Const("Nat", [])`
 
@@ -694,6 +689,30 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 None => None,
             }
+        }
+    }
+
+    /// Verified in place, body unchanged. Was an `assume_specification`, and
+    /// did not say the constant carries no universe levels -- which the model's
+    /// Nat-folding rule requires of `Bool.true`/`Bool.false`.
+    pub(crate) fn bool_to_expr(&mut self, b: bool) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            match result {
+                Some(e) => crate::expr_arena_bridge::is_const_shape(e)
+                    && crate::expr_arena_bridge::const_id(e) == if b {
+                    crate::expr_arena_bridge::bool_true_id()
+                } else {
+                    crate::expr_arena_bridge::bool_false_id()
+                } && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
+                None => true,
+            },
+    {
+        if b {
+            self.c_bool_true()
+        } else {
+            self.c_bool_false()
         }
     }
 
