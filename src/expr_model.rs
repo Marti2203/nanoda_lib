@@ -516,9 +516,18 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
     }
 }
 
-/// DEEP SCOPE: every local in `e` is a level-local whose serial is in `S` and
-/// below `c`, AND each such local's own type is deep-in-scope (same `S`) below
-/// that local's level. Well-founded because the levels strictly decrease.
+/// A level-local id whose level is below `c`.
+pub open spec fn serial_below(id: u32, c: u16) -> bool {
+    match crate::expr_arena_bridge::dbj_serial(id) {
+        Some(s) => s < c,
+        None => false,
+    }
+}
+
+/// DEEP SCOPE: every local in `e` is a level-local node in `S` whose level is
+/// below `c`, AND each such local's own type is deep-in-scope (same `S`)
+/// below that local's level. Well-founded because the levels strictly
+/// decrease.
 ///
 /// Why deep: `infer` of a local returns the local's TYPE, and the type's scope
 /// has to come from somewhere. Stating it about every local in the arena would
@@ -526,19 +535,21 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
 /// locals -- the shadow's included -- to a precondition. Carried inside the
 /// scope predicate, it comes with the local, and nothing is assumed.
 ///
-/// Why a set: the bound alone cannot say that `infer` of a lambda mentions no
-/// local its input did not -- the body's type mentions the freshly opened
-/// locals, and only the abstraction removes them. `S` tracks which serials may
-/// occur; `c` is the bound the recursion descends on.
+/// Why a set of NODES: the bound alone cannot say that `infer` of a lambda
+/// mentions no local its input did not -- only the abstraction removes the
+/// freshly opened ones -- so `S` tracks which locals may occur. And it names
+/// nodes, not levels, because the kernel's names are levels but the arena
+/// hash-conses: a level reopened with a different type is a different node,
+/// and `in_scope` admits only the live one (`TypeChecker::live`).
 ///
 /// Unique locals (`dbj_serial` = None) are out of scope: only the inductive
 /// checker makes them, outside the verified cycle.
-pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u16>, c: u16) -> bool
+pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u32>, c: u16) -> bool
     decreases c, e,
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && S.contains(s) && dbj_deep_in(
+            Some(s) => s < c && S.contains(id) && dbj_deep_in(
                 crate::expr_arena_bridge::arena_lctx()[id],
                 S,
                 s,
@@ -557,18 +568,26 @@ pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u16>, c: u16) -> bool
     }
 }
 
-/// Every serial.
-pub open spec fn all_serials() -> ISet<u16> {
-    ISet::new(|t: u16| true)
+/// A level-local id whose level is at least `c`.
+pub open spec fn serial_at_least(id: u32, c: u16) -> bool {
+    match crate::expr_arena_bridge::dbj_serial(id) {
+        Some(s) => s >= c,
+        None => false,
+    }
 }
 
-/// Deep scope with every serial allowed: the bound alone.
+/// Every node.
+pub open spec fn all_ids() -> ISet<u32> {
+    ISet::new(|t: u32| true)
+}
+
+/// Deep scope with every node allowed: the bound alone.
 pub open spec fn dbj_deep(e: ExprSpec, c: u16) -> bool {
-    dbj_deep_in(e, all_serials(), c)
+    dbj_deep_in(e, all_ids(), c)
 }
 
 /// Deep scope implies shallow scope.
-pub proof fn dbj_deep_in_below(e: ExprSpec, S: ISet<u16>, c: u16)
+pub proof fn dbj_deep_in_below(e: ExprSpec, S: ISet<u32>, c: u16)
     requires
         dbj_deep_in(e, S, c),
     ensures
@@ -602,16 +621,16 @@ pub proof fn dbj_deep_below(e: ExprSpec, c: u16)
     ensures
         dbj_serials_below(e, c),
 {
-    dbj_deep_in_below(e, all_serials(), c);
+    dbj_deep_in_below(e, all_ids(), c);
 }
 
-/// Weakening: every serial allowed before (in `S1`, below `c1`) is allowed
+/// Weakening: every node allowed before (in `S1`, below `c1`) is allowed
 /// after. A local's own type is judged at the local's level, which does not
 /// move, so the condition restricted to below that level carries down.
-pub proof fn dbj_deep_in_weaken(e: ExprSpec, S1: ISet<u16>, c1: u16, S2: ISet<u16>, c2: u16)
+pub proof fn dbj_deep_in_weaken(e: ExprSpec, S1: ISet<u32>, c1: u16, S2: ISet<u32>, c2: u16)
     requires
         dbj_deep_in(e, S1, c1),
-        forall|t: u16| #[trigger] S1.contains(t) && t < c1 ==> S2.contains(t) && t < c2,
+        forall|t: u32| #[trigger] S1.contains(t) && serial_below(t, c1) ==> S2.contains(t) && serial_below(t, c2),
     ensures
         dbj_deep_in(e, S2, c2),
     decreases c1, e,
@@ -619,6 +638,10 @@ pub proof fn dbj_deep_in_weaken(e: ExprSpec, S1: ISet<u16>, c1: u16, S2: ISet<u1
     match e {
         ExprSpec::Free(id) => {
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
+                assert(S1.contains(id) && serial_below(id, c1));
+                assert forall|t: u32| #[trigger] S1.contains(t) && serial_below(t, s) implies S2.contains(t) && serial_below(t, s) by {
+                    assert(serial_below(t, c1));
+                }
                 dbj_deep_in_weaken(crate::expr_arena_bridge::arena_lctx()[id], S1, s, S2, s);
             }
         },
@@ -652,11 +675,11 @@ pub proof fn dbj_deep_mono(e: ExprSpec, c1: u16, c2: u16)
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    dbj_deep_in_weaken(e, all_serials(), c1, all_serials(), c2);
+    dbj_deep_in_weaken(e, all_ids(), c1, all_ids(), c2);
 }
 
 /// No free variables: deep-in-scope everywhere.
-pub proof fn no_fv_dbj_deep_in(e: ExprSpec, S: ISet<u16>, c: u16)
+pub proof fn no_fv_dbj_deep_in(e: ExprSpec, S: ISet<u32>, c: u16)
     requires
         !has_fv(e),
     ensures
@@ -690,7 +713,7 @@ pub proof fn no_fv_dbj_deep(e: ExprSpec, c: u16)
     ensures
         dbj_deep(e, c),
 {
-    no_fv_dbj_deep_in(e, all_serials(), c);
+    no_fv_dbj_deep_in(e, all_ids(), c);
 }
 
 /// Substitution keeps deep scope.
@@ -698,7 +721,7 @@ pub proof fn subst_full_dbj_deep_in(
     e: ExprSpec,
     substs: Seq<ExprSpec>,
     offset: nat,
-    S: ISet<u16>,
+    S: ISet<u32>,
     c: u16,
 )
     requires
@@ -742,20 +765,20 @@ pub proof fn subst_full_dbj_deep(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat
     ensures
         dbj_deep(subst_full(e, substs, offset), c),
 {
-    assert forall|i: int| 0 <= i < substs.len() implies #[trigger] dbj_deep_in(substs[i], all_serials(), c) by {
+    assert forall|i: int| 0 <= i < substs.len() implies #[trigger] dbj_deep_in(substs[i], all_ids(), c) by {
         assert(dbj_deep(substs[i], c));
     }
-    subst_full_dbj_deep_in(e, substs, offset, all_serials(), c);
+    subst_full_dbj_deep_in(e, substs, offset, all_ids(), c);
 }
 
-/// Serial `t` occurs in `e` deeply: as a level-local below `c`, or in the
-/// type of one (judged below that local's level).
-pub open spec fn occurs_deep(e: ExprSpec, c: u16, t: u16) -> bool
+/// Node `t` occurs in `e` deeply: as a level-local below `c`, or in the type
+/// of one (judged below that local's level).
+pub open spec fn occurs_deep(e: ExprSpec, c: u16, t: u32) -> bool
     decreases c, e,
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && (t == s || occurs_deep(
+            Some(s) => s < c && (t == id || occurs_deep(
                 crate::expr_arena_bridge::arena_lctx()[id],
                 s,
                 t,
@@ -774,16 +797,16 @@ pub open spec fn occurs_deep(e: ExprSpec, c: u16, t: u16) -> bool
     }
 }
 
-/// The serials a term actually uses.
-pub open spec fn occ(e: ExprSpec, c: u16) -> ISet<u16> {
-    ISet::new(|t: u16| occurs_deep(e, c, t))
+/// The nodes a term actually uses.
+pub open spec fn occ(e: ExprSpec, c: u16) -> ISet<u32> {
+    ISet::new(|t: u32| occurs_deep(e, c, t))
 }
 
 /// A deep-in-scope term is deep-in-scope in any set holding what it uses.
-pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u16>, c: u16, O: ISet<u16>)
+pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u32>, c: u16, O: ISet<u32>)
     requires
         dbj_deep_in(e, S, c),
-        forall|t: u16| #[trigger] occurs_deep(e, c, t) ==> O.contains(t),
+        forall|t: u32| #[trigger] occurs_deep(e, c, t) ==> O.contains(t),
     ensures
         dbj_deep_in(e, O, c),
     decreases c, e,
@@ -792,41 +815,41 @@ pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u16>, c: u16, O: ISet<u16>)
         ExprSpec::Free(id) => {
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
                 let ty = crate::expr_arena_bridge::arena_lctx()[id];
-                assert(occurs_deep(e, c, s));
-                assert forall|t: u16| #[trigger] occurs_deep(ty, s, t) implies O.contains(t) by {
+                assert(occurs_deep(e, c, id));
+                assert forall|t: u32| #[trigger] occurs_deep(ty, s, t) implies O.contains(t) by {
                     assert(occurs_deep(e, c, t));
                 }
                 dbj_deep_in_occ(ty, S, s, O);
             }
         },
         ExprSpec::App(f, a) => {
-            assert forall|t: u16| #[trigger] occurs_deep(*f, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*f, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
-            assert forall|t: u16| #[trigger] occurs_deep(*a, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*a, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
             dbj_deep_in_occ(*f, S, c, O);
             dbj_deep_in_occ(*a, S, c, O);
         },
         ExprSpec::Bind(ty, b) => {
-            assert forall|t: u16| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
-            assert forall|t: u16| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
             dbj_deep_in_occ(*ty, S, c, O);
             dbj_deep_in_occ(*b, S, c, O);
         },
         ExprSpec::Let(ty, v, b) => {
-            assert forall|t: u16| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
-            assert forall|t: u16| #[trigger] occurs_deep(*v, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*v, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
-            assert forall|t: u16| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
             dbj_deep_in_occ(*ty, S, c, O);
@@ -834,7 +857,7 @@ pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u16>, c: u16, O: ISet<u16>)
             dbj_deep_in_occ(*b, S, c, O);
         },
         ExprSpec::Proj(_, st) => {
-            assert forall|t: u16| #[trigger] occurs_deep(*st, c, t) implies O.contains(t) by {
+            assert forall|t: u32| #[trigger] occurs_deep(*st, c, t) implies O.contains(t) by {
                 assert(occurs_deep(e, c, t));
             }
             dbj_deep_in_occ(*st, S, c, O);
@@ -844,18 +867,18 @@ pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u16>, c: u16, O: ISet<u16>)
 }
 
 /// What a term uses is allowed by any scope the term is in.
-pub proof fn occurs_deep_in(e: ExprSpec, S: ISet<u16>, c: u16, c1: u16, t: u16)
+pub proof fn occurs_deep_in(e: ExprSpec, S: ISet<u32>, c: u16, c1: u16, t: u32)
     requires
         dbj_deep_in(e, S, c),
         occurs_deep(e, c1, t),
     ensures
-        S.contains(t) && t < c,
+        S.contains(t) && serial_below(t, c),
     decreases c1, e,
 {
     match e {
         ExprSpec::Free(id) => {
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
-                if t != s {
+                if t != id {
                     occurs_deep_in(crate::expr_arena_bridge::arena_lctx()[id], S, s, s, t);
                 }
             }
@@ -894,16 +917,16 @@ pub proof fn occurs_deep_in(e: ExprSpec, S: ISet<u16>, c: u16, c1: u16, t: u16)
 /// is left is scoped by whatever the input allowed below `start`.
 pub proof fn abstr_levels_dbj_deep_in(
     e: ExprSpec,
-    S: ISet<u16>,
+    S: ISet<u32>,
     b: u16,
     start: u16,
     n: u16,
-    S2: ISet<u16>,
+    S2: ISet<u32>,
     c2: u16,
 )
     requires
         dbj_deep_in(e, S, b),
-        forall|t: u16| #[trigger] S.contains(t) && t < b && t < start ==> S2.contains(t) && t < c2,
+        forall|t: u32| #[trigger] S.contains(t) && serial_below(t, b) && serial_below(t, start) ==> S2.contains(t) && serial_below(t, c2),
     ensures
         dbj_deep_in(abstr_levels_full(e, start, n), S2, c2),
     decreases e,
@@ -912,7 +935,10 @@ pub proof fn abstr_levels_dbj_deep_in(
         ExprSpec::Free(id) => {
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
                 if s < start {
-                    assert(S.contains(s) && s < b);
+                    assert(S.contains(id) && serial_below(id, b) && serial_below(id, start));
+                    assert forall|t: u32| #[trigger] S.contains(t) && serial_below(t, s) implies S2.contains(t) && serial_below(t, s) by {
+                        assert(serial_below(t, b) && serial_below(t, start));
+                    }
                     dbj_deep_in_weaken(crate::expr_arena_bridge::arena_lctx()[id], S, s, S2, s);
                 }
             }
@@ -938,15 +964,15 @@ pub proof fn abstr_levels_dbj_deep_in(
 }
 
 /// A term in scope is in scope in exactly what it uses.
-pub proof fn occ_self(e: ExprSpec, c: u16)
+pub proof fn occ_self(e: ExprSpec, S: ISet<u32>, c: u16)
     requires
-        dbj_deep(e, c),
+        dbj_deep_in(e, S, c),
     ensures
         dbj_deep_in(e, occ(e, c), c),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    dbj_deep_in_occ(e, all_serials(), c, occ(e, c));
+    dbj_deep_in_occ(e, S, c, occ(e, c));
 }
 
 /// Freshness from deep scope.
