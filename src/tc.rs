@@ -1883,7 +1883,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (true, r)
             },
             Const { name, levels, .. } => if let Some(reduced) = self.reduce_quot(name, &args) {
-                (true, self.whnf_no_unfolding_aux(reduced, cheap_proj))
+                proof {
+                    // `reduce_quot` claims its step for every level list on the
+                    // constant; this is the one the head actually carries.
+                    let lvm = to_model_expr(e_fun)->Const_1;
+                    assert(to_model_expr(e_fun) == ExprSpec::Const(
+                        crate::level_arena_bridge::name_id(name),
+                        lvm,
+                    ));
+                    assert(whnf_claim(
+                        *old(self).env,
+                        crate::beta_model::spine_app(
+                            ExprSpec::Const(crate::level_arena_bridge::name_id(name), lvm),
+                            am,
+                        ),
+                        to_model_expr(reduced),
+                    ));
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(reduced)));
+                }
+                let r = self.whnf_no_unfolding_aux(reduced, cheap_proj);
+                proof {
+                    whnf_claim_trans(*old(self).env, em0, to_model_expr(reduced), to_model_expr(r));
+                }
+                (true, r)
             } else if let Some(reduced) = self.reduce_rec(name, levels, &args) {
                 (true, self.whnf_no_unfolding_aux(reduced, cheap_proj))
             } else {
@@ -2455,45 +2477,186 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    pub fn reduce_quot(&mut self, c_name: NamePtr<'t>, args: &[ExprPtr<'t>]) -> Option<ExprPtr<'t>>
+    pub fn reduce_quot(&mut self, c_name: NamePtr<'t>, args: &[ExprPtr<'t>]) -> (result: Option<
+        ExprPtr<'t>,
+    >)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // ONE QUOTIENT STEP, whatever universe levels the head carries --
+            // the rule never looks at them, and this function is given the
+            // head's name but not the head.
+            match result {
+                Some(r) => quot_step_claim(
+                    *old(self).env,
+                    crate::level_arena_bridge::name_id(c_name),
+                    crate::expr_arena_bridge::ptr_models(args@),
+                    to_model_expr(r),
+                ),
+                None => true,
+            },
     {
         if !matches!(self.env.get_declar(&c_name), Some(Declar::Quot {..})) {
             return None
         }
-        let (qmk, rest_idx) = if c_name == self.ctx.export_file.name_cache.quot_lift? {
-            let qmk = args.get(5).copied()?;
-            (self.whnf(qmk), 6)
+        // VERUS-REWRITE(named-major): was
+        // `let (qmk, rest_idx) = if lift? { (whnf(args.get(5)?), 6) } else if ind? { (whnf(args.get(4)?), 5) } else { return None };`
+        // Choosing the index first and then doing the one `get` and one `whnf`
+        // is the same checks in the same order with the same `?` declines; it
+        // lets the proof name WHICH argument was the major premise.
+        let qi: usize = if c_name == self.ctx.export_file.name_cache.quot_lift? {
+            proof {
+                crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
+                assert(crate::expr_arena_bridge::quot_kind_of(
+                    crate::level_arena_bridge::name_id(c_name),
+                ) == Some(0u8));
+            }
+            5
         } else if c_name == self.ctx.export_file.name_cache.quot_ind? {
-            let qmk = args.get(4).copied()?;
-            (self.whnf(qmk), 5)
+            proof {
+                crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
+                assert(crate::expr_arena_bridge::quot_kind_of(
+                    crate::level_arena_bridge::name_id(c_name),
+                ) == Some(1u8));
+            }
+            4
         } else {
             return None
         };
-        {
-            let (qmk_const, qmk_args) = self.ctx.unfold_apps(qmk);
-            // VERUS-REWRITE(guarded-arm): as above. The `?` keeps its meaning --
-            // a missing `quot_mk` still declines from this function.
-            match self.ctx.read_expr(qmk_const) {
-                Const { name, .. } => {
-                    if !(name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3) {
-                        return None
-                    }
-                },
-                _ => return None,
-            };
-        }
+        let qmk0 = args.get(qi).copied()?;
+        let qmk = self.whnf(qmk0);
+        let rest_idx = qi + 1;
+        let (qmk_const, qmk_args) = self.ctx.unfold_apps(qmk);
+        // VERUS-REWRITE(guarded-arm): as above. The `?` keeps its meaning --
+        // a missing `quot_mk` still declines from this function.
+        let mk_name = match self.ctx.read_expr(qmk_const) {
+            Const { name, .. } => {
+                if !(name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3) {
+                    return None
+                }
+                proof {
+                    // read the name cache HERE, before anything below can touch it
+                    crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
+                    assert(crate::expr_arena_bridge::quot_kind_of(
+                        crate::level_arena_bridge::name_id(name),
+                    ) == Some(2u8));
+                }
+                name
+            },
+            _ => return None,
+        };
         let f = args.get(3).copied()?;
         let appd = match self.ctx.read_expr(qmk) {
             App { arg, .. } => self.ctx.mk_app(f, arg),
             _ => crate::util::kernel_fail("Quot iota"),
         };
-        Some(self.ctx.foldl_apps(appd, args.iter().copied().skip(rest_idx)))
+        let ghost argv = args@;
+        let rest = args.iter().copied().skip(rest_idx);
+        proof {
+            broadcast use vstd::std_specs::iter::group_iter_axioms;
+            assert(vstd::std_specs::iter::IteratorSpec::remaining(&rest) =~= argv.skip(
+                rest_idx as int,
+            ));
+        }
+        let r = self.ctx.foldl_apps(appd, rest);
+        proof {
+            let env = *old(self).env;
+            let fm = crate::env_model::to_model_of_env(env);
+            let id = crate::level_arena_bridge::name_id(c_name);
+            let am = crate::expr_arena_bridge::ptr_models(args@);
+            let q = qi as int;
+            let qm = to_model_expr(qmk);
+            let mk_head = to_model_expr(qmk_const);
+            let mk_args = crate::expr_arena_bridge::ptr_models(qmk_args@);
+            let args2 = am.update(q, qm);
+            crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
+            assert(am[q] == to_model_expr(qmk0));
+            assert(am[3] == to_model_expr(f));
+            // the head and the major's head
+            assert(qm == crate::beta_model::spine_app(mk_head, mk_args));
+            assert(mk_head == ExprSpec::Const(
+                crate::level_arena_bridge::name_id(mk_name),
+                mk_head->Const_1,
+            ));
+            assert(crate::expr_arena_bridge::quot_kind_of(
+                crate::level_arena_bridge::name_id(mk_name),
+            ) == Some(2u8));
+            // the reduct
+            assert(mk_args.len() == 3);
+            assert(qm == ExprSpec::App(
+                Box::new(crate::beta_model::spine_app(mk_head, mk_args.subrange(0, 2))),
+                Box::new(mk_args[2]),
+            ));
+            assert(to_model_expr(appd) == ExprSpec::App(Box::new(am[3]), Box::new(mk_args[2])));
+            assert(crate::expr_arena_bridge::ptr_models(args@.skip(rest_idx as int)) =~= am.skip(
+                q + 1,
+            ));
+            assert(to_model_expr(r) == crate::beta_model::spine_app(
+                to_model_expr(appd),
+                am.skip(q + 1),
+            ));
+            assert(args2.skip(q + 1) =~= am.skip(q + 1));
+            assert(args2[3] == am[3]);
+            assert forall|lv: Seq<crate::level_model::LevelSpec>|
+                #[trigger] whnf_claim(
+                    env,
+                    crate::beta_model::spine_app(ExprSpec::Const(id, lv), am),
+                    to_model_expr(r),
+                ) by {
+                let head = ExprSpec::Const(id, lv);
+                let s0 = crate::beta_model::spine_app(head, am);
+                if crate::expr_model::nlbv(s0) <= 0 {
+                    crate::beta_model::spine_app_nlbv_decompose(head, am);
+                    assert(crate::expr_model::nlbv(am[q]) <= 0);
+                    // the major, whnf'd, is definitionally equal to what it was
+                    assert(crate::tc_model::deq_any(fm, am[q], qm));
+                    crate::tc_model::deq_any_refl(fm, head);
+                    assert forall|i: int| 0 <= i < am.len() implies crate::tc_model::deq_any(
+                        fm,
+                        #[trigger] am[i],
+                        args2[i],
+                    ) by {
+                        if i != q {
+                            crate::tc_model::deq_any_refl(fm, am[i]);
+                        }
+                    }
+                    crate::tc_model::deq_any_spine_congr(fm, head, head, am, args2);
+                    // and the replaced spine is a quotient redex
+                    crate::beta_model::spine_destruct_app(head, args2);
+                    crate::tc_model::deq_quot_intro(
+                        head,
+                        args2,
+                        qi as nat,
+                        mk_head,
+                        mk_args,
+                        to_model_expr(r),
+                    );
+                    crate::tc_model::deq_any_of_quot(
+                        fm,
+                        crate::beta_model::spine_app(head, args2),
+                        to_model_expr(r),
+                    );
+                    crate::tc_model::deq_any_trans(
+                        fm,
+                        s0,
+                        crate::beta_model::spine_app(head, args2),
+                        to_model_expr(r),
+                    );
+                    // closed
+                    crate::beta_model::spine_app_nlbv_decompose(mk_head, mk_args);
+                    assert forall|i: int| 0 <= i < am.skip(q + 1).len() implies crate::expr_model::nlbv(
+                        #[trigger] am.skip(q + 1)[i],
+                    ) <= 0 by {
+                        assert(am.skip(q + 1)[i] == am[i + q + 1]);
+                    }
+                    crate::beta_model::spine_app_nlbv(to_model_expr(appd), am.skip(q + 1));
+                }
+            }
+        }
+        Some(r)
     }
 
     /// For an expression already known to be an applied definition, unfold
@@ -3364,6 +3527,19 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
     if crate::expr_model::nlbv(a) <= 0 {
         crate::tc_model::deq_any_trans(crate::env_model::to_model_of_env(env), a, b, c);
     }
+}
+
+/// `reduce_quot`'s claim: one quotient step from the constant `id` applied
+/// to `am`, for EVERY level list on that constant. The quotient rule never
+/// reads the levels, and `reduce_quot` is handed the head's name, not the head.
+pub open spec fn quot_step_claim<'x, 't>(
+    env: Env<'x, 't>,
+    id: u64,
+    am: Seq<ExprSpec>,
+    r: ExprSpec,
+) -> bool {
+    forall|lv: Seq<crate::level_model::LevelSpec>|
+        #[trigger] whnf_claim(env, crate::beta_model::spine_app(ExprSpec::Const(id, lv), am), r)
 }
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
