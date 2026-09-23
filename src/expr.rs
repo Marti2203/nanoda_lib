@@ -468,29 +468,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// dispatch `tc.rs::reduce_quot` performs): 0 `Quot.lift`, 1 `Quot.ind`,
     /// 2 `Quot.mk`. Bridged to `expr_arena_bridge::quot_kind_of`.
 
-    pub(crate) fn is_nat_zero(&mut self, e: ExprPtr<'t>) -> bool {
-        match self.read_expr(e) {
-            Const { .. } => self.c_nat_zero() == Some(e),
-            NatLit { ptr, .. } => self.read_bignum(ptr).map(|n| n.is_zero()).unwrap_or(false),
-            _ => false,
-        }
-    }
-
-    pub(crate) fn pred_of_nat_succ(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
-        match self.read_expr(e) {
-            App { fun, arg, .. } if self.c_nat_succ() == Some(fun) => Some(arg),
-            NatLit { ptr, .. } => {
-                let n = self.read_bignum(ptr)?;
-                if n.is_zero() {
-                    None
-                } else {
-                    self.mk_nat_lit_quick(n - 1u8)
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
     pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> Option<ExprPtr<'t>> {
         if (!self.export_file.config.string_extension) || (!self.export_file.config.nat_extension) {
@@ -752,6 +729,105 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
+    /// Verified in place. Was an `assume_specification` claiming
+    /// `result == nat_repr_is_zero(e)` -- which OVERCLAIMED: `Nat.zero` at
+    /// non-empty universe levels is a different node from the cached
+    /// `Nat.zero`, so the code answers `false` where the axiom said `true`.
+    /// The true direction is what holds, and it now says the value is zero.
+    pub(crate) fn is_nat_zero(&mut self, e: ExprPtr<'t>) -> (result: bool)
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            result ==> crate::expr_arena_bridge::nat_repr_is_zero(e)
+                && crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) == Some(0nat),
+    {
+        match self.read_expr(e) {
+            // VERUS-REWRITE(option-eq): was `self.c_nat_zero() == Some(e)`.
+            Const { .. } => {
+                let r = opt_expr_eq(self.c_nat_zero(), e);
+                proof {
+                    if r {
+                        crate::expr_arena_bridge::is_const_shape_model(e);
+                    }
+                }
+                r
+            },
+            // VERUS-REWRITE(closure-and-wrapper): was
+            // `self.read_bignum(ptr).map(|n| n.is_zero()).unwrap_or(false)`;
+            // `read_bignum_value` is `read_bignum(..).cloned()`, and
+            // `biguint_is_zero` is `is_zero`. Same value.
+            NatLit { ptr, .. } => {
+                let r = match crate::expr_arena_bridge::read_bignum_value(self, ptr) {
+                    Some(n) => crate::nat_lit_model::biguint_is_zero(&n),
+                    None => false,
+                };
+                proof {
+                    if r {
+                        crate::expr_arena_bridge::is_nat_lit_shape_model(e);
+                    }
+                }
+                r
+            },
+            _ => false,
+        }
+    }
+
+    /// Verified in place. Was an `assume_specification` that lost what the
+    /// code checks: the successor head is the CACHED `Nat.succ`, which has no
+    /// universe levels.
+    pub(crate) fn pred_of_nat_succ(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            match result {
+                Some(r) => crate::expr_arena_bridge::nat_repr_pred(e, r) && (
+                crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::App(
+                    Box::new(crate::expr_model::ExprSpec::Const(
+                        crate::expr_arena_bridge::nat_succ_id(),
+                        Seq::empty(),
+                    )),
+                    Box::new(crate::expr_arena_bridge::to_model(r)),
+                ) || (crate::expr_arena_bridge::is_nat_lit_shape(e)
+                    && crate::expr_arena_bridge::nat_lit_value(e) > 0
+                    && crate::expr_arena_bridge::is_nat_lit_shape(r)
+                    && crate::expr_arena_bridge::nat_lit_value(r)
+                    == (crate::expr_arena_bridge::nat_lit_value(e) - 1) as nat)),
+                None => true,
+            },
+    {
+        match self.read_expr(e) {
+            // VERUS-REWRITE(guarded-arm): the guard `if self.c_nat_succ() ==
+            // Some(fun)` moves into the arm; its false case fell through to
+            // `_ => None`, which is what the `else` returns. VERUS-REWRITE(
+            // option-eq): the comparison through `opt_expr_eq`.
+            App { fun, arg, .. } => if opt_expr_eq(self.c_nat_succ(), fun) {
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(fun);
+                    assert(crate::expr_arena_bridge::const_levels_vec(fun) =~= Seq::<crate::level_model::LevelSpec>::empty());
+                }
+                Some(arg)
+            } else {
+                None
+            },
+            NatLit { ptr, .. } => {
+                // VERUS-REWRITE(accessor-swap): was `self.read_bignum(ptr)?`;
+                // VERUS-REWRITE(wrapper-swap): `is_zero` and `n - 1u8` are
+                // `biguint_is_zero` and `biguint_pred`.
+                let n = crate::expr_arena_bridge::read_bignum_value(self, ptr)?;
+                if crate::nat_lit_model::biguint_is_zero(&n) {
+                    None
+                } else {
+                    let r = self.mk_nat_lit_quick(crate::nat_lit_model::biguint_pred(n));
+                    proof {
+                        crate::expr_arena_bridge::is_nat_lit_shape_model(e);
+                    }
+                    r
+                }
+            },
+            _ => None,
+        }
+    }
+
     /// Used in iota reduction (`reduce_rec`) to turn a bignum
     /// either `Nat.zero`, or `App (Nat.succ) (bignum - 1)`; in order to do iota reduction,
     /// we need to know what constructor the major premise comes from.
@@ -858,6 +934,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
             Some(r)
         }
+    }
+}
+
+/// `opt == Some(e)`, with the specification vstd's `Option::eq` lacks.
+fn opt_expr_eq<'t>(opt: Option<ExprPtr<'t>>, e: ExprPtr<'t>) -> (result: bool)
+    ensures
+        result == (opt == Some(e)),
+{
+    match opt {
+        Some(m) => m == e,
+        None => false,
     }
 }
 

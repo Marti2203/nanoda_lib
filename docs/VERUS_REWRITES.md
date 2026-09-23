@@ -159,6 +159,8 @@ needed a different shape.
 | `def_eq_binder_aux`, `whnf_no_unfolding_aux` | `src/tc.rs` | or-pattern of two tuples; slice pattern |
 | `infer_const` | `src/tc.rs` | accessor shape, and an arity check hoisted one frame |
 | `infer` | `src/tc.rs` | both cache lookups go through the verified readers `cached_infer_check`/`cached_infer_no_check` — same lookups, and they hand back the caches' claims |
+| `is_nat_zero`, `pred_of_nat_succ` | `src/expr.rs` | `c_nat_zero()/c_nat_succ() == Some(p)` → `opt_expr_eq`; `pred_of_nat_succ`'s guarded `App` arm → the guard inside the arm (its false case fell through to `_ => None`); `read_bignum(..).map(|n| n.is_zero()).unwrap_or(false)` and `read_bignum(ptr)?`, `n - 1u8` → `read_bignum_value`, `biguint_is_zero`, `biguint_pred` |
+| `def_eq` | `src/tc.rs` | both `Some(p) == self.ctx.c_bool_true()` → `opt_expr_is` |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
 The bodies are the kernel's; what changed is where results are bound.

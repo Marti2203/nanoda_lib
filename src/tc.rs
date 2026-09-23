@@ -3023,10 +3023,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 
-        if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n)
-            == self.ctx.c_bool_true() {
+        // VERUS-REWRITE(option-eq): both `Some(p) == self.ctx.c_bool_true()`
+        // became `opt_expr_is(self.ctx.c_bool_true(), p)` -- `Option::eq`'s
+        // vstd specification is claim-free. Same test.
+        if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && opt_expr_is(
+            self.ctx.c_bool_true(),
+            y_n,
+        ) {
             let x_nn = self.whnf(x_n);
-            if Some(x_nn) == self.ctx.c_bool_true() {
+            if opt_expr_is(self.ctx.c_bool_true(), x_nn) {
+                proof {
+                    // both are `Bool.true`: the same constant, no universes
+                    crate::expr_arena_bridge::is_const_shape_model(x_nn);
+                    crate::expr_arena_bridge::is_const_shape_model(y_n);
+                    assert(crate::expr_arena_bridge::const_levels_vec(x_nn) =~= crate::expr_arena_bridge::const_levels_vec(y_n));
+                    assert(to_model_expr(x_nn) == to_model_expr(y_n));
+                    assert(def_eq_claim(*old(self).env, to_model_expr(x_n), to_model_expr(y_n)));
+                    def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
+                }
                 route_stats::legacy_branch(2);
                 route_stats::bump_legacy_true();
                 self.shadow_check(x, y, true);
@@ -3034,6 +3048,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
+            proof {
+                if easy {
+                    def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
+                }
+            }
             route_stats::legacy_branch(3);
             if easy {
                 route_stats::bump_legacy_true()
@@ -4655,6 +4674,33 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             kconv_trans(env, v, w, big);
         },
         _ => {},
+    }
+}
+
+/// `Some(e) == opt`, with the specification vstd's `Option::eq` lacks.
+fn opt_expr_is<'t>(opt: Option<ExprPtr<'t>>, e: ExprPtr<'t>) -> (result: bool)
+    ensures
+        result == (opt == Some(e)),
+{
+    match opt {
+        Some(m) => m == e,
+        None => false,
+    }
+}
+
+/// A claim about the weak head normal forms is a claim about the inputs.
+pub proof fn def_eq_claim_via<'x, 't>(env: Env<'x, 't>, x: ExprSpec, xn: ExprSpec, y: ExprSpec, yn: ExprSpec)
+    requires
+        whnf_claim(env, x, xn),
+        whnf_claim(env, y, yn),
+        def_eq_claim(env, xn, yn),
+    ensures
+        def_eq_claim(env, x, y),
+{
+    if crate::expr_model::nlbv(x) <= 0 && crate::expr_model::nlbv(y) <= 0 {
+        kconv_trans(env, x, xn, yn);
+        kconv_symm(env, y, yn);
+        kconv_trans(env, x, yn, y);
     }
 }
 

@@ -1683,29 +1683,6 @@ pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
         - 1) as nat)
 }
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::is_nat_zero ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-) -> (result: bool) where 'p: 't
-    ensures
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        result == nat_repr_is_zero(e),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::pred_of_nat_succ ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        match result {
-            Some(r) => nat_repr_pred(e, r),
-            None => true,
-        },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
-
 /// Real-arena counterpart to `expr.rs::TcCtx::nat_lit_to_constructor`
 /// (`expr.rs:523-533`): turn a bignum into the constructor it denotes --
 /// `Nat.zero` when it's `0`, `Nat.succ (bignum - 1)` otherwise. Every
