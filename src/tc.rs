@@ -1645,6 +1645,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return cached
         }
         let (e_fun, args) = self.ctx.unfold_apps(e);
+        // Several arms below shadow `e`; the proofs refer to the input by this.
+        let ghost em0 = to_model_expr(e);
         let (should_cache, eprime) = match self.ctx.read_expr(e_fun) {
             Proj { idx, structure, .. } => if let Some(e) = self.reduce_proj(
                 idx,
@@ -1655,7 +1657,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let e = self.whnf_no_unfolding_aux(e, cheap_proj);
                 (true, e)
             } else {
-                (false, self.ctx.foldl_apps(e_fun, args.into_iter()))
+                let r = self.ctx.foldl_apps(e_fun, args.into_iter());
+                proof {
+                    whnf_claim_refl(*old(self).env, em0);
+                    assert(to_model_expr(r) == em0);
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(r)));
+                }
+                (false, r)
             },
             Sort { level, .. } => {
                 // VERUS-REWRITE(debug-assert): was `debug_assert!`, which is a
@@ -1668,10 +1676,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     args.is_empty(),
                     "whnf_no_unfolding_aux: a sort applied to arguments",
                 );
+                let level0 = level;
                 let level = self.ctx.simplify(level);
-                (false, self.ctx.mk_sort(level))
+                let r = self.ctx.mk_sort(level);
+                proof {
+                    // no arguments, so `e` IS the sort; `simplify` changes the
+                    // level's syntax and keeps its denotation, which is exactly
+                    // `deq_leaf`'s condition for two sorts
+                    assert(em0 == ExprSpec::Sort(crate::level_arena_bridge::to_model(level0)));
+                    crate::tc_model::deq_any_of_leaf(
+                        crate::env_model::to_model_of_env(*old(self).env),
+                        em0,
+                        to_model_expr(r),
+                    );
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(r)));
+                }
+                (false, r)
             },
-            Lambda { .. } if !args.is_empty() => {
+            // VERUS-REWRITE(guarded-arm): the `if !args.is_empty()` guard moves
+            // into the arm body -- a guarded arm whose body calls `&mut self`
+            // makes the postcondition unprovable. The unguarded `Lambda` arm
+            // that followed is the `else`, and its `debug_assert!` is now
+            // true by construction.
+            Lambda { .. } => if !args.is_empty() {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant
@@ -1717,10 +1744,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 e = self.ctx.inst(e, &args[0..n_args]);
                 e = self.ctx.foldl_apps(e, args.into_iter().skip(n_args));
                 (true, self.whnf_no_unfolding_aux(e, cheap_proj))
-            },
-            Lambda { .. } => {
+            } else {
                 debug_assert!(args.is_empty());
-                (false, self.ctx.foldl_apps(e_fun, args.into_iter()))
+                let r = self.ctx.foldl_apps(e_fun, args.into_iter());
+                proof {
+                    whnf_claim_refl(*old(self).env, em0);
+                    assert(to_model_expr(r) == em0);
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(r)));
+                }
+                (false, r)
             },
             Let { val, body, .. } => {
                 let e = self.ctx.inst(body, &[val]);
@@ -1732,7 +1764,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             } else if let Some(reduced) = self.reduce_rec(name, levels, &args) {
                 (true, self.whnf_no_unfolding_aux(reduced, cheap_proj))
             } else {
-                (false, self.ctx.foldl_apps(e_fun, args.into_iter()))
+                let r = self.ctx.foldl_apps(e_fun, args.into_iter());
+                proof {
+                    whnf_claim_refl(*old(self).env, em0);
+                    assert(to_model_expr(r) == em0);
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(r)));
+                }
+                (false, r)
             },
             Var { .. } => crate::util::kernel_fail("Loose bvars are not allowed"),
             Pi { .. } => {
@@ -1741,13 +1779,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     args.is_empty(),
                     "whnf_no_unfolding_aux: a pi applied to arguments",
                 );
+                proof {
+                    whnf_claim_refl(*old(self).env, em0);
+                    assert(to_model_expr(e_fun) == em0);
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e_fun)));
+                }
                 (false, e_fun)
             },
             App { .. } => crate::util::kernel_fail("whnf_no_unfolding_aux: unreduced application"),
-            Local { .. } | NatLit { .. } | StringLit { .. } => (
-                false,
-                self.ctx.foldl_apps(e_fun, args.into_iter()),
-            ),
+            Local { .. } | NatLit { .. } | StringLit { .. } => {
+                let r = self.ctx.foldl_apps(e_fun, args.into_iter());
+                proof {
+                    whnf_claim_refl(*old(self).env, em0);
+                    assert(to_model_expr(r) == em0);
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(r)));
+                }
+                (false, r)
+            },
         };
         if should_cache && !cheap_proj {
             self.cache_whnf_no_unfolding(e, eprime);
@@ -3174,6 +3222,25 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
         e,
         r,
     ) && crate::expr_model::nlbv(r) <= 0)
+}
+
+pub proof fn whnf_claim_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
+    ensures
+        whnf_claim(env, a, a),
+{
+    crate::tc_model::deq_any_refl(crate::env_model::to_model_of_env(env), a);
+}
+
+pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
+    requires
+        whnf_claim(env, a, b),
+        whnf_claim(env, b, c),
+    ensures
+        whnf_claim(env, a, c),
+{
+    if crate::expr_model::nlbv(a) <= 0 {
+        crate::tc_model::deq_any_trans(crate::env_model::to_model_of_env(env), a, b, c);
+    }
 }
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
