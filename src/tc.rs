@@ -920,7 +920,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+    fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -929,13 +929,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         if let (StringLit { ptr, .. }, App { fun, .. }) = self.ctx.read_expr_pair(x, y) {
             if let Some((name, _levels)) = self.ctx.try_const_info(fun) {
                 if name == self.ctx.export_file.name_cache.string_of_list? {
                     // levels should be empty
                     let lhs = self.str_lit_to_ctor_reducing(ptr)?;
-                    return Some(self.def_eq(lhs, y))
+                    let r = self.def_eq(lhs, y);
+                    proof {
+                        // the literal's expansion, whnf'd, is `lhs`
+                        if r {
+                            whnf_claim_refl(*old(self).env, to_model_expr(y));
+                            def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(lhs), to_model_expr(y), to_model_expr(y));
+                        }
+                    }
+                    return Some(r)
                 }
             }
         }
@@ -943,7 +952,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+    fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -952,12 +961,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         if !self.ctx.export_file.config.string_extension_on() {
             return false
         }
-        matches!(self.try_string_lit_expansion_aux(x, y), Some(true))
-            || matches!(self.try_string_lit_expansion_aux(y, x), Some(true))
+        // VERUS-REWRITE(short-circuit-bind): the two `matches!` were one `||`
+        // expression; bound so the second's claim can be turned around. Same
+        // calls, same order, same short-circuit.
+        if matches!(self.try_string_lit_expansion_aux(x, y), Some(true)) {
+            return true
+        }
+        let r = matches!(self.try_string_lit_expansion_aux(y, x), Some(true));
+        proof {
+            if r {
+                def_eq_claim_symm(*old(self).env, to_model_expr(y), to_model_expr(x));
+            }
+        }
+        r
     }
 
     // For structures that carry no additional information, elements with the same type are def_eq.
@@ -3100,6 +3121,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             self.shadow_check(x, y, easy);
             return easy
         }
+        // Every `true` below is a claim about `(xo, yo)`, the whnf'd inputs.
+        let ghost (xo, yo) = (x_n, y_n);
         let result = if self.proof_irrel_eq(x_n, y_n) {
             route_stats::legacy_branch(4);
             true
@@ -3110,18 +3133,35 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     short
                 },
                 Exhausted(x_n, y_n) => {
+                    let ghost (xe, ye) = (x_n, y_n);
                     if self.def_eq_const(x_n, y_n) || self.def_eq_local(x_n, y_n)
                         || self.def_eq_proj(x_n, y_n) {
+                        proof {
+                            def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
+                        }
                         route_stats::legacy_branch(6);
                         true
                     } else {
                         let (xn0, yn0) = (x_n, y_n);
                         let (x_n, y_n) = (self.whnf_no_unfolding(xn0), self.whnf_no_unfolding(yn0));
+                        proof {
+                            scope_pres_in_scope(*self, xn0, x_n);
+                            scope_pres_in_scope(*self, yn0, y_n);
+                        }
                         if x_n != xn0 || y_n != yn0 {
                             let r = self.def_eq(x_n, y_n);
+                            proof {
+                                if r {
+                                    def_eq_claim_via(*old(self).env, to_model_expr(xe), to_model_expr(x_n), to_model_expr(ye), to_model_expr(y_n));
+                                    def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
+                                }
+                            }
                             route_stats::legacy_branch(7);
                             r
                         } else if self.def_eq_app(x_n, y_n) {
+                            proof {
+                                def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
+                            }
                             route_stats::legacy_branch(8);
                             true
                         } else if self.try_eta_expansion(x_n, y_n) {
@@ -3131,6 +3171,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             route_stats::legacy_branch(10);
                             true
                         } else if self.try_string_lit_expansion(x_n, y_n) {
+                            proof {
+                                def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
+                            }
                             route_stats::legacy_branch(11);
                             true
                         } else if matches!(self.def_eq_unit(x_n, y_n), Some(true)) {
@@ -3145,6 +3188,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         };
         if result {
+            proof {
+                def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(xo), to_model_expr(y), to_model_expr(yo));
+            }
             route_stats::bump_legacy_true();
             self.cache_eq(x, y);
         } else {
