@@ -786,8 +786,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         if let Pi { .. } = self.ctx.read_expr(e) {
+            proof {
+                whnf_claim_refl(*old(self).env, to_model_expr(e));
+            }
             return e
         }
         let whnfd = self.whnf(e);
@@ -1858,6 +1862,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
         // Scope: everything below lives in what `e` uses.
@@ -1895,9 +1900,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let mut ctx = Vec::new();
         let ghost fun0 = fun;
+        // Typing: the spine applied to the first `k` arguments has type `T`,
+        // convertible to `fun` instantiated by `ctx`, and exactly that
+        // whenever the last step consumed an argument (`synced`).
+        let ghost env0 = *self.env;
+        let ghost em = to_model_expr(e);
+        let ghost H = crate::beta_model::spine_head(em);
+        let ghost SA = crate::beta_model::spine_args(em);
+        let ghost n = SA.len();
+        proof {
+            crate::beta_model::spine_recompose(em);
+            assert forall|j: int| 0 <= j < args@.len() implies to_model_expr(#[trigger] args@[j]) == SA[n - 1 - j] by {
+                assert(crate::expr_arena_bridge::ptr_models(args@)[j] == to_model_expr(args@[j]));
+                assert(crate::expr_arena_bridge::ptr_models(args@).len() == SA.reverse().len());
+                assert(SA.reverse()[j] == SA[SA.len() - 1 - j]);
+            }
+            assert(crate::expr_arena_bridge::ptr_models(args@).len() == SA.reverse().len());
+        }
         fun = self.infer(fun, flag);
+        let ghost mut k: nat = 0;
+        let ghost mut T = to_model_expr(fun);
+        let ghost mut fT: nat = choose|f: nat| #[trigger] ktypes(env0, to_model_expr(fun0), to_model_expr(fun), f);
+        let ghost mut synced = true;
         proof {
             assert(crate::expr_model::dbj_deep_in(to_model_expr(fun0), L, c0));
+            assert(SA.take(0) =~= Seq::<ExprSpec>::empty());
+            assert(crate::expr_arena_bridge::ptr_models(ctx@) =~= Seq::<ExprSpec>::empty());
+            crate::beta_model::subst_full_empty(to_model_expr(fun), 0);
+            kconv_refl(env0, T);
         }
         while !args.is_empty()
             invariant
@@ -1919,6 +1949,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_model::nlbv(to_model_expr(fun)) <= ctx@.len(),
                 forall|j: int| 0 <= j < args@.len() ==> crate::expr_model::nlbv(to_model_expr(#[trigger] args@[j])) <= 0,
                 forall|j: int| 0 <= j < ctx@.len() ==> crate::expr_model::nlbv(to_model_expr(#[trigger] ctx@[j])) <= 0,
+                // typing
+                env0 == *old(self).env,
+                em == to_model_expr(e),
+                H == crate::beta_model::spine_head(em),
+                SA == crate::beta_model::spine_args(em),
+                n == SA.len(),
+                em == crate::beta_model::spine_app(H, SA),
+                k + args@.len() == n,
+                forall|j: int| 0 <= j < args@.len() ==> to_model_expr(#[trigger] args@[j]) == SA[n - 1 - j],
+                ktypes(env0, crate::beta_model::spine_app(H, SA.take(k as int)), T, fT),
+                kconv(env0, T, crate::expr_model::subst_full(to_model_expr(fun), crate::expr_arena_bridge::ptr_models(ctx@), 0)),
+                synced ==> T == crate::expr_model::subst_full(to_model_expr(fun), crate::expr_arena_bridge::ptr_models(ctx@), 0),
+                args@.len() == 0 ==> synced,
         {
             match self.ctx.read_expr(fun) {
                 Pi { binder_type, body, .. } => {
@@ -1956,6 +1999,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let ghost ctx_pre = ctx@;
                     ctx.push(arg);
                     proof {
+                        // the next argument is SA[k]
+                        let am = to_model_expr(arg);
+                        assert(am == SA[k as int]);
+                        let cm = crate::expr_arena_bridge::ptr_models(ctx_pre);
+                        assert forall|j: int| 0 <= j < cm.len() implies crate::expr_model::nlbv(#[trigger] cm[j]) <= 0 by {
+                            assert(cm[j] == to_model_expr(ctx_pre[j]));
+                        }
+                        let f2 = infer_app_step(
+                            env0,
+                            crate::beta_model::spine_app(H, SA.take(k as int)),
+                            am,
+                            T,
+                            fT,
+                            to_model_expr(binder_type),
+                            to_model_expr(body),
+                            cm,
+                        );
+                        crate::beta_model::spine_app_compose_last(H, SA.take(k as int), am);
+                        assert(SA.take(k as int).push(am) =~= SA.take(k as int + 1));
+                        crate::expr_arena_bridge::ptr_models_push(ctx_pre, arg);
+                        T = crate::expr_model::subst_full(to_model_expr(body), cm.push(am), 0);
+                        fT = f2;
+                        k = k + 1;
+                        synced = true;
+                        kconv_refl(env0, T);
+                    }
+                    proof {
                         assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body))
                             < crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun)));
                         assert(crate::expr_model::nlbv(to_model_expr(body)) <= ctx@.len());
@@ -1980,12 +2050,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let as_pi = self.ensure_pi(as_pi);
                     proof {
                         assert(crate::expr_model::dbj_deep_in(to_model_expr(as_pi0), L, c0));
+                        kconv_trans(env0, T, to_model_expr(as_pi0), to_model_expr(as_pi));
+                        synced = false;
                     }
                     match self.ctx.read_expr(as_pi) {
                         Pi { .. } => {
                             // Only clear what we just instantiated.
                             ctx.clear();
                             fun = as_pi;
+                            proof {
+                                assert(crate::expr_arena_bridge::ptr_models(ctx@) =~= Seq::<ExprSpec>::empty());
+                                crate::beta_model::subst_full_empty(to_model_expr(fun), 0);
+                            }
                         },
                         _ => crate::util::kernel_fail("infer_app: applied a non-function"),
                     }
@@ -1997,6 +2073,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             inst_deep_in(fun, ctx@, L, c0);
             inst_closed(fun, ctx@);
             scope_pres_of_occ(to_model_expr(e), to_model_expr(r), c0);
+            // every argument consumed, and the last step consumed one
+            assert(SA.take(n as int) =~= SA);
+            assert(ktypes(env0, em, to_model_expr(r), fT));
         }
         r
     }
@@ -5940,6 +6019,60 @@ pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: n
 /// a type of the input in the kernel's judgement.
 pub open spec fn kinfer_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
     exists|f: nat| #[trigger] ktypes(env, e, t, f)
+}
+
+/// ONE ARGUMENT OF `infer_app`: the spine so far has type `T`, convertible
+/// to the current function type instantiated by the pending arguments, and
+/// that type is a binder. Applying the next argument types the longer spine
+/// at exactly the binder's body instantiated by the pending arguments and
+/// the new one -- the application rule, whose conversion premise is the one
+/// carried, lifted to a common fuel.
+pub proof fn infer_app_step<'x, 't>(
+    env: Env<'x, 't>,
+    sp: ExprSpec,
+    a: ExprSpec,
+    T: ExprSpec,
+    fT: nat,
+    bt: ExprSpec,
+    body: ExprSpec,
+    ctxm: Seq<ExprSpec>,
+) -> (f2: nat)
+    requires
+        ktypes(env, sp, T, fT),
+        kconv(env, T, crate::expr_model::subst_full(ExprSpec::Bind(Box::new(bt), Box::new(body)), ctxm, 0)),
+        crate::expr_model::nlbv(a) <= 0,
+        forall|j: int| 0 <= j < ctxm.len() ==> crate::expr_model::nlbv(#[trigger] ctxm[j]) <= 0,
+    ensures
+        ktypes(
+            env,
+            ExprSpec::App(Box::new(sp), Box::new(a)),
+            crate::expr_model::subst_full(body, ctxm.push(a), 0),
+            f2,
+        ),
+{
+    let dty = crate::env_model::to_model_of_declar_ty(env);
+    let denv = crate::env_model::to_model_of_env(env);
+    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let aty = crate::expr_model::subst_full(bt, ctxm, 0);
+    let bt2 = crate::expr_model::subst_full(body, ctxm, 1);
+    let F = ExprSpec::Bind(Box::new(aty), Box::new(bt2));
+    assert(crate::expr_model::subst_full(ExprSpec::Bind(Box::new(bt), Box::new(body)), ctxm, 0) == F);
+    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T, F, h);
+    let f2: nat = (if fT >= h { fT } else { h }) + 1;
+    crate::tc_model::types_to_mono(dty, denv, lctx, true, sp, T, fT, f2);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, T, F, h, (f2 - 1) as nat);
+    assert(crate::tc_model::app_marker(T, aty, bt2, aty));
+    assert(crate::tc_model::types_to(
+        dty,
+        denv,
+        lctx,
+        true,
+        ExprSpec::App(Box::new(sp), Box::new(a)),
+        crate::expr_model::subst_full(bt2, seq![a], 0),
+        f2,
+    ));
+    crate::expr_model::subst_full_push(body, ctxm, a, 0);
+    f2
 }
 
 /// What `def_eq` promises when it answers `true`, and what the equality cache
