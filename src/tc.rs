@@ -802,7 +802,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> LevelPtr<'t>
+    pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: LevelPtr<'t>)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), e),
@@ -811,6 +811,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
+            kinfer_claim(*old(self).env, to_model_expr(e), ExprSpec::Sort(to_model_level(result))),
     {
         let whnfd = self.infer_then_whnf(e, flag);
         match self.ctx.read_expr(whnfd) {
@@ -1477,9 +1478,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let ty = self.infer(e, flag);
-        self.whnf(ty)
+        let r = self.whnf(ty);
+        proof {
+            kinfer_conv(*old(self).env, to_model_expr(e), to_model_expr(ty), to_model_expr(r));
+        }
+        r
     }
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -2306,6 +2312,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let mut universes = Vec::new();
         let mut locals = Vec::new();
@@ -2313,10 +2320,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Scope: the walk works in what was live on entry plus the locals it
         // opens (`walk_set`), which is always live.
         let ghost L = live_set(*self);
+        // Typing: the telescope walked so far (`pi_walk`).
+        let ghost env0 = *self.env;
+        let ghost e0m = to_model_expr(e);
+        let ghost mut Xs = seq![to_model_expr(e)];
+        let ghost mut As = Seq::<ExprSpec>::empty();
+        let ghost mut Bs = Seq::<ExprSpec>::empty();
         proof {
             live_below(*self, c0);
             assert(ids_of(locals@) =~= Seq::<u32>::empty());
             assert(self.live@ + ids_of(locals@) =~= self.live@);
+            assert(crate::expr_arena_bridge::ptr_models(locals@) =~= Seq::<ExprSpec>::empty());
+            assert(level_models(universes@) =~= Seq::<crate::level_model::LevelSpec>::empty());
+            crate::beta_model::subst_full_empty(to_model_expr(e), 0);
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant
@@ -2334,6 +2350,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_model::dbj_deep_in(to_model_expr(e), L, c0),
                 crate::expr_model::nlbv(to_model_expr(e)) <= locals@.len(),
                 opened_locals(locals@, c0, walk_set(L, self.live@, c0)),
+                env0 == *old(self).env,
+                pi_walk(env0, Xs, As, Bs, locals@, level_models(universes@)),
+                Xs[locals@.len() as int] == crate::expr_model::subst_full(
+                    to_model_expr(e),
+                    crate::expr_arena_bridge::ptr_models(locals@),
+                    0,
+                ),
+                Xs[0] == e0m,
         {
             let ghost bt0 = binder_type;
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
@@ -2349,6 +2373,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 in_scope_of_deep_in(*self, binder_type, Sk);
             }
             let dom_univ = self.infer_sort_of(binder_type, flag);
+            let ghost pre_u = universes@;
             universes.push(dom_univ);
             crate::util::kernel_check(
                 self.ctx.dbj_level_counter < u16::MAX,
@@ -2365,6 +2390,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 walk_set_grows(L, live_k, crate::expr_arena_bridge::expr_id(loc), c0);
                 opened_locals_weaken(locals@, c0, walk_set(L, live_k, c0), walk_set(L, self.live@, c0));
                 assert(ids_of(locals@) =~= ids_of(pre).push(crate::expr_arena_bridge::expr_id(loc)));
+                // typing: one more binder of the telescope
+                assert(level_models(universes@) =~= level_models(pre_u).push(to_model_level(dom_univ)));
+                assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
+                assert forall|j: int| 0 <= j < pre.len() implies crate::expr_arena_bridge::is_local_shape(#[trigger] pre[j]) by {}
+                pi_walk_step(
+                    env0,
+                    Xs,
+                    As,
+                    Bs,
+                    pre,
+                    level_models(pre_u),
+                    to_model_expr(bt0),
+                    to_model_expr(body),
+                    to_model_level(dom_univ),
+                    loc,
+                );
+                Xs = Xs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(locals@), 0));
+                As = As.push(crate::expr_model::subst_full(to_model_expr(bt0), crate::expr_arena_bridge::ptr_models(pre), 0));
+                Bs = Bs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(pre), 1));
             }
             proof {
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body))
@@ -2385,6 +2429,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope_of_deep_in(*self, instd, Sn);
         }
         let mut infd = self.infer_sort_of(instd, flag);
+        let ghost n = locals@.len();
+        let ghost usn = level_models(universes@);
+        let ghost v = to_model_level(infd);
+        proof {
+            pi_telescope(env0, Xs, As, Bs, locals@, usn, v, 0);
+            assert(usn.subrange(n as int, n as int) =~= Seq::<crate::level_model::LevelSpec>::empty());
+        }
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant
                 tc_wf(*self),
@@ -2392,7 +2443,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
                 self.live@ == old(self).live@ + ids_of(locals@),
                 universes@.len() == locals@.len(),
+                universes@.len() <= n,
+                n == usn.len(),
+                level_models(universes@) == usn.subrange(0, universes@.len() as int),
+                to_model_level(infd) == imax_fold(usn.subrange(universes@.len() as int, n as int), v),
         {
+            proof {
+                let j = universes@.len() as int;
+                assert(level_models(universes@.push(universe)) == usn.subrange(0, j + 1));
+                assert(level_models(universes@.push(universe))[j] == to_model_level(universe));
+                assert(to_model_level(universe) == usn[j]);
+                assert(usn.subrange(j, n as int).drop_first() =~= usn.subrange(j + 1, n as int));
+                assert(level_models(universes@) =~= usn.subrange(0, j));
+            }
             infd = self.ctx.imax(universe, infd);
             self.ctx.replace_dbj_level(local);
             self.live = Ghost(self.live@.drop_last());
@@ -2405,7 +2468,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             c0 == self.ctx.dbj_level_counter,
             "infer_pi: de Bruijn level counter was left unbalanced",
         );
-        self.ctx.mk_sort(infd)
+        let r = self.ctx.mk_sort(infd);
+        proof {
+            assert(usn.subrange(0, n as int) =~= usn);
+            assert(to_model_expr(r) == ExprSpec::Sort(imax_fold(usn.subrange(0, n as int), v)));
+        }
+        r
     }
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -5762,6 +5830,7 @@ pub proof fn binder_walk_step<'x, 't>(
 
 /// The walk closed off: the innermost bodies agree (on closed inputs), so the
 /// two telescopes do.
+#[verifier::spinoff_prover]
 pub proof fn binder_walk_close<'x, 't>(
     env: Env<'x, 't>,
     b1s: Seq<ExprSpec>,
@@ -6044,6 +6113,214 @@ pub proof fn kinfer_of_ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec
 {
     kconv_refl(env, t);
     assert(ktc_marker(t, f));
+}
+
+/// A claim carries along a conversion of its result.
+pub proof fn kinfer_conv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r1: ExprSpec, r2: ExprSpec)
+    requires
+        kinfer_claim(env, e, r1),
+        kconv(env, r1, r2),
+    ensures
+        kinfer_claim(env, e, r2),
+{
+    let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f) && kconv(env, T, r1);
+    kconv_trans(env, T, r1, r2);
+    assert(ktc_marker(T, f));
+}
+
+/// The universes of a Pi telescope, folded from the inside: `imax u0 (imax u1
+/// (.. (imax u(n-1) v)))`, the sort `infer_pi` builds.
+pub open spec fn imax_fold(us: Seq<crate::level_model::LevelSpec>, v: crate::level_model::LevelSpec) -> crate::level_model::LevelSpec
+    decreases us.len(),
+{
+    if us.len() == 0 {
+        v
+    } else {
+        crate::level_model::LevelSpec::IMax(Box::new(us[0]), Box::new(imax_fold(us.drop_first(), v)))
+    }
+}
+
+pub open spec fn level_models<'t>(s: Seq<crate::util::LevelPtr<'t>>) -> Seq<crate::level_model::LevelSpec> {
+    Seq::new(s.len(), |i: int| to_model_level(s[i]))
+}
+
+/// ONE PI BINDER: its type has a sort `u`, its body (opened with a local) has a
+/// sort `acc`, so the binder has sort `imax u acc` -- the Pi rule, exactly.
+pub proof fn pi_rule_step<'x, 't>(
+    env: Env<'x, 't>,
+    A: ExprSpec,
+    B: ExprSpec,
+    lid: u32,
+    u: crate::level_model::LevelSpec,
+    acc: crate::level_model::LevelSpec,
+) -> (f: nat)
+    requires
+        kinfer_claim(env, A, ExprSpec::Sort(u)),
+        kinfer_claim(env, crate::expr_model::subst_full(B, seq![ExprSpec::Free(lid)], 0), ExprSpec::Sort(acc)),
+    ensures
+        ktypes(
+            env,
+            ExprSpec::Bind(Box::new(A), Box::new(B)),
+            ExprSpec::Sort(crate::level_model::LevelSpec::IMax(Box::new(u), Box::new(acc))),
+            f,
+        ),
+{
+    let dty = crate::env_model::to_model_of_declar_ty(env);
+    let denv = crate::env_model::to_model_of_env(env);
+    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let ob = crate::expr_model::subst_full(B, seq![ExprSpec::Free(lid)], 0);
+    let (TA, fA) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, A, T, f)
+        && kconv(env, T, ExprSpec::Sort(u));
+    let (TB, fB) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, ob, T, f)
+        && kconv(env, T, ExprSpec::Sort(acc));
+    let hA = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TA, ExprSpec::Sort(u), h);
+    let hB = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TB, ExprSpec::Sort(acc), h);
+    let m1: nat = if fA >= fB { fA } else { fB };
+    let m2: nat = if hA >= hB { hA } else { hB };
+    let g: nat = if m1 >= m2 { m1 } else { m2 };
+    crate::tc_model::types_to_mono(dty, denv, lctx, true, A, TA, fA, g);
+    crate::tc_model::types_to_mono(dty, denv, lctx, true, ob, TB, fB, g);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TA, ExprSpec::Sort(u), hA, g);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TB, ExprSpec::Sort(acc), hB, g);
+    assert(crate::tc_model::pi_marker(lid, TA, u, TB, acc));
+    g + 1
+}
+
+/// A Pi telescope's walk state: the term at each depth, its binder type and
+/// body, and each binder type's sort; opening a depth's body with its local
+/// gives the next depth.
+pub open spec fn pi_walk<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    us: Seq<crate::level_model::LevelSpec>,
+) -> bool {
+    &&& Xs.len() == locals.len() + 1 && As.len() == locals.len() && Bs.len() == locals.len() && us.len() == locals.len()
+    &&& forall|j: int| 0 <= j < locals.len() ==> #[trigger] Xs[j] == ExprSpec::Bind(Box::new(As[j]), Box::new(Bs[j]))
+    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::subst_full(
+        #[trigger] Bs[j],
+        seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[j]))],
+        0,
+    ) == Xs[j + 1]
+    &&& forall|j: int| 0 <= j < locals.len() ==> #[trigger] kinfer_claim(env, As[j], ExprSpec::Sort(us[j]))
+}
+
+/// One more binder of the walk.
+pub proof fn pi_walk_step<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    us: Seq<crate::level_model::LevelSpec>,
+    btm: ExprSpec,
+    bodym: ExprSpec,
+    u: crate::level_model::LevelSpec,
+    loc: crate::util::ExprPtr<'t>,
+)
+    requires
+        pi_walk(env, Xs, As, Bs, locals, us),
+        Xs[locals.len() as int] == crate::expr_model::subst_full(
+            ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
+            crate::expr_arena_bridge::ptr_models(locals),
+            0,
+        ),
+        kinfer_claim(
+            env,
+            crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0),
+            ExprSpec::Sort(u),
+        ),
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::is_local_shape(#[trigger] locals[j]),
+        crate::expr_arena_bridge::is_local_shape(loc),
+    ensures
+        pi_walk(
+            env,
+            Xs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0)),
+            As.push(crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0)),
+            Bs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals), 1)),
+            locals.push(loc),
+            us.push(u),
+        ),
+{
+    let lm = crate::expr_arena_bridge::ptr_models(locals);
+    let k = locals.len() as int;
+    let a = crate::expr_model::subst_full(btm, lm, 0);
+    let b = crate::expr_model::subst_full(bodym, lm, 1);
+    let x = crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0);
+    let (Xs2, As2, Bs2, l2, us2) = (Xs.push(x), As.push(a), Bs.push(b), locals.push(loc), us.push(u));
+    crate::expr_arena_bridge::is_local_shape_model(loc);
+    assert forall|j: int| 0 <= j < lm.len() implies #[trigger] crate::expr_model::nlbv(lm[j]) <= 0 by {
+        crate::expr_arena_bridge::is_local_shape_model(locals[j]);
+    }
+    crate::expr_model::subst_full_push(bodym, lm, ExprSpec::Free(crate::expr_arena_bridge::expr_id(loc)), 0);
+    crate::expr_arena_bridge::ptr_models_push(locals, loc);
+    assert(Xs[k] == ExprSpec::Bind(Box::new(a), Box::new(b)));
+    assert forall|j: int| 0 <= j < l2.len() implies #[trigger] Xs2[j] == ExprSpec::Bind(Box::new(As2[j]), Box::new(Bs2[j])) by {
+        if j < k {
+            assert(Xs2[j] == Xs[j] && As2[j] == As[j] && Bs2[j] == Bs[j]);
+        }
+    }
+    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_model::subst_full(
+        #[trigger] Bs2[j],
+        seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(l2[j]))],
+        0,
+    ) == Xs2[j + 1] by {
+        if j < k {
+            assert(Bs2[j] == Bs[j] && l2[j] == locals[j] && Xs2[j + 1] == Xs[j + 1]);
+        }
+    }
+    assert forall|j: int| 0 <= j < l2.len() implies #[trigger] kinfer_claim(env, As2[j], ExprSpec::Sort(us2[j])) by {
+        if j < k {
+            assert(As2[j] == As[j] && us2[j] == us[j]);
+        }
+    }
+}
+
+/// THE TELESCOPE: from the innermost body's sort outwards, each binder has
+/// the sort `imax` of its type's sort and the rest.
+#[verifier::spinoff_prover]
+pub proof fn pi_telescope<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    us: Seq<crate::level_model::LevelSpec>,
+    v: crate::level_model::LevelSpec,
+    i: nat,
+)
+    requires
+        pi_walk(env, Xs, As, Bs, locals, us),
+        kinfer_claim(env, Xs[locals.len() as int], ExprSpec::Sort(v)),
+        i <= locals.len(),
+    ensures
+        kinfer_claim(env, Xs[i as int], ExprSpec::Sort(imax_fold(us.subrange(i as int, us.len() as int), v))),
+    decreases locals.len() - i,
+{
+    let n = locals.len() as int;
+    if i as int == n {
+        assert(us.subrange(n, n) =~= Seq::<crate::level_model::LevelSpec>::empty());
+    } else {
+        pi_telescope(env, Xs, As, Bs, locals, us, v, i + 1);
+        let ii = i as int;
+        let acc = imax_fold(us.subrange(ii + 1, n), v);
+        assert(us.subrange(ii, n).len() > 0);
+        assert(us.subrange(ii, n)[0] == us[ii]);
+        assert(us.subrange(ii, n).drop_first() =~= us.subrange(ii + 1, n));
+        assert(imax_fold(us.subrange(ii, n), v) == crate::level_model::LevelSpec::IMax(Box::new(us[ii]), Box::new(acc)));
+        assert(Xs[ii] == ExprSpec::Bind(Box::new(As[ii]), Box::new(Bs[ii])));
+        assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[ii]))], 0) == Xs[ii + 1]);
+        assert(kinfer_claim(env, As[ii], ExprSpec::Sort(us[ii])));
+        let f = pi_rule_step(env, As[i as int], Bs[i as int], crate::expr_arena_bridge::expr_id(locals[i as int]), us[i as int], acc);
+        kinfer_of_ktypes(
+            env,
+            Xs[i as int],
+            ExprSpec::Sort(crate::level_model::LevelSpec::IMax(Box::new(us[i as int]), Box::new(acc))),
+            f,
+        );
+    }
 }
 
 /// ONE ARGUMENT OF `infer_app`: the spine so far has type `T`, convertible
