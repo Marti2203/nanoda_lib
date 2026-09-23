@@ -516,6 +516,169 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
     }
 }
 
+/// DEEP SCOPE: every level-local in `e` is below `c`, AND each such local's
+/// own type is deep-in-scope below that local's level. Well-founded because
+/// the levels strictly decrease along the recursion.
+///
+/// Why deep rather than `dbj_serials_below`: `infer` of a local returns the
+/// local's TYPE, and the type's scope has to come from somewhere. Stating it
+/// about every local in the arena would be an assumption (the arena is
+/// external), and would bind every creator of locals -- the shadow's included
+/// -- to a precondition. Carried inside the scope predicate instead, it comes
+/// with the local, and nothing is assumed.
+pub open spec fn dbj_deep(e: ExprSpec, c: u16) -> bool
+    decreases c, e,
+{
+    match e {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
+            Some(s) => s < c && dbj_deep(crate::expr_arena_bridge::arena_lctx()[id], s),
+            None => true,
+        },
+        ExprSpec::App(f, a) => dbj_deep(*f, c) && dbj_deep(*a, c),
+        ExprSpec::Bind(t, b) => dbj_deep(*t, c) && dbj_deep(*b, c),
+        ExprSpec::Let(t, v, b) => dbj_deep(*t, c) && dbj_deep(*v, c) && dbj_deep(*b, c),
+        ExprSpec::Proj(_, st) => dbj_deep(*st, c),
+        _ => true,
+    }
+}
+
+/// Deep scope implies shallow scope.
+pub proof fn dbj_deep_below(e: ExprSpec, c: u16)
+    requires
+        dbj_deep(e, c),
+    ensures
+        dbj_serials_below(e, c),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            dbj_deep_below(*f, c);
+            dbj_deep_below(*a, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            dbj_deep_below(*t, c);
+            dbj_deep_below(*b, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            dbj_deep_below(*t, c);
+            dbj_deep_below(*v, c);
+            dbj_deep_below(*b, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            dbj_deep_below(*st, c);
+        },
+        _ => {},
+    }
+}
+
+/// Raising the bound keeps it true: a local's own type is judged at the
+/// local's level, which does not move.
+pub proof fn dbj_deep_mono(e: ExprSpec, c1: u16, c2: u16)
+    requires
+        dbj_deep(e, c1),
+        c1 <= c2,
+    ensures
+        dbj_deep(e, c2),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            dbj_deep_mono(*f, c1, c2);
+            dbj_deep_mono(*a, c1, c2);
+        },
+        ExprSpec::Bind(t, b) => {
+            dbj_deep_mono(*t, c1, c2);
+            dbj_deep_mono(*b, c1, c2);
+        },
+        ExprSpec::Let(t, v, b) => {
+            dbj_deep_mono(*t, c1, c2);
+            dbj_deep_mono(*v, c1, c2);
+            dbj_deep_mono(*b, c1, c2);
+        },
+        ExprSpec::Proj(_, st) => {
+            dbj_deep_mono(*st, c1, c2);
+        },
+        _ => {},
+    }
+}
+
+/// No free variables: deep-in-scope at every depth.
+pub proof fn no_fv_dbj_deep(e: ExprSpec, c: u16)
+    requires
+        !has_fv(e),
+    ensures
+        dbj_deep(e, c),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            no_fv_dbj_deep(*f, c);
+            no_fv_dbj_deep(*a, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            no_fv_dbj_deep(*t, c);
+            no_fv_dbj_deep(*b, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            no_fv_dbj_deep(*t, c);
+            no_fv_dbj_deep(*v, c);
+            no_fv_dbj_deep(*b, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            no_fv_dbj_deep(*st, c);
+        },
+        _ => {},
+    }
+}
+
+/// Substitution keeps deep scope.
+pub proof fn subst_full_dbj_deep(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+    requires
+        dbj_deep(e, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep(substs[i], c),
+    ensures
+        dbj_deep(subst_full(e, substs, offset), c),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) >= offset && (i as nat - offset) < substs.len() {
+                let j = (substs.len() - 1 - (i as nat - offset)) as int;
+                assert(dbj_deep(substs[j], c));
+            }
+        },
+        ExprSpec::App(f, a) => {
+            subst_full_dbj_deep(*f, substs, offset, c);
+            subst_full_dbj_deep(*a, substs, offset, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_full_dbj_deep(*t, substs, offset, c);
+            subst_full_dbj_deep(*b, substs, offset + 1, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_full_dbj_deep(*t, substs, offset, c);
+            subst_full_dbj_deep(*v, substs, offset, c);
+            subst_full_dbj_deep(*b, substs, offset + 1, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            subst_full_dbj_deep(*st, substs, offset, c);
+        },
+        _ => {},
+    }
+}
+
+/// Freshness from deep scope.
+pub proof fn dbj_deep_fv_absent(e: ExprSpec, k: u32, c: u16)
+    requires
+        crate::expr_arena_bridge::dbj_serial(k) == Some(c),
+        dbj_deep(e, c),
+    ensures
+        fv_absent(e, k),
+{
+    dbj_deep_below(e, c);
+    dbj_serials_below_fv_absent(e, k, c);
+}
+
 /// Substituting a prefix `l` under one binder, then `s` at the binder itself,
 /// is substituting the extended prefix `l.push(s)` -- provided every value is
 /// closed, so the second pass cannot reach inside what the first put in. This

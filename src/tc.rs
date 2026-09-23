@@ -892,8 +892,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // scope: the expansion has no locals, and whnf adds none
                     crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_len(x));
-                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_serials_below(sl, k) implies crate::expr_model::dbj_serials_below(to_model_expr(r), k) by {
-                        crate::expr_model::no_fv_dbj_serials_below(to_model_expr(c), k);
+                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(sl, k) implies crate::expr_model::dbj_deep(to_model_expr(r), k) by {
+                        crate::expr_model::no_fv_dbj_deep(to_model_expr(c), k);
                     }
                 }
                 Some(r)
@@ -1380,11 +1380,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
                     }
                     // scope: the field is an argument of the whnf'd structure
-                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_serials_below(ExprSpec::Proj(idx, Box::new(s0)), k)
-                        implies crate::expr_model::dbj_serials_below(to_model_expr(a), k) by {
-                        assert(crate::expr_model::dbj_serials_below(s0, k));
-                        assert(crate::expr_model::dbj_serials_below(sm, k));
-                        spine_app_dbj_serials_below(ExprSpec::Const(id, lv), am2, k);
+                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(ExprSpec::Proj(idx, Box::new(s0)), k)
+                        implies crate::expr_model::dbj_deep(to_model_expr(a), k) by {
+                        assert(crate::expr_model::dbj_deep(s0, k));
+                        assert(crate::expr_model::dbj_deep(sm, k));
+                        spine_app_dbj_deep(ExprSpec::Const(id, lv), am2, k);
                     }
                 }
                 Some(a)
@@ -3936,36 +3936,36 @@ fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
 }
 
 /// A spine is in scope exactly when its head and every argument are.
-pub proof fn spine_app_dbj_serials_below(h: ExprSpec, args: Seq<ExprSpec>, c: u16)
+pub proof fn spine_app_dbj_deep(h: ExprSpec, args: Seq<ExprSpec>, c: u16)
     ensures
-        crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h, args), c) <==> (
-        crate::expr_model::dbj_serials_below(h, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_serials_below(args[i], c)),
+        crate::expr_model::dbj_deep(crate::beta_model::spine_app(h, args), c) <==> (
+        crate::expr_model::dbj_deep(h, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep(args[i], c)),
     decreases args.len(),
 {
     if args.len() > 0 {
         let init = args.subrange(0, args.len() - 1);
         let last = args[args.len() - 1];
-        spine_app_dbj_serials_below(h, init, c);
+        spine_app_dbj_deep(h, init, c);
         assert(crate::beta_model::spine_app(h, args) == ExprSpec::App(
             Box::new(crate::beta_model::spine_app(h, init)),
             Box::new(last),
         ));
-        if crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h, args), c) {
+        if crate::expr_model::dbj_deep(crate::beta_model::spine_app(h, args), c) {
             assert forall|i: int| 0 <= i < args.len() implies
-                #[trigger] crate::expr_model::dbj_serials_below(args[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep(args[i], c) by {
                 if i < args.len() - 1 {
                     assert(init[i] == args[i]);
                 }
             }
         }
-        if crate::expr_model::dbj_serials_below(h, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_serials_below(args[i], c) {
+        if crate::expr_model::dbj_deep(h, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep(args[i], c) {
             assert forall|i: int| 0 <= i < init.len() implies
-                #[trigger] crate::expr_model::dbj_serials_below(init[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep(init[i], c) by {
                 assert(init[i] == args[i]);
             }
-            assert(crate::expr_model::dbj_serials_below(last, c));
+            assert(crate::expr_model::dbj_deep(last, c));
         }
     }
 }
@@ -3977,25 +3977,25 @@ pub proof fn spine_scope_pres(h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
     ensures
         scope_pres(crate::beta_model::spine_app(h1, args), crate::beta_model::spine_app(h2, args)),
 {
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h1, args), c)
-        implies crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h2, args), c) by {
-        spine_app_dbj_serials_below(h1, args, c);
-        spine_app_dbj_serials_below(h2, args, c);
+    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(crate::beta_model::spine_app(h1, args), c)
+        implies crate::expr_model::dbj_deep(crate::beta_model::spine_app(h2, args), c) by {
+        spine_app_dbj_deep(h1, args, c);
+        spine_app_dbj_deep(h2, args, c);
     }
 }
 
 /// What a head peels to under `n` binders is in scope if the head is.
-pub proof fn spine_bind_dbj_serials_below(lam: ExprSpec, n: nat, bm: ExprSpec, c: u16)
+pub proof fn spine_bind_dbj_deep(lam: ExprSpec, n: nat, bm: ExprSpec, c: u16)
     requires
         crate::beta_model::spine_bind(lam, n) == Some(bm),
-        crate::expr_model::dbj_serials_below(lam, c),
+        crate::expr_model::dbj_deep(lam, c),
     ensures
-        crate::expr_model::dbj_serials_below(bm, c),
+        crate::expr_model::dbj_deep(bm, c),
     decreases n,
 {
     if n > 0 {
         if let ExprSpec::Bind(_, b) = lam {
-            spine_bind_dbj_serials_below(*b, (n - 1) as nat, bm, c);
+            spine_bind_dbj_deep(*b, (n - 1) as nat, bm, c);
         }
     }
 }
@@ -4050,9 +4050,10 @@ pub open spec fn telescope_ok<'x, 't>(
     &&& c0 as nat + n < 0x1_0000
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(Box::new(t1s[i]), Box::new(b1s[i + 1]))
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(Box::new(t2s[i]), Box::new(b2s[i + 1]))
-    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_serials_below(b1s[i], c0) && crate::expr_model::dbj_serials_below(b2s[i], c0)
+    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(b1s[i], c0) && crate::expr_model::dbj_deep(b2s[i], c0)
     &&& forall|i: int| 0 <= i < n ==> #[trigger] ls[i] == ExprSpec::Free(ks[i])
     &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ks[i]) == Some((c0 + i) as u16)
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_model::dbj_deep(crate::expr_arena_bridge::arena_lctx()[ks[i]], (c0 + i) as u16)
     // each binder's types, instantiated with the locals opened so far
     &&& forall|i: int| 0 <= i < n ==> #[trigger] kconv(
         env,
@@ -4076,9 +4077,9 @@ pub proof fn binder_step<'x, 't>(
     cj: u16,
 )
     requires
-        forall|q: int| 0 <= q < lj.len() ==> crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_serials_below(lj[q], cj),
-        crate::expr_model::dbj_serials_below(n1, cj),
-        crate::expr_model::dbj_serials_below(n2, cj),
+        forall|q: int| 0 <= q < lj.len() ==> crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(lj[q], cj),
+        crate::expr_model::dbj_deep(n1, cj),
+        crate::expr_model::dbj_deep(n2, cj),
         crate::expr_arena_bridge::dbj_serial(k) == Some(cj),
         kconv(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0)),
         kconv(env, crate::expr_model::subst_full(n1, lj.push(ExprSpec::Free(k)), 0), crate::expr_model::subst_full(n2, lj.push(ExprSpec::Free(k)), 0)),
@@ -4091,13 +4092,45 @@ pub proof fn binder_step<'x, 't>(
 {
     let s1 = crate::expr_model::subst_full(n1, lj, 1);
     let s2 = crate::expr_model::subst_full(n2, lj, 1);
-    crate::expr_model::subst_full_dbj_serials_below(n1, lj, 1, cj);
-    crate::expr_model::subst_full_dbj_serials_below(n2, lj, 1, cj);
-    crate::expr_model::dbj_serials_below_fv_absent(s1, k, cj);
-    crate::expr_model::dbj_serials_below_fv_absent(s2, k, cj);
+    crate::expr_model::subst_full_dbj_deep(n1, lj, 1, cj);
+    crate::expr_model::subst_full_dbj_deep(n2, lj, 1, cj);
+    crate::expr_model::dbj_deep_fv_absent(s1, k, cj);
+    crate::expr_model::dbj_deep_fv_absent(s2, k, cj);
     crate::expr_model::subst_full_push(n1, lj, ExprSpec::Free(k), 0);
     crate::expr_model::subst_full_push(n2, lj, ExprSpec::Free(k), 0);
     kconv_bind_fresh(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0), s1, s2, k);
+}
+
+/// The locals opened before depth `j` are closed and deep-in-scope below
+/// `c0 + j`: each sits at a lower level, and carries its type's scope.
+pub proof fn telescope_locals_deep<'x, 't>(
+    env: Env<'x, 't>,
+    b1s: Seq<ExprSpec>,
+    b2s: Seq<ExprSpec>,
+    t1s: Seq<ExprSpec>,
+    t2s: Seq<ExprSpec>,
+    ls: Seq<ExprSpec>,
+    ks: Seq<u32>,
+    c0: u16,
+    n: nat,
+    j: nat,
+)
+    requires
+        telescope_ok(env, b1s, b2s, t1s, t2s, ls, ks, c0, n),
+        j < n,
+    ensures
+        forall|q: int| 0 <= q < ls.subrange(0, j as int).len() ==>
+            crate::expr_model::nlbv(#[trigger] ls.subrange(0, j as int)[q]) <= 0
+            && crate::expr_model::dbj_deep(ls.subrange(0, j as int)[q], (c0 + j) as u16),
+{
+    let lj = ls.subrange(0, j as int);
+    assert forall|q: int| 0 <= q < lj.len() implies
+        crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(lj[q], (c0 + j) as u16) by {
+        assert(lj[q] == ls[q]);
+        assert(ls[q] == ExprSpec::Free(ks[q]));
+        assert(crate::expr_arena_bridge::dbj_serial(ks[q]) == Some((c0 + q) as u16));
+        assert(crate::expr_model::dbj_deep(crate::expr_arena_bridge::arena_lctx()[ks[q]], (c0 + q) as u16));
+    }
 }
 
 /// BINDER TELESCOPE CONGRUENCE: if every binder's types agree once the outer
@@ -4142,16 +4175,11 @@ pub proof fn binder_telescope_from<'x, 't>(
         assert(b1s[j as int] == ExprSpec::Bind(Box::new(t1s[j as int]), Box::new(b1s[(j + 1) as int])));
         assert(b2s[j as int] == ExprSpec::Bind(Box::new(t2s[j as int]), Box::new(b2s[(j + 1) as int])));
         assert(ls[j as int] == ExprSpec::Free(k));
-        assert(crate::expr_model::dbj_serials_below(b1s[(j + 1) as int], c0) && crate::expr_model::dbj_serials_below(b2s[(j + 1) as int], c0));
+        assert(crate::expr_model::dbj_deep(b1s[(j + 1) as int], c0) && crate::expr_model::dbj_deep(b2s[(j + 1) as int], c0));
         assert(kconv(env, crate::expr_model::subst_full(t1s[j as int], lj, 0), crate::expr_model::subst_full(t2s[j as int], lj, 0)));
-        assert forall|q: int| 0 <= q < lj.len() implies
-            crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_serials_below(lj[q], cj) by {
-            assert(lj[q] == ls[q]);
-            assert(ls[q] == ExprSpec::Free(ks[q]));
-            assert(crate::expr_arena_bridge::dbj_serial(ks[q]) == Some((c0 + q) as u16));
-        }
-        crate::expr_model::dbj_serials_below_mono(b1s[(j + 1) as int], c0, cj);
-        crate::expr_model::dbj_serials_below_mono(b2s[(j + 1) as int], c0, cj);
+        telescope_locals_deep(env, b1s, b2s, t1s, t2s, ls, ks, c0, n, j);
+        crate::expr_model::dbj_deep_mono(b1s[(j + 1) as int], c0, cj);
+        crate::expr_model::dbj_deep_mono(b2s[(j + 1) as int], c0, cj);
         binder_step(
             env,
             t1s[j as int],
@@ -4186,8 +4214,8 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
 /// what lets `def_eq` recurse on a whnf'd term and still know its locals are
 /// in scope, which is where its binder case gets freshness from.
 pub open spec fn scope_pres(e: ExprSpec, r: ExprSpec) -> bool {
-    forall|c: u16| #[trigger] crate::expr_model::dbj_serials_below(e, c)
-        ==> crate::expr_model::dbj_serials_below(r, c)
+    forall|c: u16| #[trigger] crate::expr_model::dbj_deep(e, c)
+        ==> crate::expr_model::dbj_deep(r, c)
 }
 
 /// Lift an untyped step (`deq_any`) into `whnf_claim`.
@@ -4269,17 +4297,17 @@ pub proof fn beta_spine_claim<'x, 't>(
         crate::beta_model::spine_app_nlbv(e1m, pb);
     }
     // scope: the reduct is built from the peeled body and the arguments
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_serials_below(em0, c) implies crate::expr_model::dbj_serials_below(e2m, c) by {
-        spine_app_dbj_serials_below(lam, am, c);
-        spine_bind_dbj_serials_below(lam, n, bm, c);
-        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_serials_below(pa[i], c) by {
+    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(em0, c) implies crate::expr_model::dbj_deep(e2m, c) by {
+        spine_app_dbj_deep(lam, am, c);
+        spine_bind_dbj_deep(lam, n, bm, c);
+        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_deep(pa[i], c) by {
             assert(pa[i] == am[i]);
         }
-        crate::expr_model::subst_full_dbj_serials_below(bm, pa, 0, c);
-        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_serials_below(pb[i], c) by {
+        crate::expr_model::subst_full_dbj_deep(bm, pa, 0, c);
+        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_deep(pb[i], c) by {
             assert(pb[i] == am[i + n]);
         }
-        spine_app_dbj_serials_below(e1m, pb, c);
+        spine_app_dbj_deep(e1m, pb, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -4328,10 +4356,10 @@ pub proof fn zeta_spine_claim<'x, 't>(
         crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
         crate::beta_model::spine_app_nlbv(e1m, am);
     }
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_serials_below(em0, c) implies crate::expr_model::dbj_serials_below(e2m, c) by {
-        spine_app_dbj_serials_below(lm, am, c);
-        crate::expr_model::subst_full_dbj_serials_below(bm, seq![vm], 0, c);
-        spine_app_dbj_serials_below(e1m, am, c);
+    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(em0, c) implies crate::expr_model::dbj_deep(e2m, c) by {
+        spine_app_dbj_deep(lm, am, c);
+        crate::expr_model::subst_full_dbj_deep(bm, seq![vm], 0, c);
+        spine_app_dbj_deep(e1m, am, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -4436,19 +4464,19 @@ pub proof fn quot_step_lemma<'x, 't>(
         }
         // in scope: built from the arguments and the whnf'd major's last
         // argument, and whnf introduced no local
-        assert forall|c: u16| #[trigger] crate::expr_model::dbj_serials_below(s0, c) implies crate::expr_model::dbj_serials_below(r, c) by {
-            spine_app_dbj_serials_below(head, am, c);
-            assert(crate::expr_model::dbj_serials_below(am[q], c));
-            assert(crate::expr_model::dbj_serials_below(qm, c));
-            spine_app_dbj_serials_below(mk_head, mk_args, c);
-            assert(crate::expr_model::dbj_serials_below(am[3], c));
-            assert(crate::expr_model::dbj_serials_below(mk_args[2], c));
-            assert(crate::expr_model::dbj_serials_below(appd, c));
+        assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(s0, c) implies crate::expr_model::dbj_deep(r, c) by {
+            spine_app_dbj_deep(head, am, c);
+            assert(crate::expr_model::dbj_deep(am[q], c));
+            assert(crate::expr_model::dbj_deep(qm, c));
+            spine_app_dbj_deep(mk_head, mk_args, c);
+            assert(crate::expr_model::dbj_deep(am[3], c));
+            assert(crate::expr_model::dbj_deep(mk_args[2], c));
+            assert(crate::expr_model::dbj_deep(appd, c));
             assert forall|i: int| 0 <= i < am.skip(q + 1).len() implies
-                #[trigger] crate::expr_model::dbj_serials_below(am.skip(q + 1)[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep(am.skip(q + 1)[i], c) by {
                 assert(am.skip(q + 1)[i] == am[i + q + 1]);
             }
-            spine_app_dbj_serials_below(appd, am.skip(q + 1), c);
+            spine_app_dbj_deep(appd, am.skip(q + 1), c);
         }
     }
 }
@@ -4507,7 +4535,7 @@ pub open spec fn nat_bin_claim<'x, 't>(
 /// and it is a precondition, not a claim, because it is about the CURRENT
 /// counter.
 pub open spec fn in_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::util::ExprPtr<'t>) -> bool {
-    crate::expr_model::dbj_serials_below(to_model_expr(e), tc.ctx.dbj_level_counter)
+    crate::expr_model::dbj_deep(to_model_expr(e), tc.ctx.dbj_level_counter)
 }
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
@@ -5291,11 +5319,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ks,
                     crate::level_arena_bridge::to_model_of_levels(levels),
                 );
-                assert forall|k: u16| #[trigger] crate::expr_model::dbj_serials_below(to_model_expr(e), k)
-                    implies crate::expr_model::dbj_serials_below(to_model_expr(r), k) by {
-                    crate::expr_model::no_fv_dbj_serials_below(to_model_expr(def_val), k);
-                    spine_app_dbj_serials_below(to_model_expr(fun), am, k);
-                    spine_app_dbj_serials_below(to_model_expr(def_val), am, k);
+                assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(to_model_expr(e), k)
+                    implies crate::expr_model::dbj_deep(to_model_expr(r), k) by {
+                    crate::expr_model::no_fv_dbj_deep(to_model_expr(def_val), k);
+                    spine_app_dbj_deep(to_model_expr(fun), am, k);
+                    spine_app_dbj_deep(to_model_expr(def_val), am, k);
                 }
             }
             Some(r)
