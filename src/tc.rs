@@ -1588,39 +1588,62 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+    fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*(*old(self)).env),
+                to_model_expr(e),
+                to_model_expr(result),
+            ),
     {
         self.whnf_no_unfolding_aux(e, true)
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+    pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*(*old(self)).env),
+                to_model_expr(e),
+                to_model_expr(result),
+            ),
     {
         self.whnf_no_unfolding_aux(e, false)
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> ExprPtr<'t>
+    fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // The reduction claim `whnf`'s chain needs. Five of this match's
+            // arms re-assemble the spine unchanged, so they pay it by
+            // reflexivity; the four that actually reduce owe a real step.
+            crate::beta_model::pstep_star(
+                crate::env_model::env_model_nofv(*(*old(self)).env),
+                to_model_expr(e),
+                to_model_expr(result),
+            ),
     {
         if let Some(cached) = self.tc_cache.whnf_no_unfolding_cache.get(&e).copied() {
+            proof {
+                // `tc_wf` already says every entry in this cache carries the
+                // reduction claim; naming the key is what lets its trigger fire.
+                assert(self.tc_cache.whnf_no_unfolding_cache@.contains_key(e));
+            }
             return cached
         }
         let (e_fun, args) = self.ctx.unfold_apps(e);
