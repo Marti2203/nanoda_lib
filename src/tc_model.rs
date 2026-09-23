@@ -2975,7 +2975,11 @@ pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool {
 /// binder. Instantiating a closed body is a no-op (`subst_full_noop`),
 /// which covers the kernel's "no loose bvars" shortcut.
 pub open spec fn proj_field_type(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
     cur: ExprSpec,
     args: Seq<ExprSpec>,
     np: nat,
@@ -2984,16 +2988,24 @@ pub open spec fn proj_field_type(
     s: ExprSpec,
     t: ExprSpec,
 ) -> bool
-    decreases np + remaining,
+    decreases h, 3int, np + remaining,
 {
     exists|bt: ExprSpec, body: ExprSpec| #[trigger]
-        proj_step_marker(bt, body) && pstep_star(
+        proj_step_marker(bt, body) && deq_p(
+            dty,
             denv,
+            lctx,
+            io,
             cur,
             ExprSpec::Bind(Box::new(bt), Box::new(body)),
+            h,
         ) && (if np > 0 {
             args.len() > 0 && proj_field_type(
+                dty,
                 denv,
+                lctx,
+                io,
+                h,
                 subst_full(body, seq![args[0]], 0),
                 args.drop_first(),
                 (np - 1) as nat,
@@ -3004,7 +3016,11 @@ pub open spec fn proj_field_type(
             )
         } else if remaining > 0 {
             proj_field_type(
+                dty,
                 denv,
+                lctx,
+                io,
+                h,
                 subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
                 args,
                 0,
@@ -3027,7 +3043,7 @@ pub open spec fn types_to(
     t: ExprSpec,
     fuel: nat,
 ) -> bool
-    decreases fuel, e,
+    decreases fuel, 6int, crate::expr_model::depth(e),
 {
     ||| (match e {
         ExprSpec::Free(lid) => lctx.contains_key(lid) && t == lctx[lid],
@@ -3074,18 +3090,30 @@ pub open spec fn types_to(
     // to a proof of `(a :: head :: tail) != []`. Found 2026-09-14 by the
     // disagreement counter on `Init.Data.List.Lemmas` (see `4bf07bb`).
     ||| (match e {
-        ExprSpec::App(f, a) => exists|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+        ExprSpec::App(f, a) => fuel > 0 && exists|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, fuel) && pstep_star(
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, fuel) && deq_p(
+                dty,
                 denv,
+                lctx,
+                io,
                 ft,
                 ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+                (fuel - 1) as nat,
             )
             // `io` is the kernel's `InferOnly` mode: it never infers the
             // argument, so neither the argument's type nor its agreement with
             // the domain is part of the derivation. `io == false` is real
             // typing. Everything else about the rule is shared.
-             && (io || (types_to(dty, denv, lctx, io, *a, aty2, fuel) && deq_any(denv, aty2, aty)))
+             && (io || (types_to(dty, denv, lctx, io, *a, aty2, fuel) && deq_p(
+                dty,
+                denv,
+                lctx,
+                io,
+                aty2,
+                aty,
+                (fuel - 1) as nat,
+            )))
                 && t == subst_full(bt, seq![*a], 0),
         _ => false,
     })
@@ -3139,14 +3167,14 @@ pub open spec fn types_to(
                 *binder_type,
                 bt_ty,
                 (fuel - 1) as nat,
-            ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
+            ) && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), (fuel - 1) as nat) && types_to(
                 dty,
                 denv,
                 lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 instd_ty,
                 (fuel - 1) as nat,
-            ) && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)) && t == ExprSpec::Sort(
+            ) && deq_p(dty, denv, lctx, io, instd_ty, ExprSpec::Sort(cod_level), (fuel - 1) as nat) && t == ExprSpec::Sort(
                 LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)),
             ),
         _ => false,
@@ -3169,12 +3197,16 @@ pub open spec fn types_to(
                 *s,
                 sty,
                 f2,
-            ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+            ) && deq_p(dty, denv, lctx, io, sty, spine_app(ExprSpec::Const(ind_id, ls), args), f2)
                 && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
                 np,
             ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (
             np as nat) <= args.len() && proj_field_type(
+                dty,
                 denv,
+                lctx,
+                io,
+                f2,
                 ctor_ty0,
                 args,
                 np as nat,
@@ -3260,22 +3292,42 @@ pub proof fn types_to_mono(
     if let ExprSpec::App(f, a) = e {
         let (ft, aty, bt, aty2) = choose|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, f1) && pstep_star(
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, f1) && deq_p(
+                dty,
                 denv,
+                lctx,
+                io,
                 ft,
                 ExprSpec::Bind(Box::new(aty), Box::new(bt)),
-            ) && (io || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_any(denv, aty2, aty)))
-                && t == subst_full(bt, seq![*a], 0);
+                (f1 - 1) as nat,
+            ) && (io || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_p(
+                dty,
+                denv,
+                lctx,
+                io,
+                aty2,
+                aty,
+                (f1 - 1) as nat,
+            ))) && t == subst_full(bt, seq![*a], 0);
         types_to_mono(dty, denv, lctx, io, *f, ft, f1, f2);
+        deq_p_mono(
+            dty,
+            denv,
+            lctx,
+            io,
+            ft,
+            ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+            (f1 - 1) as nat,
+            (f2 - 1) as nat,
+        );
         // the ARGUMENT's derivation has to be lifted too, in the mode that
         // has one
         if !io {
             types_to_mono(dty, denv, lctx, io, *a, aty2, f1, f2);
+            deq_p_mono(dty, denv, lctx, io, aty2, aty, (f1 - 1) as nat, (f2 - 1) as nat);
             assert(types_to(dty, denv, lctx, io, *a, aty2, f2));
-            assert(deq_any(denv, aty2, aty));
         }
         assert(app_marker(ft, aty, bt, aty2));
-        assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
         assert(types_to(dty, denv, lctx, io, e, t, f2));
     }
     // Leaves: these disjuncts do not mention the height at all, but the goal
@@ -3326,12 +3378,16 @@ pub proof fn types_to_mono(
                 *s,
                 sty,
                 h,
-            ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
+            ) && deq_p(dty, denv, lctx, io, sty, spine_app(ExprSpec::Const(ind_id, ls), args), h)
                 && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
                 np,
             ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, h) && (np as nat)
                 <= args.len() && proj_field_type(
+                dty,
                 denv,
+                lctx,
+                io,
+                h,
                 ctor_ty0,
                 args,
                 np as nat,
@@ -3407,17 +3463,19 @@ pub proof fn types_to_mono(
                     *binder_type,
                     bt_ty,
                     g1,
-                ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
+                ) && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), g1) && types_to(
                     dty,
                     denv,
                     lctx, io,
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     instd_ty,
                     g1,
-                ) && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)) && t == ExprSpec::Sort(
+                ) && deq_p(dty, denv, lctx, io, instd_ty, ExprSpec::Sort(cod_level), g1) && t == ExprSpec::Sort(
                     LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)),
                 );
             types_to_mono(dty, denv, lctx, io, *binder_type, bt_ty, g1, g2);
+            deq_p_mono(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), g1, g2);
+            deq_p_mono(dty, denv, lctx, io, instd_ty, ExprSpec::Sort(cod_level), g1, g2);
             types_to_mono(
                 dty,
                 denv,
@@ -3518,10 +3576,11 @@ pub proof fn types_to_app(
     aty2: ExprSpec,
 )
     requires
+        fuel > 0,
         types_to(dty, denv, lctx, io, f, ft, fuel),
-        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        deq_p(dty, denv, lctx, io, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)), (fuel - 1) as nat),
         types_to(dty, denv, lctx, io, a, aty2, fuel),
-        deq_any(denv, aty2, aty),
+        deq_p(dty, denv, lctx, io, aty2, aty, (fuel - 1) as nat),
     ensures
         types_to(
             dty,
@@ -3533,10 +3592,50 @@ pub proof fn types_to_app(
         ),
 {
     assert(app_marker(ft, aty, bt, aty2));
-    assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
-    assert(types_to(dty, denv, lctx, io, a, aty2, fuel));
-    assert(deq_any(denv, aty2, aty));
     assert(subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
+}
+
+/// The application rule from a reduction to the binder and an untyped
+/// agreement of the argument's type: the heights those carry are lifted to
+/// a common one, which is returned.
+pub proof fn types_to_app_lift(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    f: ExprSpec,
+    a: ExprSpec,
+    ft: ExprSpec,
+    aty: ExprSpec,
+    bt: ExprSpec,
+    fuel: nat,
+    aty2: ExprSpec,
+) -> (f2: nat)
+    requires
+        types_to(dty, denv, lctx, io, f, ft, fuel),
+        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        types_to(dty, denv, lctx, io, a, aty2, fuel),
+        deq_any(denv, aty2, aty),
+    ensures
+        f2 >= fuel,
+        types_to(
+            dty,
+            denv,
+            lctx, io,
+            ExprSpec::App(Box::new(f), Box::new(a)),
+            subst_full(bt, seq![a], 0),
+            f2,
+        ),
+{
+    let hh = choose|hh: nat| #[trigger] deq(denv, aty2, aty, hh);
+    deq_p_of_deq(dty, denv, lctx, io, aty2, aty, hh);
+    let f2: nat = (if fuel >= hh { fuel } else { hh }) + 1;
+    types_to_mono(dty, denv, lctx, io, f, ft, fuel, f2);
+    types_to_mono(dty, denv, lctx, io, a, aty2, fuel, f2);
+    deq_p_mono(dty, denv, lctx, io, aty2, aty, hh, (f2 - 1) as nat);
+    deq_p_of_pstep_star(dty, denv, lctx, io, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)), (f2 - 1) as nat);
+    types_to_app(dty, denv, lctx, io, f, a, ft, aty, bt, f2, aty2);
+    f2
 }
 
 pub proof fn types_to_let(
@@ -3594,16 +3693,21 @@ pub proof fn types_to_proj(
         ctor_num_params_of(ctor_id) == Some(np),
         types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
         (np as nat) <= args.len(),
-        proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
+        proj_field_type(dty, denv, lctx, io, f2, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
     ensures
         types_to(dty, denv, lctx, io, ExprSpec::Proj(idx, Box::new(s)), t, fuel),
 {
+    deq_p_of_pstep_star(dty, denv, lctx, io, sty, spine_app(ExprSpec::Const(ind_id, ls), args), f2);
     assert(proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
 }
 
 /// One parameter step of `proj_field_type`.
 pub proof fn proj_field_type_param_step(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
     body: ExprSpec,
@@ -3619,7 +3723,11 @@ pub proof fn proj_field_type_param_step(
         args.len() > 0,
         pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
         proj_field_type(
+            dty,
             denv,
+            lctx,
+            io,
+            h,
             subst_full(body, seq![args[0]], 0),
             args.drop_first(),
             (np - 1) as nat,
@@ -3629,14 +3737,19 @@ pub proof fn proj_field_type_param_step(
             t,
         ),
     ensures
-        proj_field_type(denv, cur, args, np, fld, remaining, s, t),
+        proj_field_type(dty, denv, lctx, io, h, cur, args, np, fld, remaining, s, t),
 {
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
 /// One field step of `proj_field_type`.
 pub proof fn proj_field_type_field_step(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
     body: ExprSpec,
@@ -3650,7 +3763,11 @@ pub proof fn proj_field_type_field_step(
         remaining > 0,
         pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
         proj_field_type(
+            dty,
             denv,
+            lctx,
+            io,
+            h,
             subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
             args,
             0,
@@ -3660,14 +3777,19 @@ pub proof fn proj_field_type_field_step(
             t,
         ),
     ensures
-        proj_field_type(denv, cur, args, 0, fld, remaining, s, t),
+        proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, remaining, s, t),
 {
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
 /// The final step of `proj_field_type`: the field type is the binder type.
 pub proof fn proj_field_type_final(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
     body: ExprSpec,
@@ -3678,8 +3800,9 @@ pub proof fn proj_field_type_final(
     requires
         pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
     ensures
-        proj_field_type(denv, cur, args, 0, fld, 0, s, bt),
+        proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, 0, s, bt),
 {
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
@@ -3757,6 +3880,8 @@ pub proof fn types_to_pi(
             fuel,
         ),
 {
+    deq_p_of_pstep_star(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), (fuel - 1) as nat);
+    deq_p_of_pstep_star(dty, denv, lctx, io, instd_ty, ExprSpec::Sort(cod_level), (fuel - 1) as nat);
     assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
 }
 
@@ -3785,12 +3910,19 @@ pub open spec fn is_proof_type_m(
     lctx: Map<u32, ExprSpec>,
     io: bool,
     ty: ExprSpec,
-) -> bool {
+    h: nat,
+) -> bool
+    decreases h, 3int, 0nat,
+{
     exists|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(tt, f, l) && types_to(dty, denv, lctx, io, ty, tt, f) && pstep_star(
+        proof_type_marker(tt, f, l) && f < h && types_to(dty, denv, lctx, io, ty, tt, f) && deq_p(
+            dty,
             denv,
+            lctx,
+            io,
             tt,
             ExprSpec::Sort(l),
+            h,
         ) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0)
 }
 
@@ -3808,17 +3940,17 @@ pub open spec fn proof_irrel_pair(
     y: ExprSpec,
     h: nat,
 ) -> bool
-    decreases h, 3int,
+    decreases h, 4int, 0nat,
 {
     exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        irrel_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
+        irrel_marker(tx, ty2, fx, fy) && fx < h && fy < h && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
             dty,
             denv,
             lctx, io,
             y,
             ty2,
             fy,
-        ) && is_proof_type_m(dty, denv, lctx, io, tx) && is_proof_type_m(dty, denv, lctx, io, ty2) && deq_p(
+        ) && is_proof_type_m(dty, denv, lctx, io, tx, h) && is_proof_type_m(dty, denv, lctx, io, ty2, h) && deq_p(
             dty,
             denv,
             lctx, io,
@@ -3864,14 +3996,93 @@ pub open spec fn unit_like_head(id: u64) -> bool {
 /// The same, up to reduction: the kernel whnfs the inferred type before
 /// looking at its head, so the rule's real side condition is that the type
 /// REDUCES to such a structure.
-pub open spec fn unit_like_type_m(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec) -> bool {
-    exists|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
+pub open spec fn unit_like_type_m(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 3int, 0nat,
+{
+    exists|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, denv, lctx, io, tx, r, h) && unit_like_type(r)
+}
+
+/// Marker triggers for the two type conditions: their witnesses sit under
+/// `deq_p`, which is in the same recursive group and so cannot trigger.
+pub open spec fn unit_like_marker(r: ExprSpec) -> bool {
+    true
+}
+
+pub open spec fn struct_type_marker(ils: Seq<LevelSpec>, rest: Seq<ExprSpec>) -> bool {
+    true
 }
 
 /// "This type is such a structure, applied to whatever parameters."
 pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
     exists|id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>| #[trigger]
         spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
+}
+
+/// The shadow's untyped forms of the two type conditions: the certified
+/// routes establish them by reduction and untyped conversion, and the lift
+/// lemmas below place them at a height in the typed family.
+pub open spec fn unit_like_type_u(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec) -> bool {
+    exists|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
+}
+
+pub open spec fn struct_type_of_u(
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    tx: ExprSpec,
+    ind: u64,
+    params: Seq<ExprSpec>,
+) -> bool {
+    exists|ils: Seq<LevelSpec>, rest: Seq<ExprSpec>| #[trigger]
+        deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
+}
+
+/// Reduction to a unit-like type holds at every height.
+pub proof fn unit_like_type_of_u(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    h: nat,
+)
+    requires
+        unit_like_type_u(denv, tx),
+    ensures
+        unit_like_type_m(dty, denv, lctx, io, tx, h),
+{
+    let r = choose|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r);
+    deq_p_of_pstep_star(dty, denv, lctx, io, tx, r, h);
+    assert(unit_like_marker(r));
+}
+
+/// An untyped structure-type fact holds from some height on; this returns one.
+pub proof fn struct_type_of_lift(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    ind: u64,
+    params: Seq<ExprSpec>,
+) -> (h: nat)
+    requires
+        struct_type_of_u(denv, tx, ind, params),
+    ensures
+        struct_type_of(dty, denv, lctx, io, tx, ind, params, h),
+{
+    let (ils, rest) = choose|ils: Seq<LevelSpec>, rest: Seq<ExprSpec>| #[trigger]
+        deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest));
+    let target = spine_app(ExprSpec::Const(ind, ils), params + rest);
+    let hh = choose|hh: nat| #[trigger] deq(denv, tx, target, hh);
+    deq_p_of_deq(dty, denv, lctx, io, tx, target, hh);
+    assert(struct_type_marker(ils, rest));
+    hh
 }
 
 /// Marker trigger for `eta_struct_expand`'s witnesses.
@@ -3897,13 +4108,19 @@ pub open spec fn eta_struct_marker(
 /// on its own is strictly stronger, and it was rejecting pairs the kernel
 /// accepts, because `tx` need not whnf to a constant-headed application.
 pub open spec fn struct_type_of(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
     tx: ExprSpec,
     ind: u64,
     params: Seq<ExprSpec>,
-) -> bool {
+    h: nat,
+) -> bool
+    decreases h, 3int, 0nat,
+{
     exists|ils: Seq<LevelSpec>, rest: Seq<ExprSpec>| #[trigger]
-        deq_any(denv, tx, spine_app(ExprSpec::Const(ind, ils), params + rest))
+        struct_type_marker(ils, rest) && deq_p(dty, denv, lctx, io, tx, spine_app(ExprSpec::Const(ind, ils), params + rest), h)
 }
 
 /// STRUCTURE ETA, the kernel's `try_eta_struct`, in the same shape the
@@ -3923,7 +4140,10 @@ pub open spec fn eta_struct_expand(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
-) -> bool {
+    h: nat,
+) -> bool
+    decreases h, 4int, 0nat,
+{
     exists|
         tx: ExprSpec,
         f: nat,
@@ -3933,8 +4153,8 @@ pub open spec fn eta_struct_expand(
         params: Seq<ExprSpec>,
         nf: nat,
     | #[trigger]
-        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && types_to(dty, denv, lctx, io, x, tx, f)
-            && struct_type_of(denv, tx, ind, params) && struct_ctor_of(ind) == Some(cid)
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, lctx, io, x, tx, f)
+            && struct_type_of(dty, denv, lctx, io, tx, ind, params, h) && struct_ctor_of(ind) == Some(cid)
             && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
@@ -3950,8 +4170,11 @@ pub open spec fn eta_struct_pair(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
-) -> bool {
-    eta_struct_expand(dty, denv, lctx, io, x, y) || eta_struct_expand(dty, denv, lctx, io, y, x)
+    h: nat,
+) -> bool
+    decreases h, 5int, 0nat,
+{
+    eta_struct_expand(dty, denv, lctx, io, x, y, h) || eta_struct_expand(dty, denv, lctx, io, y, x, h)
 }
 
 /// THE UNIT RULE, the kernel's `def_eq_unit`: if `x`'s type is a structure
@@ -3968,9 +4191,12 @@ pub open spec fn unit_pair(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
-) -> bool {
+    h: nat,
+) -> bool
+    decreases h, 4int, 0nat,
+{
     exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        unit_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
+        unit_marker(tx, ty2, fx, fy) && fx < h && fy < h && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
             dty,
             denv,
             lctx, io,
@@ -3983,7 +4209,8 @@ pub open spec fn unit_pair(
         // kernel only ever inspects `x`'s type, but the rule is symmetric in
         // truth: the two types are convertible, so if one has a single
         // element so does the other.
-         && (unit_like_type_m(denv, tx) || unit_like_type_m(denv, ty2)) && deq_any(denv, tx, ty2)
+         && (unit_like_type_m(dty, denv, lctx, io, tx, h) || unit_like_type_m(dty, denv, lctx, io, ty2, h))
+            && deq_p(dty, denv, lctx, io, tx, ty2, h)
 }
 
 /// The NON-REDUCTION leaf equalities of definitional equality: two
@@ -5005,12 +5232,12 @@ pub open spec fn deq_p_c(
     y: ExprSpec,
     h: nat,
 ) -> bool
-    decreases h, 0int,
+    decreases h, 0int, 0nat,
 {
     ||| deq_c(env, x, y, h)
     ||| (h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
-    ||| unit_pair(dty, env, lctx, io, x, y)
-    ||| eta_struct_pair(dty, env, lctx, io, x, y)
+    ||| (h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| (h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_p_c(
             dty,
@@ -5078,7 +5305,7 @@ pub open spec fn deq_p_chain_valid(
     ch: Seq<ExprSpec>,
     h: nat,
 ) -> bool
-    decreases h, 1int,
+    decreases h, 1int, 0nat,
 {
     forall|i: int|
         #![trigger ch[i]]
@@ -5098,7 +5325,7 @@ pub open spec fn deq_p(
     y: ExprSpec,
     h: nat,
 ) -> bool
-    decreases h, 2int,
+    decreases h, 2int, 0nat,
 {
     exists|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
@@ -5160,23 +5387,11 @@ pub proof fn deq_p_c_mono(
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
     } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
-        // the proposition-equality conjunct is now a TYPED conversion, so it
-        // has to be lifted along with the step itself
-        let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
-                dty,
-                env,
-                lctx, io,
-                y,
-                ty2,
-                fy,
-            ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2)
-                && deq_p(dty, env, lctx, io, tx, ty2, (h1 - 1) as nat);
-        deq_p_mono(dty, env, lctx, io, tx, ty2, (h1 - 1) as nat, (h2 - 1) as nat);
-        assert(irrel_marker(tx, ty2, fx, fy));
-        assert(proof_irrel_pair(dty, env, lctx, io, x, y, (h2 - 1) as nat));
-    } else if unit_pair(dty, env, lctx, io, x, y) {
-    } else if eta_struct_pair(dty, env, lctx, io, x, y) {
+        proof_irrel_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
+    } else if h1 > 0 && unit_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+        unit_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
+    } else if h1 > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+        eta_struct_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -5301,34 +5516,31 @@ pub proof fn deq_p_c_symm(
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
     } else if h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        let hp = (h - 1) as nat;
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
+            irrel_marker(tx, ty2, fx, fy) && fx < hp && fy < hp && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
                 dty,
                 env,
                 lctx, io,
                 y,
                 ty2,
                 fy,
-            ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2)
-                && deq_p(dty, env, lctx, io, tx, ty2, (h - 1) as nat);
-        deq_p_symm(dty, env, lctx, io, tx, ty2, (h - 1) as nat);
+            ) && is_proof_type_m(dty, env, lctx, io, tx, hp) && is_proof_type_m(dty, env, lctx, io, ty2, hp)
+                && deq_p(dty, env, lctx, io, tx, ty2, hp);
+        deq_p_symm(dty, env, lctx, io, tx, ty2, hp);
         assert(irrel_marker(ty2, tx, fy, fx));
-        assert(proof_irrel_pair(dty, env, lctx, io, y, x, (h - 1) as nat));
-    } else if unit_pair(dty, env, lctx, io, x, y) {
+        assert(proof_irrel_pair(dty, env, lctx, io, y, x, hp));
+    } else if h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        let hp = (h - 1) as nat;
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            unit_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
-                dty,
-                env,
-                lctx, io,
-                y,
-                ty2,
-                fy,
-            ) && (unit_like_type_m(env, tx) || unit_like_type_m(env, ty2)) && deq_any(env, tx, ty2);
-        deq_any_symm(env, tx, ty2);
+            unit_marker(tx, ty2, fx, fy) && fx < hp && fy < hp && types_to(dty, env, lctx, io, x, tx, fx)
+                && types_to(dty, env, lctx, io, y, ty2, fy) && (unit_like_type_m(dty, env, lctx, io, tx, hp)
+                || unit_like_type_m(dty, env, lctx, io, ty2, hp)) && deq_p(dty, env, lctx, io, tx, ty2, hp);
+        deq_p_symm(dty, env, lctx, io, tx, ty2, hp);
         assert(unit_marker(ty2, tx, fy, fx));
-        assert(unit_pair(dty, env, lctx, io, y, x));
-    } else if eta_struct_pair(dty, env, lctx, io, x, y) {
-        assert(eta_struct_pair(dty, env, lctx, io, y, x));
+        assert(unit_pair(dty, env, lctx, io, y, x, hp));
+    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        assert(eta_struct_pair(dty, env, lctx, io, y, x, (h - 1) as nat));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -5464,6 +5676,28 @@ pub proof fn deq_p_of_deq_p_c(
     }
 }
 
+/// Reduction is typed conversion, at any height: the reduct is a `defeq`
+/// partner, which `deq_c` admits outright.
+pub proof fn deq_p_of_pstep_star(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        pstep_star(env, x, y),
+    ensures
+        deq_p(dty, env, lctx, io, x, y, h),
+{
+    crate::beta_model::defeq_of_pstep_star(env, x, y);
+    assert(deq_c(env, x, y, h));
+    deq_p_c_of_deq_c(dty, env, lctx, io, x, y, h);
+    deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
+}
+
 /// `deq_p` subsumes the untyped `deq`: per-link `deq_p_c_of_deq_c` over
 /// the witness chain.
 pub proof fn deq_p_of_deq(
@@ -5514,16 +5748,17 @@ pub proof fn proof_irrel_pair_mono(
         h1 <= h2,
     ensures
         proof_irrel_pair(dty, env, lctx, io, x, y, h2),
+    decreases h1, 3int,
 {
     let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
+        irrel_marker(tx, ty2, fx, fy) && fx < h1 && fy < h1 && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
             dty,
             env,
             lctx, io,
             y,
             ty2,
             fy,
-        ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2) && deq_p(
+        ) && is_proof_type_m(dty, env, lctx, io, tx, h1) && is_proof_type_m(dty, env, lctx, io, ty2, h1) && deq_p(
             dty,
             env,
             lctx, io,
@@ -5532,7 +5767,176 @@ pub proof fn proof_irrel_pair_mono(
             h1,
         );
     deq_p_mono(dty, env, lctx, io, tx, ty2, h1, h2);
+    is_proof_type_m_mono(dty, env, lctx, io, tx, h1, h2);
+    is_proof_type_m_mono(dty, env, lctx, io, ty2, h1, h2);
     assert(irrel_marker(tx, ty2, fx, fy));
+}
+
+/// The typed-rule helpers are monotone in their height, like `deq_p`: each
+/// asks for a derivation below it and a conversion at it.
+pub proof fn is_proof_type_m_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    ty: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        is_proof_type_m(dty, env, lctx, io, ty, h1),
+        h1 <= h2,
+    ensures
+        is_proof_type_m(dty, env, lctx, io, ty, h2),
+    decreases h1, 2int,
+{
+    let (tt, f, l) = choose|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
+        proof_type_marker(tt, f, l) && f < h1 && types_to(dty, env, lctx, io, ty, tt, f) && deq_p(
+            dty,
+            env,
+            lctx,
+            io,
+            tt,
+            ExprSpec::Sort(l),
+            h1,
+        ) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0);
+    deq_p_mono(dty, env, lctx, io, tt, ExprSpec::Sort(l), h1, h2);
+    assert(proof_type_marker(tt, f, l));
+}
+
+pub proof fn unit_like_type_m_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        unit_like_type_m(dty, env, lctx, io, tx, h1),
+        h1 <= h2,
+    ensures
+        unit_like_type_m(dty, env, lctx, io, tx, h2),
+    decreases h1, 2int,
+{
+    let r = choose|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, env, lctx, io, tx, r, h1) && unit_like_type(r);
+    deq_p_mono(dty, env, lctx, io, tx, r, h1, h2);
+    assert(unit_like_marker(r));
+}
+
+pub proof fn struct_type_of_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    ind: u64,
+    params: Seq<ExprSpec>,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        struct_type_of(dty, env, lctx, io, tx, ind, params, h1),
+        h1 <= h2,
+    ensures
+        struct_type_of(dty, env, lctx, io, tx, ind, params, h2),
+    decreases h1, 2int,
+{
+    let (ils, rest) = choose|ils: Seq<LevelSpec>, rest: Seq<ExprSpec>| #[trigger]
+        struct_type_marker(ils, rest) && deq_p(dty, env, lctx, io, tx, spine_app(ExprSpec::Const(ind, ils), params + rest), h1);
+    deq_p_mono(dty, env, lctx, io, tx, spine_app(ExprSpec::Const(ind, ils), params + rest), h1, h2);
+    assert(struct_type_marker(ils, rest));
+}
+
+pub proof fn unit_pair_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        unit_pair(dty, env, lctx, io, x, y, h1),
+        h1 <= h2,
+    ensures
+        unit_pair(dty, env, lctx, io, x, y, h2),
+    decreases h1, 3int,
+{
+    let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
+        unit_marker(tx, ty2, fx, fy) && fx < h1 && fy < h1 && types_to(dty, env, lctx, io, x, tx, fx)
+            && types_to(dty, env, lctx, io, y, ty2, fy) && (unit_like_type_m(dty, env, lctx, io, tx, h1)
+            || unit_like_type_m(dty, env, lctx, io, ty2, h1)) && deq_p(dty, env, lctx, io, tx, ty2, h1);
+    deq_p_mono(dty, env, lctx, io, tx, ty2, h1, h2);
+    if unit_like_type_m(dty, env, lctx, io, tx, h1) {
+        unit_like_type_m_mono(dty, env, lctx, io, tx, h1, h2);
+    } else {
+        unit_like_type_m_mono(dty, env, lctx, io, ty2, h1, h2);
+    }
+    assert(unit_marker(tx, ty2, fx, fy));
+}
+
+pub proof fn eta_struct_expand_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        eta_struct_expand(dty, env, lctx, io, x, y, h1),
+        h1 <= h2,
+    ensures
+        eta_struct_expand(dty, env, lctx, io, x, y, h2),
+    decreases h1, 3int,
+{
+    let (tx, f, ind, cid, ls, params, nf) = choose|
+        tx: ExprSpec,
+        f: nat,
+        ind: u64,
+        cid: u64,
+        ls: Seq<LevelSpec>,
+        params: Seq<ExprSpec>,
+        nf: nat,
+    | #[trigger]
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h1 && types_to(dty, env, lctx, io, x, tx, f)
+            && struct_type_of(dty, env, lctx, io, tx, ind, params, h1) && struct_ctor_of(ind) == Some(cid)
+            && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
+            ExprSpec::Const(cid, ls),
+            params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
+        );
+    struct_type_of_mono(dty, env, lctx, io, tx, ind, params, h1, h2);
+    assert(eta_struct_marker(tx, f, ind, cid, ls, params, nf));
+}
+
+pub proof fn eta_struct_pair_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        eta_struct_pair(dty, env, lctx, io, x, y, h1),
+        h1 <= h2,
+    ensures
+        eta_struct_pair(dty, env, lctx, io, x, y, h2),
+    decreases h1, 4int,
+{
+    if eta_struct_expand(dty, env, lctx, io, x, y, h1) {
+        eta_struct_expand_mono(dty, env, lctx, io, x, y, h1, h2);
+    } else {
+        eta_struct_expand_mono(dty, env, lctx, io, y, x, h1, h2);
+    }
 }
 
 /// An irrelevance pair at height `hi` is `deq_p` at any height above it.
@@ -5567,13 +5971,17 @@ pub proof fn deq_p_of_unit(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
+    hi: nat,
     h: nat,
 )
     requires
-        unit_pair(dty, env, lctx, io, x, y),
+        unit_pair(dty, env, lctx, io, x, y, hi),
+        h > hi,
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
+    unit_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
 
@@ -5584,14 +5992,15 @@ pub proof fn deq_p_any_of_unit(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
+    hi: nat,
 )
     requires
-        unit_pair(dty, env, lctx, io, x, y),
+        unit_pair(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {
-    deq_p_of_unit(dty, env, lctx, io, x, y, 0);
-    assert(deq_p(dty, env, lctx, io, x, y, 0));
+    deq_p_of_unit(dty, env, lctx, io, x, y, hi, hi + 1);
+    assert(deq_p(dty, env, lctx, io, x, y, hi + 1));
 }
 
 /// Structure eta lifts into `deq_p` at any height, as the other typed
@@ -5603,13 +6012,17 @@ pub proof fn deq_p_of_eta_struct(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
+    hi: nat,
     h: nat,
 )
     requires
-        eta_struct_pair(dty, env, lctx, io, x, y),
+        eta_struct_pair(dty, env, lctx, io, x, y, hi),
+        h > hi,
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
+    eta_struct_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
 
@@ -5620,14 +6033,15 @@ pub proof fn deq_p_any_of_eta_struct(
     io: bool,
     x: ExprSpec,
     y: ExprSpec,
+    hi: nat,
 )
     requires
-        eta_struct_pair(dty, env, lctx, io, x, y),
+        eta_struct_pair(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {
-    deq_p_of_eta_struct(dty, env, lctx, io, x, y, 0);
-    assert(deq_p(dty, env, lctx, io, x, y, 0));
+    deq_p_of_eta_struct(dty, env, lctx, io, x, y, hi, hi + 1);
+    assert(deq_p(dty, env, lctx, io, x, y, hi + 1));
 }
 
 /// `deq_p` is reflexive at every height: the length-1 chain.

@@ -174,7 +174,7 @@ use crate::tc_model::{
     deq_p_any_refl, deq_p_any_spine_update, deq_p_any_symm, deq_p_any_trans, eta_struct_expand, eta_struct_marker,
     eta_struct_pair, infer_shadow_claim, infer_types_to, irrel_marker, is_proof_type_m, nat_found_claim,
     proj_field_type, proj_field_type_field_step, proj_field_type_final, proj_field_type_param_step, proof_irrel_pair,
-    proof_type_marker, struct_type_of, types_to, types_to_app, types_to_const, types_to_free, types_to_lambda,
+    proof_type_marker, deq_p_mono, deq_p_of_deq, deq, struct_type_of, struct_type_of_u, unit_like_type_u, struct_type_of_lift, unit_like_type_of_u, struct_type_of_mono, deq_p_of_pstep_star, types_to, types_to_app, types_to_app_lift, types_to_const, types_to_free, types_to_lambda,
     types_to_let, types_to_mono, types_to_nat_lit, types_to_pi, types_to_proj, types_to_sort, types_to_string_lit,
     unit_like_head, unit_like_type, unit_like_type_m, unit_marker, unit_pair,
 };
@@ -2413,7 +2413,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     fa,
                     hm,
                 );
-                types_to_app(
+                let hn = types_to_app_lift(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
                     arena_lctx(), false,
@@ -2425,7 +2425,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     hm,
                     to_model(a_ty),
                 );
-                h = hm;
+                h = hn;
                 spine_app_compose_last(to_model(hd), args_all.subrange(0, i as int), to_model(a));
                 assert(args_all.subrange(0, i as int).push(to_model(a)) =~= args_all.subrange(
                     0,
@@ -2598,7 +2598,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             forall|j: int| 0 <= j < args_s@.len() ==> nlbv(to_model(#[trigger] args_s@[j])) <= 0,
             forall|t: ExprSpec| #[trigger]
                 proj_field_type(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(cur),
                     args_model.skip(i as int),
                     (npn - (i as nat)) as nat,
@@ -2606,7 +2610,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                     idxn,
                     s_m,
                     t,
-                ) ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
+                ) ==> proj_field_type(dty, denv, lctx, false, f2, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases np as usize - i,
     {
         let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) {
@@ -2644,7 +2648,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             assert(args_model.skip(i as int).drop_first() =~= args_model.skip(i as int + 1));
             assert forall|t: ExprSpec| #[trigger]
                 proj_field_type(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(new_ty),
                     args_model.skip(i as int + 1),
                     (npn - ((i + 1) as nat)) as nat,
@@ -2653,7 +2661,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                     s_m,
                     t,
                 ) implies proj_field_type(
+                dty,
                 denv,
+                lctx,
+                false,
+                f2,
                 to_model(ctor_ty0),
                 args_model,
                 npn,
@@ -2663,7 +2675,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                 t,
             ) by {
                 proj_field_type_param_step(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(cur),
                     to_model(bt),
                     to_model(body),
@@ -2684,7 +2700,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
         assert((npn - (i as nat)) as nat == 0);
         assert forall|t: ExprSpec| #[trigger]
             proj_field_type(
+                dty,
                 denv,
+                lctx,
+                false,
+                f2,
                 to_model(cur),
                 args_model.skip(npn as int),
                 0,
@@ -2693,7 +2713,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                 s_m,
                 t,
             ) implies proj_field_type(
+            dty,
             denv,
+            lctx,
+            false,
+            f2,
             to_model(ctor_ty0),
             args_model,
             npn,
@@ -2703,7 +2727,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             t,
         ) by {
             assert(proj_field_type(
+                dty,
                 denv,
+                lctx,
+                false,
+                f2,
                 to_model(cur),
                 args_model.skip(i as int),
                 (npn - (i as nat)) as nat,
@@ -2732,7 +2760,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             nlbv(to_model(cur)) <= 0,
             forall|t: ExprSpec| #[trigger]
                 proj_field_type(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(cur),
                     args_model.skip(npn as int),
                     0,
@@ -2740,7 +2772,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                     (idxn - (j as nat)) as nat,
                     s_m,
                     t,
-                ) ==> proj_field_type(denv, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
+                ) ==> proj_field_type(dty, denv, lctx, false, f2, to_model(ctor_ty0), args_model, npn, 0, idxn, s_m, t),
         decreases idx - j,
     {
         let (w2, bt, body) = match verified_ensure_pi_capped(ctx, env, memo, cur) {
@@ -2776,7 +2808,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             subst_full_nlbv_bound(to_model(body), to_model(pj), 0);
             assert forall|t: ExprSpec| #[trigger]
                 proj_field_type(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(new_ty),
                     args_model.skip(npn as int),
                     0,
@@ -2785,7 +2821,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                     s_m,
                     t,
                 ) implies proj_field_type(
+                dty,
                 denv,
+                lctx,
+                false,
+                f2,
                 to_model(ctor_ty0),
                 args_model,
                 npn,
@@ -2795,7 +2835,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                 t,
             ) by {
                 proj_field_type_field_step(
+                    dty,
                     denv,
+                    lctx,
+                    false,
+                    f2,
                     to_model(cur),
                     to_model(bt),
                     to_model(body),
@@ -2816,7 +2860,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     };
     proof {
         proj_field_type_final(
+            dty,
             denv,
+            lctx,
+            false,
+            f2,
             to_model(cur),
             to_model(bt),
             to_model(body),
@@ -2827,7 +2875,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
         assert(j == idx);
         assert((idxn - (j as nat)) as nat == 0);
         assert(proj_field_type(
+            dty,
             denv,
+            lctx,
+            false,
+            f2,
             to_model(cur),
             args_model.skip(npn as int),
             0,
@@ -2837,7 +2889,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             to_model(bt),
         ));
         assert(proj_field_type(
+            dty,
             denv,
+            lctx,
+            false,
+            f2,
             to_model(ctor_ty0),
             args_model,
             npn,
@@ -3068,14 +3124,14 @@ pub open spec fn eta_struct_claim<'t, 'x>(
             x,
             xt,
             f,
-        ) && struct_type_of(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
+        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
             == Some(cid) && ctor_num_fields_of(cid) == Some(nf as u16) && to_model(r) == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))),
         )
 }
 
-pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, r: ExprPtr<'t>)
+pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, r: ExprPtr<'t>) -> (h: nat)
     requires
         eta_struct_claim(env, x, r),
     ensures
@@ -3085,6 +3141,7 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
             arena_lctx(), false,
             to_model(x),
             to_model(r),
+            h,
         ),
 {
     let (xt, f, ind, cid, ls, params, nf) = choose|
@@ -3101,19 +3158,18 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
             x,
             xt,
             f,
-        ) && struct_type_of(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
+        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
             == Some(cid) && ctor_num_fields_of(cid) == Some(nf as u16) && to_model(r) == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))),
         );
+    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx());
+    let hs = struct_type_of_lift(dty, denv, lctx, false, to_model(xt), ind, params);
+    let h: nat = (if hs >= f { hs } else { f }) + 1;
+    struct_type_of_mono(dty, denv, lctx, false, to_model(xt), ind, params, hs, h);
     assert(eta_struct_marker(to_model(xt), f, ind, cid, ls, params, nf));
-    assert(eta_struct_expand(
-        to_model_of_declar_ty(env),
-        to_model_of_env(env),
-        arena_lctx(), false,
-        to_model(x),
-        to_model(r),
-    ));
+    assert(eta_struct_expand(dty, denv, lctx, false, to_model(x), to_model(r), h));
+    h
 }
 
 /// The producer: infer `x`'s type, reduce it, read the structure and its sole
@@ -3236,7 +3292,7 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
         ));
         defeq_of_pstep_star(em, to_model(xt), to_model(xtw));
         deq_any_of_defeq(em, to_model(xt), to_model(xtw));
-        assert(struct_type_of(em, to_model(xt), name_id(ind_name), params));
+        assert(struct_type_of_u(em, to_model(xt), name_id(ind_name), params));
         let projs = Seq::new(nf as nat, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x))));
         is_const_shape_model(ctor_const);
         const_levels_vec_model(ctor_const);
@@ -3421,7 +3477,7 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
         deq_any_of_defeq(em, to_model(yt), to_model(xtw));
         // xt ~ yt (from the conversion check) and yt reduces to the structure
         deq_any_trans(em, to_model(xt), to_model(yt), to_model(xtw));
-        assert(struct_type_of(em, to_model(xt), name_id(ind_name), params));
+        assert(struct_type_of_u(em, to_model(xt), name_id(ind_name), params));
         let projs = Seq::new(nf as nat, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x))));
         is_const_shape_model(ctor_const);
         const_levels_vec_model(ctor_const);
@@ -3480,13 +3536,13 @@ pub open spec fn unit_shadow_claim<'t, 'x>(
 ) -> bool {
     exists|xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
         #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
-        infer_types_to(env, x, xt, fx) && infer_types_to(env, y, yt, fy) && unit_like_type_m(
+        infer_types_to(env, x, xt, fx) && infer_types_to(env, y, yt, fy) && unit_like_type_u(
             to_model_of_env(env),
             to_model(xt),
         ) && deq_any(to_model_of_env(env), to_model(xt), to_model(yt))
 }
 
-pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (h: nat)
     requires
         unit_shadow_claim(env, x, y),
     ensures
@@ -3496,15 +3552,25 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
             arena_lctx(), false,
             to_model(x),
             to_model(y),
+            h,
         ),
 {
     let (xt, yt, fx, fy) = choose|xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
         #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
-        infer_types_to(env, x, xt, fx) && infer_types_to(env, y, yt, fy) && unit_like_type_m(
+        infer_types_to(env, x, xt, fx) && infer_types_to(env, y, yt, fy) && unit_like_type_u(
             to_model_of_env(env),
             to_model(xt),
         ) && deq_any(to_model_of_env(env), to_model(xt), to_model(yt));
+    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx());
+    let hh = choose|hh: nat| #[trigger] deq(denv, to_model(xt), to_model(yt), hh);
+    deq_p_of_deq(dty, denv, lctx, false, to_model(xt), to_model(yt), hh);
+    let m1: nat = if fx >= fy { fx } else { fy };
+    let h: nat = (if hh >= m1 { hh } else { m1 }) + 1;
+    deq_p_mono(dty, denv, lctx, false, to_model(xt), to_model(yt), hh, h);
+    unit_like_type_of_u(dty, denv, lctx, false, to_model(xt), h);
     assert(unit_marker(to_model(xt), to_model(yt), fx, fy));
+    assert(unit_pair(dty, denv, lctx, false, to_model(x), to_model(y), h));
+    h
 }
 
 /// The producer: infer both types, reduce `x`'s, check its head names a
@@ -3571,7 +3637,7 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(
         assert(const_id(hd) == name_id(name));
         assert(unit_like_type(to_model(xtw)));
         assert(pstep_star(em, to_model(xt), to_model(xtw)));
-        assert(unit_like_type_m(em, to_model(xt)));
+        assert(unit_like_type_u(em, to_model(xt)));
     }
     let yt = match verified_infer_shadow(ctx, env, memo, y) {
         Some(v) => v,
@@ -4241,15 +4307,21 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
         pstep_star(to_model_of_env(env), to_model(ytt), to_model(r)) && to_model(r)
             == ExprSpec::Sort(level_to_model(l)) && (forall|rho: Map<nat, nat>| #[trigger]
             interp(level_to_model(l), rho) <= 0);
+    // one height above every derivation involved
+    let m1: nat = if fx >= fy { fx } else { fy };
+    let m2: nat = if fxt >= fyt { fxt } else { fyt };
+    let m3: nat = if m1 >= m2 { m1 } else { m2 };
+    let h: nat = (if hi >= m3 { hi } else { m3 }) + 1;
+    deq_p_mono(dty, denv, lctx, false, to_model(xt), to_model(yt), hi, h);
     assert(proof_type_marker(to_model(xtt), fxt, level_to_model(xl)));
-    assert(pstep_star(denv, to_model(xtt), ExprSpec::Sort(level_to_model(xl))));
-    assert(is_proof_type_m(dty, denv, lctx, false, to_model(xt)));
+    deq_p_of_pstep_star(dty, denv, lctx, false, to_model(xtt), ExprSpec::Sort(level_to_model(xl)), h);
+    assert(is_proof_type_m(dty, denv, lctx, false, to_model(xt), h));
     assert(proof_type_marker(to_model(ytt), fyt, level_to_model(yl)));
-    assert(pstep_star(denv, to_model(ytt), ExprSpec::Sort(level_to_model(yl))));
-    assert(is_proof_type_m(dty, denv, lctx, false, to_model(yt)));
+    deq_p_of_pstep_star(dty, denv, lctx, false, to_model(ytt), ExprSpec::Sort(level_to_model(yl)), h);
+    assert(is_proof_type_m(dty, denv, lctx, false, to_model(yt), h));
     assert(irrel_marker(to_model(xt), to_model(yt), fx, fy));
-    assert(proof_irrel_pair(dty, denv, lctx, false, to_model(x), to_model(y), hi));
-    hi
+    assert(proof_irrel_pair(dty, denv, lctx, false, to_model(x), to_model(y), h));
+    h
 }
 
 /// `verified_conv` with the per-checker failure cache around it: pairs
@@ -5331,8 +5403,8 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
         let built = Seq::new(new_args@.len(), |i: int| to_model(new_args@[i]));
         assert(new_args@ =~= args@.update(major_idx as int, ex));
         assert(built =~= args_model.update(major_idx as int, to_model(ex)));
-        eta_struct_pair_of_claim(*env, major, ex);
-        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(major), to_model(ex));
+        let hq = eta_struct_pair_of_claim(*env, major, ex);
+        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(major), to_model(ex), hq);
         assert(args_model[major_idx as int] == to_model(major));
         deq_p_any_spine_update(
             dtym,
@@ -5854,8 +5926,8 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
             if !expr_ptr_eq(ex, x) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, budget - 1) {
                     proof {
-                        eta_struct_pair_of_claim(*env, x, ex);
-                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(x), to_model(ex));
+                        let hq = eta_struct_pair_of_claim(*env, x, ex);
+                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(x), to_model(ex), hq);
                         deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ex), to_model(y));
                     }
                     conv_stat(18);
@@ -5873,8 +5945,8 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
             if !expr_ptr_eq(ey, y) {
                 if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, budget - 1) {
                     proof {
-                        eta_struct_pair_of_claim(*env, y, ey);
-                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(y), to_model(ey));
+                        let hq = eta_struct_pair_of_claim(*env, y, ey);
+                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(y), to_model(ey), hq);
                         deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ey));
                         deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ey), to_model(y));
                     }
@@ -6541,8 +6613,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
     if !either_rigid {
         if let Some(true) = verified_unit_shadow(ctx, env, memo, x, y, fuel) {
             proof {
-                unit_pair_of_shadow_claim(*env, x, y);
-                deq_p_any_of_unit(dtym, em, lcm, false, to_model(x), to_model(y));
+                let hq = unit_pair_of_shadow_claim(*env, x, y);
+                deq_p_any_of_unit(dtym, em, lcm, false, to_model(x), to_model(y), hq);
             }
             conv_stat(17);
             return Some(true);
