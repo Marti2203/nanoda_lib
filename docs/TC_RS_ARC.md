@@ -877,3 +877,51 @@ drops the cache on exit instead, which re-establishes the invariant vacuously
 the way `subst_expr_levels` already clears its scratch cache to establish its
 own. That is the conservative reading of the routes' silence rather than a way
 around it, and it costs a cold cache only under `NANODA_SHADOW=1`.
+
+## 20. The core contracts are typed, and the model they were written against is not
+
+Two findings in one session, the second containing the first.
+
+**First (fixed):** `whnf`'s `Sort` arm simplifies the level, which is not a
+term reduction, so `tc_wf`'s `pstep_star` claim on the whnf cache was false.
+The fix was `deq_any`, whose `deq_leaf` admits exactly `simplify`'s
+denotation-preservation.
+
+**Second (open, and larger):** `deq_any` is the UNTYPED definitional
+equality, and the kernel's conversion is typed. The kernel performs steps no
+disjunct of `deq_c` can express:
+
+| kernel step | where | in the model |
+|---|---|---|
+| proof irrelevance | `def_eq` → `proof_irrel_eq` | `deq_p`'s `proof_irrel_pair` (typed) |
+| unit-like types | `def_eq_unit` | `deq_p`'s `unit_pair` (typed) |
+| structure eta | `def_eq` → `try_eta_struct`; `reduce_rec` → `iota_try_eta_struct` | `eta_struct_expand` (typed, via `types_to`) |
+| K-like recursor reduction | `reduce_rec` → `to_ctor_when_k` | a `deq_p` leaf lemma exists |
+| recursor iota on large terms | `reduce_rec` | `rec_ready` is CAPPED (`args <= 64`, `rhs size <= 500`) for the confluence proofs; the kernel is not |
+
+So `tc_wf`'s `eq_cache` conjunct is false whenever `def_eq` succeeds by proof
+irrelevance, unit, or structure eta, and `whnf_claim` -- hence both whnf-cache
+conjuncts and `whnf`'s own contract -- is false whenever `whnf` reduces a
+recursor by K, by structure eta on the major, or past the caps.
+
+**What survives unchanged:** every proof landed so far. The zeta, beta,
+quotient and projection arms of `whnf_no_unfolding_aux`, `reduce_quot`,
+`reduce_proj`, `unfold_def`, the `Sort`-arm `deq_leaf` step: all genuine
+untyped steps. `deq_c` is `deq_p_c`'s first disjunct, so each lifts into the
+typed relation as it stands. Nothing false was *proven* -- the recursor arm's
+failure is Verus reporting the truth, and `whnf`'s postcondition verifies only
+modulo that callee `ensures`.
+
+**The direction this points to (a decision, not yet taken):** restate
+`whnf_claim` and the `eq_cache` conjunct over `deq_p_any`, with `dty` from the
+environment and the local context from the arena, then add K-like, structure
+eta and an uncapped recursor step as typed leaves one at a time. That is a
+weakening again, and it keeps every proof above. The open technical question
+it raises is that the arena's local context GROWS as `mk_dbj_level` creates
+locals, so a cached claim made under a smaller context must survive into a
+larger one -- the typed relation needs monotonicity in `lctx`.
+
+**Why neither finding came from an error message:** in both cases the
+obligation looked like an ordinary hard proof. What exposed them was going
+arm by arm and asking which rule of the model justifies this step -- and
+finding that for some arms, none does.
