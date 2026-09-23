@@ -925,3 +925,22 @@ larger one -- the typed relation needs monotonicity in `lctx`.
 obligation looked like an ordinary hard proof. What exposed them was going
 arm by arm and asking which rule of the model justifies this step -- and
 finding that for some arms, none does.
+
+### §20, continued — the typed direction, taken
+
+The user chose the typed route. `conv(env, x, y)` is `deq_p_any` at the
+instantiation the shadow's proof-irrelevance route already used, and
+`whnf_claim` is stated over it. The monotonicity question raised above does
+not arise: `arena_lctx()` is an ambient map over every local ever created,
+and locals are immutable, so a claim made under it never needs weakening.
+
+Landed on the typed claim: `whnf`'s whole loop, every arm of
+`whnf_no_unfolding_aux` but the recursor, `reduce_quot`, `reduce_proj`,
+`str_lit_to_ctor_reducing`, `unfold_def`, `try_reduce_nat` and `do_nat_bin`.
+
+The recursor arm needs three things, in dependency order: `infer`'s typing
+claim and `def_eq`'s conversion claim (K-like replacement is proof
+irrelevance of the major premise against the nullary constructor; structure
+eta needs the major's type), and an UNCAPPED recursor-iota step -- `pstep`'s
+`rec_ready` carries size caps for the confluence proofs that the kernel does
+not, so it wants a `deq_quot`-style leaf rather than the `pstep` rule.
