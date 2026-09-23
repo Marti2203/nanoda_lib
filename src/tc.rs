@@ -963,46 +963,163 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn do_nat_bin(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, op: NatBinOp) -> Option<ExprPtr<'t>>
+    fn do_nat_bin(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, op: NatBinOp) -> (result: Option<
+        ExprPtr<'t>,
+    >)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // ONE NAT-FOLDING STEP, for whichever operator constant `op` names --
+            // this function is handed the operation, not the head
+            match result {
+                Some(r) => nat_bin_claim(
+                    *old(self).env,
+                    nat_op_code(op),
+                    to_model_expr(x),
+                    to_model_expr(y),
+                    to_model_expr(r),
+                ),
+                None => true,
+            },
     {
         use NatBinOp::*;
-        let (x, y) = (self.whnf(x), self.whnf(y));
-        let (arg1, arg2) = (self.ctx.get_bignum_from_expr(x)?, self.ctx.get_bignum_from_expr(y)?);
-        match op {
+        // `xw`/`yw`, not `x`/`y`: a local that shadows a parameter named in the
+        // `ensures` silently redirects the postcondition to itself. Same values.
+        let (xw, yw) = (self.whnf(x), self.whnf(y));
+        let (arg1, arg2) = (self.ctx.get_bignum_from_expr(xw)?, self.ctx.get_bignum_from_expr(yw)?);
+        let ghost a = crate::nat_lit_model::to_nat(arg1);
+        let ghost b = crate::nat_lit_model::to_nat(arg2);
+        // VERUS-REWRITE(wrapper-swap): each operation goes through its
+        // `biguint_*` wrapper, which calls the very `util::nat_*` function (or
+        // `num_traits::Pow::pow`, or `==`/`<=`) the kernel called here, and adds
+        // the value contract. Same computation, same result.
+        let r = match op {
             Add => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_add(arg1, arg2)),
             Sub => self.ctx.mk_nat_lit_quick(nat_sub(arg1, arg2)),
             Mul => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_mul(arg1, arg2)),
-            Pow => self.ctx.mk_nat_lit_quick(arg1.pow(arg2)),
+            Pow => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_pow(arg1, arg2)),
             Div => self.ctx.mk_nat_lit_quick(nat_div(arg1, arg2)),
             Mod => self.ctx.mk_nat_lit_quick(nat_mod(arg1, arg2)),
-            Gcd => self.ctx.mk_nat_lit_quick(nat_gcd(&arg1, &arg2)),
-            LAnd => self.ctx.mk_nat_lit_quick(nat_land(arg1, arg2)),
-            LOr => self.ctx.mk_nat_lit_quick(nat_lor(arg1, arg2)),
-            XOr => self.ctx.mk_nat_lit_quick(nat_xor(&arg1, &arg2)),
-            Shl => self.ctx.mk_nat_lit_quick(nat_shl(arg1, arg2)),
-            Shr => self.ctx.mk_nat_lit_quick(nat_shr(arg1, arg2)),
-            Beq => self.ctx.bool_to_expr(arg1 == arg2),
-            Ble => self.ctx.bool_to_expr(arg1 <= arg2),
+            Gcd => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_gcd(&arg1, &arg2)),
+            LAnd => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_land(arg1, arg2)),
+            LOr => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_lor(arg1, arg2)),
+            XOr => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_xor(&arg1, &arg2)),
+            Shl => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shl(arg1, arg2)),
+            Shr => self.ctx.mk_nat_lit_quick(crate::nat_lit_model::biguint_shr(arg1, arg2)),
+            Beq => self.ctx.bool_to_expr(crate::nat_lit_model::biguint_eq(&arg1, &arg2)),
+            Ble => self.ctx.bool_to_expr(crate::nat_lit_model::biguint_le(&arg1, &arg2)),
+        };
+        proof {
+            let env = *old(self).env;
+            let fm = crate::env_model::to_model_of_env(env);
+            let code = nat_op_code(op);
+            let xm = to_model_expr(x);
+            let ym = to_model_expr(y);
+            let xwm = to_model_expr(xw);
+            let ywm = to_model_expr(yw);
+            assert(crate::beta_model::nat_value(xwm) == Some(a));
+            assert(crate::beta_model::nat_value(ywm) == Some(b));
+            if let Some(rr) = r {
+                // the literal the kernel built IS the model's folded value
+                if code == 7 || code == 8 {
+                    crate::expr_arena_bridge::is_const_shape_model(rr);
+                    crate::beta_model::const_expr_no_levels_canonical(
+                        to_model_expr(rr),
+                        crate::expr_arena_bridge::const_id(rr),
+                    );
+                } else {
+                    crate::expr_arena_bridge::is_nat_lit_shape_model(rr);
+                }
+                let rm = to_model_expr(rr);
+                assert forall|oid: u64, lv: Seq<crate::level_model::LevelSpec>|
+                    crate::expr_arena_bridge::nat_bin_op_of(oid) == Some(code) && lv.len() == 0
+                    implies #[trigger] whnf_claim(env, ExprSpec::App(Box::new(ExprSpec::App(Box::new(ExprSpec::Const(oid, lv)), Box::new(xm))), Box::new(ym)), rm) by {
+                    let h = ExprSpec::Const(oid, lv);
+                    let args0 = Seq::<ExprSpec>::empty().push(xm).push(ym);
+                    let s0 = crate::beta_model::spine_app(h, args0);
+                    // the claim's App-of-App shape is this two-argument spine
+                    crate::beta_model::spine_app_compose_last(h, Seq::<ExprSpec>::empty().push(xm), ym);
+                    crate::beta_model::spine_app_compose_last(h, Seq::<ExprSpec>::empty(), xm);
+                    assert(crate::beta_model::spine_app(h, Seq::<ExprSpec>::empty()) == h);
+                    assert(s0 == ExprSpec::App(Box::new(ExprSpec::App(Box::new(ExprSpec::Const(oid, lv)), Box::new(xm))), Box::new(ym)));
+                    if crate::expr_model::nlbv(s0) <= 0 {
+                        crate::beta_model::spine_app_nlbv_decompose(h, args0);
+                        assert(args0[0] == xm && args0[1] == ym);
+                        // both operands, whnf'd, are convertible with themselves
+                        let args1 = args0.update(0, xwm);
+                        let args2 = args1.update(1, ywm);
+                        conv_spine_update(env, h, args0, 0, xwm);
+                        assert(args1[1] == ym);
+                        conv_spine_update(env, h, args1, 1, ywm);
+                        conv_trans(
+                            env,
+                            s0,
+                            crate::beta_model::spine_app(h, args1),
+                            crate::beta_model::spine_app(h, args2),
+                        );
+                        // and the result is a nat-fold redex -- an untyped step
+                        let sp = crate::beta_model::spine_app(h, args2);
+                        assert(args2 =~= Seq::<ExprSpec>::empty().push(xwm).push(ywm));
+                        crate::beta_model::spine_app_compose_last(
+                            h,
+                            Seq::<ExprSpec>::empty().push(xwm),
+                            ywm,
+                        );
+                        crate::beta_model::spine_app_compose_last(h, Seq::<ExprSpec>::empty(), xwm);
+                        assert(crate::beta_model::spine_app(h, Seq::<ExprSpec>::empty()) == h);
+                        let inner = ExprSpec::App(Box::new(h), Box::new(xwm));
+                        assert(sp == ExprSpec::App(Box::new(inner), Box::new(ywm)));
+                        crate::beta_model::spine_destruct_app(h, args2);
+                        assert(crate::beta_model::spine_head(sp) == h);
+                        assert(crate::beta_model::spine_args(sp) =~= args2);
+                        assert(crate::beta_model::nat_fold_ready(sp));
+                        assert(crate::beta_model::nat_fold_result(sp) == rm);
+                        assert(crate::beta_model::pstep(fm, inner, inner));
+                        assert(crate::beta_model::pstep(fm, ywm, ywm));
+                        crate::beta_model::pstep_fold_intro(
+                            fm,
+                            Box::new(inner),
+                            Box::new(ywm),
+                            inner,
+                            ywm,
+                            rm,
+                        );
+                        crate::beta_model::pstep_star_one(fm, sp, rm);
+                        crate::beta_model::defeq_of_pstep_star(fm, sp, rm);
+                        crate::tc_model::deq_any_of_defeq(fm, sp, rm);
+                        conv_of_deq(env, sp, rm);
+                        conv_trans(env, s0, sp, rm);
+                        crate::beta_model::const_expr_no_levels_shape(
+                            crate::expr_arena_bridge::bool_true_id(),
+                        );
+                        crate::beta_model::const_expr_no_levels_shape(
+                            crate::expr_arena_bridge::bool_false_id(),
+                        );
+                    }
+                }
+            }
         }
+        r
     }
 
     /// Try to reduce an expression `e` which is an application of `Nat.succ`,
     /// or an application of a supported binary operation. `e` must have no free
     /// variables.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>>
+    pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            match result {
+                Some(r) => whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(r)),
+                None => true,
+            },
     {
         if !self.ctx.export_file.config.nat_extension_on() {
             return None
@@ -1011,6 +1128,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return None
         }
         let (f, args) = self.ctx.unfold_apps(e);
+        let ghost am = crate::expr_arena_bridge::ptr_models(args@);
+        proof {
+            crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
+        }
         // VERUS-REWRITE(slice-pattern): the original matches on
         // `args.as_slice()` with `[arg]` and `[arg1, arg2]`. Slice patterns are
         // unsupported outright, so the arity is tested and the elements
@@ -1021,47 +1142,132 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // postcondition unprovable -- every assert inside passes, the
         // postcondition still fails. Collapsed into one arm with the same
         // conditions tested in the same order by an if/else-if chain.
+        // VERUS-REWRITE(option-eq): every `Some(name) == name_cache.nat_x`
+        // became `opt_name_is(name_cache.nat_x, name)` -- `Option::eq`'s vstd
+        // specification is claim-free, so the comparison told the verifier
+        // nothing. Same test.
         let out = match self.ctx.read_expr(f) {
-            Const { name, .. } => {
-                if args.len() == 1 && Some(name) == self.ctx.export_file.name_cache.nat_succ {
+            Const { name, levels, .. } => {
+                // VERUS-REWRITE(nat-levels-guard): Nat's operators and `Nat.succ`
+                // take no universe parameters, and the model's folding rules
+                // apply only to the level-free constant. With levels attached
+                // the term is ill-formed (`infer_const` rejects the arity), and
+                // folding it anyway would be a step no rule justifies. Declines
+                // on ill-formed input only.
+                if self.ctx.read_levels(levels).len() != 0 {
+                    None
+                } else if args.len() == 1 && opt_name_is(self.ctx.export_file.name_cache.nat_succ, name) {
                     let arg = args[0];
                     let v_expr = self.whnf(arg);
-                    self.ctx.get_bignum_succ_from_expr(v_expr)
+                    let r = self.ctx.get_bignum_succ_from_expr(v_expr);
+                    proof {
+                        if let Some(rr) = r {
+                            let env = *old(self).env;
+                            let em = to_model_expr(e);
+                            let fm0 = to_model_expr(f);
+                            let argm = to_model_expr(arg);
+                            let vm = to_model_expr(v_expr);
+                            assert(am[0] == argm);
+                            assert(am =~= Seq::<ExprSpec>::empty().push(argm));
+                            crate::beta_model::spine_app_compose_last(fm0, Seq::<ExprSpec>::empty(), argm);
+                            assert(crate::beta_model::spine_app(fm0, Seq::<ExprSpec>::empty()) == fm0);
+                            assert(em == ExprSpec::App(Box::new(fm0), Box::new(argm)));
+                            if crate::expr_model::nlbv(em) <= 0 {
+                                // Nat.succ arg ~ Nat.succ (whnf arg)
+                                let args1 = am.update(0, vm);
+                                conv_spine_update(env, fm0, am, 0, vm);
+                                assert(args1 =~= Seq::<ExprSpec>::empty().push(vm));
+                                crate::beta_model::spine_app_compose_last(fm0, Seq::<ExprSpec>::empty(), vm);
+                                let w = ExprSpec::App(Box::new(fm0), Box::new(vm));
+                                assert(crate::beta_model::spine_app(fm0, args1) == w);
+                                // ... whose numeral value is one more than the
+                                // whnf'd argument's, and the result is exactly
+                                // that numeral
+                                assert(crate::beta_model::nat_value(w) is Some);
+                                conv_nat_value(env, w);
+                                conv_trans(env, em, w, to_model_expr(rr));
+                            }
+                        }
+                    }
+                    r
                 } else if args.len() == 2 {
                     let arg1 = args[0];
                     let arg2 = args[1];
-                    let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
+                    let op = if opt_name_is(self.ctx.export_file.name_cache.nat_add, name) {
                         NatBinOp::Add
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_sub, name) {
                         NatBinOp::Sub
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_mul, name) {
                         NatBinOp::Mul
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_pow, name) {
                         NatBinOp::Pow
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_mod, name) {
                         NatBinOp::Mod
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_div, name) {
                         NatBinOp::Div
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_beq, name) {
                         NatBinOp::Beq
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_ble, name) {
                         NatBinOp::Ble
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_land, name) {
                         NatBinOp::LAnd
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_lor, name) {
                         NatBinOp::LOr
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_xor, name) {
                         NatBinOp::XOr
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_gcd, name) {
                         NatBinOp::Gcd
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_shl, name) {
                         NatBinOp::Shl
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
+                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_shr, name) {
                         NatBinOp::Shr
                     } else {
                         return None
                     };
-                    self.do_nat_bin(arg1, arg2, op)
+                    proof {
+                        assert(crate::expr_arena_bridge::nat_bin_op_of(
+                            crate::level_arena_bridge::name_id(name),
+                        ) == Some(nat_op_code(op)));
+                    }
+                    let r = self.do_nat_bin(arg1, arg2, op);
+                    proof {
+                        if let Some(rr) = r {
+                            let env = *old(self).env;
+                            let em = to_model_expr(e);
+                            let fm0 = to_model_expr(f);
+                            let lvm = fm0->Const_1;
+                            let xm = to_model_expr(arg1);
+                            let ym = to_model_expr(arg2);
+                            assert(fm0 == ExprSpec::Const(crate::level_arena_bridge::name_id(name), lvm));
+                            assert(lvm.len() == 0);
+                            assert(am[0] == xm && am[1] == ym);
+                            assert(am =~= Seq::<ExprSpec>::empty().push(xm).push(ym));
+                            crate::beta_model::spine_app_compose_last(
+                                fm0,
+                                Seq::<ExprSpec>::empty().push(xm),
+                                ym,
+                            );
+                            crate::beta_model::spine_app_compose_last(fm0, Seq::<ExprSpec>::empty(), xm);
+                            assert(crate::beta_model::spine_app(fm0, Seq::<ExprSpec>::empty()) == fm0);
+                            assert(em == ExprSpec::App(
+                                Box::new(ExprSpec::App(Box::new(fm0), Box::new(xm))),
+                                Box::new(ym),
+                            ));
+                            // `do_nat_bin`'s claim, at this head
+                            assert(whnf_claim(
+                                env,
+                                ExprSpec::App(
+                                    Box::new(ExprSpec::App(
+                                        Box::new(ExprSpec::Const(crate::level_arena_bridge::name_id(name), lvm)),
+                                        Box::new(xm),
+                                    )),
+                                    Box::new(ym),
+                                ),
+                                to_model_expr(rr),
+                            ));
+                        }
+                    }
+                    r
                 } else {
                     None
                 }
@@ -3688,6 +3894,95 @@ pub proof fn conv_spine_update<'x, 't>(
     );
 }
 
+pub proof fn conv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+    requires
+        conv(env, x, y),
+    ensures
+        conv(env, y, x),
+{
+    crate::tc_model::deq_p_any_symm(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(),
+        x,
+        y,
+    );
+}
+
+/// A term with a numeral value is convertible with that numeral as a literal.
+/// `NatLit(n)` is itself; `Nat.zero` is what `NatLit(0)` unfolds to; and
+/// `Nat.succ a` is what `NatLit(m + 1)` unfolds to, with `a` handled by
+/// induction under congruence.
+pub proof fn conv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
+    requires
+        crate::beta_model::nat_value(v) is Some,
+    ensures
+        conv(
+            env,
+            v,
+            ExprSpec::NatLit(
+                crate::expr_model::NatLitPayload(Ghost(crate::beta_model::nat_value(v)->Some_0)),
+            ),
+        ),
+    decreases v,
+{
+    let fm = crate::env_model::to_model_of_env(env);
+    match v {
+        ExprSpec::NatLit(n) => {
+            assert(crate::expr_model::NatLitPayload(Ghost(n.0@)) == n);
+            conv_refl(env, v);
+        },
+        ExprSpec::Const(id, ls) => {
+            crate::beta_model::const_expr_no_levels_canonical(v, crate::expr_arena_bridge::nat_zero_id());
+            let z = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(0nat)));
+            assert(crate::beta_model::pstep(fm, z, v));
+            crate::beta_model::pstep_star_one(fm, z, v);
+            crate::beta_model::defeq_of_pstep_star(fm, z, v);
+            crate::tc_model::deq_any_of_defeq(fm, z, v);
+            conv_of_deq(env, z, v);
+            conv_symm(env, z, v);
+        },
+        ExprSpec::App(f, a) => {
+            let m = crate::beta_model::nat_value(*a)->Some_0;
+            conv_nat_value(env, *a);
+            let lm = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(m)));
+            // Nat.succ a ~ Nat.succ (NatLit m), as a one-argument spine
+            crate::beta_model::spine_app_compose_last(*f, Seq::<ExprSpec>::empty(), *a);
+            assert(crate::beta_model::spine_app(*f, Seq::<ExprSpec>::empty()) == *f);
+            let args = Seq::<ExprSpec>::empty().push(*a);
+            assert(crate::beta_model::spine_app(*f, args) == v);
+            conv_spine_update(env, *f, args, 0, lm);
+            let args1 = args.update(0, lm);
+            assert(args1 =~= Seq::<ExprSpec>::empty().push(lm));
+            crate::beta_model::spine_app_compose_last(*f, Seq::<ExprSpec>::empty(), lm);
+            let w = ExprSpec::App(Box::new(*f), Box::new(lm));
+            assert(crate::beta_model::spine_app(*f, args1) == w);
+            // and NatLit(m + 1) unfolds to exactly that
+            crate::beta_model::const_expr_no_levels_canonical(*f, crate::expr_arena_bridge::nat_succ_id());
+            let big = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((m + 1) as nat)));
+            assert(crate::beta_model::pstep(fm, big, w));
+            crate::beta_model::pstep_star_one(fm, big, w);
+            crate::beta_model::defeq_of_pstep_star(fm, big, w);
+            crate::tc_model::deq_any_of_defeq(fm, big, w);
+            conv_of_deq(env, big, w);
+            conv_symm(env, big, w);
+            conv_trans(env, v, w, big);
+        },
+        _ => {},
+    }
+}
+
+/// `Some(n) == opt`, with the specification vstd's `Option::eq` lacks.
+fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
+    ensures
+        result == (opt == Some(n)),
+{
+    match opt {
+        Some(m) => m == n,
+        None => false,
+    }
+}
+
 /// What `whnf` and `whnf_no_unfolding` promise, and what their caches hold:
 /// on a CLOSED input, the output is convertible with it, and closed too.
 ///
@@ -3746,6 +4041,41 @@ pub open spec fn quot_step_claim<'x, 't>(
 ) -> bool {
     forall|lv: Seq<crate::level_model::LevelSpec>|
         #[trigger] whnf_claim(env, crate::beta_model::spine_app(ExprSpec::Const(id, lv), am), r)
+}
+
+/// The model's operation code for each `NatBinOp`, in the order
+/// `name_cache_ids_ok` pins the name cache to.
+pub(crate) open spec fn nat_op_code(op: NatBinOp) -> u8 {
+    match op {
+        NatBinOp::Add => 0u8,
+        NatBinOp::Sub => 1u8,
+        NatBinOp::Mul => 2u8,
+        NatBinOp::Div => 3u8,
+        NatBinOp::Mod => 4u8,
+        NatBinOp::Pow => 5u8,
+        NatBinOp::Gcd => 6u8,
+        NatBinOp::Beq => 7u8,
+        NatBinOp::Ble => 8u8,
+        NatBinOp::LAnd => 9u8,
+        NatBinOp::LOr => 10u8,
+        NatBinOp::XOr => 11u8,
+        NatBinOp::Shl => 12u8,
+        NatBinOp::Shr => 13u8,
+    }
+}
+
+/// `do_nat_bin`'s claim: one nat-folding step, from ANY level-free operator
+/// constant with this operation code applied to the two operands.
+pub open spec fn nat_bin_claim<'x, 't>(
+    env: Env<'x, 't>,
+    code: u8,
+    xm: ExprSpec,
+    ym: ExprSpec,
+    rm: ExprSpec,
+) -> bool {
+    forall|oid: u64, lv: Seq<crate::level_model::LevelSpec>|
+        crate::expr_arena_bridge::nat_bin_op_of(oid) == Some(code) && lv.len() == 0 ==>
+        #[trigger] whnf_claim(env, ExprSpec::App(Box::new(ExprSpec::App(Box::new(ExprSpec::Const(oid, lv)), Box::new(xm))), Box::new(ym)), rm)
 }
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
