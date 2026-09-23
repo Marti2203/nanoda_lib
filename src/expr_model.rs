@@ -516,6 +516,106 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
     }
 }
 
+/// FRESHNESS FROM SCOPE. A level-local whose serial is `c` cannot occur in a
+/// term whose level-locals are all below `c`. The arena is hash-consed, so a
+/// newly made local can be the very node an old term mentions -- freshness has
+/// to come from the level, and this is where it does.
+pub proof fn dbj_serials_below_fv_absent(e: ExprSpec, k: u32, c: u16)
+    requires
+        crate::expr_arena_bridge::dbj_serial(k) == Some(c),
+        dbj_serials_below(e, c),
+    ensures
+        fv_absent(e, k),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            dbj_serials_below_fv_absent(*f, k, c);
+            dbj_serials_below_fv_absent(*a, k, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            dbj_serials_below_fv_absent(*t, k, c);
+            dbj_serials_below_fv_absent(*b, k, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            dbj_serials_below_fv_absent(*t, k, c);
+            dbj_serials_below_fv_absent(*v, k, c);
+            dbj_serials_below_fv_absent(*b, k, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            dbj_serials_below_fv_absent(*st, k, c);
+        },
+        _ => {},
+    }
+}
+
+/// A term with no free variables at all is in scope at every depth --
+/// declaration types and values from the environment, in particular.
+pub proof fn no_fv_dbj_serials_below(e: ExprSpec, c: u16)
+    requires
+        !has_fv(e),
+    ensures
+        dbj_serials_below(e, c),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            no_fv_dbj_serials_below(*f, c);
+            no_fv_dbj_serials_below(*a, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            no_fv_dbj_serials_below(*t, c);
+            no_fv_dbj_serials_below(*b, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            no_fv_dbj_serials_below(*t, c);
+            no_fv_dbj_serials_below(*v, c);
+            no_fv_dbj_serials_below(*b, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            no_fv_dbj_serials_below(*st, c);
+        },
+        _ => {},
+    }
+}
+
+/// Substitution introduces no local that neither the term nor the substituted
+/// values mentioned.
+pub proof fn subst_full_dbj_serials_below(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+    requires
+        dbj_serials_below(e, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_serials_below(substs[i], c),
+    ensures
+        dbj_serials_below(subst_full(e, substs, offset), c),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if (i as nat) >= offset && (i as nat - offset) < substs.len() {
+                let j = (substs.len() - 1 - (i as nat - offset)) as int;
+                assert(dbj_serials_below(substs[j], c));
+            }
+        },
+        ExprSpec::App(f, a) => {
+            subst_full_dbj_serials_below(*f, substs, offset, c);
+            subst_full_dbj_serials_below(*a, substs, offset, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_full_dbj_serials_below(*t, substs, offset, c);
+            subst_full_dbj_serials_below(*b, substs, offset + 1, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_full_dbj_serials_below(*t, substs, offset, c);
+            subst_full_dbj_serials_below(*v, substs, offset, c);
+            subst_full_dbj_serials_below(*b, substs, offset + 1, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            subst_full_dbj_serials_below(*st, substs, offset, c);
+        },
+        _ => {},
+    }
+}
+
 /// The model of `TcCtx::abstr_aux_levels` -- abstraction by de Bruijn LEVEL
 /// rather than by an explicit list of locals.
 ///

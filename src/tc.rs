@@ -2908,21 +2908,46 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+    fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         if x == y {
+            proof { kconv_refl(*old(self).env, to_model_expr(x)); }
             return Some(true)
         }
-        if self.tc_cache.eq_cache.contains(&SortedPair::new(x, y)) {
+        // VERUS-REWRITE(accessor-swap): was
+        // `self.tc_cache.eq_cache.contains(&SortedPair::new(x, y))`;
+        // `cached_eq` is exactly that lookup, and hands back the cache's claim.
+        if self.cached_eq(x, y) {
             return Some(true)
         }
         if let Some(r) = self.def_eq_sort(x, y) {
+            proof {
+                if r {
+                    // two sorts whose levels denote the same universe under
+                    // every assignment: `deq_leaf`'s condition
+                    let (l, rl) = choose|l: LevelPtr<'t>, rl: LevelPtr<'t>|
+                        #![trigger to_model_level(l), to_model_level(rl)]
+                        to_model_expr(x) == ExprSpec::Sort(to_model_level(l))
+                        && to_model_expr(y) == ExprSpec::Sort(to_model_level(rl))
+                        && forall|rho: vstd::map::Map<nat, nat>|
+                            #[trigger] crate::level_model::interp(to_model_level(l), rho)
+                                == crate::level_model::interp(to_model_level(rl), rho);
+                    assert(crate::tc_model::deq_leaf(to_model_expr(x), to_model_expr(y)));
+                    crate::tc_model::deq_any_of_leaf(
+                        crate::env_model::to_model_of_env(*old(self).env),
+                        to_model_expr(x),
+                        to_model_expr(y),
+                    );
+                    kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
+                }
+            }
             return Some(r)
         }
         if let Some(r) = self.def_eq_binder_multi(x, y) {
@@ -3938,6 +3963,57 @@ fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
     match opt {
         Some(m) => m == n,
         None => false,
+    }
+}
+
+/// A spine is in scope exactly when its head and every argument are.
+pub proof fn spine_app_dbj_serials_below(h: ExprSpec, args: Seq<ExprSpec>, c: u16)
+    ensures
+        crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h, args), c) <==> (
+        crate::expr_model::dbj_serials_below(h, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_serials_below(args[i], c)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let init = args.subrange(0, args.len() - 1);
+        let last = args[args.len() - 1];
+        spine_app_dbj_serials_below(h, init, c);
+        assert(crate::beta_model::spine_app(h, args) == ExprSpec::App(
+            Box::new(crate::beta_model::spine_app(h, init)),
+            Box::new(last),
+        ));
+        if crate::expr_model::dbj_serials_below(crate::beta_model::spine_app(h, args), c) {
+            assert forall|i: int| 0 <= i < args.len() implies
+                #[trigger] crate::expr_model::dbj_serials_below(args[i], c) by {
+                if i < args.len() - 1 {
+                    assert(init[i] == args[i]);
+                }
+            }
+        }
+        if crate::expr_model::dbj_serials_below(h, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_serials_below(args[i], c) {
+            assert forall|i: int| 0 <= i < init.len() implies
+                #[trigger] crate::expr_model::dbj_serials_below(init[i], c) by {
+                assert(init[i] == args[i]);
+            }
+            assert(crate::expr_model::dbj_serials_below(last, c));
+        }
+    }
+}
+
+/// What a head peels to under `n` binders is in scope if the head is.
+pub proof fn spine_bind_dbj_serials_below(lam: ExprSpec, n: nat, bm: ExprSpec, c: u16)
+    requires
+        crate::beta_model::spine_bind(lam, n) == Some(bm),
+        crate::expr_model::dbj_serials_below(lam, c),
+    ensures
+        crate::expr_model::dbj_serials_below(bm, c),
+    decreases n,
+{
+    if n > 0 {
+        if let ExprSpec::Bind(_, b) = lam {
+            spine_bind_dbj_serials_below(*b, (n - 1) as nat, bm, c);
+        }
     }
 }
 

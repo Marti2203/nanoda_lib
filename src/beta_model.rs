@@ -284,6 +284,19 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
 /// `NatLit`'s own (which needed one `if n.0@ == 0` split).
 pub uninterp spec fn string_lit_expand_model(len: nat) -> ExprSpec;
 
+/// The one thing about the opaque expansion that well-scopedness needs: it
+/// mentions no free variable. True by construction -- the kernel builds it
+/// from `String.ofList`, `List.cons`/`List.nil` at `Char`, `Char.ofNat` and
+/// numeral literals, and nothing else -- but the target is deliberately
+/// uninterpreted (see above), so it has to be said. Stated about the MODEL
+/// function once, rather than added to each exec claim that produces it.
+#[verifier::external_body]
+pub proof fn string_lit_expand_no_fv(len: nat)
+    ensures
+        !crate::expr_model::has_fv(string_lit_expand_model(len)),
+{
+}
+
 pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool
     decreases e1,
 {
