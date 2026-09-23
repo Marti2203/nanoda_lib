@@ -888,8 +888,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::beta_model::defeq_of_pstep_star(fm, sl, to_model_expr(c));
                     crate::tc_model::deq_any_of_defeq(fm, sl, to_model_expr(c));
                     // the unfolding is an untyped step; `whnf`'s is typed
-                    conv_of_deq(*old(self).env, sl, to_model_expr(c));
-                    conv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
+                    kconv_of_deq(*old(self).env, sl, to_model_expr(c));
+                    kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                 }
                 Some(r)
             },
@@ -1051,10 +1051,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         // both operands, whnf'd, are convertible with themselves
                         let args1 = args0.update(0, xwm);
                         let args2 = args1.update(1, ywm);
-                        conv_spine_update(env, h, args0, 0, xwm);
+                        kconv_spine_update(env, h, args0, 0, xwm);
                         assert(args1[1] == ym);
-                        conv_spine_update(env, h, args1, 1, ywm);
-                        conv_trans(
+                        kconv_spine_update(env, h, args1, 1, ywm);
+                        kconv_trans(
                             env,
                             s0,
                             crate::beta_model::spine_app(h, args1),
@@ -1090,8 +1090,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::beta_model::pstep_star_one(fm, sp, rm);
                         crate::beta_model::defeq_of_pstep_star(fm, sp, rm);
                         crate::tc_model::deq_any_of_defeq(fm, sp, rm);
-                        conv_of_deq(env, sp, rm);
-                        conv_trans(env, s0, sp, rm);
+                        kconv_of_deq(env, sp, rm);
+                        kconv_trans(env, s0, sp, rm);
                         crate::beta_model::const_expr_no_levels_shape(
                             crate::expr_arena_bridge::bool_true_id(),
                         );
@@ -1175,7 +1175,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             if crate::expr_model::nlbv(em) <= 0 {
                                 // Nat.succ arg ~ Nat.succ (whnf arg)
                                 let args1 = am.update(0, vm);
-                                conv_spine_update(env, fm0, am, 0, vm);
+                                kconv_spine_update(env, fm0, am, 0, vm);
                                 assert(args1 =~= Seq::<ExprSpec>::empty().push(vm));
                                 crate::beta_model::spine_app_compose_last(fm0, Seq::<ExprSpec>::empty(), vm);
                                 let w = ExprSpec::App(Box::new(fm0), Box::new(vm));
@@ -1184,8 +1184,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 // whnf'd argument's, and the result is exactly
                                 // that numeral
                                 assert(crate::beta_model::nat_value(w) is Some);
-                                conv_nat_value(env, w);
-                                conv_trans(env, em, w, to_model_expr(rr));
+                                kconv_nat_value(env, w);
+                                kconv_trans(env, em, w, to_model_expr(rr));
                             }
                         }
                     }
@@ -1366,12 +1366,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::beta_model::pstep_star_one(fm, pm, to_model_expr(a));
                     crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
                     crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
-                    conv_of_deq(env, pm, to_model_expr(a));
+                    kconv_of_deq(env, pm, to_model_expr(a));
                     if crate::expr_model::nlbv(s0) <= 0 {
                         // the structure, whnf'd, is convertible with what it
                         // was, and projection is a congruence
-                        conv_proj_congr(env, idx, s0, sm);
-                        conv_trans(env, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
+                        kconv_proj_congr(env, idx, s0, sm);
+                        kconv_trans(env, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
                         crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
                     }
                 }
@@ -1947,7 +1947,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(to_model_expr(e1) == crate::beta_model::spine_app(to_model_expr(pr), am));
                     if crate::expr_model::nlbv(em0) <= 0 {
                         crate::beta_model::spine_app_nlbv_decompose(pm, am);
-                        conv_spine_congr(*old(self).env, pm, to_model_expr(pr), am);
+                        kconv_spine_congr(*old(self).env, pm, to_model_expr(pr), am);
                         crate::beta_model::spine_app_nlbv(to_model_expr(pr), am);
                     }
                     assert(whnf_claim(*old(self).env, em0, to_model_expr(e1)));
@@ -2917,8 +2917,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     // the major, whnf'd, is convertible with what it was, and
                     // replacing one argument of a spine by something
                     // convertible with it is a congruence
-                    assert(conv(env, am[q], qm));
-                    conv_spine_update(env, head, am, q, qm);
+                    assert(kconv(env, am[q], qm));
+                    kconv_spine_update(env, head, am, q, qm);
                     assert(am.update(q, qm) == args2);
                     // and the replaced spine is a quotient redex -- an untyped
                     // step, lifted
@@ -2936,8 +2936,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::beta_model::spine_app(head, args2),
                         to_model_expr(r),
                     );
-                    conv_of_deq(env, crate::beta_model::spine_app(head, args2), to_model_expr(r));
-                    conv_trans(env, s0, crate::beta_model::spine_app(head, args2), to_model_expr(r));
+                    kconv_of_deq(env, crate::beta_model::spine_app(head, args2), to_model_expr(r));
+                    kconv_trans(env, s0, crate::beta_model::spine_app(head, args2), to_model_expr(r));
                     // closed
                     crate::beta_model::spine_app_nlbv_decompose(mk_head, mk_args);
                     assert forall|i: int| 0 <= i < am.skip(q + 1).len() implies crate::expr_model::nlbv(
@@ -3765,51 +3765,73 @@ pub proof fn deq_any_of_nofv_pstep_star<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b
     crate::tc_model::deq_any_of_defeq(crate::env_model::to_model_of_env(env), a, b);
 }
 
-/// THE KERNEL'S CONVERSION: typed definitional equality, at the one
-/// instantiation every claim in this file uses -- declaration types and values
-/// from the environment, and local types from the arena.
+/// THE KERNEL'S CONVERSION: typed definitional equality in `InferOnly` mode,
+/// at the one instantiation every claim in this file uses -- declaration types
+/// and values from the environment, local types from the arena.
 ///
-/// Typed because the kernel's is. `def_eq` succeeds by proof irrelevance, by
-/// unit-like types and by structure eta, and `whnf` reduces recursors by
-/// K-like replacement -- none of which the untyped `deq` can express, so a
-/// claim stated with `deq_any` is false of real runs (TC_RS_ARC.md §20).
+/// Typed, because the kernel's conversion is: `def_eq` succeeds by proof
+/// irrelevance, unit-like types and structure eta, and `whnf` reduces
+/// recursors by K-like replacement -- none of which the untyped `deq` can
+/// express (TC_RS_ARC.md §20). `InferOnly` (`io == true`), because the kernel
+/// types the terms those steps compare with `InferOnly` inference, which never
+/// checks an application's argument. So this is exactly what the kernel
+/// computes -- and it is sound only on well-typed terms.
+///
+/// The connection to real conversion, `tconv` below, is THE METATHEOREM this
+/// file does not yet prove: on well-typed terms, `kconv` implies `tconv`. Its
+/// core is that `InferOnly` inference of a well-typed term yields a real type,
+/// which needs uniqueness of typing up to conversion and injectivity of Pi.
+/// It is stated here as the target, and nothing assumes it.
 ///
 /// `arena_lctx()` is an AMBIENT map: every local ever created, keyed by its
 /// unique id. Locals are immutable, so a claim made under it never needs
 /// weakening as more binders open.
-pub open spec fn conv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bool {
+pub open spec fn kconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bool {
     crate::tc_model::deq_p_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
         y,
     )
 }
 
-pub proof fn conv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
+/// REAL typed conversion (`io == false`): what the metatheory will connect
+/// `kconv` to, on well-typed terms.
+pub open spec fn tconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bool {
+    crate::tc_model::deq_p_any(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(),
+        false,
+        x,
+        y,
+    )
+}
+
+pub proof fn kconv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
     ensures
-        conv(env, x, x),
+        kconv(env, x, x),
 {
     crate::tc_model::deq_p_any_refl(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
     );
 }
 
-pub proof fn conv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+pub proof fn kconv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
-        conv(env, x, y),
-        conv(env, y, z),
+        kconv(env, x, y),
+        kconv(env, y, z),
     ensures
-        conv(env, x, z),
+        kconv(env, x, z),
 {
     crate::tc_model::deq_p_any_trans(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
         y,
         z,
@@ -3817,31 +3839,31 @@ pub proof fn conv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: E
 }
 
 /// Every untyped step is a typed one (`deq_c` is `deq_p_c`'s first disjunct).
-pub proof fn conv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+pub proof fn kconv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
         crate::tc_model::deq_any(crate::env_model::to_model_of_env(env), x, y),
     ensures
-        conv(env, x, y),
+        kconv(env, x, y),
 {
     crate::tc_model::deq_p_any_of_deq_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
         y,
     );
 }
 
-pub proof fn conv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec, s2: ExprSpec)
+pub proof fn kconv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec, s2: ExprSpec)
     requires
-        conv(env, s1, s2),
+        kconv(env, s1, s2),
     ensures
-        conv(env, ExprSpec::Proj(idx, Box::new(s1)), ExprSpec::Proj(idx, Box::new(s2))),
+        kconv(env, ExprSpec::Proj(idx, Box::new(s1)), ExprSpec::Proj(idx, Box::new(s2))),
 {
     crate::tc_model::deq_p_any_proj_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         idx,
         s1,
         s2,
@@ -3849,16 +3871,16 @@ pub proof fn conv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec,
 }
 
 /// Head congruence along an unchanged argument list.
-pub proof fn conv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, rest: Seq<ExprSpec>)
+pub proof fn kconv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, rest: Seq<ExprSpec>)
     requires
-        conv(env, x, y),
+        kconv(env, x, y),
     ensures
-        conv(env, crate::beta_model::spine_app(x, rest), crate::beta_model::spine_app(y, rest)),
+        kconv(env, crate::beta_model::spine_app(x, rest), crate::beta_model::spine_app(y, rest)),
 {
     crate::tc_model::deq_p_any_spine_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
         y,
         rest,
@@ -3866,7 +3888,7 @@ pub proof fn conv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec
 }
 
 /// Replace one argument of a spine by something convertible with it.
-pub proof fn conv_spine_update<'x, 't>(
+pub proof fn kconv_spine_update<'x, 't>(
     env: Env<'x, 't>,
     head: ExprSpec,
     args: Seq<ExprSpec>,
@@ -3875,9 +3897,9 @@ pub proof fn conv_spine_update<'x, 't>(
 )
     requires
         0 <= i < args.len(),
-        conv(env, args[i], y),
+        kconv(env, args[i], y),
     ensures
-        conv(
+        kconv(
             env,
             crate::beta_model::spine_app(head, args),
             crate::beta_model::spine_app(head, args.update(i, y)),
@@ -3886,7 +3908,7 @@ pub proof fn conv_spine_update<'x, 't>(
     crate::tc_model::deq_p_any_spine_update(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         head,
         args,
         i,
@@ -3894,16 +3916,16 @@ pub proof fn conv_spine_update<'x, 't>(
     );
 }
 
-pub proof fn conv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+pub proof fn kconv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
-        conv(env, x, y),
+        kconv(env, x, y),
     ensures
-        conv(env, y, x),
+        kconv(env, y, x),
 {
     crate::tc_model::deq_p_any_symm(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), false,
+        crate::expr_arena_bridge::arena_lctx(), true,
         x,
         y,
     );
@@ -3913,11 +3935,11 @@ pub proof fn conv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
 /// `NatLit(n)` is itself; `Nat.zero` is what `NatLit(0)` unfolds to; and
 /// `Nat.succ a` is what `NatLit(m + 1)` unfolds to, with `a` handled by
 /// induction under congruence.
-pub proof fn conv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
+pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
     requires
         crate::beta_model::nat_value(v) is Some,
     ensures
-        conv(
+        kconv(
             env,
             v,
             ExprSpec::NatLit(
@@ -3930,7 +3952,7 @@ pub proof fn conv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
     match v {
         ExprSpec::NatLit(n) => {
             assert(crate::expr_model::NatLitPayload(Ghost(n.0@)) == n);
-            conv_refl(env, v);
+            kconv_refl(env, v);
         },
         ExprSpec::Const(id, ls) => {
             crate::beta_model::const_expr_no_levels_canonical(v, crate::expr_arena_bridge::nat_zero_id());
@@ -3939,19 +3961,19 @@ pub proof fn conv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             crate::beta_model::pstep_star_one(fm, z, v);
             crate::beta_model::defeq_of_pstep_star(fm, z, v);
             crate::tc_model::deq_any_of_defeq(fm, z, v);
-            conv_of_deq(env, z, v);
-            conv_symm(env, z, v);
+            kconv_of_deq(env, z, v);
+            kconv_symm(env, z, v);
         },
         ExprSpec::App(f, a) => {
             let m = crate::beta_model::nat_value(*a)->Some_0;
-            conv_nat_value(env, *a);
+            kconv_nat_value(env, *a);
             let lm = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(m)));
             // Nat.succ a ~ Nat.succ (NatLit m), as a one-argument spine
             crate::beta_model::spine_app_compose_last(*f, Seq::<ExprSpec>::empty(), *a);
             assert(crate::beta_model::spine_app(*f, Seq::<ExprSpec>::empty()) == *f);
             let args = Seq::<ExprSpec>::empty().push(*a);
             assert(crate::beta_model::spine_app(*f, args) == v);
-            conv_spine_update(env, *f, args, 0, lm);
+            kconv_spine_update(env, *f, args, 0, lm);
             let args1 = args.update(0, lm);
             assert(args1 =~= Seq::<ExprSpec>::empty().push(lm));
             crate::beta_model::spine_app_compose_last(*f, Seq::<ExprSpec>::empty(), lm);
@@ -3964,9 +3986,9 @@ pub proof fn conv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             crate::beta_model::pstep_star_one(fm, big, w);
             crate::beta_model::defeq_of_pstep_star(fm, big, w);
             crate::tc_model::deq_any_of_defeq(fm, big, w);
-            conv_of_deq(env, big, w);
-            conv_symm(env, big, w);
-            conv_trans(env, v, w, big);
+            kconv_of_deq(env, big, w);
+            kconv_symm(env, big, w);
+            kconv_trans(env, v, w, big);
         },
         _ => {},
     }
@@ -3992,7 +4014,7 @@ fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
 /// the two agree exactly when the term is closed. The kernel never relies on
 /// the open case -- it rejects loose bound variables -- and this states it.
 pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) -> bool {
-    crate::expr_model::nlbv(e) <= 0 ==> (conv(env, e, r) && crate::expr_model::nlbv(r) <= 0)
+    crate::expr_model::nlbv(e) <= 0 ==> (kconv(env, e, r) && crate::expr_model::nlbv(r) <= 0)
 }
 
 /// Lift an untyped step (`deq_any`) into `whnf_claim`.
@@ -4007,7 +4029,7 @@ pub proof fn whnf_claim_of_deq<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpe
         whnf_claim(env, e, r),
 {
     if crate::expr_model::nlbv(e) <= 0 {
-        conv_of_deq(env, e, r);
+        kconv_of_deq(env, e, r);
     }
 }
 
@@ -4015,7 +4037,7 @@ pub proof fn whnf_claim_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
     ensures
         whnf_claim(env, a, a),
 {
-    conv_refl(env, a);
+    kconv_refl(env, a);
 }
 
 pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
@@ -4026,7 +4048,7 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
         whnf_claim(env, a, c),
 {
     if crate::expr_model::nlbv(a) <= 0 {
-        conv_trans(env, a, b, c);
+        kconv_trans(env, a, b, c);
     }
 }
 
