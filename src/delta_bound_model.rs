@@ -1023,7 +1023,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
         deq_p_any(
             to_model_of_declar_ty(*env),
             to_model_of_env(*env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(t1),
             to_model(t2),
         ),
@@ -1035,7 +1035,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))),
                 ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2))),
             ),
@@ -1093,7 +1093,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
                     deq_p_any_bind_fresh(
                         dtym,
                         em,
-                        lcm,
+                        lcm, false,
                         to_model(t1),
                         to_model(t2),
                         to_model(b1),
@@ -1789,7 +1789,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_free(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 expr_id(e),
                 0,
             );
@@ -1807,7 +1807,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_sort(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 level_to_model(l),
                 0,
             );
@@ -1839,7 +1839,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_const(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(),
+                        arena_lctx(), false,
                         name_id(c_name),
                         const_levels_vec(e),
                         to_model(r),
@@ -1863,7 +1863,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_nat_lit(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(),
+                        arena_lctx(), false,
                         to_model(e),
                         to_model(r),
                         0,
@@ -1884,7 +1884,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_string_lit(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(),
+                        arena_lctx(), false,
                         to_model(e),
                         to_model(r),
                         0,
@@ -1980,7 +1980,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             assert(types_to(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(instd),
                 to_model(infd),
                 hb,
@@ -1988,7 +1988,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_lambda(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(binder_type),
                 to_model(body),
                 expr_id(local),
@@ -2089,7 +2089,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_mono(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(binder_type),
                 to_model(bt_ty),
                 h1,
@@ -2098,7 +2098,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_mono(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(instd),
                 to_model(instd_ty),
                 h2,
@@ -2114,7 +2114,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_pi(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(binder_type),
                 to_model(body),
                 expr_id(local),
@@ -2178,7 +2178,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_let(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(ty0),
                 to_model(val),
                 to_model(body),
@@ -2229,7 +2229,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(),
+                    arena_lctx(), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(cur_ty),
                     h,
@@ -2398,7 +2398,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to_mono(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(),
+                    arena_lctx(), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(cur_ty),
                     h,
@@ -2407,7 +2407,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to_mono(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(),
+                    arena_lctx(), false,
                     to_model(a),
                     to_model(a_ty),
                     fa,
@@ -2416,7 +2416,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to_app(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(),
+                    arena_lctx(), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(a),
                     to_model(cur_ty),
@@ -2508,7 +2508,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
         None => return None,
     };
     let ghost f2 = choose|f: nat| #[trigger] infer_types_to(*env, structure, sty, f);
-    assert(types_to(dty, denv, lctx, s_m, to_model(sty), f2));
+    assert(types_to(dty, denv, lctx, false, s_m, to_model(sty), f2));
     let k: u32 = 2000;
     let w = verified_whnf_free(ctx, env, memo, sty);
     proof {
@@ -2574,7 +2574,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
                 to_model_of_levels(ind_levels),
                 to_model(ctor_ty0),
             );
-        types_to_const(dty, denv, lctx, ctor_id, ls, to_model(ctor_ty0), f2);
+        types_to_const(dty, denv, lctx, false, ctor_id, ls, to_model(ctor_ty0), f2);
     }
     let mut cur = ctor_ty0;
     let mut i: usize = 0;
@@ -2849,7 +2849,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
         types_to_proj(
             dty,
             denv,
-            lctx,
+            lctx, false,
             idx,
             s_m,
             to_model(bt),
@@ -2956,7 +2956,7 @@ pub open spec fn proof_irrel_shadow_claim<'t, 'x>(
         ) && is_proof_type_claim(env, yt) && deq_p_any(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(xt),
             to_model(yt),
         )
@@ -3082,7 +3082,7 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
         eta_struct_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(x),
             to_model(r),
         ),
@@ -3110,7 +3110,7 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
     assert(eta_struct_expand(
         to_model_of_declar_ty(env),
         to_model_of_env(env),
-        arena_lctx(),
+        arena_lctx(), false,
         to_model(x),
         to_model(r),
     ));
@@ -3493,7 +3493,7 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
         unit_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(x),
             to_model(y),
         ),
@@ -4205,7 +4205,7 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
         proof_irrel_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(x),
             to_model(y),
             hi,
@@ -4222,11 +4222,11 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
         ) && is_proof_type_claim(env, yt) && deq_p_any(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(xt),
             to_model(yt),
         );
-    let hi = choose|h: nat| deq_p(dty, denv, lctx, to_model(xt), to_model(yt), h);
+    let hi = choose|h: nat| deq_p(dty, denv, lctx, false, to_model(xt), to_model(yt), h);
     let (xtt, fxt) = choose|tt: ExprPtr<'t>, f: nat|
         #![trigger infer_types_to(env, xt, tt, f)]
         infer_types_to(env, xt, tt, f) && is_prop_type_claim(env, tt);
@@ -4243,12 +4243,12 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
             interp(level_to_model(l), rho) <= 0);
     assert(proof_type_marker(to_model(xtt), fxt, level_to_model(xl)));
     assert(pstep_star(denv, to_model(xtt), ExprSpec::Sort(level_to_model(xl))));
-    assert(is_proof_type_m(dty, denv, lctx, to_model(xt)));
+    assert(is_proof_type_m(dty, denv, lctx, false, to_model(xt)));
     assert(proof_type_marker(to_model(ytt), fyt, level_to_model(yl)));
     assert(pstep_star(denv, to_model(ytt), ExprSpec::Sort(level_to_model(yl))));
-    assert(is_proof_type_m(dty, denv, lctx, to_model(yt)));
+    assert(is_proof_type_m(dty, denv, lctx, false, to_model(yt)));
     assert(irrel_marker(to_model(xt), to_model(yt), fx, fy));
-    assert(proof_irrel_pair(dty, denv, lctx, to_model(x), to_model(y), hi));
+    assert(proof_irrel_pair(dty, denv, lctx, false, to_model(x), to_model(y), hi));
     hi
 }
 
@@ -4275,7 +4275,7 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -4335,7 +4335,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -4393,7 +4393,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
             deq_p_any(
                 dtym,
                 em,
-                lcm,
+                lcm, false,
                 spine_app(to_model(h1), am1.subrange(0, i as int)),
                 spine_app(to_model(h2), am2.subrange(0, i as int)),
             ),
@@ -4422,7 +4422,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
                 deq_p_any_app_congr(
                     dtym,
                     em,
-                    lcm,
+                    lcm, false,
                     spine_app(to_model(h1), p1),
                     spine_app(to_model(h2), p2),
                     to_model(a1),
@@ -4473,7 +4473,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0,
@@ -4550,7 +4550,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
     }
     proof {
         let hi = proof_irrel_pair_of_shadow_claim(*env, major, ctor_app);
-        deq_p_any_of_irrel(dtym, em, lcm, to_model(major), to_model(ctor_app), hi);
+        deq_p_any_of_irrel(dtym, em, lcm, false, to_model(major), to_model(ctor_app), hi);
     }
     // the spine with the synthesized constructor in the major position
     let mut args2: Vec<ExprPtr<'t>> = Vec::new();
@@ -4583,13 +4583,13 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
         deq_p_any_spine_update(
             dtym,
             em,
-            lcm,
+            lcm, false,
             to_model(head),
             args_model,
             major_idx as int,
             to_model(ctor_app),
         );
-        assert(deq_p_any(dtym, em, lcm, to_model(x), to_model(spine2)));
+        assert(deq_p_any(dtym, em, lcm, false, to_model(x), to_model(spine2)));
         assert forall|j: int| 0 <= j < args2_model.len() implies nlbv(#[trigger] args2_model[j])
             <= 0 by {
             if j == major_idx as int {
@@ -4609,8 +4609,8 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(cm, em, to_model(spine2), to_model(r));
         defeq_of_pstep_star(em, to_model(spine2), to_model(r));
-        deq_p_any_of_defeq(dtym, em, lcm, to_model(spine2), to_model(r));
-        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(spine2), to_model(r));
+        deq_p_any_of_defeq(dtym, em, lcm, false, to_model(spine2), to_model(r));
+        deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(spine2), to_model(r));
     }
     Some(r)
 }
@@ -5281,7 +5281,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(r),
             ),
@@ -5332,12 +5332,12 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
         assert(new_args@ =~= args@.update(major_idx as int, ex));
         assert(built =~= args_model.update(major_idx as int, to_model(ex)));
         eta_struct_pair_of_claim(*env, major, ex);
-        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(major), to_model(ex));
+        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(major), to_model(ex));
         assert(args_model[major_idx as int] == to_model(major));
         deq_p_any_spine_update(
             dtym,
             em,
-            lcm,
+            lcm, false,
             to_model(hd),
             args_model,
             major_idx as int,
@@ -5373,7 +5373,7 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(r),
             ),
@@ -5427,7 +5427,7 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
         match verified_quot_step(ctx, env, memo, s2) {
             Some(v) => {
                 proof {
-                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(s2), to_model(v));
+                    deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(s2), to_model(v));
                 }
                 v
             },
@@ -5437,9 +5437,9 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
     let r = ctx.mk_proj(ty_name, idx, s3);
     proof {
         defeq_of_pstep_star(em, to_model(structure), to_model(s2));
-        deq_p_any_of_defeq(dtym, em, lcm, to_model(structure), to_model(s2));
-        deq_p_any_trans(dtym, em, lcm, to_model(structure), to_model(s2), to_model(s3));
-        deq_p_any_proj_congr(dtym, em, lcm, idx, to_model(structure), to_model(s3));
+        deq_p_any_of_defeq(dtym, em, lcm, false, to_model(structure), to_model(s2));
+        deq_p_any_trans(dtym, em, lcm, false, to_model(structure), to_model(s2), to_model(s3));
+        deq_p_any_proj_congr(dtym, em, lcm, false, idx, to_model(structure), to_model(s3));
         assert(to_model(x) == ExprSpec::Proj(idx, Box::new(to_model(structure))));
         assert(to_model(r) == ExprSpec::Proj(idx, Box::new(to_model(s3))));
     }
@@ -5485,7 +5485,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0,
@@ -5500,7 +5500,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
     let mut any = false;
     let mut i: u32 = 0;
     proof {
-        deq_p_any_refl(dtym, em, lcm, to_model(x));
+        deq_p_any_refl(dtym, em, lcm, false, to_model(x));
     }
     while i < rounds
         invariant
@@ -5512,7 +5512,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
             dtym == to_model_of_declar_ty(*env),
             lcm == arena_lctx(),
             nlbv(to_model(cur)) <= 0,
-            deq_p_any(dtym, em, lcm, to_model(x), to_model(cur)),
+            deq_p_any(dtym, em, lcm, false, to_model(x), to_model(cur)),
         decreases rounds - i,
     {
         // Try the spine rewriter, then the projection one. FIRST-MATCH-WINS
@@ -5551,9 +5551,9 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
             env_model_nofv_sub(*env);
             pstep_star_env_weaken(cmk, em, to_model(rw), to_model(rww));
             defeq_of_pstep_star(em, to_model(rw), to_model(rww));
-            deq_p_any_of_defeq(dtym, em, lcm, to_model(rw), to_model(rww));
-            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cur), to_model(rw));
-            deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rw), to_model(rww));
+            deq_p_any_of_defeq(dtym, em, lcm, false, to_model(rw), to_model(rww));
+            deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(cur), to_model(rw));
+            deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(rw), to_model(rww));
         }
         cur = rww;
         any = true;
@@ -5586,7 +5586,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -5614,7 +5614,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
         env_model_nofv_sub(*env);
         pstep_star_env_weaken(cmr, em, to_model(x), to_model(w));
         defeq_of_pstep_star(em, to_model(x), to_model(w));
-        deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(w));
+        deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(w));
     }
     let x2 = verified_major_eta_fix(ctx, env, memo, w, 4);
     // If the OTHER side is a stuck recursor too, rewrite it as well and
@@ -5631,7 +5631,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                 env_model_nofv_sub(*env);
                 pstep_star_env_weaken(cmr2, em, to_model(y), to_model(wy));
                 defeq_of_pstep_star(em, to_model(y), to_model(wy));
-                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
+                deq_p_any_of_defeq(dtym, em, lcm, false, to_model(y), to_model(wy));
             }
             let y2 = verified_major_eta_fix(ctx, env, memo, wy, 4);
             if let Some(ry) = y2 {
@@ -5646,9 +5646,9 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                             pstep_star_env_weaken(cmr2, em, to_model(rx), to_model(rxw));
                             pstep_star_env_weaken(cmr2, em, to_model(ry), to_model(ryw));
                             defeq_of_pstep_star(em, to_model(rx), to_model(rxw));
-                            deq_p_any_of_defeq(dtym, em, lcm, to_model(rx), to_model(rxw));
+                            deq_p_any_of_defeq(dtym, em, lcm, false, to_model(rx), to_model(rxw));
                             defeq_of_pstep_star(em, to_model(ry), to_model(ryw));
-                            deq_p_any_of_defeq(dtym, em, lcm, to_model(ry), to_model(ryw));
+                            deq_p_any_of_defeq(dtym, em, lcm, false, to_model(ry), to_model(ryw));
                         }
                         // A rewrite only helps if reducing it actually gets
                         // somewhere: if both reducts are where they already
@@ -5672,7 +5672,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(x),
                                     to_model(w),
                                     to_model(rx),
@@ -5680,7 +5680,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(x),
                                     to_model(rx),
                                     to_model(rxw),
@@ -5688,7 +5688,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(y),
                                     to_model(wy),
                                     to_model(ry),
@@ -5696,7 +5696,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(y),
                                     to_model(ry),
                                     to_model(ryw),
@@ -5704,16 +5704,16 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(x),
                                     to_model(rxw),
                                     to_model(ryw),
                                 );
-                                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ryw));
+                                deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ryw));
                                 deq_p_any_trans(
                                     dtym,
                                     em,
-                                    lcm,
+                                    lcm, false,
                                     to_model(x),
                                     to_model(ryw),
                                     to_model(y),
@@ -5743,8 +5743,8 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
             match verified_conv_p(ctx, env, memo, r, y, fuel, (budget - 1) as u32) {
                 Some(true) => {
                     proof {
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(w), to_model(r));
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(r), to_model(y));
+                        deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(w), to_model(r));
+                        deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(r), to_model(y));
                     }
                     conv_stat(20);
                     Some(true)
@@ -5781,7 +5781,7 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -5833,12 +5833,12 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
             ) {
                 proof {
                     defeq_of_pstep_star(em, to_model(x), to_model(wx));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(wx));
+                    deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(wx));
                     defeq_of_pstep_star(em, to_model(y), to_model(wy));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(wy));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(wx), to_model(wy));
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(wy));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(wy), to_model(y));
+                    deq_p_any_of_defeq(dtym, em, lcm, false, to_model(y), to_model(wy));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(wx), to_model(wy));
+                    deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(wy));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(wy), to_model(y));
                 }
                 return Some(true);
             }
@@ -5855,8 +5855,8 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
                 if let Some(true) = verified_conv_p(ctx, env, memo, ex, y, fuel, budget - 1) {
                     proof {
                         eta_struct_pair_of_claim(*env, x, ex);
-                        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(x), to_model(ex));
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ex), to_model(y));
+                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(x), to_model(ex));
+                        deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ex), to_model(y));
                     }
                     conv_stat(18);
                     return Some(true);
@@ -5874,9 +5874,9 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
                 if let Some(true) = verified_conv_p(ctx, env, memo, x, ey, fuel, budget - 1) {
                     proof {
                         eta_struct_pair_of_claim(*env, y, ey);
-                        deq_p_any_of_eta_struct(dtym, em, lcm, to_model(y), to_model(ey));
-                        deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ey));
-                        deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ey), to_model(y));
+                        deq_p_any_of_eta_struct(dtym, em, lcm, false, to_model(y), to_model(ey));
+                        deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ey));
+                        deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ey), to_model(y));
                     }
                     conv_stat(19);
                     return Some(true);
@@ -5914,7 +5914,7 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -5941,7 +5941,7 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
             assert(pstep_star(em, to_model(x), to_model(rx)));
             assert(pstep_star(em, to_model(y), to_model(rx)));
             assert(defeq(em, to_model(x), to_model(y)));
-            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+            deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(y));
         }
         conv_stat(6);
         return Some(true);
@@ -5951,12 +5951,12 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
         if let Some(true) = verified_conv_p(ctx, env, memo, rx, ry, fuel, budget - 1) {
             proof {
                 defeq_of_pstep_star(em, to_model(x), to_model(rx));
-                deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(rx));
+                deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(rx));
                 defeq_of_pstep_star(em, to_model(y), to_model(ry));
-                deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ry));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(ry));
-                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                deq_p_any_of_defeq(dtym, em, lcm, false, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(rx), to_model(ry));
+                deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ry));
+                deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ry), to_model(y));
             }
             conv_stat(10);
             return Some(true);
@@ -5989,7 +5989,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6019,8 +6019,8 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
         if let Some(rx) = verified_quot_step(ctx, env, memo, x) {
             if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, budget - 1) {
                 proof {
-                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), to_model(rx));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
+                    deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(x), to_model(rx));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(rx), to_model(y));
                 }
                 conv_stat(15);
                 return Some(true);
@@ -6031,9 +6031,9 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
         if let Some(ry) = verified_quot_step(ctx, env, memo, y) {
             if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, budget - 1) {
                 proof {
-                    deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                    deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(y), to_model(ry));
+                    deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ry), to_model(y));
                 }
                 conv_stat(15);
                 return Some(true);
@@ -6075,11 +6075,11 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
                         assert(eta_expands_to(to_model(new_lambda), to_model(y)));
                         assert(deq_eta(to_model(new_lambda), to_model(y)));
                         deq_any_of_eta(em, to_model(new_lambda), to_model(y));
-                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(y));
+                        deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(new_lambda), to_model(y));
                         deq_p_any_trans(
                             dtym,
                             em,
-                            lcm,
+                            lcm, false,
                             to_model(x),
                             to_model(new_lambda),
                             to_model(y),
@@ -6118,12 +6118,12 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
                         assert(eta_expands_to(to_model(new_lambda), to_model(x)));
                         assert(deq_eta(to_model(new_lambda), to_model(x)));
                         deq_any_of_eta(em, to_model(new_lambda), to_model(x));
-                        deq_p_any_of_deq_any(dtym, em, lcm, to_model(new_lambda), to_model(x));
-                        deq_p_any_symm(dtym, em, lcm, to_model(new_lambda), to_model(x));
+                        deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(new_lambda), to_model(x));
+                        deq_p_any_symm(dtym, em, lcm, false, to_model(new_lambda), to_model(x));
                         deq_p_any_trans(
                             dtym,
                             em,
-                            lcm,
+                            lcm, false,
                             to_model(x),
                             to_model(new_lambda),
                             to_model(y),
@@ -6150,7 +6150,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
         if let Some(rx) = verified_k_like_step_p(ctx, env, memo, x, fuel, budget) {
             if let Some(true) = verified_conv_p(ctx, env, memo, rx, y, fuel, budget - 1) {
                 proof {
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(rx), to_model(y));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(rx), to_model(y));
                 }
                 conv_stat(13);
                 return Some(true);
@@ -6161,8 +6161,8 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
         if let Some(ry) = verified_k_like_step_p(ctx, env, memo, y, fuel, budget) {
             if let Some(true) = verified_conv_p(ctx, env, memo, x, ry, fuel, budget - 1) {
                 proof {
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ry));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ry), to_model(y));
+                    deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ry));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ry), to_model(y));
                 }
                 conv_stat(13);
                 return Some(true);
@@ -6341,7 +6341,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6354,7 +6354,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
     let ghost lcm = arena_lctx();
     if expr_ptr_eq(x, y) {
         proof {
-            deq_p_any_refl(dtym, em, lcm, to_model(x));
+            deq_p_any_refl(dtym, em, lcm, false, to_model(x));
         }
         return Some(true);
     }
@@ -6373,7 +6373,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                     | #[trigger]
                         interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho));
                 assert(deq_leaf(to_model(x), to_model(y)));
-                deq_p_any_of_leaf(dtym, em, lcm, to_model(x), to_model(y));
+                deq_p_any_of_leaf(dtym, em, lcm, false, to_model(x), to_model(y));
             }
             conv_stat(0);
             return Some(true);
@@ -6407,7 +6407,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                 ));
             }
             assert(deq_leaf(to_model(x), to_model(y)));
-            deq_p_any_of_leaf(dtym, em, lcm, to_model(x), to_model(y));
+            deq_p_any_of_leaf(dtym, em, lcm, false, to_model(x), to_model(y));
         }
         conv_stat(1);
         return Some(true);
@@ -6454,7 +6454,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             if expr_ptr_eq(nx, ny) {
                 proof {
                     assert(defeq(em, to_model(x), to_model(y)));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+                    deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(y));
                 }
                 conv_stat(16);
                 return Some(true);
@@ -6462,12 +6462,12 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             if let Some(true) = verified_conv_p(ctx, env, memo, nx, ny, fuel, budget - 1) {
                 proof {
                     defeq_of_pstep_star(em, to_model(x), to_model(nx));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(nx));
+                    deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(nx));
                     defeq_of_pstep_star(em, to_model(y), to_model(ny));
-                    deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(ny));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(nx), to_model(ny));
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(ny));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(ny), to_model(y));
+                    deq_p_any_of_defeq(dtym, em, lcm, false, to_model(y), to_model(ny));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(nx), to_model(ny));
+                    deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(ny));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(ny), to_model(y));
                 }
                 conv_stat(16);
                 return Some(true);
@@ -6483,7 +6483,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             nat_repr_is_zero_reaches_canonical(em, x);
             nat_repr_is_zero_reaches_canonical(em, y);
             assert(defeq(em, to_model(x), to_model(y)));
-            deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(y));
+            deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(y));
         }
         conv_stat(9);
         return Some(true);
@@ -6506,13 +6506,13 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                 let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
                 nat_repr_pred_reaches_succ_app(em, x, xp);
                 nat_repr_pred_reaches_succ_app(em, y, yp);
-                deq_p_any_refl(dtym, em, lcm, sc);
-                deq_p_any_app_congr(dtym, em, lcm, sc, sc, to_model(xp), to_model(yp));
-                deq_p_any_of_deq_any(dtym, em, lcm, to_model(x), ax);
-                deq_p_any_of_deq_any(dtym, em, lcm, to_model(y), ay);
-                deq_p_any_trans(dtym, em, lcm, to_model(x), ax, ay);
-                deq_p_any_symm(dtym, em, lcm, to_model(y), ay);
-                deq_p_any_trans(dtym, em, lcm, to_model(x), ay, to_model(y));
+                deq_p_any_refl(dtym, em, lcm, false, sc);
+                deq_p_any_app_congr(dtym, em, lcm, false, sc, sc, to_model(xp), to_model(yp));
+                deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(x), ax);
+                deq_p_any_of_deq_any(dtym, em, lcm, false, to_model(y), ay);
+                deq_p_any_trans(dtym, em, lcm, false, to_model(x), ax, ay);
+                deq_p_any_symm(dtym, em, lcm, false, to_model(y), ay);
+                deq_p_any_trans(dtym, em, lcm, false, to_model(x), ay, to_model(y));
             }
             conv_stat(9);
             return Some(true);
@@ -6528,7 +6528,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
         if let Some(true) = verified_proof_irrel_shadow(ctx, env, memo, x, y, fuel, budget) {
             proof {
                 let hi = proof_irrel_pair_of_shadow_claim(*env, x, y);
-                deq_p_any_of_irrel(dtym, em, lcm, to_model(x), to_model(y), hi);
+                deq_p_any_of_irrel(dtym, em, lcm, false, to_model(x), to_model(y), hi);
             }
             conv_stat(11);
             return Some(true);
@@ -6542,7 +6542,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
         if let Some(true) = verified_unit_shadow(ctx, env, memo, x, y, fuel) {
             proof {
                 unit_pair_of_shadow_claim(*env, x, y);
-                deq_p_any_of_unit(dtym, em, lcm, to_model(x), to_model(y));
+                deq_p_any_of_unit(dtym, em, lcm, false, to_model(x), to_model(y));
             }
             conv_stat(17);
             return Some(true);
@@ -6563,22 +6563,22 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             if let Some(true) = verified_conv_p(ctx, env, memo, cx, cy, fuel, budget - 1) {
                 proof {
                     if cx == x {
-                        deq_p_any_refl(dtym, em, lcm, to_model(x));
+                        deq_p_any_refl(dtym, em, lcm, false, to_model(x));
                     } else {
                         pstep_star_env_weaken(cm, em, to_model(x), to_model(cx));
                         defeq_of_pstep_star(em, to_model(x), to_model(cx));
-                        deq_p_any_of_defeq(dtym, em, lcm, to_model(x), to_model(cx));
+                        deq_p_any_of_defeq(dtym, em, lcm, false, to_model(x), to_model(cx));
                     }
                     if cy == y {
-                        deq_p_any_refl(dtym, em, lcm, to_model(y));
+                        deq_p_any_refl(dtym, em, lcm, false, to_model(y));
                     } else {
                         pstep_star_env_weaken(cm, em, to_model(y), to_model(cy));
                         defeq_of_pstep_star(em, to_model(y), to_model(cy));
-                        deq_p_any_of_defeq(dtym, em, lcm, to_model(y), to_model(cy));
+                        deq_p_any_of_defeq(dtym, em, lcm, false, to_model(y), to_model(cy));
                     }
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cx), to_model(cy));
-                    deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(cy));
-                    deq_p_any_trans(dtym, em, lcm, to_model(x), to_model(cy), to_model(y));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(cx), to_model(cy));
+                    deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(cy));
+                    deq_p_any_trans(dtym, em, lcm, false, to_model(x), to_model(cy), to_model(y));
                 }
                 conv_stat(5);
                 return Some(true);
@@ -6597,7 +6597,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             if i1 == i2 {
                 if let Some(true) = verified_conv_p(ctx, env, memo, s1, s2, fuel, budget) {
                     proof {
-                        deq_p_any_proj_congr(dtym, em, lcm, i1, to_model(s1), to_model(s2));
+                        deq_p_any_proj_congr(dtym, em, lcm, false, i1, to_model(s1), to_model(s2));
                     }
                     conv_stat(4);
                     return Some(true);
@@ -6627,7 +6627,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                         deq_p_any_app_congr(
                             dtym,
                             em,
-                            lcm,
+                            lcm, false,
                             to_model(f1),
                             to_model(f2),
                             to_model(a1),
@@ -6649,7 +6649,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                         deq_p_any_bind_congr(
                             dtym,
                             em,
-                            lcm,
+                            lcm, false,
                             to_model(t1),
                             to_model(t2),
                             to_model(b1),
@@ -6686,7 +6686,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
                         deq_p_any_bind_congr(
                             dtym,
                             em,
-                            lcm,
+                            lcm, false,
                             to_model(t1),
                             to_model(t2),
                             to_model(b1),
@@ -6776,7 +6776,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
         }
         if let Some(true) = verified_conv_major_eta_p(ctx, env, memo, y, x, fuel, budget) {
             proof {
-                deq_p_any_symm(dtym, em, lcm, to_model(y), to_model(x));
+                deq_p_any_symm(dtym, em, lcm, false, to_model(y), to_model(x));
             }
             return Some(true);
         }

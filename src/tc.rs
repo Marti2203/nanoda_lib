@@ -3781,7 +3781,7 @@ pub open spec fn conv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> boo
     crate::tc_model::deq_p_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
         y,
     )
@@ -3794,7 +3794,7 @@ pub proof fn conv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
     crate::tc_model::deq_p_any_refl(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
     );
 }
@@ -3809,7 +3809,7 @@ pub proof fn conv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: E
     crate::tc_model::deq_p_any_trans(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
         y,
         z,
@@ -3826,7 +3826,7 @@ pub proof fn conv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_of_deq_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
         y,
     );
@@ -3841,7 +3841,7 @@ pub proof fn conv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec,
     crate::tc_model::deq_p_any_proj_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         idx,
         s1,
         s2,
@@ -3858,7 +3858,7 @@ pub proof fn conv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec
     crate::tc_model::deq_p_any_spine_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
         y,
         rest,
@@ -3886,7 +3886,7 @@ pub proof fn conv_spine_update<'x, 't>(
     crate::tc_model::deq_p_any_spine_update(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         head,
         args,
         i,
@@ -3903,7 +3903,7 @@ pub proof fn conv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_symm(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(), false,
         x,
         y,
     );

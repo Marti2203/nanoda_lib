@@ -1593,7 +1593,7 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             result ==> deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -1648,7 +1648,7 @@ pub open spec fn infer_types_to<'t, 'x>(
     types_to(
         to_model_of_declar_ty(env),
         to_model_of_env(env),
-        arena_lctx(),
+        arena_lctx(), false,
         to_model(e),
         to_model(r),
         fuel,
@@ -1742,7 +1742,7 @@ impl<'x, 't> ConvCert<'x, 't> {
         deq_p_any(
             to_model_of_declar_ty(self.env@),
             to_model_of_env(self.env@),
-            arena_lctx(),
+            arena_lctx(), false,
             to_model(self.x),
             to_model(self.y),
         )
@@ -1780,7 +1780,7 @@ impl<'x, 't> ConvCert<'x, 't> {
             deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(),
+                arena_lctx(), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -3022,6 +3022,7 @@ pub open spec fn types_to(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -3075,12 +3076,17 @@ pub open spec fn types_to(
     ||| (match e {
         ExprSpec::App(f, a) => exists|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, *f, ft, fuel) && pstep_star(
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, fuel) && pstep_star(
                 denv,
                 ft,
                 ExprSpec::Bind(Box::new(aty), Box::new(bt)),
-            ) && types_to(dty, denv, lctx, *a, aty2, fuel) && deq_any(denv, aty2, aty) && t
-                == subst_full(bt, seq![*a], 0),
+            )
+            // `io` is the kernel's `InferOnly` mode: it never infers the
+            // argument, so neither the argument's type nor its agreement with
+            // the domain is part of the derivation. `io == false` is real
+            // typing. Everything else about the rule is shared.
+             && (io || (types_to(dty, denv, lctx, io, *a, aty2, fuel) && deq_any(denv, aty2, aty)))
+                && t == subst_full(bt, seq![*a], 0),
         _ => false,
     })
     ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
@@ -3096,7 +3102,7 @@ pub open spec fn types_to(
             fuel_marker(f2) && f2 < fuel && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![*val], 0),
                 t,
                 f2,
@@ -3108,7 +3114,7 @@ pub open spec fn types_to(
             bind_marker(lid, infd) && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 (fuel - 1) as nat,
@@ -3129,14 +3135,14 @@ pub open spec fn types_to(
             pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 *binder_type,
                 bt_ty,
                 (fuel - 1) as nat,
             ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 instd_ty,
                 (fuel - 1) as nat,
@@ -3159,14 +3165,14 @@ pub open spec fn types_to(
             proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && f2 < fuel && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 *s,
                 sty,
                 f2,
             ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
                 && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
                 np,
-            ) && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (
+            ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (
             np as nat) <= args.len() && proj_field_type(
                 denv,
                 ctor_ty0,
@@ -3185,6 +3191,7 @@ pub proof fn types_to_nat_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -3197,7 +3204,7 @@ pub proof fn types_to_nat_lit(
             _ => false,
         }),
     ensures
-        types_to(dty, denv, lctx, e, t, fuel),
+        types_to(dty, denv, lctx, io, e, t, fuel),
 {
 }
 
@@ -3205,6 +3212,7 @@ pub proof fn types_to_string_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -3217,7 +3225,7 @@ pub proof fn types_to_string_lit(
             _ => false,
         }),
     ensures
-        types_to(dty, denv, lctx, e, t, fuel),
+        types_to(dty, denv, lctx, io, e, t, fuel),
 {
 }
 
@@ -3235,37 +3243,40 @@ pub proof fn types_to_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     e: ExprSpec,
     t: ExprSpec,
     f1: nat,
     f2: nat,
 )
     requires
-        types_to(dty, denv, lctx, e, t, f1),
+        types_to(dty, denv, lctx, io, e, t, f1),
         f1 <= f2,
     ensures
-        types_to(dty, denv, lctx, e, t, f2),
+        types_to(dty, denv, lctx, io, e, t, f2),
     decreases f1, e,
 {
     // App: the premise is on a syntactic subterm at the SAME height.
     if let ExprSpec::App(f, a) = e {
         let (ft, aty, bt, aty2) = choose|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
             #![trigger app_marker(ft, aty, bt, aty2)]
-            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, *f, ft, f1) && pstep_star(
+            app_marker(ft, aty, bt, aty2) && types_to(dty, denv, lctx, io, *f, ft, f1) && pstep_star(
                 denv,
                 ft,
                 ExprSpec::Bind(Box::new(aty), Box::new(bt)),
-            ) && types_to(dty, denv, lctx, *a, aty2, f1) && deq_any(denv, aty2, aty) && t
-                == subst_full(bt, seq![*a], 0);
-        types_to_mono(dty, denv, lctx, *f, ft, f1, f2);
-        // the ARGUMENT's derivation has to be lifted too, now that the rule
-        // actually requires one
-        types_to_mono(dty, denv, lctx, *a, aty2, f1, f2);
+            ) && (io || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_any(denv, aty2, aty)))
+                && t == subst_full(bt, seq![*a], 0);
+        types_to_mono(dty, denv, lctx, io, *f, ft, f1, f2);
+        // the ARGUMENT's derivation has to be lifted too, in the mode that
+        // has one
+        if !io {
+            types_to_mono(dty, denv, lctx, io, *a, aty2, f1, f2);
+            assert(types_to(dty, denv, lctx, io, *a, aty2, f2));
+            assert(deq_any(denv, aty2, aty));
+        }
         assert(app_marker(ft, aty, bt, aty2));
         assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
-        assert(types_to(dty, denv, lctx, *a, aty2, f2));
-        assert(deq_any(denv, aty2, aty));
-        assert(types_to(dty, denv, lctx, e, t, f2));
+        assert(types_to(dty, denv, lctx, io, e, t, f2));
     }
     // Leaves: these disjuncts do not mention the height at all, but the goal
     // still has to be unfolded at f2 for the solver to see that.
@@ -3278,7 +3289,7 @@ pub proof fn types_to_mono(
         | ExprSpec::StringLit(_)
         | ExprSpec::Var(_)
         | ExprSpec::Closed => {
-            assert(types_to(dty, denv, lctx, e, t, f2));
+            assert(types_to(dty, denv, lctx, io, e, t, f2));
         },
         _ => {},
     }
@@ -3289,13 +3300,13 @@ pub proof fn types_to_mono(
             fuel_marker(h) && h < f1 && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![*val], 0),
                 t,
                 h,
             );
         assert(fuel_marker(h));
-        assert(types_to(dty, denv, lctx, e, t, f2));
+        assert(types_to(dty, denv, lctx, io, e, t, f2));
     }
     if let ExprSpec::Proj(idx, s) = e {
         let (h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) = choose|
@@ -3311,14 +3322,14 @@ pub proof fn types_to_mono(
             proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && h < f1 && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 *s,
                 sty,
                 h,
             ) && pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args))
                 && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
                 np,
-            ) && types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, h) && (np as nat)
+            ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, h) && (np as nat)
                 <= args.len() && proj_field_type(
                 denv,
                 ctor_ty0,
@@ -3330,7 +3341,7 @@ pub proof fn types_to_mono(
                 t,
             );
         assert(proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
-        assert(types_to(dty, denv, lctx, e, t, f2));
+        assert(types_to(dty, denv, lctx, io, e, t, f2));
     }
     // Binders: premises one height down, re-exhibited through the markers.
 
@@ -3342,7 +3353,7 @@ pub proof fn types_to_mono(
             bind_marker(lid, infd) && types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 g1,
@@ -3354,7 +3365,7 @@ pub proof fn types_to_mono(
                 bind_marker(lid, infd) && types_to(
                     dty,
                     denv,
-                    lctx,
+                    lctx, io,
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     infd,
                     g1,
@@ -3365,7 +3376,7 @@ pub proof fn types_to_mono(
             types_to_mono(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 g1,
@@ -3375,12 +3386,12 @@ pub proof fn types_to_mono(
             assert(types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 (f2 - 1) as nat,
             ));
-            assert(types_to(dty, denv, lctx, e, t, f2));
+            assert(types_to(dty, denv, lctx, io, e, t, f2));
         } else {
             let (lid, bt_ty, dom_level, instd_ty, cod_level) = choose|
                 lid: u32,
@@ -3392,41 +3403,41 @@ pub proof fn types_to_mono(
                 pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
                     dty,
                     denv,
-                    lctx,
+                    lctx, io,
                     *binder_type,
                     bt_ty,
                     g1,
                 ) && pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)) && types_to(
                     dty,
                     denv,
-                    lctx,
+                    lctx, io,
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     instd_ty,
                     g1,
                 ) && pstep_star(denv, instd_ty, ExprSpec::Sort(cod_level)) && t == ExprSpec::Sort(
                     LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)),
                 );
-            types_to_mono(dty, denv, lctx, *binder_type, bt_ty, g1, g2);
+            types_to_mono(dty, denv, lctx, io, *binder_type, bt_ty, g1, g2);
             types_to_mono(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 instd_ty,
                 g1,
                 g2,
             );
             assert(pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level));
-            assert(types_to(dty, denv, lctx, *binder_type, bt_ty, (f2 - 1) as nat));
+            assert(types_to(dty, denv, lctx, io, *binder_type, bt_ty, (f2 - 1) as nat));
             assert(types_to(
                 dty,
                 denv,
-                lctx,
+                lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 instd_ty,
                 (f2 - 1) as nat,
             ));
-            assert(types_to(dty, denv, lctx, e, t, f2));
+            assert(types_to(dty, denv, lctx, io, e, t, f2));
         }
     }
 }
@@ -3436,13 +3447,14 @@ pub proof fn types_to_free(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     lid: u32,
     fuel: nat,
 )
     requires
         lctx.contains_key(lid),
     ensures
-        types_to(dty, denv, lctx, ExprSpec::Free(lid), lctx[lid], fuel),
+        types_to(dty, denv, lctx, io, ExprSpec::Free(lid), lctx[lid], fuel),
 {
 }
 
@@ -3450,6 +3462,7 @@ pub proof fn types_to_sort(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     l: LevelSpec,
     fuel: nat,
 )
@@ -3457,7 +3470,7 @@ pub proof fn types_to_sort(
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             ExprSpec::Sort(l),
             ExprSpec::Sort(LevelSpec::Succ(Box::new(l))),
             fuel,
@@ -3469,6 +3482,7 @@ pub proof fn types_to_const(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     cid: u64,
     clevels: Seq<LevelSpec>,
     t: ExprSpec,
@@ -3478,7 +3492,7 @@ pub proof fn types_to_const(
         dty.contains_key(cid),
         subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
     ensures
-        types_to(dty, denv, lctx, ExprSpec::Const(cid, clevels), t, fuel),
+        types_to(dty, denv, lctx, io, ExprSpec::Const(cid, clevels), t, fuel),
 {
 }
 
@@ -3494,6 +3508,7 @@ pub proof fn types_to_app(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     f: ExprSpec,
     a: ExprSpec,
     ft: ExprSpec,
@@ -3503,15 +3518,15 @@ pub proof fn types_to_app(
     aty2: ExprSpec,
 )
     requires
-        types_to(dty, denv, lctx, f, ft, fuel),
+        types_to(dty, denv, lctx, io, f, ft, fuel),
         pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
-        types_to(dty, denv, lctx, a, aty2, fuel),
+        types_to(dty, denv, lctx, io, a, aty2, fuel),
         deq_any(denv, aty2, aty),
     ensures
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             ExprSpec::App(Box::new(f), Box::new(a)),
             subst_full(bt, seq![a], 0),
             fuel,
@@ -3519,7 +3534,7 @@ pub proof fn types_to_app(
 {
     assert(app_marker(ft, aty, bt, aty2));
     assert(pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))));
-    assert(types_to(dty, denv, lctx, a, aty2, fuel));
+    assert(types_to(dty, denv, lctx, io, a, aty2, fuel));
     assert(deq_any(denv, aty2, aty));
     assert(subst_full(bt, seq![a], 0) == subst_full(bt, seq![a], 0));
 }
@@ -3528,6 +3543,7 @@ pub proof fn types_to_let(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     ty0: ExprSpec,
     val: ExprSpec,
     body: ExprSpec,
@@ -3537,12 +3553,12 @@ pub proof fn types_to_let(
 )
     requires
         f2 < fuel,
-        types_to(dty, denv, lctx, subst_full(body, seq![val], 0), t, f2),
+        types_to(dty, denv, lctx, io, subst_full(body, seq![val], 0), t, f2),
     ensures
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)),
             t,
             fuel,
@@ -3556,6 +3572,7 @@ pub proof fn types_to_proj(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     idx: usize,
     s: ExprSpec,
     t: ExprSpec,
@@ -3571,15 +3588,15 @@ pub proof fn types_to_proj(
 )
     requires
         f2 < fuel,
-        types_to(dty, denv, lctx, s, sty, f2),
+        types_to(dty, denv, lctx, io, s, sty, f2),
         pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args)),
         struct_ctor_of(ind_id) == Some(ctor_id),
         ctor_num_params_of(ctor_id) == Some(np),
-        types_to(dty, denv, lctx, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
+        types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
         (np as nat) <= args.len(),
         proj_field_type(denv, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
     ensures
-        types_to(dty, denv, lctx, ExprSpec::Proj(idx, Box::new(s)), t, fuel),
+        types_to(dty, denv, lctx, io, ExprSpec::Proj(idx, Box::new(s)), t, fuel),
 {
     assert(proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
 }
@@ -3670,6 +3687,7 @@ pub proof fn types_to_lambda(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     binder_type: ExprSpec,
     body: ExprSpec,
     lid: u32,
@@ -3681,7 +3699,7 @@ pub proof fn types_to_lambda(
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             subst_full(body, seq![ExprSpec::Free(lid)], 0),
             infd,
             (fuel - 1) as nat,
@@ -3690,7 +3708,7 @@ pub proof fn types_to_lambda(
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
             ExprSpec::Bind(
                 Box::new(abstr_full(binder_type, seq![lid], 0)),
@@ -3706,6 +3724,7 @@ pub proof fn types_to_pi(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     binder_type: ExprSpec,
     body: ExprSpec,
     lid: u32,
@@ -3717,12 +3736,12 @@ pub proof fn types_to_pi(
 )
     requires
         fuel > 0,
-        types_to(dty, denv, lctx, binder_type, bt_ty, (fuel - 1) as nat),
+        types_to(dty, denv, lctx, io, binder_type, bt_ty, (fuel - 1) as nat),
         pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)),
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             subst_full(body, seq![ExprSpec::Free(lid)], 0),
             instd_ty,
             (fuel - 1) as nat,
@@ -3732,7 +3751,7 @@ pub proof fn types_to_pi(
         types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
             ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
             fuel,
@@ -3764,10 +3783,11 @@ pub open spec fn is_proof_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     ty: ExprSpec,
 ) -> bool {
     exists|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(tt, f, l) && types_to(dty, denv, lctx, ty, tt, f) && pstep_star(
+        proof_type_marker(tt, f, l) && types_to(dty, denv, lctx, io, ty, tt, f) && pstep_star(
             denv,
             tt,
             ExprSpec::Sort(l),
@@ -3783,6 +3803,7 @@ pub open spec fn proof_irrel_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3790,17 +3811,17 @@ pub open spec fn proof_irrel_pair(
     decreases h, 3int,
 {
     exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        irrel_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, x, tx, fx) && types_to(
+        irrel_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             y,
             ty2,
             fy,
-        ) && is_proof_type_m(dty, denv, lctx, tx) && is_proof_type_m(dty, denv, lctx, ty2) && deq_p(
+        ) && is_proof_type_m(dty, denv, lctx, io, tx) && is_proof_type_m(dty, denv, lctx, io, ty2) && deq_p(
             dty,
             denv,
-            lctx,
+            lctx, io,
             tx,
             ty2,
             h,
@@ -3899,6 +3920,7 @@ pub open spec fn eta_struct_expand(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
@@ -3911,7 +3933,7 @@ pub open spec fn eta_struct_expand(
         params: Seq<ExprSpec>,
         nf: nat,
     | #[trigger]
-        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && types_to(dty, denv, lctx, x, tx, f)
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && types_to(dty, denv, lctx, io, x, tx, f)
             && struct_type_of(denv, tx, ind, params) && struct_ctor_of(ind) == Some(cid)
             && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
@@ -3925,10 +3947,11 @@ pub open spec fn eta_struct_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
-    eta_struct_expand(dty, denv, lctx, x, y) || eta_struct_expand(dty, denv, lctx, y, x)
+    eta_struct_expand(dty, denv, lctx, io, x, y) || eta_struct_expand(dty, denv, lctx, io, y, x)
 }
 
 /// THE UNIT RULE, the kernel's `def_eq_unit`: if `x`'s type is a structure
@@ -3942,14 +3965,15 @@ pub open spec fn unit_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
     exists|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        unit_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, x, tx, fx) && types_to(
+        unit_marker(tx, ty2, fx, fy) && types_to(dty, denv, lctx, io, x, tx, fx) && types_to(
             dty,
             denv,
-            lctx,
+            lctx, io,
             y,
             ty2,
             fy,
@@ -4976,6 +5000,7 @@ pub open spec fn deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4983,18 +5008,18 @@ pub open spec fn deq_p_c(
     decreases h, 0int,
 {
     ||| deq_c(env, x, y, h)
-    ||| (h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat))
-    ||| unit_pair(dty, env, lctx, x, y)
-    ||| eta_struct_pair(dty, env, lctx, x, y)
+    ||| (h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| unit_pair(dty, env, lctx, io, x, y)
+    ||| eta_struct_pair(dty, env, lctx, io, x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             *f1,
             *f2,
             (h - 1) as nat,
-        ) && deq_p_c(dty, env, lctx, *a1, *a2, (h - 1) as nat),
+        ) && deq_p_c(dty, env, lctx, io, *a1, *a2, (h - 1) as nat),
         // Binder congruence, two forms as in `deq_c`: raw bodies, or the
         // bodies opened with one fresh free variable related by a `deq_p`
         // chain one height down (2026-09-06: lets proof irrelevance apply
@@ -5004,15 +5029,15 @@ pub open spec fn deq_p_c(
         (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             *t1,
             *t2,
             (h - 1) as nat,
-        ) && (deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
+        ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
             fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
                 dty,
                 env,
-                lctx,
+                lctx, io,
                 inst_free(*b1, k),
                 inst_free(*b2, k),
                 (h - 1) as nat,
@@ -5020,14 +5045,14 @@ pub open spec fn deq_p_c(
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             *t1,
             *t2,
             (h - 1) as nat,
-        ) && deq_p_c(dty, env, lctx, *v1, *v2, (h - 1) as nat) && deq_p_c(
+        ) && deq_p_c(dty, env, lctx, io, *v1, *v2, (h - 1) as nat) && deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             *b1,
             *b2,
             (h - 1) as nat,
@@ -5035,7 +5060,7 @@ pub open spec fn deq_p_c(
         (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => pidx1 == pidx2 && deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             *s1,
             *s2,
             (h - 1) as nat,
@@ -5049,6 +5074,7 @@ pub open spec fn deq_p_chain_valid(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     ch: Seq<ExprSpec>,
     h: nat,
 ) -> bool
@@ -5056,7 +5082,7 @@ pub open spec fn deq_p_chain_valid(
 {
     forall|i: int|
         #![trigger ch[i]]
-        0 <= i < ch.len() - 1 ==> deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h)
+        0 <= i < ch.len() - 1 ==> deq_p_c(dty, env, lctx, io, ch[i], ch[i + 1], h)
 }
 
 /// TYPED definitional equality (v1): chain-witnessed transitive closure
@@ -5067,6 +5093,7 @@ pub open spec fn deq_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -5077,7 +5104,7 @@ pub open spec fn deq_p(
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         )
@@ -5088,10 +5115,11 @@ pub open spec fn deq_p_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
-    exists|h: nat| #[trigger] deq_p(dty, env, lctx, x, y, h)
+    exists|h: nat| #[trigger] deq_p(dty, env, lctx, io, x, y, h)
 }
 
 /// `deq_p_c` subsumes `deq_c` (first disjunct, definitional).
@@ -5099,6 +5127,7 @@ pub proof fn deq_p_c_of_deq_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -5106,7 +5135,7 @@ pub proof fn deq_p_c_of_deq_c(
     requires
         deq_c(env, x, y, h),
     ensures
-        deq_p_c(dty, env, lctx, x, y, h),
+        deq_p_c(dty, env, lctx, io, x, y, h),
 {
 }
 
@@ -5115,71 +5144,72 @@ pub proof fn deq_p_c_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
     h2: nat,
 )
     requires
-        deq_p_c(dty, env, lctx, x, y, h1),
+        deq_p_c(dty, env, lctx, io, x, y, h1),
         h1 <= h2,
     ensures
-        deq_p_c(dty, env, lctx, x, y, h2),
+        deq_p_c(dty, env, lctx, io, x, y, h2),
     decreases h1, 0int,
 {
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
-    } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h1 - 1) as nat) {
+    } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
         // the proposition-equality conjunct is now a TYPED conversion, so it
         // has to be lifted along with the step itself
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
                 dty,
                 env,
-                lctx,
+                lctx, io,
                 y,
                 ty2,
                 fy,
-            ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2)
-                && deq_p(dty, env, lctx, tx, ty2, (h1 - 1) as nat);
-        deq_p_mono(dty, env, lctx, tx, ty2, (h1 - 1) as nat, (h2 - 1) as nat);
+            ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2)
+                && deq_p(dty, env, lctx, io, tx, ty2, (h1 - 1) as nat);
+        deq_p_mono(dty, env, lctx, io, tx, ty2, (h1 - 1) as nat, (h2 - 1) as nat);
         assert(irrel_marker(tx, ty2, fx, fy));
-        assert(proof_irrel_pair(dty, env, lctx, x, y, (h2 - 1) as nat));
-    } else if unit_pair(dty, env, lctx, x, y) {
-    } else if eta_struct_pair(dty, env, lctx, x, y) {
+        assert(proof_irrel_pair(dty, env, lctx, io, x, y, (h2 - 1) as nat));
+    } else if unit_pair(dty, env, lctx, io, x, y) {
+    } else if eta_struct_pair(dty, env, lctx, io, x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h1 - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *f1, *f2, (h1 - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *a1,
                     *a2,
                     (h1 - 1) as nat,
                 ));
-                deq_p_c_mono(dty, env, lctx, *f1, *f2, (h1 - 1) as nat, (h2 - 1) as nat);
-                deq_p_c_mono(dty, env, lctx, *a1, *a2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_p_c(dty, env, lctx, *f1, *f2, (h2 - 1) as nat) && deq_p_c(
+                deq_p_c_mono(dty, env, lctx, io, *f1, *f2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_p_c_mono(dty, env, lctx, io, *a1, *a2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_p_c(dty, env, lctx, io, *f1, *f2, (h2 - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *a1,
                     *a2,
                     (h2 - 1) as nat,
                 ));
-                assert(deq_p_c(dty, env, lctx, x, y, h2));
+                assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h1 - 1) as nat));
-                deq_p_c_mono(dty, env, lctx, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
-                if deq_p_c(dty, env, lctx, *b1, *b2, (h1 - 1) as nat) {
-                    deq_p_c_mono(dty, env, lctx, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                    assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat));
+                deq_p_c_mono(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
+                if deq_p_c(dty, env, lctx, io, *b1, *b2, (h1 - 1) as nat) {
+                    deq_p_c_mono(dty, env, lctx, io, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
+                    assert(h2 > 0 && deq_p_c(dty, env, lctx, io, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         *b1,
                         *b2,
                         (h2 - 1) as nat,
@@ -5189,7 +5219,7 @@ pub proof fn deq_p_c_mono(
                         fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
                             dty,
                             env,
-                            lctx,
+                            lctx, io,
                             inst_free(*b1, k),
                             inst_free(*b2, k),
                             (h1 - 1) as nat,
@@ -5197,7 +5227,7 @@ pub proof fn deq_p_c_mono(
                     deq_p_mono(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         inst_free(*b1, k),
                         inst_free(*b2, k),
                         (h1 - 1) as nat,
@@ -5207,41 +5237,41 @@ pub proof fn deq_p_c_mono(
                     assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         inst_free(*b1, k),
                         inst_free(*b2, k),
                         (h2 - 1) as nat,
                     ));
                 }
-                assert(deq_p_c(dty, env, lctx, x, y, h2));
+                assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h1 - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *v1,
                     *v2,
                     (h1 - 1) as nat,
-                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h1 - 1) as nat));
-                deq_p_c_mono(dty, env, lctx, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
-                deq_p_c_mono(dty, env, lctx, *v1, *v2, (h1 - 1) as nat, (h2 - 1) as nat);
-                deq_p_c_mono(dty, env, lctx, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_p_c(dty, env, lctx, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
+                ) && deq_p_c(dty, env, lctx, io, *b1, *b2, (h1 - 1) as nat));
+                deq_p_c_mono(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_p_c_mono(dty, env, lctx, io, *v1, *v2, (h1 - 1) as nat, (h2 - 1) as nat);
+                deq_p_c_mono(dty, env, lctx, io, *b1, *b2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_p_c(dty, env, lctx, io, *t1, *t2, (h2 - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *v1,
                     *v2,
                     (h2 - 1) as nat,
-                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h2 - 1) as nat));
-                assert(deq_p_c(dty, env, lctx, x, y, h2));
+                ) && deq_p_c(dty, env, lctx, io, *b1, *b2, (h2 - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
-                assert(deq_p_c(dty, env, lctx, *s1, *s2, (h1 - 1) as nat));
-                deq_p_c_mono(dty, env, lctx, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
-                assert(h2 > 0 && deq_p_c(dty, env, lctx, *s1, *s2, (h2 - 1) as nat));
-                assert(deq_p_c(dty, env, lctx, x, y, h2));
+                assert(deq_p_c(dty, env, lctx, io, *s1, *s2, (h1 - 1) as nat));
+                deq_p_c_mono(dty, env, lctx, io, *s1, *s2, (h1 - 1) as nat, (h2 - 1) as nat);
+                assert(h2 > 0 && deq_p_c(dty, env, lctx, io, *s1, *s2, (h2 - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
             _ => {
                 assert(false);
@@ -5257,80 +5287,81 @@ pub proof fn deq_p_c_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
 )
     requires
-        deq_p_c(dty, env, lctx, x, y, h),
+        deq_p_c(dty, env, lctx, io, x, y, h),
     ensures
-        deq_p_c(dty, env, lctx, y, x, h),
+        deq_p_c(dty, env, lctx, io, y, x, h),
     decreases h, 0int,
 {
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
-    } else if h > 0 && proof_irrel_pair(dty, env, lctx, x, y, (h - 1) as nat) {
+    } else if h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+            irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
                 dty,
                 env,
-                lctx,
+                lctx, io,
                 y,
                 ty2,
                 fy,
-            ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2)
-                && deq_p(dty, env, lctx, tx, ty2, (h - 1) as nat);
-        deq_p_symm(dty, env, lctx, tx, ty2, (h - 1) as nat);
+            ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2)
+                && deq_p(dty, env, lctx, io, tx, ty2, (h - 1) as nat);
+        deq_p_symm(dty, env, lctx, io, tx, ty2, (h - 1) as nat);
         assert(irrel_marker(ty2, tx, fy, fx));
-        assert(proof_irrel_pair(dty, env, lctx, y, x, (h - 1) as nat));
-    } else if unit_pair(dty, env, lctx, x, y) {
+        assert(proof_irrel_pair(dty, env, lctx, io, y, x, (h - 1) as nat));
+    } else if unit_pair(dty, env, lctx, io, x, y) {
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-            unit_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+            unit_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
                 dty,
                 env,
-                lctx,
+                lctx, io,
                 y,
                 ty2,
                 fy,
             ) && (unit_like_type_m(env, tx) || unit_like_type_m(env, ty2)) && deq_any(env, tx, ty2);
         deq_any_symm(env, tx, ty2);
         assert(unit_marker(ty2, tx, fy, fx));
-        assert(unit_pair(dty, env, lctx, y, x));
-    } else if eta_struct_pair(dty, env, lctx, x, y) {
-        assert(eta_struct_pair(dty, env, lctx, y, x));
+        assert(unit_pair(dty, env, lctx, io, y, x));
+    } else if eta_struct_pair(dty, env, lctx, io, x, y) {
+        assert(eta_struct_pair(dty, env, lctx, io, y, x));
     } else {
         assert(h > 0);
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                assert(deq_p_c(dty, env, lctx, *f1, *f2, (h - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *f1, *f2, (h - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *a1,
                     *a2,
                     (h - 1) as nat,
                 ));
-                deq_p_c_symm(dty, env, lctx, *f1, *f2, (h - 1) as nat);
-                deq_p_c_symm(dty, env, lctx, *a1, *a2, (h - 1) as nat);
-                assert(h > 0 && deq_p_c(dty, env, lctx, *f2, *f1, (h - 1) as nat) && deq_p_c(
+                deq_p_c_symm(dty, env, lctx, io, *f1, *f2, (h - 1) as nat);
+                deq_p_c_symm(dty, env, lctx, io, *a1, *a2, (h - 1) as nat);
+                assert(h > 0 && deq_p_c(dty, env, lctx, io, *f2, *f1, (h - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *a2,
                     *a1,
                     (h - 1) as nat,
                 ));
-                assert(deq_p_c(dty, env, lctx, y, x, h));
+                assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
             (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat));
-                deq_p_c_symm(dty, env, lctx, *t1, *t2, (h - 1) as nat);
-                if deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat) {
-                    deq_p_c_symm(dty, env, lctx, *b1, *b2, (h - 1) as nat);
-                    assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h - 1) as nat));
+                deq_p_c_symm(dty, env, lctx, io, *t1, *t2, (h - 1) as nat);
+                if deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) {
+                    deq_p_c_symm(dty, env, lctx, io, *b1, *b2, (h - 1) as nat);
+                    assert(h > 0 && deq_p_c(dty, env, lctx, io, *t2, *t1, (h - 1) as nat) && deq_p_c(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         *b2,
                         *b1,
                         (h - 1) as nat,
@@ -5340,7 +5371,7 @@ pub proof fn deq_p_c_symm(
                         fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
                             dty,
                             env,
-                            lctx,
+                            lctx, io,
                             inst_free(*b1, k),
                             inst_free(*b2, k),
                             (h - 1) as nat,
@@ -5348,7 +5379,7 @@ pub proof fn deq_p_c_symm(
                     deq_p_symm(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         inst_free(*b1, k),
                         inst_free(*b2, k),
                         (h - 1) as nat,
@@ -5357,41 +5388,41 @@ pub proof fn deq_p_c_symm(
                     assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && deq_p(
                         dty,
                         env,
-                        lctx,
+                        lctx, io,
                         inst_free(*b2, k),
                         inst_free(*b1, k),
                         (h - 1) as nat,
                     ));
                 }
-                assert(deq_p_c(dty, env, lctx, y, x, h));
+                assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                assert(deq_p_c(dty, env, lctx, *t1, *t2, (h - 1) as nat) && deq_p_c(
+                assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *v1,
                     *v2,
                     (h - 1) as nat,
-                ) && deq_p_c(dty, env, lctx, *b1, *b2, (h - 1) as nat));
-                deq_p_c_symm(dty, env, lctx, *t1, *t2, (h - 1) as nat);
-                deq_p_c_symm(dty, env, lctx, *v1, *v2, (h - 1) as nat);
-                deq_p_c_symm(dty, env, lctx, *b1, *b2, (h - 1) as nat);
-                assert(h > 0 && deq_p_c(dty, env, lctx, *t2, *t1, (h - 1) as nat) && deq_p_c(
+                ) && deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat));
+                deq_p_c_symm(dty, env, lctx, io, *t1, *t2, (h - 1) as nat);
+                deq_p_c_symm(dty, env, lctx, io, *v1, *v2, (h - 1) as nat);
+                deq_p_c_symm(dty, env, lctx, io, *b1, *b2, (h - 1) as nat);
+                assert(h > 0 && deq_p_c(dty, env, lctx, io, *t2, *t1, (h - 1) as nat) && deq_p_c(
                     dty,
                     env,
-                    lctx,
+                    lctx, io,
                     *v2,
                     *v1,
                     (h - 1) as nat,
-                ) && deq_p_c(dty, env, lctx, *b2, *b1, (h - 1) as nat));
-                assert(deq_p_c(dty, env, lctx, y, x, h));
+                ) && deq_p_c(dty, env, lctx, io, *b2, *b1, (h - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
             (ExprSpec::Proj(pidx1, s1), ExprSpec::Proj(pidx2, s2)) => {
-                assert(deq_p_c(dty, env, lctx, *s1, *s2, (h - 1) as nat));
-                deq_p_c_symm(dty, env, lctx, *s1, *s2, (h - 1) as nat);
-                assert(h > 0 && deq_p_c(dty, env, lctx, *s2, *s1, (h - 1) as nat));
-                assert(deq_p_c(dty, env, lctx, y, x, h));
+                assert(deq_p_c(dty, env, lctx, io, *s1, *s2, (h - 1) as nat));
+                deq_p_c_symm(dty, env, lctx, io, *s1, *s2, (h - 1) as nat);
+                assert(h > 0 && deq_p_c(dty, env, lctx, io, *s2, *s1, (h - 1) as nat));
+                assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
             _ => {
                 assert(false);
@@ -5405,24 +5436,25 @@ pub proof fn deq_p_of_deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
 )
     requires
-        deq_p_c(dty, env, lctx, x, y, h),
+        deq_p_c(dty, env, lctx, io, x, y, h),
     ensures
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
 {
     let ch = seq![x, y];
     assert(ch.len() == 2);
     assert(ch[0] == x);
     assert(ch[ch.len() - 1] == y);
-    assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ch, h)) by {
         assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch[i],
             ch[i + 1],
             h,
@@ -5438,6 +5470,7 @@ pub proof fn deq_p_of_deq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -5445,15 +5478,15 @@ pub proof fn deq_p_of_deq(
     requires
         deq(env, x, y, h),
     ensures
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
 {
     let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_chain_valid(env, ch, h);
-    assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ch, h)) by {
         assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch[i],
             ch[i + 1],
             h,
@@ -5470,34 +5503,35 @@ pub proof fn proof_irrel_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
     h2: nat,
 )
     requires
-        proof_irrel_pair(dty, env, lctx, x, y, h1),
+        proof_irrel_pair(dty, env, lctx, io, x, y, h1),
         h1 <= h2,
     ensures
-        proof_irrel_pair(dty, env, lctx, x, y, h2),
+        proof_irrel_pair(dty, env, lctx, io, x, y, h2),
 {
     let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
-        irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, x, tx, fx) && types_to(
+        irrel_marker(tx, ty2, fx, fy) && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
             dty,
             env,
-            lctx,
+            lctx, io,
             y,
             ty2,
             fy,
-        ) && is_proof_type_m(dty, env, lctx, tx) && is_proof_type_m(dty, env, lctx, ty2) && deq_p(
+        ) && is_proof_type_m(dty, env, lctx, io, tx) && is_proof_type_m(dty, env, lctx, io, ty2) && deq_p(
             dty,
             env,
-            lctx,
+            lctx, io,
             tx,
             ty2,
             h1,
         );
-    deq_p_mono(dty, env, lctx, tx, ty2, h1, h2);
+    deq_p_mono(dty, env, lctx, io, tx, ty2, h1, h2);
     assert(irrel_marker(tx, ty2, fx, fy));
 }
 
@@ -5506,20 +5540,21 @@ pub proof fn deq_p_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
     h: nat,
 )
     requires
-        proof_irrel_pair(dty, env, lctx, x, y, hi),
+        proof_irrel_pair(dty, env, lctx, io, x, y, hi),
         h > hi,
     ensures
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
 {
-    proof_irrel_pair_mono(dty, env, lctx, x, y, hi, (h - 1) as nat);
-    assert(deq_p_c(dty, env, lctx, x, y, h));
-    deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+    proof_irrel_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    assert(deq_p_c(dty, env, lctx, io, x, y, h));
+    deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
 
 /// The unit rule lifts into `deq_p` at any height, exactly as proof
@@ -5529,32 +5564,34 @@ pub proof fn deq_p_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
 )
     requires
-        unit_pair(dty, env, lctx, x, y),
+        unit_pair(dty, env, lctx, io, x, y),
     ensures
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
 {
-    deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+    deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
 
 pub proof fn deq_p_any_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
-        unit_pair(dty, env, lctx, x, y),
+        unit_pair(dty, env, lctx, io, x, y),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
-    deq_p_of_unit(dty, env, lctx, x, y, 0);
-    assert(deq_p(dty, env, lctx, x, y, 0));
+    deq_p_of_unit(dty, env, lctx, io, x, y, 0);
+    assert(deq_p(dty, env, lctx, io, x, y, 0));
 }
 
 /// Structure eta lifts into `deq_p` at any height, as the other typed
@@ -5563,32 +5600,34 @@ pub proof fn deq_p_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
 )
     requires
-        eta_struct_pair(dty, env, lctx, x, y),
+        eta_struct_pair(dty, env, lctx, io, x, y),
     ensures
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
 {
-    deq_p_of_deq_p_c(dty, env, lctx, x, y, h);
+    deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
 
 pub proof fn deq_p_any_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
-        eta_struct_pair(dty, env, lctx, x, y),
+        eta_struct_pair(dty, env, lctx, io, x, y),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
-    deq_p_of_eta_struct(dty, env, lctx, x, y, 0);
-    assert(deq_p(dty, env, lctx, x, y, 0));
+    deq_p_of_eta_struct(dty, env, lctx, io, x, y, 0);
+    assert(deq_p(dty, env, lctx, io, x, y, 0));
 }
 
 /// `deq_p` is reflexive at every height: the length-1 chain.
@@ -5596,17 +5635,18 @@ pub proof fn deq_p_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     h: nat,
 )
     ensures
-        deq_p(dty, env, lctx, x, x, h),
+        deq_p(dty, env, lctx, io, x, x, h),
 {
     let ch = seq![x];
     assert(ch.len() == 1);
     assert(ch[0] == x);
     assert(ch[ch.len() - 1] == x);
-    assert(deq_p_chain_valid(dty, env, lctx, ch, h));
+    assert(deq_p_chain_valid(dty, env, lctx, io, ch, h));
 }
 
 /// `deq_p` is monotone in its height index.
@@ -5614,37 +5654,38 @@ pub proof fn deq_p_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
     h2: nat,
 )
     requires
-        deq_p(dty, env, lctx, x, y, h1),
+        deq_p(dty, env, lctx, io, x, y, h1),
         h1 <= h2,
     ensures
-        deq_p(dty, env, lctx, x, y, h2),
+        deq_p(dty, env, lctx, io, x, y, h2),
     decreases h1, 1int,
 {
     let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h1,
         );
-    assert(deq_p_chain_valid(dty, env, lctx, ch, h2)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ch, h2)) by {
         assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch[i],
             ch[i + 1],
             h2,
         ) by {
-            assert(deq_p_c(dty, env, lctx, ch[i], ch[i + 1], h1));
-            deq_p_c_mono(dty, env, lctx, ch[i], ch[i + 1], h1, h2);
+            assert(deq_p_c(dty, env, lctx, io, ch[i], ch[i + 1], h1));
+            deq_p_c_mono(dty, env, lctx, io, ch[i], ch[i + 1], h1, h2);
         }
     }
 }
@@ -5654,21 +5695,22 @@ pub proof fn deq_p_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, x, y, h),
+        deq_p(dty, env, lctx, io, x, y, h),
     ensures
-        deq_p(dty, env, lctx, y, x, h),
+        deq_p(dty, env, lctx, io, y, x, h),
     decreases h, 1int,
 {
     let ch = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
@@ -5677,19 +5719,19 @@ pub proof fn deq_p_symm(
     assert(rev.len() == n);
     assert(rev[0] == ch[n - 1]);
     assert(rev[rev.len() - 1] == ch[0]);
-    assert(deq_p_chain_valid(dty, env, lctx, rev, h)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, rev, h)) by {
         assert forall|i: int| #![trigger rev[i]] 0 <= i < rev.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             rev[i],
             rev[i + 1],
             h,
         ) by {
             assert(rev[i] == ch[n - 1 - i]);
             assert(rev[i + 1] == ch[n - 2 - i]);
-            assert(deq_p_c(dty, env, lctx, ch[n - 2 - i], ch[n - 1 - i], h));
-            deq_p_c_symm(dty, env, lctx, ch[n - 2 - i], ch[n - 1 - i], h);
+            assert(deq_p_c(dty, env, lctx, io, ch[n - 2 - i], ch[n - 1 - i], h));
+            deq_p_c_symm(dty, env, lctx, io, ch[n - 2 - i], ch[n - 1 - i], h);
         }
     }
 }
@@ -5699,22 +5741,23 @@ pub proof fn deq_p_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, x, y, h),
-        deq_p(dty, env, lctx, y, z, h),
+        deq_p(dty, env, lctx, io, x, y, h),
+        deq_p(dty, env, lctx, io, y, z, h),
     ensures
-        deq_p(dty, env, lctx, x, z, h),
+        deq_p(dty, env, lctx, io, x, z, h),
 {
     let ch1 = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
@@ -5722,7 +5765,7 @@ pub proof fn deq_p_trans(
         ch.len() >= 1 && ch[0] == y && ch[ch.len() - 1] == z && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
@@ -5740,11 +5783,11 @@ pub proof fn deq_p_trans(
         assert(ch[ch.len() - 1] == ch2_tail[ch2_tail.len() - 1]);
         assert(ch2_tail[ch2_tail.len() - 1] == ch2[ch2.len() - 1]);
     }
-    assert(deq_p_chain_valid(dty, env, lctx, ch, h)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ch, h)) by {
         assert forall|i: int| #![trigger ch[i]] 0 <= i < ch.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch[i],
             ch[i + 1],
             h,
@@ -5752,20 +5795,20 @@ pub proof fn deq_p_trans(
             if i < n1 - 1 {
                 assert(ch[i] == ch1[i]);
                 assert(ch[i + 1] == ch1[i + 1]);
-                assert(deq_p_c(dty, env, lctx, ch1[i], ch1[i + 1], h));
+                assert(deq_p_c(dty, env, lctx, io, ch1[i], ch1[i + 1], h));
             } else if i == n1 - 1 {
                 assert(ch[i] == ch1[n1 - 1]);
                 assert(ch1[n1 - 1] == y);
                 assert(ch[i + 1] == ch2_tail[0]);
                 assert(ch2_tail[0] == ch2[1]);
-                assert(deq_p_c(dty, env, lctx, ch2[0], ch2[1], h));
+                assert(deq_p_c(dty, env, lctx, io, ch2[0], ch2[1], h));
                 assert(ch2[0] == y);
             } else {
                 assert(ch[i] == ch2_tail[i - n1]);
                 assert(ch[i + 1] == ch2_tail[i + 1 - n1]);
                 assert(ch2_tail[i - n1] == ch2[i - n1 + 1]);
                 assert(ch2_tail[i + 1 - n1] == ch2[i + 2 - n1]);
-                assert(deq_p_c(dty, env, lctx, ch2[i - n1 + 1], ch2[i - n1 + 2], h));
+                assert(deq_p_c(dty, env, lctx, io, ch2[i - n1 + 1], ch2[i - n1 + 2], h));
             }
         }
     }
@@ -5779,6 +5822,7 @@ pub proof fn deq_p_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
@@ -5786,13 +5830,13 @@ pub proof fn deq_p_app_congr(
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, f1, f2, h),
-        deq_p(dty, env, lctx, a1, a2, h),
+        deq_p(dty, env, lctx, io, f1, f2, h),
+        deq_p(dty, env, lctx, io, a1, a2, h),
     ensures
         deq_p(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::App(Box::new(f1), Box::new(a1)),
             ExprSpec::App(Box::new(f2), Box::new(a2)),
             h + 1,
@@ -5802,7 +5846,7 @@ pub proof fn deq_p_app_congr(
         ch.len() >= 1 && ch[0] == f1 && ch[ch.len() - 1] == f2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
@@ -5810,48 +5854,48 @@ pub proof fn deq_p_app_congr(
         ch.len() >= 1 && ch[0] == a1 && ch[ch.len() - 1] == a2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
     let mf = Seq::new(chf.len(), |i: int| ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
     let ma = Seq::new(cha.len(), |i: int| ExprSpec::App(Box::new(f2), Box::new(cha[i])));
-    assert(deq_p_chain_valid(dty, env, lctx, mf, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, mf, h + 1)) by {
         assert forall|i: int| #![trigger mf[i]] 0 <= i < mf.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             mf[i],
             mf[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, chf[i], chf[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, chf[i], chf[i + 1], h));
             defeq_refl(env, a1);
             assert(deq_c(env, a1, a1, h));
-            assert(deq_p_c(dty, env, lctx, a1, a1, h));
+            assert(deq_p_c(dty, env, lctx, io, a1, a1, h));
             assert(mf[i] == ExprSpec::App(Box::new(chf[i]), Box::new(a1)));
             assert(mf[i + 1] == ExprSpec::App(Box::new(chf[i + 1]), Box::new(a1)));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, mf[i], mf[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, mf[i], mf[i + 1], h + 1));
         }
     }
-    assert(deq_p_chain_valid(dty, env, lctx, ma, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ma, h + 1)) by {
         assert forall|i: int| #![trigger ma[i]] 0 <= i < ma.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ma[i],
             ma[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, cha[i], cha[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, cha[i], cha[i + 1], h));
             defeq_refl(env, f2);
             assert(deq_c(env, f2, f2, h));
-            assert(deq_p_c(dty, env, lctx, f2, f2, h));
+            assert(deq_p_c(dty, env, lctx, io, f2, f2, h));
             assert(ma[i] == ExprSpec::App(Box::new(f2), Box::new(cha[i])));
             assert(ma[i + 1] == ExprSpec::App(Box::new(f2), Box::new(cha[i + 1])));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, ma[i], ma[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, ma[i], ma[i + 1], h + 1));
         }
     }
     assert(mf[0] == ExprSpec::App(Box::new(f1), Box::new(a1)));
@@ -5861,7 +5905,7 @@ pub proof fn deq_p_app_congr(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::App(Box::new(f1), Box::new(a1)),
         ExprSpec::App(Box::new(f2), Box::new(a1)),
         h + 1,
@@ -5869,7 +5913,7 @@ pub proof fn deq_p_app_congr(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::App(Box::new(f2), Box::new(a1)),
         ExprSpec::App(Box::new(f2), Box::new(a2)),
         h + 1,
@@ -5877,7 +5921,7 @@ pub proof fn deq_p_app_congr(
     deq_p_trans(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::App(Box::new(f1), Box::new(a1)),
         ExprSpec::App(Box::new(f2), Box::new(a1)),
         ExprSpec::App(Box::new(f2), Box::new(a2)),
@@ -5890,6 +5934,7 @@ pub proof fn deq_p_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5897,13 +5942,13 @@ pub proof fn deq_p_bind_congr(
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, t1, t2, h),
-        deq_p(dty, env, lctx, b1, b2, h),
+        deq_p(dty, env, lctx, io, t1, t2, h),
+        deq_p(dty, env, lctx, io, b1, b2, h),
     ensures
         deq_p(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(t1), Box::new(b1)),
             ExprSpec::Bind(Box::new(t2), Box::new(b2)),
             h + 1,
@@ -5913,7 +5958,7 @@ pub proof fn deq_p_bind_congr(
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
@@ -5921,48 +5966,48 @@ pub proof fn deq_p_bind_congr(
         ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
     let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
-    assert(deq_p_chain_valid(dty, env, lctx, mt, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             mt[i],
             mt[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, cht[i], cht[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
-            assert(deq_p_c(dty, env, lctx, b1, b1, h));
+            assert(deq_p_c(dty, env, lctx, io, b1, b1, h));
             assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
             assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1));
         }
     }
-    assert(deq_p_chain_valid(dty, env, lctx, mb, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, mb, h + 1)) by {
         assert forall|i: int| #![trigger mb[i]] 0 <= i < mb.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             mb[i],
             mb[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, chb[i], chb[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, chb[i], chb[i + 1], h));
             defeq_refl(env, t2);
             assert(deq_c(env, t2, t2, h));
-            assert(deq_p_c(dty, env, lctx, t2, t2, h));
+            assert(deq_p_c(dty, env, lctx, io, t2, t2, h));
             assert(mb[i] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
             assert(mb[i + 1] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i + 1])));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, mb[i], mb[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, mb[i], mb[i + 1], h + 1));
         }
     }
     assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
@@ -5972,7 +6017,7 @@ pub proof fn deq_p_bind_congr(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t1), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b1)),
         h + 1,
@@ -5980,7 +6025,7 @@ pub proof fn deq_p_bind_congr(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t2), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         h + 1,
@@ -5988,7 +6033,7 @@ pub proof fn deq_p_bind_congr(
     deq_p_trans(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t1), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b2)),
@@ -6001,18 +6046,19 @@ pub proof fn deq_p_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, s1, s2, h),
+        deq_p(dty, env, lctx, io, s1, s2, h),
     ensures
         deq_p(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Proj(pidx, Box::new(s1)),
             ExprSpec::Proj(pidx, Box::new(s2)),
             h + 1,
@@ -6022,25 +6068,25 @@ pub proof fn deq_p_proj_congr(
         ch.len() >= 1 && ch[0] == s1 && ch[ch.len() - 1] == s2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
     let ms = Seq::new(chs.len(), |i: int| ExprSpec::Proj(pidx, Box::new(chs[i])));
-    assert(deq_p_chain_valid(dty, env, lctx, ms, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, ms, h + 1)) by {
         assert forall|i: int| #![trigger ms[i]] 0 <= i < ms.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             ms[i],
             ms[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, chs[i], chs[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, chs[i], chs[i + 1], h));
             assert(ms[i] == ExprSpec::Proj(pidx, Box::new(chs[i])));
             assert(ms[i + 1] == ExprSpec::Proj(pidx, Box::new(chs[i + 1])));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, ms[i], ms[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, ms[i], ms[i + 1], h + 1));
         }
     }
     assert(ms[0] == ExprSpec::Proj(pidx, Box::new(s1)));
@@ -6048,7 +6094,7 @@ pub proof fn deq_p_proj_congr(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Proj(pidx, Box::new(s1)),
         ExprSpec::Proj(pidx, Box::new(s2)),
         h + 1,
@@ -6060,50 +6106,53 @@ pub proof fn deq_p_any_of_deq_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
         deq_any(env, x, y),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
     let h = choose|h: nat| deq(env, x, y, h);
-    deq_p_of_deq(dty, env, lctx, x, y, h);
-    assert(deq_p(dty, env, lctx, x, y, h));
+    deq_p_of_deq(dty, env, lctx, io, x, y, h);
+    assert(deq_p(dty, env, lctx, io, x, y, h));
 }
 
 pub proof fn deq_p_any_of_defeq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
         defeq(env, x, y),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
     deq_any_of_defeq(env, x, y);
-    deq_p_any_of_deq_any(dty, env, lctx, x, y);
+    deq_p_any_of_deq_any(dty, env, lctx, io, x, y);
 }
 
 pub proof fn deq_p_any_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
 )
     requires
-        proof_irrel_pair(dty, env, lctx, x, y, hi),
+        proof_irrel_pair(dty, env, lctx, io, x, y, hi),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
-    deq_p_of_irrel(dty, env, lctx, x, y, hi, hi + 1);
-    assert(deq_p(dty, env, lctx, x, y, hi + 1));
+    deq_p_of_irrel(dty, env, lctx, io, x, y, hi, hi + 1);
+    assert(deq_p(dty, env, lctx, io, x, y, hi + 1));
 }
 
 /// `deq_p_any` congruences: lift the height-indexed `deq_p_*_congr` through
@@ -6112,37 +6161,38 @@ pub proof fn deq_p_any_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
     a2: ExprSpec,
 )
     requires
-        deq_p_any(dty, env, lctx, f1, f2),
-        deq_p_any(dty, env, lctx, a1, a2),
+        deq_p_any(dty, env, lctx, io, f1, f2),
+        deq_p_any(dty, env, lctx, io, a1, a2),
     ensures
         deq_p_any(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::App(Box::new(f1), Box::new(a1)),
             ExprSpec::App(Box::new(f2), Box::new(a2)),
         ),
 {
-    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, f1, f2, h);
-    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, a1, a2, h);
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, f1, f2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, a1, a2, h);
     let h = if h1 >= h2 {
         h1
     } else {
         h2
     };
-    deq_p_mono(dty, env, lctx, f1, f2, h1, h);
-    deq_p_mono(dty, env, lctx, a1, a2, h2, h);
-    deq_p_app_congr(dty, env, lctx, f1, f2, a1, a2, h);
+    deq_p_mono(dty, env, lctx, io, f1, f2, h1, h);
+    deq_p_mono(dty, env, lctx, io, a1, a2, h2, h);
+    deq_p_app_congr(dty, env, lctx, io, f1, f2, a1, a2, h);
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::App(Box::new(f1), Box::new(a1)),
         ExprSpec::App(Box::new(f2), Box::new(a2)),
         h + 1,
@@ -6153,37 +6203,38 @@ pub proof fn deq_p_any_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
 )
     requires
-        deq_p_any(dty, env, lctx, t1, t2),
-        deq_p_any(dty, env, lctx, b1, b2),
+        deq_p_any(dty, env, lctx, io, t1, t2),
+        deq_p_any(dty, env, lctx, io, b1, b2),
     ensures
         deq_p_any(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(t1), Box::new(b1)),
             ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         ),
 {
-    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
-    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, b1, b2, h);
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, t1, t2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, b1, b2, h);
     let h = if h1 >= h2 {
         h1
     } else {
         h2
     };
-    deq_p_mono(dty, env, lctx, t1, t2, h1, h);
-    deq_p_mono(dty, env, lctx, b1, b2, h2, h);
-    deq_p_bind_congr(dty, env, lctx, t1, t2, b1, b2, h);
+    deq_p_mono(dty, env, lctx, io, t1, t2, h1, h);
+    deq_p_mono(dty, env, lctx, io, b1, b2, h2, h);
+    deq_p_bind_congr(dty, env, lctx, io, t1, t2, b1, b2, h);
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t1), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         h + 1,
@@ -6194,27 +6245,28 @@ pub proof fn deq_p_any_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
 )
     requires
-        deq_p_any(dty, env, lctx, s1, s2),
+        deq_p_any(dty, env, lctx, io, s1, s2),
     ensures
         deq_p_any(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Proj(pidx, Box::new(s1)),
             ExprSpec::Proj(pidx, Box::new(s2)),
         ),
 {
-    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, s1, s2, h);
-    deq_p_proj_congr(dty, env, lctx, pidx, s1, s2, h1);
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, s1, s2, h);
+    deq_p_proj_congr(dty, env, lctx, io, pidx, s1, s2, h1);
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Proj(pidx, Box::new(s1)),
         ExprSpec::Proj(pidx, Box::new(s2)),
         h1 + 1,
@@ -6225,16 +6277,17 @@ pub proof fn deq_p_any_of_leaf(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
         deq_leaf(x, y),
     ensures
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
 {
     deq_any_of_leaf(env, x, y);
-    deq_p_any_of_deq_any(dty, env, lctx, x, y);
+    deq_p_any_of_deq_any(dty, env, lctx, io, x, y);
 }
 
 /// Binder INTRODUCTION by a fresh instance (the locally-nameless rule):
@@ -6248,6 +6301,7 @@ pub proof fn deq_p_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -6256,15 +6310,15 @@ pub proof fn deq_p_bind_fresh(
     h: nat,
 )
     requires
-        deq_p(dty, env, lctx, t1, t2, h),
+        deq_p(dty, env, lctx, io, t1, t2, h),
         fv_absent(b1, k),
         fv_absent(b2, k),
-        deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h),
+        deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
     ensures
         deq_p(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(t1), Box::new(b1)),
             ExprSpec::Bind(Box::new(t2), Box::new(b2)),
             h + 1,
@@ -6274,29 +6328,29 @@ pub proof fn deq_p_bind_fresh(
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(
             dty,
             env,
-            lctx,
+            lctx, io,
             ch,
             h,
         );
     let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-    assert(deq_p_chain_valid(dty, env, lctx, mt, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             mt[i],
             mt[i + 1],
             h + 1,
         ) by {
-            assert(deq_p_c(dty, env, lctx, cht[i], cht[i + 1], h));
+            assert(deq_p_c(dty, env, lctx, io, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
-            deq_p_c_of_deq_c(dty, env, lctx, b1, b1, h);
-            assert(deq_p_c(dty, env, lctx, b1, b1, h));
+            deq_p_c_of_deq_c(dty, env, lctx, io, b1, b1, h);
+            assert(deq_p_c(dty, env, lctx, io, b1, b1, h));
             assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
             assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
             assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, mt[i], mt[i + 1], h + 1));
+            assert(deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1));
         }
     }
     assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
@@ -6304,7 +6358,7 @@ pub proof fn deq_p_bind_fresh(
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t1), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b1)),
         h + 1,
@@ -6314,26 +6368,26 @@ pub proof fn deq_p_bind_fresh(
     let by = ExprSpec::Bind(Box::new(t2), Box::new(b2));
     defeq_refl(env, t2);
     assert(deq_c(env, t2, t2, h));
-    deq_p_c_of_deq_c(dty, env, lctx, t2, t2, h);
-    assert(deq_p_c(dty, env, lctx, t2, t2, h));
+    deq_p_c_of_deq_c(dty, env, lctx, io, t2, t2, h);
+    assert(deq_p_c(dty, env, lctx, io, t2, t2, h));
     assert(fresh_marker(k));
     assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k) && deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         inst_free(b1, k),
         inst_free(b2, k),
         h,
     ));
     assert(((h + 1) - 1) as nat == h);
-    assert(deq_p_c(dty, env, lctx, bx, by, h + 1));
+    assert(deq_p_c(dty, env, lctx, io, bx, by, h + 1));
     let link = seq![bx, by];
     assert(link.len() == 2 && link[0] == bx && link[1] == by);
-    assert(deq_p_chain_valid(dty, env, lctx, link, h + 1)) by {
+    assert(deq_p_chain_valid(dty, env, lctx, io, link, h + 1)) by {
         assert forall|i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_p_c(
             dty,
             env,
-            lctx,
+            lctx, io,
             link[i],
             link[i + 1],
             h + 1,
@@ -6341,8 +6395,8 @@ pub proof fn deq_p_bind_fresh(
             assert(i == 0);
         }
     }
-    assert(deq_p(dty, env, lctx, bx, by, h + 1));
-    deq_p_trans(dty, env, lctx, ExprSpec::Bind(Box::new(t1), Box::new(b1)), bx, by, h + 1);
+    assert(deq_p(dty, env, lctx, io, bx, by, h + 1));
+    deq_p_trans(dty, env, lctx, io, ExprSpec::Bind(Box::new(t1), Box::new(b1)), bx, by, h + 1);
 }
 
 /// `deq_p_any` face of `deq_p_bind_fresh`.
@@ -6350,6 +6404,7 @@ pub proof fn deq_p_any_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -6357,33 +6412,33 @@ pub proof fn deq_p_any_bind_fresh(
     k: u32,
 )
     requires
-        deq_p_any(dty, env, lctx, t1, t2),
+        deq_p_any(dty, env, lctx, io, t1, t2),
         fv_absent(b1, k),
         fv_absent(b2, k),
-        deq_p_any(dty, env, lctx, inst_free(b1, k), inst_free(b2, k)),
+        deq_p_any(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k)),
     ensures
         deq_p_any(
             dty,
             env,
-            lctx,
+            lctx, io,
             ExprSpec::Bind(Box::new(t1), Box::new(b1)),
             ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         ),
 {
-    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, t1, t2, h);
-    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h);
+    let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, t1, t2, h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h);
     let hm = if h1 >= h2 {
         h1
     } else {
         h2
     };
-    deq_p_mono(dty, env, lctx, t1, t2, h1, hm);
-    deq_p_mono(dty, env, lctx, inst_free(b1, k), inst_free(b2, k), h2, hm);
-    deq_p_bind_fresh(dty, env, lctx, t1, t2, b1, b2, k, hm);
+    deq_p_mono(dty, env, lctx, io, t1, t2, h1, hm);
+    deq_p_mono(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h2, hm);
+    deq_p_bind_fresh(dty, env, lctx, io, t1, t2, b1, b2, k, hm);
     assert(deq_p(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::Bind(Box::new(t1), Box::new(b1)),
         ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         hm + 1,
@@ -6396,14 +6451,15 @@ pub proof fn deq_p_any_spine_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     rest: Seq<ExprSpec>,
 )
     requires
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
     ensures
-        deq_p_any(dty, env, lctx, spine_app(x, rest), spine_app(y, rest)),
+        deq_p_any(dty, env, lctx, io, spine_app(x, rest), spine_app(y, rest)),
     decreases rest.len(),
 {
     if rest.len() == 0 {
@@ -6415,9 +6471,9 @@ pub proof fn deq_p_any_spine_congr(
         assert(rest =~= front.push(last));
         spine_app_compose_last(x, front, last);
         spine_app_compose_last(y, front, last);
-        deq_p_any_spine_congr(dty, env, lctx, x, y, front);
-        deq_p_any_refl(dty, env, lctx, last);
-        deq_p_any_app_congr(dty, env, lctx, spine_app(x, front), spine_app(y, front), last, last);
+        deq_p_any_spine_congr(dty, env, lctx, io, x, y, front);
+        deq_p_any_refl(dty, env, lctx, io, last);
+        deq_p_any_app_congr(dty, env, lctx, io, spine_app(x, front), spine_app(y, front), last, last);
     }
 }
 
@@ -6427,6 +6483,7 @@ pub proof fn deq_p_any_spine_update(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     head: ExprSpec,
     args: Seq<ExprSpec>,
     i: int,
@@ -6434,9 +6491,9 @@ pub proof fn deq_p_any_spine_update(
 )
     requires
         0 <= i < args.len(),
-        deq_p_any(dty, env, lctx, args[i], y),
+        deq_p_any(dty, env, lctx, io, args[i], y),
     ensures
-        deq_p_any(dty, env, lctx, spine_app(head, args), spine_app(head, args.update(i, y))),
+        deq_p_any(dty, env, lctx, io, spine_app(head, args), spine_app(head, args.update(i, y))),
 {
     let args2 = args.update(i, y);
     let pre = args.subrange(0, i);
@@ -6448,12 +6505,12 @@ pub proof fn deq_p_any_spine_update(
     spine_app_concat(head, pre.push(y), rest);
     spine_app_compose_last(head, pre, args[i]);
     spine_app_compose_last(head, pre, y);
-    deq_p_any_refl(dty, env, lctx, x);
-    deq_p_any_app_congr(dty, env, lctx, x, x, args[i], y);
+    deq_p_any_refl(dty, env, lctx, io, x);
+    deq_p_any_app_congr(dty, env, lctx, io, x, x, args[i], y);
     deq_p_any_spine_congr(
         dty,
         env,
-        lctx,
+        lctx, io,
         ExprSpec::App(Box::new(x), Box::new(args[i])),
         ExprSpec::App(Box::new(x), Box::new(y)),
         rest,
@@ -6464,57 +6521,60 @@ pub proof fn deq_p_any_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
 )
     ensures
-        deq_p_any(dty, env, lctx, x, x),
+        deq_p_any(dty, env, lctx, io, x, x),
 {
-    deq_p_refl(dty, env, lctx, x, 0);
-    assert(deq_p(dty, env, lctx, x, x, 0));
+    deq_p_refl(dty, env, lctx, io, x, 0);
+    assert(deq_p(dty, env, lctx, io, x, x, 0));
 }
 
 pub proof fn deq_p_any_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
 )
     requires
-        deq_p_any(dty, env, lctx, x, y),
+        deq_p_any(dty, env, lctx, io, x, y),
     ensures
-        deq_p_any(dty, env, lctx, y, x),
+        deq_p_any(dty, env, lctx, io, y, x),
 {
-    let h = choose|h: nat| deq_p(dty, env, lctx, x, y, h);
-    deq_p_symm(dty, env, lctx, x, y, h);
-    assert(deq_p(dty, env, lctx, y, x, h));
+    let h = choose|h: nat| deq_p(dty, env, lctx, io, x, y, h);
+    deq_p_symm(dty, env, lctx, io, x, y, h);
+    assert(deq_p(dty, env, lctx, io, y, x, h));
 }
 
 pub proof fn deq_p_any_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: Map<u64, (Seq<u64>, ExprSpec)>,
     lctx: Map<u32, ExprSpec>,
+    io: bool,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,
 )
     requires
-        deq_p_any(dty, env, lctx, x, y),
-        deq_p_any(dty, env, lctx, y, z),
+        deq_p_any(dty, env, lctx, io, x, y),
+        deq_p_any(dty, env, lctx, io, y, z),
     ensures
-        deq_p_any(dty, env, lctx, x, z),
+        deq_p_any(dty, env, lctx, io, x, z),
 {
-    let h1 = choose|h: nat| deq_p(dty, env, lctx, x, y, h);
-    let h2 = choose|h: nat| deq_p(dty, env, lctx, y, z, h);
+    let h1 = choose|h: nat| deq_p(dty, env, lctx, io, x, y, h);
+    let h2 = choose|h: nat| deq_p(dty, env, lctx, io, y, z, h);
     let hm = if h1 >= h2 {
         h1
     } else {
         h2
     };
-    deq_p_mono(dty, env, lctx, x, y, h1, hm);
-    deq_p_mono(dty, env, lctx, y, z, h2, hm);
-    deq_p_trans(dty, env, lctx, x, y, z, hm);
-    assert(deq_p(dty, env, lctx, x, z, hm));
+    deq_p_mono(dty, env, lctx, io, x, y, h1, hm);
+    deq_p_mono(dty, env, lctx, io, y, z, h2, hm);
+    deq_p_trans(dty, env, lctx, io, x, y, z, hm);
+    assert(deq_p(dty, env, lctx, io, x, z, hm));
 }
 
 /// `nat_repr_is_zero(e)` (EITHER a `NatLit` valued 0, or a `Const` named
