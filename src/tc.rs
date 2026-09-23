@@ -1722,6 +1722,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            // THE TYPING CLAIM: the result is a type of `e` in the kernel's
+            // judgement.
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         // VERUS-REWRITE(accessor-swap): both lookups were
         // `self.tc_cache.infer_cache_*.get(&e).copied()`; the verified readers
@@ -1738,17 +1741,31 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Local { binder_type, .. } => {
                 proof {
                     local_type_scope(*self, e);
+                    // a local's type is what the arena records for it
+                    crate::expr_arena_bridge::arena_lctx_local(e);
+                    assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0));
                 }
                 binder_type
             },
             Var { .. } => crate::util::kernel_fail("no loose bvars allowed in infer"),
-            Sort { level, .. } => self.infer_sort(level, flag),
+            Sort { level, .. } => {
+                let r = self.infer_sort(level, flag);
+                proof {
+                    assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(r), 0));
+                }
+                r
+            },
             App { .. } => self.infer_app(e, flag),
             Pi { .. } => self.infer_pi(e, flag),
             Lambda { .. } => self.infer_lambda(e, flag),
             Let { binder_type, val, body, .. } => {
                 let r = self.infer_let(binder_type, val, body, flag);
                 proof {
+                    assert(to_model_expr(e) == ExprSpec::Let(
+                        Box::new(to_model_expr(binder_type)),
+                        Box::new(to_model_expr(val)),
+                        Box::new(to_model_expr(body)),
+                    ));
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
                         crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
                         crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
@@ -1760,6 +1777,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Const { name, levels, .. } => {
                 let r = self.infer_const(name, levels, flag);
                 proof {
+                    crate::expr_arena_bridge::is_const_shape_model(e);
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
                         crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
                         crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
@@ -1793,6 +1811,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     Some(t) => {
                         proof {
                             crate::expr_arena_bridge::is_const_shape_model(t);
+                            assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
                         }
                         t
                     },
@@ -1809,6 +1828,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     Some(t) => {
                         proof {
                             crate::expr_arena_bridge::is_const_shape_model(t);
+                            assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
                         }
                         t
                     },
@@ -2320,6 +2340,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             crate::expr_model::nlbv(to_model_expr(result)) <= 0,
+            kinfer_claim(
+                *old(self).env,
+                ExprSpec::Let(
+                    Box::new(to_model_expr(binder_type)),
+                    Box::new(to_model_expr(val)),
+                    Box::new(to_model_expr(body)),
+                ),
+                to_model_expr(result),
+            ),
             forall|S: vstd::iset::ISet<u32>, c: u16|
                 crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c)
                 && crate::expr_model::dbj_deep_in(to_model_expr(val), S, c)
@@ -2351,6 +2380,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let r = self.infer(body, flag);
         proof {
+            // the let rule, one fuel above the body's derivation
+            let f = choose|f: nat| #[trigger] ktypes(*old(self).env, to_model_expr(body), to_model_expr(r), f);
+            assert(crate::tc_model::fuel_marker(f));
+            assert(to_model_expr(body) == crate::expr_model::subst_full(to_model_expr(body0), seq![to_model_expr(val)], 0));
+            assert(ktypes(
+                *old(self).env,
+                ExprSpec::Let(
+                    Box::new(to_model_expr(binder_type)),
+                    Box::new(to_model_expr(val)),
+                    Box::new(to_model_expr(body0)),
+                ),
+                to_model_expr(r),
+                f + 1,
+            ));
             assert forall|S: vstd::iset::ISet<u32>, c: u16|
                 crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c)
                 && crate::expr_model::dbj_deep_in(to_model_expr(val), S, c)
@@ -5876,6 +5919,29 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
     }
 }
 
+/// THE KERNEL'S TYPING JUDGEMENT: the typed family in the kernel's mode
+/// (`io = true`, InferOnly -- arguments are not re-checked against their
+/// binders), over the environment's declarations and the arena's locals. The
+/// same family at `io = false` is real typing; relating the two on well-typed
+/// terms is the metatheory.
+pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: nat) -> bool {
+    crate::tc_model::types_to(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(),
+        true,
+        e,
+        t,
+        f,
+    )
+}
+
+/// What `infer` promises, and what both inference caches hold: the result is
+/// a type of the input in the kernel's judgement.
+pub open spec fn kinfer_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
+    exists|f: nat| #[trigger] ktypes(env, e, t, f)
+}
+
 /// What `def_eq` promises when it answers `true`, and what the equality cache
 /// holds: on closed inputs, the two sides are convertible in the kernel's
 /// relation. Closed for the same reason as `whnf_claim` -- `def_eq` reaches
@@ -6678,16 +6744,17 @@ pub proof fn local_type_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, x: crate:
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
-        tc.tc_cache.infer_cache_check@.contains_key(e) ==> crate::tc_model::infer_shadow_claim(
+        tc.tc_cache.infer_cache_check@.contains_key(e) ==> kinfer_claim(
             *tc.env,
-            e,
-            tc.tc_cache.infer_cache_check@[e],
+            to_model_expr(e),
+            to_model_expr(tc.tc_cache.infer_cache_check@[e]),
         ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_check@[e]))
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
-        tc.tc_cache.infer_cache_no_check@.contains_key(e) ==> scope_pres(
+        tc.tc_cache.infer_cache_no_check@.contains_key(e) ==> kinfer_claim(
+            *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.infer_cache_no_check@[e]),
-        )
+        ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_no_check@[e]))
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.whnf_cache@.contains_key(e) ==> whnf_claim(
             *tc.env,
@@ -6935,6 +7002,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn cache_infer_no_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
+            kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
@@ -6952,7 +7020,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn cache_infer_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
-            crate::tc_model::infer_shadow_claim(*(*old(self)).env, e, r),
+            kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
@@ -7061,7 +7129,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*self),
         ensures
             match result {
-                Some(r) => crate::tc_model::infer_shadow_claim(*self.env, e, r) && scope_pres(
+                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
                     to_model_expr(e),
                     to_model_expr(r),
                 ),
@@ -7086,7 +7154,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*self),
         ensures
             match result {
-                Some(r) => scope_pres(to_model_expr(e), to_model_expr(r)),
+                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
+                    to_model_expr(e),
+                    to_model_expr(r),
+                ),
                 None => true,
             },
     {
@@ -7291,6 +7362,16 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             // a declaration's type, at new universes: no locals, no loose indices
             !crate::expr_model::has_fv(to_model_expr(result)),
             crate::expr_model::nlbv(to_model_expr(result)) <= 0,
+            // and a type of the constant, in the kernel's judgement
+            ktypes(
+                *old(self).env,
+                ExprSpec::Const(
+                    crate::level_arena_bridge::name_id(c_name),
+                    crate::level_arena_bridge::to_model_of_levels(c_uparams),
+                ),
+                to_model_expr(result),
+                0,
+            ),
     {
         match crate::env_model::get_declar_info_ty(self.env, &c_name) {
             Some((d_uparams, d_ty)) => {
@@ -7324,6 +7405,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 let r = self.ctx.subst_expr_levels(d_ty, d_uparams, c_uparams);
                 proof {
+                    crate::expr_model::subst_expr_levels_fn_rel(
+                        to_model_expr(d_ty),
+                        crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(d_uparams)),
+                        crate::level_arena_bridge::to_model_of_levels(c_uparams),
+                    );
                     subst_levels_nlbv(
                         to_model_expr(d_ty),
                         crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(d_uparams)),
