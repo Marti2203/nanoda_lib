@@ -491,22 +491,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Used in iota reduction (`reduce_rec`) to turn a bignum
-    /// either `Nat.zero`, or `App (Nat.succ) (bignum - 1)`; in order to do iota reduction,
-    /// we need to know what constructor the major premise comes from.
-    pub(crate) fn nat_lit_to_constructor(&mut self, n: BigUintPtr<'t>) -> Option<ExprPtr<'t>> {
-        assert!(self.export_file.config.nat_extension);
-        let n = self.read_bignum(n).unwrap();
-        if n.is_zero() {
-            self.c_nat_zero()
-        } else {
-            let pred = self.alloc_bignum(core::ops::Sub::sub(n, 1u8)).unwrap();
-            let pred = self.mk_nat_lit(pred).unwrap();
-            let succ_c = self.c_nat_succ()?;
-            Some(self.mk_app(succ_c, pred))
-        }
-    }
-
     /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
     pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> Option<ExprPtr<'t>> {
         if (!self.export_file.config.string_extension) || (!self.export_file.config.nat_extension) {
@@ -765,6 +749,114 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 None => None,
             }
+        }
+    }
+
+    /// Used in iota reduction (`reduce_rec`) to turn a bignum
+    /// either `Nat.zero`, or `App (Nat.succ) (bignum - 1)`; in order to do iota reduction,
+    /// we need to know what constructor the major premise comes from.
+    ///
+    /// Verified in place. Was a claim-free `assume_specification`; the result
+    /// is now known to be the literal's one-step unfolding, with no locals.
+    pub(crate) fn nat_lit_to_constructor(&mut self, n: BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            match result {
+                Some(r) => !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(r))
+                    && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(r)) <= 0
+                    && crate::beta_model::pstep(
+                    vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                    crate::expr_model::ExprSpec::NatLit(
+                        crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
+                    ),
+                    crate::expr_arena_bridge::to_model(r),
+                ),
+                None => true,
+            },
+    {
+        // VERUS-REWRITE(assert-macro): was `assert!(self.export_file.config.nat_extension)`.
+        // Same check, same abort; the field is read through its accessor
+        // because `Config` is opaque to Verus.
+        crate::util::kernel_check(
+            self.export_file.config.nat_extension_on(),
+            "nat_lit_to_constructor: nat literal without the nat extension enabled",
+        );
+        // VERUS-REWRITE(accessor-swap): was `self.read_bignum(n).unwrap()`;
+        // `read_bignum_value` is `read_bignum(..).cloned()`, and says which
+        // number it read. The unwrap keeps its panic, with a message. The
+        // binding is renamed from `n`, which the contract uses for the pointer.
+        let nv = match crate::expr_arena_bridge::read_bignum_value(self, n) {
+            Some(v) => v,
+            None => crate::util::kernel_fail("nat_lit_to_constructor: literal not in the bignum store"),
+        };
+        // VERUS-REWRITE(wrapper-swap): `n.is_zero()` is `biguint_is_zero`.
+        if crate::nat_lit_model::biguint_is_zero(&nv) {
+            let r = self.c_nat_zero();
+            proof {
+                if let Some(z) = r {
+                    crate::expr_arena_bridge::is_const_shape_model(z);
+                    assert(crate::expr_arena_bridge::bignum_ptr_value(n) == 0);
+                    crate::beta_model::const_expr_no_levels_canonical(
+                        crate::expr_arena_bridge::to_model(z),
+                        crate::expr_arena_bridge::nat_zero_id(),
+                    );
+                    assert(crate::beta_model::pstep(
+                        vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                        crate::expr_model::ExprSpec::NatLit(
+                            crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
+                        ),
+                        crate::expr_arena_bridge::to_model(z),
+                    ));
+                    assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(z)));
+                    assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(z)) <= 0);
+                }
+            }
+            r
+        } else {
+            // VERUS-REWRITE(wrapper-swap): `core::ops::Sub::sub(n, 1u8)` is
+            // `biguint_pred`. Both unwraps keep their panics, with messages.
+            let pred = match self.alloc_bignum(crate::nat_lit_model::biguint_pred(nv)) {
+                Some(p) => p,
+                None => crate::util::kernel_fail("nat_lit_to_constructor: could not store the predecessor"),
+            };
+            let pred = match self.mk_nat_lit(pred) {
+                Some(p) => p,
+                None => crate::util::kernel_fail("nat_lit_to_constructor: could not build the predecessor"),
+            };
+            let succ_c = self.c_nat_succ()?;
+            proof {
+                crate::expr_arena_bridge::is_const_shape_model(succ_c);
+                crate::expr_arena_bridge::is_nat_lit_shape_model(pred);
+                assert(crate::expr_arena_bridge::bignum_ptr_value(n) > 0);
+                assert(crate::expr_arena_bridge::nat_lit_value(pred)
+                    == (crate::expr_arena_bridge::bignum_ptr_value(n) - 1) as nat);
+                crate::beta_model::const_expr_no_levels_canonical(
+                    crate::expr_arena_bridge::to_model(succ_c),
+                    crate::expr_arena_bridge::nat_succ_id(),
+                );
+            }
+            let r = self.mk_app(succ_c, pred);
+            proof {
+                assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(succ_c)) == 0);
+                assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(pred)) == 0);
+                assert(crate::beta_model::max_var_below(crate::expr_arena_bridge::to_model(succ_c), 0));
+                assert(crate::beta_model::max_var_below(crate::expr_arena_bridge::to_model(pred), 0));
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(succ_c)) == 0);
+                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(pred)) == 0);
+                assert(crate::beta_model::pstep(
+                    vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                    crate::expr_model::ExprSpec::NatLit(
+                        crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
+                    ),
+                    crate::expr_arena_bridge::to_model(r),
+                ));
+                assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(succ_c)));
+                assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(pred)));
+                assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(r)));
+                assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(r)) <= 0);
+            }
+            Some(r)
         }
     }
 }

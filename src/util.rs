@@ -916,11 +916,12 @@ pub struct TcCache<'t> {
 impl<'t> TcCache<'t> {
     /// Verified in place, body unchanged. The ensures is what
     /// `TypeChecker::new` needs to establish `tc_wf` on a fresh checker: the
-    /// four claim-bearing caches start empty, so every clause of the invariant
+    /// five claim-bearing caches start empty, so every clause of the invariant
     /// holds vacuously.
     pub(crate) fn new() -> (result: Self)
         ensures
             result.infer_cache_check@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            result.infer_cache_no_check@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
             result.whnf_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
             result.whnf_no_unfolding_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
             result.eq_cache@ == vstd::set::Set::<SortedPair<'t>>::empty(),
@@ -1292,6 +1293,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             result.1 matches Expr::Const { name, levels, .. }
                 ==> crate::expr_arena_bridge::const_name_of(x) == name
                 && crate::expr_arena_bridge::const_levels_of(x) == levels,
+            result.0 matches Expr::Local { id, binder_type, .. }
+                ==> crate::expr_arena_bridge::local_id_of(a) == id
+                && crate::expr_arena_bridge::local_binder_type_of(a) == binder_type
+                && to_model_expr(a) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(a)),
+            result.1 matches Expr::Local { id, binder_type, .. }
+                ==> crate::expr_arena_bridge::local_id_of(x) == id
+                && crate::expr_arena_bridge::local_binder_type_of(x) == binder_type
+                && to_model_expr(x) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
     {
         (self.read_expr(a), self.read_expr(x))
     }

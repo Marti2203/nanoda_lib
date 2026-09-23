@@ -158,6 +158,8 @@ needed a different shape.
 | `get_pfx`, `replace_pfx` | `src/name.rs` | or-pattern — `root_of` must unfold at each constructor, so the arms cannot share a body |
 | `def_eq_binder_aux`, `whnf_no_unfolding_aux` | `src/tc.rs` | or-pattern of two tuples; slice pattern |
 | `infer_const` | `src/tc.rs` | accessor shape, and an arity check hoisted one frame |
+| `infer` | `src/tc.rs` | both cache lookups go through the verified readers `cached_infer_check`/`cached_infer_no_check` — same lookups, and they hand back the caches' claims |
+| `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
 The bodies are the kernel's; what changed is where results are bound.
 
@@ -184,7 +186,9 @@ still a rejection — but each is an improvement.
 ## 5. `panic!` and `assert!` on rejection paths
 
 `infer_sort`, `infer_const`, and all 21 sites in the 46-function `def_eq`
-cycle, now routed through `util::kernel_check` / `util::kernel_fail`.
+cycle, now routed through `util::kernel_check` / `util::kernel_fail`; also
+`nat_lit_to_constructor`'s `assert!` and its three `.unwrap()`s (which keep
+their panics and gain messages).
 
 This one is **by design and will not change**. vstd specifies
 `core::panicking::panic` with `requires false` — deliberately, because a panic
