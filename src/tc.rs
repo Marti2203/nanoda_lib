@@ -1531,16 +1531,54 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return cached
         }
         let mut cursor = e;
+        proof {
+            // the loop starts with `cursor == e`, so the chain is reflexive
+            crate::beta_model::pstep_star_refl(
+                crate::env_model::env_model_nofv(*old(self).env),
+                to_model_expr(e),
+            );
+        }
         loop
             invariant
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 (*self).env == old(self).env,
+                // THE CORE CONTRACT, as a running chain: everything this loop
+                // has done to `e` so far is a reduction.
+                crate::beta_model::pstep_star(
+                    crate::env_model::env_model_nofv(*old(self).env),
+                    to_model_expr(e),
+                    to_model_expr(cursor),
+                ),
         {
             let whnfd = self.whnf_no_unfolding(cursor);
+            proof {
+                crate::beta_model::pstep_star_trans(
+                    crate::env_model::env_model_nofv(*old(self).env),
+                    to_model_expr(e),
+                    to_model_expr(cursor),
+                    to_model_expr(whnfd),
+                );
+            }
             if let Some(reduce_nat_ok) = self.try_reduce_nat(whnfd) {
+                proof {
+                    crate::beta_model::pstep_star_trans(
+                        crate::env_model::env_model_nofv(*old(self).env),
+                        to_model_expr(e),
+                        to_model_expr(whnfd),
+                        to_model_expr(reduce_nat_ok),
+                    );
+                }
                 cursor = reduce_nat_ok;
             } else if let Some(next_term) = self.unfold_def(whnfd) {
+                proof {
+                    crate::beta_model::pstep_star_trans(
+                        crate::env_model::env_model_nofv(*old(self).env),
+                        to_model_expr(e),
+                        to_model_expr(whnfd),
+                        to_model_expr(next_term),
+                    );
+                }
                 cursor = next_term;
             } else {
                 self.cache_whnf(e, whnfd);
