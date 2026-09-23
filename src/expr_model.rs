@@ -525,8 +525,8 @@ pub open spec fn serial_below(id: u32, c: u16) -> bool {
 }
 
 /// DEEP SCOPE: every local in `e` is a level-local node in `S` whose level is
-/// below `c`, AND each such local's own type is deep-in-scope (same `S`)
-/// below that local's level. Well-founded because the levels strictly
+/// below `c`, AND each such local's own type is closed and deep-in-scope
+/// (same `S`) below that local's level. Well-founded because the levels strictly
 /// decrease.
 ///
 /// Why deep: `infer` of a local returns the local's TYPE, and the type's scope
@@ -549,11 +549,8 @@ pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u32>, c: u16) -> bool
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && S.contains(id) && dbj_deep_in(
-                crate::expr_arena_bridge::arena_lctx()[id],
-                S,
-                s,
-            ),
+            Some(s) => s < c && S.contains(id) && nlbv(crate::expr_arena_bridge::arena_lctx()[id]) <= 0
+                && dbj_deep_in(crate::expr_arena_bridge::arena_lctx()[id], S, s),
             None => false,
         },
         ExprSpec::App(f, a) => dbj_deep_in(*f, S, c) && dbj_deep_in(*a, S, c),
@@ -958,6 +955,41 @@ pub proof fn abstr_levels_dbj_deep_in(
         },
         ExprSpec::Proj(_, st) => {
             abstr_levels_dbj_deep_in(*st, S, b, start, n, S2, c2);
+        },
+        _ => {},
+    }
+}
+
+/// Abstracting the levels from `start` up turns each such local into an index
+/// below `nob - start`, so the result has no more loose indices than that and
+/// whatever the input already had.
+pub proof fn abstr_levels_nlbv(e: ExprSpec, start: u16, nob: u16)
+    requires
+        dbj_serials_below(e, nob),
+        start <= nob,
+        nob as nat + depth(e) < 0x1_0000,
+    ensures
+        nlbv(abstr_levels_full(e, start, nob)) <= (if nlbv(e) >= (nob - start) as nat { nlbv(e) } else { (nob - start) as nat }),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            abstr_levels_nlbv(*f, start, nob);
+            abstr_levels_nlbv(*a, start, nob);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_levels_nlbv(*ty, start, nob);
+            dbj_serials_below_mono(*b, nob, (nob + 1) as u16);
+            abstr_levels_nlbv(*b, start, (nob + 1) as u16);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_levels_nlbv(*ty, start, nob);
+            abstr_levels_nlbv(*v, start, nob);
+            dbj_serials_below_mono(*b, nob, (nob + 1) as u16);
+            abstr_levels_nlbv(*b, start, (nob + 1) as u16);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_levels_nlbv(*st, start, nob);
         },
         _ => {},
     }
