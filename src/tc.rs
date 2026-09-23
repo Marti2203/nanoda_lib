@@ -2756,7 +2756,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+    fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -2765,12 +2765,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         match self.ctx.read_expr_pair(x, y) {
             (
                 Proj { ty_name: ty_name_l, idx: idx_l, structure: structure_l, .. },
                 Proj { ty_name: ty_name_r, idx: idx_r, structure: structure_r, .. },
-            ) => ty_name_l == ty_name_r && idx_l == idx_r && self.def_eq(structure_l, structure_r),
+            ) => {
+                let r = ty_name_l == ty_name_r && idx_l == idx_r && self.def_eq(structure_l, structure_r);
+                proof {
+                    if r && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
+                        assert(crate::expr_model::nlbv(to_model_expr(structure_l)) <= 0);
+                        assert(crate::expr_model::nlbv(to_model_expr(structure_r)) <= 0);
+                        kconv_proj_congr(*old(self).env, idx_l, to_model_expr(structure_l), to_model_expr(structure_r));
+                    }
+                }
+                r
+            },
             _ => false,
         }
     }
@@ -2802,7 +2813,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+    fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -2811,6 +2822,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         let (f1, args1) = self.ctx.unfold_apps(x);
         if args1.is_empty() {
@@ -2848,6 +2860,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 in_scope(*self, f2),
                 forall|j: int| 0 <= j < args1@.len() ==> in_scope(*self, #[trigger] args1@[j]),
                 forall|j: int| 0 <= j < args2@.len() ==> in_scope(*self, #[trigger] args2@[j]),
+                i <= args1.len(),
+                *self.env == *old(self).env,
+                args_eq ==> forall|j: int| 0 <= j < i ==> def_eq_claim(
+                    *old(self).env,
+                    to_model_expr(#[trigger] args1@[j]),
+                    to_model_expr(args2@[j]),
+                ),
+            ensures
+                tc_wf(*self),
+                (*self).env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                args1.len() == args2.len(),
+                in_scope(*self, f1),
+                in_scope(*self, f2),
+                args_eq ==> i == args1.len(),
+                args_eq ==> forall|j: int| 0 <= j < args1@.len() ==> def_eq_claim(
+                    *old(self).env,
+                    to_model_expr(#[trigger] args1@[j]),
+                    to_model_expr(args2@[j]),
+                ),
         {
             if !self.def_eq(args1[i], args2[i]) {
                 args_eq = false;
@@ -2861,6 +2893,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         if !self.def_eq(f1, f2) {
             return false
+        }
+        proof {
+            let env = *old(self).env;
+            let (xm, ym) = (to_model_expr(x), to_model_expr(y));
+            if crate::expr_model::nlbv(xm) <= 0 && crate::expr_model::nlbv(ym) <= 0 {
+                let a1 = crate::expr_arena_bridge::ptr_models(args1@);
+                let a2 = crate::expr_arena_bridge::ptr_models(args2@);
+                crate::beta_model::spine_app_nlbv_decompose(to_model_expr(f1), a1);
+                crate::beta_model::spine_app_nlbv_decompose(to_model_expr(f2), a2);
+                assert forall|j: int| 0 <= j < a1.len() implies kconv(env, #[trigger] a1[j], a2[j]) by {
+                    assert(a1[j] == to_model_expr(args1@[j]));
+                    assert(a2[j] == to_model_expr(args2@[j]));
+                    assert(crate::expr_model::nlbv(a1[j]) <= 0);
+                    assert(crate::expr_model::nlbv(a2[j]) <= 0);
+                }
+                kconv_spine_pairwise(env, to_model_expr(f1), to_model_expr(f2), a1, a2);
+            }
         }
         true
     }
@@ -4420,6 +4469,70 @@ pub proof fn kconv_spine_update<'x, 't>(
     );
 }
 
+/// The first `k` arguments replaced by convertible ones.
+pub proof fn kconv_spine_prefix<'x, 't>(
+    env: Env<'x, 't>,
+    h: ExprSpec,
+    a1: Seq<ExprSpec>,
+    a2: Seq<ExprSpec>,
+    k: int,
+)
+    requires
+        a1.len() == a2.len(),
+        0 <= k <= a1.len(),
+        forall|i: int| 0 <= i < a1.len() ==> kconv(env, #[trigger] a1[i], a2[i]),
+    ensures
+        kconv(
+            env,
+            crate::beta_model::spine_app(h, a1),
+            crate::beta_model::spine_app(h, a2.take(k) + a1.skip(k)),
+        ),
+    decreases k,
+{
+    if k == 0 {
+        assert(a2.take(0) + a1.skip(0) =~= a1);
+        kconv_refl(env, crate::beta_model::spine_app(h, a1));
+    } else {
+        kconv_spine_prefix(env, h, a1, a2, k - 1);
+        let m = a2.take(k - 1) + a1.skip(k - 1);
+        assert(m[k - 1] == a1[k - 1]);
+        kconv_spine_update(env, h, m, k - 1, a2[k - 1]);
+        assert(m.update(k - 1, a2[k - 1]) =~= a2.take(k) + a1.skip(k));
+        kconv_trans(
+            env,
+            crate::beta_model::spine_app(h, a1),
+            crate::beta_model::spine_app(h, m),
+            crate::beta_model::spine_app(h, a2.take(k) + a1.skip(k)),
+        );
+    }
+}
+
+/// Spines with convertible heads and pairwise convertible arguments.
+pub proof fn kconv_spine_pairwise<'x, 't>(
+    env: Env<'x, 't>,
+    h1: ExprSpec,
+    h2: ExprSpec,
+    a1: Seq<ExprSpec>,
+    a2: Seq<ExprSpec>,
+)
+    requires
+        a1.len() == a2.len(),
+        kconv(env, h1, h2),
+        forall|i: int| 0 <= i < a1.len() ==> kconv(env, #[trigger] a1[i], a2[i]),
+    ensures
+        kconv(env, crate::beta_model::spine_app(h1, a1), crate::beta_model::spine_app(h2, a2)),
+{
+    kconv_spine_prefix(env, h1, a1, a2, a1.len() as int);
+    assert(a2.take(a1.len() as int) + a1.skip(a1.len() as int) =~= a2);
+    kconv_spine_congr(env, h1, h2, a2);
+    kconv_trans(
+        env,
+        crate::beta_model::spine_app(h1, a1),
+        crate::beta_model::spine_app(h1, a2),
+        crate::beta_model::spine_app(h2, a2),
+    );
+}
+
 pub proof fn kconv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
         kconv(env, x, y),
@@ -5969,6 +6082,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 && crate::expr_arena_bridge::is_const_shape(y)
                 && crate::expr_arena_bridge::const_name_of(x)
                 == crate::expr_arena_bridge::const_name_of(y),
+            // same constant at universes equal under every assignment
+            result ==> kconv(*old(self).env, to_model_expr(x), to_model_expr(y)),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -5983,6 +6098,15 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if res {
                         assert(crate::expr_arena_bridge::is_const_shape(x));
                         assert(crate::expr_arena_bridge::is_const_shape(y));
+                        crate::expr_arena_bridge::is_const_shape_model(x);
+                        crate::expr_arena_bridge::is_const_shape_model(y);
+                        assert(crate::tc_model::deq_leaf(to_model_expr(x), to_model_expr(y)));
+                        crate::tc_model::deq_any_of_leaf(
+                            crate::env_model::to_model_of_env(*old(self).env),
+                            to_model_expr(x),
+                            to_model_expr(y),
+                        );
+                        kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
                     }
                 }
                 res
