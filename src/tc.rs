@@ -2574,7 +2574,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> Option<bool>
+    fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -2583,8 +2583,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         if self.ctx.is_nat_zero(x) && self.ctx.is_nat_zero(y) {
+            proof {
+                // both are the numeral zero
+                let z = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(0nat)));
+                kconv_nat_value(*old(self).env, to_model_expr(x));
+                kconv_nat_value(*old(self).env, to_model_expr(y));
+                kconv_symm(*old(self).env, to_model_expr(y), z);
+                kconv_trans(*old(self).env, to_model_expr(x), z, to_model_expr(y));
+            }
             return Some(true)
         }
         if let (NatLit { .. }, NatLit { .. }) = (self.ctx.read_expr(x), self.ctx.read_expr(y)) {
@@ -2592,13 +2601,42 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.ctx.export_file.config.nat_extension_on(),
                 "def_eq_nat: nat literal without the nat extension enabled",
             );
+            proof {
+                if x == y {
+                    kconv_refl(*old(self).env, to_model_expr(x));
+                }
+            }
             return Some(x == y)
         }
         if let (Some(x_pred), Some(y_pred)) = (
             self.ctx.pred_of_nat_succ(x),
             self.ctx.pred_of_nat_succ(y),
         ) {
-            Some(self.def_eq(x_pred, y_pred))
+            let r = self.def_eq(x_pred, y_pred);
+            proof {
+                let env = *old(self).env;
+                nat_pred_kconv(env, x, x_pred);
+                nat_pred_kconv(env, y, y_pred);
+                if r && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
+                    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty());
+                    let (xp, yp) = (to_model_expr(x_pred), to_model_expr(y_pred));
+                    let ax = ExprSpec::App(Box::new(s), Box::new(xp));
+                    let ay = ExprSpec::App(Box::new(s), Box::new(yp));
+                    // Nat.succ x' ~ Nat.succ y', by one argument
+                    kconv_spine_update(env, s, seq![xp], 0, yp);
+                    assert(crate::beta_model::spine_app(s, seq![xp]) == ax) by {
+                        reveal_with_fuel(crate::beta_model::spine_app, 2);
+                    }
+                    assert(seq![xp].update(0, yp) =~= seq![yp]);
+                    assert(crate::beta_model::spine_app(s, seq![yp]) == ay) by {
+                        reveal_with_fuel(crate::beta_model::spine_app, 2);
+                    }
+                    kconv_trans(env, to_model_expr(x), ax, ay);
+                    kconv_symm(env, to_model_expr(y), ay);
+                    kconv_trans(env, to_model_expr(x), ay, to_model_expr(y));
+                }
+            }
+            Some(r)
         } else {
             None
         }
@@ -3675,15 +3713,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             result is None || result->Some_0 is FoundEqResult,
+            result == Some(DeltaResult::<'t>::FoundEqResult(true)) ==> def_eq_claim(
+                *old(self).env,
+                to_model_expr(x),
+                to_model_expr(y),
+            ),
     {
         if let Some(short) = self.def_eq_nat(x, y) {
             return Some(DeltaResult::FoundEqResult(short))
         }
         if (!self.ctx.has_fvars(x) && !self.ctx.has_fvars(y)) || self.ctx.eager_mode {
             if let Some(xprime) = self.try_reduce_nat(x) {
-                return Some(DeltaResult::FoundEqResult(self.def_eq(xprime, y)))
+                let r = self.def_eq(xprime, y);
+                proof {
+                    if r {
+                        whnf_claim_refl(*old(self).env, to_model_expr(y));
+                        def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(xprime), to_model_expr(y), to_model_expr(y));
+                    }
+                }
+                return Some(DeltaResult::FoundEqResult(r))
             } else if let Some(yprime) = self.try_reduce_nat(y) {
-                return Some(DeltaResult::FoundEqResult(self.def_eq(x, yprime)))
+                let r = self.def_eq(x, yprime);
+                proof {
+                    if r {
+                        whnf_claim_refl(*old(self).env, to_model_expr(x));
+                        def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x), to_model_expr(y), to_model_expr(yprime));
+                    }
+                }
+                return Some(DeltaResult::FoundEqResult(r))
             }
         }
         None
@@ -4685,6 +4742,42 @@ fn opt_expr_is<'t>(opt: Option<ExprPtr<'t>>, e: ExprPtr<'t>) -> (result: bool)
     match opt {
         Some(m) => m == e,
         None => false,
+    }
+}
+
+/// What `pred_of_nat_succ` returns is the argument of a `Nat.succ` the input
+/// is convertible with -- itself, or its literal's unfolding.
+pub proof fn nat_pred_kconv<'x, 't>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>)
+    requires
+        to_model_expr(e) == ExprSpec::App(
+            Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty())),
+            Box::new(to_model_expr(r)),
+        ) || (crate::expr_arena_bridge::is_nat_lit_shape(e)
+            && crate::expr_arena_bridge::nat_lit_value(e) > 0
+            && crate::expr_arena_bridge::is_nat_lit_shape(r)
+            && crate::expr_arena_bridge::nat_lit_value(r) == (crate::expr_arena_bridge::nat_lit_value(e) - 1) as nat),
+    ensures
+        kconv(
+            env,
+            to_model_expr(e),
+            ExprSpec::App(
+                Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty())),
+                Box::new(to_model_expr(r)),
+            ),
+        ),
+        crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(r)) <= 0,
+{
+    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty());
+    let a = ExprSpec::App(Box::new(s), Box::new(to_model_expr(r)));
+    if to_model_expr(e) == a {
+        kconv_refl(env, a);
+    } else {
+        crate::expr_arena_bridge::is_nat_lit_shape_model(e);
+        crate::expr_arena_bridge::is_nat_lit_shape_model(r);
+        assert(crate::beta_model::nat_value(to_model_expr(r)) == Some(crate::expr_arena_bridge::nat_lit_value(r)));
+        assert(crate::beta_model::nat_value(a) == Some(crate::expr_arena_bridge::nat_lit_value(e)));
+        kconv_nat_value(env, a);
+        kconv_symm(env, a, to_model_expr(e));
     }
 }
 
