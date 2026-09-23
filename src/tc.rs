@@ -2059,13 +2059,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let e1 = self.ctx.inst(body_e, sl);
                 let e2 = self.ctx.foldl_apps(e1, args.into_iter().skip(n_args));
                 proof {
-                    // N BETA STEPS AT ONCE. The loop peeled `n` binders off the
-                    // head (`spine_bind`); the kernel instantiates the body with
-                    // the first `n` arguments in one `inst` and re-applies the
-                    // rest. The model's `spine_reduce` does the same `n` steps
-                    // one `subst1` at a time, and `spine_reduce_eq_subst_full`
-                    // says the two agree -- on a closed term, again.
-                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    // n beta steps at once; the model-level argument is
+                    // `beta_spine_claim`. Here only the links from the kernel's
+                    // values to the model.
                     let lam = to_model_expr(e_fun);
                     let bm = to_model_expr(body_e);
                     let n = n_args as nat;
@@ -2076,43 +2072,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(to_model_expr(e1) == crate::expr_model::subst_full(bm, pa, 0));
                     assert(crate::expr_arena_bridge::ptr_models(argv.subrange(n as int, argv.len() as int)) =~= pb);
                     assert(to_model_expr(e2) == crate::beta_model::spine_app(to_model_expr(e1), pb));
-                    assert(am =~= pa + pb);
                     assert(em0 == crate::beta_model::spine_app(lam, am));
-                    crate::beta_model::spine_app_concat(lam, pa, pb);
-                    if crate::expr_model::nlbv(em0) <= 0 {
-                        crate::beta_model::spine_app_nlbv_decompose(lam, am);
-                        crate::beta_model::spine_bind_nlbv(lam, n, bm, 0);
-                        assert forall|i: int| 0 <= i < pa.len() implies
-                            crate::expr_model::nlbv(#[trigger] pa[i]) <= 0
-                            && crate::beta_model::max_var_below(pa[i], 60000) by {
-                            assert(pa[i] == am[i]);
-                            assert(am[i] == to_model_expr(argv[i]));
-                            crate::beta_model::nlbv_bound_implies_max_var_below(pa[i], 0);
-                            crate::beta_model::max_var_below_mono(
-                                pa[i],
-                                crate::expr_model::depth(pa[i]),
-                                60000,
-                            );
-                        }
-                        assert forall|i: int| 0 <= i < pb.len() implies
-                            crate::expr_model::nlbv(#[trigger] pb[i]) <= 0 by {
-                            assert(pb[i] == am[i + n]);
-                        }
-                        crate::beta_model::spine_reduce_eq_subst_full(lam, pa, bm, 60000);
-                        crate::beta_model::pstep_star_spine_reduce(fm, lam, pa);
-                        crate::beta_model::pstep_spine_app_star(
-                            fm,
-                            crate::beta_model::spine_app(lam, pa),
-                            crate::beta_model::spine_reduce(lam, pa),
-                            pb,
-                        );
-                        crate::beta_model::defeq_of_pstep_star(fm, em0, to_model_expr(e2));
-                        crate::tc_model::deq_any_of_defeq(fm, em0, to_model_expr(e2));
-                        crate::beta_model::subst_full_nlbv_bound_n(bm, pa, 0);
-                        crate::beta_model::spine_app_nlbv(to_model_expr(e1), pb);
+                    assert forall|i: int| 0 <= i < am.len() implies
+                        crate::expr_model::depth(#[trigger] am[i]) < 60000 by {
+                        assert(am[i] == to_model_expr(argv[i]));
                     }
-                    whnf_claim_of_deq(*old(self).env, em0, to_model_expr(e2));
-                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e2)));
+                    beta_spine_claim(*old(self).env, lam, bm, am, n);
                 }
                 let r = self.whnf_no_unfolding_aux(e2, cheap_proj);
                 proof {
@@ -2136,12 +2101,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let e1 = self.ctx.inst(body, &sv);
                 let e2 = self.ctx.foldl_apps(e1, args.into_iter());
                 proof {
-                    // ONE ZETA STEP. `e` is `Let(t, v, b)` applied to `am`; the
-                    // model's rule takes `Let(t, v, b)` to `subst1(b, v)`, and the
-                    // kernel's `inst` computes `subst_full(b, [v], 0)`. The two
-                    // agree on a closed term (`subst_c_eq_subst_full`), which is
-                    // the condition `whnf_claim` carries.
-                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    // one zeta step; the model-level argument is
+                    // `zeta_spine_claim`
                     let tm = to_model_expr(binder_type);
                     let vm = to_model_expr(val);
                     let bm = to_model_expr(body);
@@ -2152,32 +2113,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(crate::expr_arena_bridge::ptr_models(sv@) =~= seq![vm]);
                     assert(to_model_expr(e1) == crate::expr_model::subst_full(bm, seq![vm], 0));
                     assert(to_model_expr(e2) == crate::beta_model::spine_app(to_model_expr(e1), am));
-                    if crate::expr_model::nlbv(em0) <= 0 {
-                        crate::beta_model::spine_app_nlbv_decompose(lm, am);
-                        assert(crate::expr_model::nlbv(vm) <= 0);
-                        assert(crate::expr_model::nlbv(bm) <= 1);
-                        crate::beta_model::nlbv_bound_implies_max_var_below(vm, 0);
-                        crate::beta_model::subst_c_eq_subst_full(
-                            bm,
-                            vm,
-                            0,
-                            crate::expr_model::depth(vm),
-                        );
-                        let rm = crate::beta_model::subst1(bm, vm);
-                        assert(rm == crate::beta_model::subst_c(bm, vm, 0));
-                        assert(rm == to_model_expr(e1));
-                        assert(crate::beta_model::pstep(fm, bm, bm));
-                        assert(crate::beta_model::pstep(fm, vm, vm));
-                        assert(crate::beta_model::pstep(fm, lm, rm));
-                        crate::beta_model::pstep_star_one(fm, lm, rm);
-                        crate::beta_model::pstep_spine_app_star(fm, lm, rm, am);
-                        crate::beta_model::defeq_of_pstep_star(fm, em0, to_model_expr(e2));
-                        crate::tc_model::deq_any_of_defeq(fm, em0, to_model_expr(e2));
-                        crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
-                        crate::beta_model::spine_app_nlbv(to_model_expr(e1), am);
-                    }
-                    whnf_claim_of_deq(*old(self).env, em0, to_model_expr(e2));
-                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e2)));
+                    zeta_spine_claim(*old(self).env, tm, vm, bm, am);
                 }
                 let r = self.whnf_no_unfolding_aux(e2, cheap_proj);
                 proof {
@@ -4033,6 +3969,117 @@ pub proof fn whnf_claim_of_deq<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpe
     }
 }
 
+/// N BETA STEPS AT ONCE, the model half of `whnf_no_unfolding_aux`'s lambda
+/// arm. The head peels `n` binders to `bm` (`spine_bind`); the kernel
+/// instantiates `bm` with the first `n` arguments in one `inst` and re-applies
+/// the rest. The model's `spine_reduce` does the same `n` steps one `subst1` at
+/// a time, and `spine_reduce_eq_subst_full` says the two agree on a closed term.
+pub proof fn beta_spine_claim<'x, 't>(
+    env: Env<'x, 't>,
+    lam: ExprSpec,
+    bm: ExprSpec,
+    am: Seq<ExprSpec>,
+    n: nat,
+)
+    requires
+        crate::beta_model::spine_bind(lam, n) == Some(bm),
+        n <= am.len(),
+        forall|i: int| 0 <= i < am.len() ==> #[trigger] crate::expr_model::depth(am[i]) < 60000,
+    ensures
+        whnf_claim(
+            env,
+            crate::beta_model::spine_app(lam, am),
+            crate::beta_model::spine_app(
+                crate::expr_model::subst_full(bm, am.subrange(0, n as int), 0),
+                am.subrange(n as int, am.len() as int),
+            ),
+        ),
+{
+    let fm = crate::env_model::to_model_of_env(env);
+    let pa = am.subrange(0, n as int);
+    let pb = am.subrange(n as int, am.len() as int);
+    let em0 = crate::beta_model::spine_app(lam, am);
+    let e1m = crate::expr_model::subst_full(bm, pa, 0);
+    let e2m = crate::beta_model::spine_app(e1m, pb);
+    assert(am =~= pa + pb);
+    crate::beta_model::spine_app_concat(lam, pa, pb);
+    if crate::expr_model::nlbv(em0) <= 0 {
+        crate::beta_model::spine_app_nlbv_decompose(lam, am);
+        crate::beta_model::spine_bind_nlbv(lam, n, bm, 0);
+        assert forall|i: int| 0 <= i < pa.len() implies
+            crate::expr_model::nlbv(#[trigger] pa[i]) <= 0
+            && crate::beta_model::max_var_below(pa[i], 60000) by {
+            assert(pa[i] == am[i]);
+            crate::beta_model::nlbv_bound_implies_max_var_below(pa[i], 0);
+            crate::beta_model::max_var_below_mono(pa[i], crate::expr_model::depth(pa[i]), 60000);
+        }
+        assert forall|i: int| 0 <= i < pb.len() implies
+            crate::expr_model::nlbv(#[trigger] pb[i]) <= 0 by {
+            assert(pb[i] == am[i + n]);
+        }
+        crate::beta_model::spine_reduce_eq_subst_full(lam, pa, bm, 60000);
+        crate::beta_model::pstep_star_spine_reduce(fm, lam, pa);
+        crate::beta_model::pstep_spine_app_star(
+            fm,
+            crate::beta_model::spine_app(lam, pa),
+            crate::beta_model::spine_reduce(lam, pa),
+            pb,
+        );
+        crate::beta_model::defeq_of_pstep_star(fm, em0, e2m);
+        crate::tc_model::deq_any_of_defeq(fm, em0, e2m);
+        crate::beta_model::subst_full_nlbv_bound_n(bm, pa, 0);
+        crate::beta_model::spine_app_nlbv(e1m, pb);
+    }
+    whnf_claim_of_deq(env, em0, e2m);
+}
+
+/// ONE ZETA STEP, the model half of `whnf_no_unfolding_aux`'s `Let` arm.
+/// The model's rule takes `Let(t, v, b)` to `subst1(b, v)`; the kernel's `inst`
+/// computes `subst_full(b, [v], 0)`. The two agree on a closed term
+/// (`subst_c_eq_subst_full`), which is the condition `whnf_claim` carries.
+pub proof fn zeta_spine_claim<'x, 't>(
+    env: Env<'x, 't>,
+    tm: ExprSpec,
+    vm: ExprSpec,
+    bm: ExprSpec,
+    am: Seq<ExprSpec>,
+)
+    requires
+        crate::expr_model::depth(vm) < 60000,
+    ensures
+        whnf_claim(
+            env,
+            crate::beta_model::spine_app(ExprSpec::Let(Box::new(tm), Box::new(vm), Box::new(bm)), am),
+            crate::beta_model::spine_app(crate::expr_model::subst_full(bm, seq![vm], 0), am),
+        ),
+{
+    let fm = crate::env_model::to_model_of_env(env);
+    let lm = ExprSpec::Let(Box::new(tm), Box::new(vm), Box::new(bm));
+    let em0 = crate::beta_model::spine_app(lm, am);
+    let e1m = crate::expr_model::subst_full(bm, seq![vm], 0);
+    let e2m = crate::beta_model::spine_app(e1m, am);
+    if crate::expr_model::nlbv(em0) <= 0 {
+        crate::beta_model::spine_app_nlbv_decompose(lm, am);
+        assert(crate::expr_model::nlbv(vm) <= 0);
+        assert(crate::expr_model::nlbv(bm) <= 1);
+        crate::beta_model::nlbv_bound_implies_max_var_below(vm, 0);
+        crate::beta_model::subst_c_eq_subst_full(bm, vm, 0, crate::expr_model::depth(vm));
+        let rm = crate::beta_model::subst1(bm, vm);
+        assert(rm == crate::beta_model::subst_c(bm, vm, 0));
+        assert(rm == e1m);
+        assert(crate::beta_model::pstep(fm, bm, bm));
+        assert(crate::beta_model::pstep(fm, vm, vm));
+        assert(crate::beta_model::pstep(fm, lm, rm));
+        crate::beta_model::pstep_star_one(fm, lm, rm);
+        crate::beta_model::pstep_spine_app_star(fm, lm, rm, am);
+        crate::beta_model::defeq_of_pstep_star(fm, em0, e2m);
+        crate::tc_model::deq_any_of_defeq(fm, em0, e2m);
+        crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
+        crate::beta_model::spine_app_nlbv(e1m, am);
+    }
+    whnf_claim_of_deq(env, em0, e2m);
+}
+
 pub proof fn whnf_claim_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
     ensures
         whnf_claim(env, a, a),
@@ -4049,6 +4096,25 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
 {
     if crate::expr_model::nlbv(a) <= 0 {
         kconv_trans(env, a, b, c);
+    }
+}
+
+/// What `def_eq` promises when it answers `true`, and what the equality cache
+/// holds: on closed inputs, the two sides are convertible in the kernel's
+/// relation. Closed for the same reason as `whnf_claim` -- `def_eq` reaches
+/// its answers through `whnf`, whose claim is conditioned on it.
+pub open spec fn def_eq_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bool {
+    crate::expr_model::nlbv(x) <= 0 && crate::expr_model::nlbv(y) <= 0 ==> kconv(env, x, y)
+}
+
+pub proof fn def_eq_claim_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+    requires
+        def_eq_claim(env, x, y),
+    ensures
+        def_eq_claim(env, y, x),
+{
+    if crate::expr_model::nlbv(x) <= 0 && crate::expr_model::nlbv(y) <= 0 {
+        kconv_symm(env, x, y);
     }
 }
 
@@ -4120,11 +4186,7 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
             to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]),
         )
     &&& forall|p: crate::util::SortedPair<'t>| #[trigger]
-        tc.tc_cache.eq_cache@.contains(p) ==> crate::tc_model::deq_any(
-            crate::env_model::to_model_of_env(*tc.env),
-            to_model_expr(p.0),
-            to_model_expr(p.1),
-        )
+        tc.tc_cache.eq_cache@.contains(p) ==> def_eq_claim(*tc.env, to_model_expr(p.0), to_model_expr(p.1))
     // The shadow memo is a claim-bearing cache as well -- its entries are
     // certificates carrying their own reduction claim -- so its wellformedness
     // belongs here beside the other four rather than in every signature that
@@ -4428,11 +4490,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn cache_eq(&mut self, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(x),
-                to_model_expr(y),
-            ),
+            def_eq_claim(*(*old(self)).env, to_model_expr(x), to_model_expr(y)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4440,11 +4498,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let p = crate::util::SortedPair::new(x, y);
         proof {
-            crate::tc_model::deq_any_symm(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(x),
-                to_model_expr(y),
-            );
+            def_eq_claim_symm(*(*old(self)).env, to_model_expr(x), to_model_expr(y));
             crate::util_model::sorted_pair_obeys_key_model();
             crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
         }
@@ -4539,11 +4593,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             tc_wf(*self),
         ensures
-            result ==> crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*self.env),
-                to_model_expr(x),
-                to_model_expr(y),
-            ),
+            result ==> def_eq_claim(*self.env, to_model_expr(x), to_model_expr(y)),
     {
         let p = crate::util::SortedPair::new(x, y);
         proof {
@@ -4553,11 +4603,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let hit = self.tc_cache.eq_cache.contains(&p);
         proof {
             if hit {
-                crate::tc_model::deq_any_symm(
-                    crate::env_model::to_model_of_env(*self.env),
-                    to_model_expr(p.0),
-                    to_model_expr(p.1),
-                );
+                def_eq_claim_symm(*self.env, to_model_expr(p.0), to_model_expr(p.1));
             }
         }
         hit
