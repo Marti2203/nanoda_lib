@@ -892,8 +892,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // scope: the expansion has no locals, and whnf adds none
                     crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_len(x));
-                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(sl, k) implies crate::expr_model::dbj_deep(to_model_expr(r), k) by {
-                        crate::expr_model::no_fv_dbj_deep(to_model_expr(c), k);
+                    assert forall|SS: ISet<u16>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(sl, SS, k) implies crate::expr_model::dbj_deep_in(to_model_expr(r), SS, k) by {
+                        crate::expr_model::no_fv_dbj_deep_in(to_model_expr(c), SS, k);
                     }
                 }
                 Some(r)
@@ -1380,11 +1380,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
                     }
                     // scope: the field is an argument of the whnf'd structure
-                    assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(ExprSpec::Proj(idx, Box::new(s0)), k)
-                        implies crate::expr_model::dbj_deep(to_model_expr(a), k) by {
-                        assert(crate::expr_model::dbj_deep(s0, k));
-                        assert(crate::expr_model::dbj_deep(sm, k));
-                        spine_app_dbj_deep(ExprSpec::Const(id, lv), am2, k);
+                    assert forall|SS: ISet<u16>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(ExprSpec::Proj(idx, Box::new(s0)), SS, k)
+                        implies crate::expr_model::dbj_deep_in(to_model_expr(a), SS, k) by {
+                        assert(crate::expr_model::dbj_deep_in(s0, SS, k));
+                        assert(crate::expr_model::dbj_deep_in(sm, SS, k));
+                        spine_app_dbj_deep_in(ExprSpec::Const(id, lv), am2, SS, k);
                     }
                 }
                 Some(a)
@@ -3936,36 +3936,36 @@ fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
 }
 
 /// A spine is in scope exactly when its head and every argument are.
-pub proof fn spine_app_dbj_deep(h: ExprSpec, args: Seq<ExprSpec>, c: u16)
+pub proof fn spine_app_dbj_deep_in(h: ExprSpec, args: Seq<ExprSpec>, SS: ISet<u16>, c: u16)
     ensures
-        crate::expr_model::dbj_deep(crate::beta_model::spine_app(h, args), c) <==> (
-        crate::expr_model::dbj_deep(h, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep(args[i], c)),
+        crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h, args), SS, c) <==> (
+        crate::expr_model::dbj_deep_in(h, SS, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c)),
     decreases args.len(),
 {
     if args.len() > 0 {
         let init = args.subrange(0, args.len() - 1);
         let last = args[args.len() - 1];
-        spine_app_dbj_deep(h, init, c);
+        spine_app_dbj_deep_in(h, init, SS, c);
         assert(crate::beta_model::spine_app(h, args) == ExprSpec::App(
             Box::new(crate::beta_model::spine_app(h, init)),
             Box::new(last),
         ));
-        if crate::expr_model::dbj_deep(crate::beta_model::spine_app(h, args), c) {
+        if crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h, args), SS, c) {
             assert forall|i: int| 0 <= i < args.len() implies
-                #[trigger] crate::expr_model::dbj_deep(args[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c) by {
                 if i < args.len() - 1 {
                     assert(init[i] == args[i]);
                 }
             }
         }
-        if crate::expr_model::dbj_deep(h, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep(args[i], c) {
+        if crate::expr_model::dbj_deep_in(h, SS, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c) {
             assert forall|i: int| 0 <= i < init.len() implies
-                #[trigger] crate::expr_model::dbj_deep(init[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(init[i], SS, c) by {
                 assert(init[i] == args[i]);
             }
-            assert(crate::expr_model::dbj_deep(last, c));
+            assert(crate::expr_model::dbj_deep_in(last, SS, c));
         }
     }
 }
@@ -3977,25 +3977,25 @@ pub proof fn spine_scope_pres(h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
     ensures
         scope_pres(crate::beta_model::spine_app(h1, args), crate::beta_model::spine_app(h2, args)),
 {
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(crate::beta_model::spine_app(h1, args), c)
-        implies crate::expr_model::dbj_deep(crate::beta_model::spine_app(h2, args), c) by {
-        spine_app_dbj_deep(h1, args, c);
-        spine_app_dbj_deep(h2, args, c);
+    assert forall|SS: ISet<u16>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h1, args), SS, c)
+        implies crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h2, args), SS, c) by {
+        spine_app_dbj_deep_in(h1, args, SS, c);
+        spine_app_dbj_deep_in(h2, args, SS, c);
     }
 }
 
 /// What a head peels to under `n` binders is in scope if the head is.
-pub proof fn spine_bind_dbj_deep(lam: ExprSpec, n: nat, bm: ExprSpec, c: u16)
+pub proof fn spine_bind_dbj_deep_in(lam: ExprSpec, n: nat, bm: ExprSpec, SS: ISet<u16>, c: u16)
     requires
         crate::beta_model::spine_bind(lam, n) == Some(bm),
-        crate::expr_model::dbj_deep(lam, c),
+        crate::expr_model::dbj_deep_in(lam, SS, c),
     ensures
-        crate::expr_model::dbj_deep(bm, c),
+        crate::expr_model::dbj_deep_in(bm, SS, c),
     decreases n,
 {
     if n > 0 {
         if let ExprSpec::Bind(_, b) = lam {
-            spine_bind_dbj_deep(*b, (n - 1) as nat, bm, c);
+            spine_bind_dbj_deep_in(*b, (n - 1) as nat, bm, SS, c);
         }
     }
 }
@@ -4214,8 +4214,8 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
 /// what lets `def_eq` recurse on a whnf'd term and still know its locals are
 /// in scope, which is where its binder case gets freshness from.
 pub open spec fn scope_pres(e: ExprSpec, r: ExprSpec) -> bool {
-    forall|c: u16| #[trigger] crate::expr_model::dbj_deep(e, c)
-        ==> crate::expr_model::dbj_deep(r, c)
+    forall|SS: ISet<u16>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(e, SS, c)
+        ==> crate::expr_model::dbj_deep_in(r, SS, c)
 }
 
 /// Lift an untyped step (`deq_any`) into `whnf_claim`.
@@ -4297,17 +4297,17 @@ pub proof fn beta_spine_claim<'x, 't>(
         crate::beta_model::spine_app_nlbv(e1m, pb);
     }
     // scope: the reduct is built from the peeled body and the arguments
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(em0, c) implies crate::expr_model::dbj_deep(e2m, c) by {
-        spine_app_dbj_deep(lam, am, c);
-        spine_bind_dbj_deep(lam, n, bm, c);
-        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_deep(pa[i], c) by {
+    assert forall|SS: ISet<u16>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(em0, SS, c) implies crate::expr_model::dbj_deep_in(e2m, SS, c) by {
+        spine_app_dbj_deep_in(lam, am, SS, c);
+        spine_bind_dbj_deep_in(lam, n, bm, SS, c);
+        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_deep_in(pa[i], SS, c) by {
             assert(pa[i] == am[i]);
         }
-        crate::expr_model::subst_full_dbj_deep(bm, pa, 0, c);
-        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_deep(pb[i], c) by {
+        crate::expr_model::subst_full_dbj_deep_in(bm, pa, 0, SS, c);
+        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_deep_in(pb[i], SS, c) by {
             assert(pb[i] == am[i + n]);
         }
-        spine_app_dbj_deep(e1m, pb, c);
+        spine_app_dbj_deep_in(e1m, pb, SS, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -4356,10 +4356,10 @@ pub proof fn zeta_spine_claim<'x, 't>(
         crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
         crate::beta_model::spine_app_nlbv(e1m, am);
     }
-    assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(em0, c) implies crate::expr_model::dbj_deep(e2m, c) by {
-        spine_app_dbj_deep(lm, am, c);
-        crate::expr_model::subst_full_dbj_deep(bm, seq![vm], 0, c);
-        spine_app_dbj_deep(e1m, am, c);
+    assert forall|SS: ISet<u16>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(em0, SS, c) implies crate::expr_model::dbj_deep_in(e2m, SS, c) by {
+        spine_app_dbj_deep_in(lm, am, SS, c);
+        crate::expr_model::subst_full_dbj_deep_in(bm, seq![vm], 0, SS, c);
+        spine_app_dbj_deep_in(e1m, am, SS, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -4464,19 +4464,19 @@ pub proof fn quot_step_lemma<'x, 't>(
         }
         // in scope: built from the arguments and the whnf'd major's last
         // argument, and whnf introduced no local
-        assert forall|c: u16| #[trigger] crate::expr_model::dbj_deep(s0, c) implies crate::expr_model::dbj_deep(r, c) by {
-            spine_app_dbj_deep(head, am, c);
-            assert(crate::expr_model::dbj_deep(am[q], c));
-            assert(crate::expr_model::dbj_deep(qm, c));
-            spine_app_dbj_deep(mk_head, mk_args, c);
-            assert(crate::expr_model::dbj_deep(am[3], c));
-            assert(crate::expr_model::dbj_deep(mk_args[2], c));
-            assert(crate::expr_model::dbj_deep(appd, c));
+        assert forall|SS: ISet<u16>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(s0, SS, c) implies crate::expr_model::dbj_deep_in(r, SS, c) by {
+            spine_app_dbj_deep_in(head, am, SS, c);
+            assert(crate::expr_model::dbj_deep_in(am[q], SS, c));
+            assert(crate::expr_model::dbj_deep_in(qm, SS, c));
+            spine_app_dbj_deep_in(mk_head, mk_args, SS, c);
+            assert(crate::expr_model::dbj_deep_in(am[3], SS, c));
+            assert(crate::expr_model::dbj_deep_in(mk_args[2], SS, c));
+            assert(crate::expr_model::dbj_deep_in(appd, SS, c));
             assert forall|i: int| 0 <= i < am.skip(q + 1).len() implies
-                #[trigger] crate::expr_model::dbj_deep(am.skip(q + 1)[i], c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(am.skip(q + 1)[i], SS, c) by {
                 assert(am.skip(q + 1)[i] == am[i + q + 1]);
             }
-            spine_app_dbj_deep(appd, am.skip(q + 1), c);
+            spine_app_dbj_deep_in(appd, am.skip(q + 1), SS, c);
         }
     }
 }
@@ -5319,11 +5319,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ks,
                     crate::level_arena_bridge::to_model_of_levels(levels),
                 );
-                assert forall|k: u16| #[trigger] crate::expr_model::dbj_deep(to_model_expr(e), k)
-                    implies crate::expr_model::dbj_deep(to_model_expr(r), k) by {
-                    crate::expr_model::no_fv_dbj_deep(to_model_expr(def_val), k);
-                    spine_app_dbj_deep(to_model_expr(fun), am, k);
-                    spine_app_dbj_deep(to_model_expr(def_val), am, k);
+                assert forall|SS: ISet<u16>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(e), SS, k)
+                    implies crate::expr_model::dbj_deep_in(to_model_expr(r), SS, k) by {
+                    crate::expr_model::no_fv_dbj_deep_in(to_model_expr(def_val), SS, k);
+                    spine_app_dbj_deep_in(to_model_expr(fun), am, SS, k);
+                    spine_app_dbj_deep_in(to_model_expr(def_val), am, SS, k);
                 }
             }
             Some(r)

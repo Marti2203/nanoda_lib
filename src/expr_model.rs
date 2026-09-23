@@ -516,155 +516,236 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
     }
 }
 
-/// DEEP SCOPE: every level-local in `e` is below `c`, AND each such local's
-/// own type is deep-in-scope below that local's level. Well-founded because
-/// the levels strictly decrease along the recursion.
+/// DEEP SCOPE: every local in `e` is a level-local whose serial is in `S` and
+/// below `c`, AND each such local's own type is deep-in-scope (same `S`) below
+/// that local's level. Well-founded because the levels strictly decrease.
 ///
-/// Why deep rather than `dbj_serials_below`: `infer` of a local returns the
-/// local's TYPE, and the type's scope has to come from somewhere. Stating it
-/// about every local in the arena would be an assumption (the arena is
-/// external), and would bind every creator of locals -- the shadow's included
-/// -- to a precondition. Carried inside the scope predicate instead, it comes
-/// with the local, and nothing is assumed.
-pub open spec fn dbj_deep(e: ExprSpec, c: u16) -> bool
+/// Why deep: `infer` of a local returns the local's TYPE, and the type's scope
+/// has to come from somewhere. Stating it about every local in the arena would
+/// be an assumption (the arena is external) and would bind every creator of
+/// locals -- the shadow's included -- to a precondition. Carried inside the
+/// scope predicate, it comes with the local, and nothing is assumed.
+///
+/// Why a set: the bound alone cannot say that `infer` of a lambda mentions no
+/// local its input did not -- the body's type mentions the freshly opened
+/// locals, and only the abstraction removes them. `S` tracks which serials may
+/// occur; `c` is the bound the recursion descends on.
+///
+/// Unique locals (`dbj_serial` = None) are out of scope: only the inductive
+/// checker makes them, outside the verified cycle.
+pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u16>, c: u16) -> bool
     decreases c, e,
 {
     match e {
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && dbj_deep(crate::expr_arena_bridge::arena_lctx()[id], s),
-            None => true,
+            Some(s) => s < c && S.contains(s) && dbj_deep_in(
+                crate::expr_arena_bridge::arena_lctx()[id],
+                S,
+                s,
+            ),
+            None => false,
         },
-        ExprSpec::App(f, a) => dbj_deep(*f, c) && dbj_deep(*a, c),
-        ExprSpec::Bind(t, b) => dbj_deep(*t, c) && dbj_deep(*b, c),
-        ExprSpec::Let(t, v, b) => dbj_deep(*t, c) && dbj_deep(*v, c) && dbj_deep(*b, c),
-        ExprSpec::Proj(_, st) => dbj_deep(*st, c),
+        ExprSpec::App(f, a) => dbj_deep_in(*f, S, c) && dbj_deep_in(*a, S, c),
+        ExprSpec::Bind(t, b) => dbj_deep_in(*t, S, c) && dbj_deep_in(*b, S, c),
+        ExprSpec::Let(t, v, b) => dbj_deep_in(*t, S, c) && dbj_deep_in(*v, S, c) && dbj_deep_in(
+            *b,
+            S,
+            c,
+        ),
+        ExprSpec::Proj(_, st) => dbj_deep_in(*st, S, c),
         _ => true,
     }
 }
 
+/// Every serial.
+pub open spec fn all_serials() -> ISet<u16> {
+    ISet::new(|t: u16| true)
+}
+
+/// Deep scope with every serial allowed: the bound alone.
+pub open spec fn dbj_deep(e: ExprSpec, c: u16) -> bool {
+    dbj_deep_in(e, all_serials(), c)
+}
+
 /// Deep scope implies shallow scope.
-pub proof fn dbj_deep_below(e: ExprSpec, c: u16)
+pub proof fn dbj_deep_in_below(e: ExprSpec, S: ISet<u16>, c: u16)
     requires
-        dbj_deep(e, c),
+        dbj_deep_in(e, S, c),
     ensures
         dbj_serials_below(e, c),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            dbj_deep_below(*f, c);
-            dbj_deep_below(*a, c);
+            dbj_deep_in_below(*f, S, c);
+            dbj_deep_in_below(*a, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_deep_below(*t, c);
-            dbj_deep_below(*b, c);
+            dbj_deep_in_below(*t, S, c);
+            dbj_deep_in_below(*b, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_deep_below(*t, c);
-            dbj_deep_below(*v, c);
-            dbj_deep_below(*b, c);
+            dbj_deep_in_below(*t, S, c);
+            dbj_deep_in_below(*v, S, c);
+            dbj_deep_in_below(*b, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_deep_below(*st, c);
+            dbj_deep_in_below(*st, S, c);
         },
         _ => {},
     }
 }
 
-/// Raising the bound keeps it true: a local's own type is judged at the
-/// local's level, which does not move.
+pub proof fn dbj_deep_below(e: ExprSpec, c: u16)
+    requires
+        dbj_deep(e, c),
+    ensures
+        dbj_serials_below(e, c),
+{
+    dbj_deep_in_below(e, all_serials(), c);
+}
+
+/// Weakening: every serial allowed before (in `S1`, below `c1`) is allowed
+/// after. A local's own type is judged at the local's level, which does not
+/// move, so the condition restricted to below that level carries down.
+pub proof fn dbj_deep_in_weaken(e: ExprSpec, S1: ISet<u16>, c1: u16, S2: ISet<u16>, c2: u16)
+    requires
+        dbj_deep_in(e, S1, c1),
+        forall|t: u16| #[trigger] S1.contains(t) && t < c1 ==> S2.contains(t) && t < c2,
+    ensures
+        dbj_deep_in(e, S2, c2),
+    decreases c1, e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
+                dbj_deep_in_weaken(crate::expr_arena_bridge::arena_lctx()[id], S1, s, S2, s);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            dbj_deep_in_weaken(*f, S1, c1, S2, c2);
+            dbj_deep_in_weaken(*a, S1, c1, S2, c2);
+        },
+        ExprSpec::Bind(t, b) => {
+            dbj_deep_in_weaken(*t, S1, c1, S2, c2);
+            dbj_deep_in_weaken(*b, S1, c1, S2, c2);
+        },
+        ExprSpec::Let(t, v, b) => {
+            dbj_deep_in_weaken(*t, S1, c1, S2, c2);
+            dbj_deep_in_weaken(*v, S1, c1, S2, c2);
+            dbj_deep_in_weaken(*b, S1, c1, S2, c2);
+        },
+        ExprSpec::Proj(_, st) => {
+            dbj_deep_in_weaken(*st, S1, c1, S2, c2);
+        },
+        _ => {},
+    }
+}
+
+/// Raising the bound keeps it true.
 pub proof fn dbj_deep_mono(e: ExprSpec, c1: u16, c2: u16)
     requires
         dbj_deep(e, c1),
         c1 <= c2,
     ensures
         dbj_deep(e, c2),
+{
+    broadcast use vstd::iset::lemma_iset_new;
+
+    dbj_deep_in_weaken(e, all_serials(), c1, all_serials(), c2);
+}
+
+/// No free variables: deep-in-scope everywhere.
+pub proof fn no_fv_dbj_deep_in(e: ExprSpec, S: ISet<u16>, c: u16)
+    requires
+        !has_fv(e),
+    ensures
+        dbj_deep_in(e, S, c),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            dbj_deep_mono(*f, c1, c2);
-            dbj_deep_mono(*a, c1, c2);
+            no_fv_dbj_deep_in(*f, S, c);
+            no_fv_dbj_deep_in(*a, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_deep_mono(*t, c1, c2);
-            dbj_deep_mono(*b, c1, c2);
+            no_fv_dbj_deep_in(*t, S, c);
+            no_fv_dbj_deep_in(*b, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_deep_mono(*t, c1, c2);
-            dbj_deep_mono(*v, c1, c2);
-            dbj_deep_mono(*b, c1, c2);
+            no_fv_dbj_deep_in(*t, S, c);
+            no_fv_dbj_deep_in(*v, S, c);
+            no_fv_dbj_deep_in(*b, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_deep_mono(*st, c1, c2);
+            no_fv_dbj_deep_in(*st, S, c);
         },
         _ => {},
     }
 }
 
-/// No free variables: deep-in-scope at every depth.
 pub proof fn no_fv_dbj_deep(e: ExprSpec, c: u16)
     requires
         !has_fv(e),
     ensures
         dbj_deep(e, c),
-    decreases e,
 {
-    match e {
-        ExprSpec::App(f, a) => {
-            no_fv_dbj_deep(*f, c);
-            no_fv_dbj_deep(*a, c);
-        },
-        ExprSpec::Bind(t, b) => {
-            no_fv_dbj_deep(*t, c);
-            no_fv_dbj_deep(*b, c);
-        },
-        ExprSpec::Let(t, v, b) => {
-            no_fv_dbj_deep(*t, c);
-            no_fv_dbj_deep(*v, c);
-            no_fv_dbj_deep(*b, c);
-        },
-        ExprSpec::Proj(_, st) => {
-            no_fv_dbj_deep(*st, c);
-        },
-        _ => {},
-    }
+    no_fv_dbj_deep_in(e, all_serials(), c);
 }
 
 /// Substitution keeps deep scope.
-pub proof fn subst_full_dbj_deep(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+pub proof fn subst_full_dbj_deep_in(
+    e: ExprSpec,
+    substs: Seq<ExprSpec>,
+    offset: nat,
+    S: ISet<u16>,
+    c: u16,
+)
     requires
-        dbj_deep(e, c),
-        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep(substs[i], c),
+        dbj_deep_in(e, S, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep_in(substs[i], S, c),
     ensures
-        dbj_deep(subst_full(e, substs, offset), c),
+        dbj_deep_in(subst_full(e, substs, offset), S, c),
     decreases e,
 {
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) >= offset && (i as nat - offset) < substs.len() {
                 let j = (substs.len() - 1 - (i as nat - offset)) as int;
-                assert(dbj_deep(substs[j], c));
+                assert(dbj_deep_in(substs[j], S, c));
             }
         },
         ExprSpec::App(f, a) => {
-            subst_full_dbj_deep(*f, substs, offset, c);
-            subst_full_dbj_deep(*a, substs, offset, c);
+            subst_full_dbj_deep_in(*f, substs, offset, S, c);
+            subst_full_dbj_deep_in(*a, substs, offset, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            subst_full_dbj_deep(*t, substs, offset, c);
-            subst_full_dbj_deep(*b, substs, offset + 1, c);
+            subst_full_dbj_deep_in(*t, substs, offset, S, c);
+            subst_full_dbj_deep_in(*b, substs, offset + 1, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            subst_full_dbj_deep(*t, substs, offset, c);
-            subst_full_dbj_deep(*v, substs, offset, c);
-            subst_full_dbj_deep(*b, substs, offset + 1, c);
+            subst_full_dbj_deep_in(*t, substs, offset, S, c);
+            subst_full_dbj_deep_in(*v, substs, offset, S, c);
+            subst_full_dbj_deep_in(*b, substs, offset + 1, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            subst_full_dbj_deep(*st, substs, offset, c);
+            subst_full_dbj_deep_in(*st, substs, offset, S, c);
         },
         _ => {},
     }
+}
+
+pub proof fn subst_full_dbj_deep(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+    requires
+        dbj_deep(e, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep(substs[i], c),
+    ensures
+        dbj_deep(subst_full(e, substs, offset), c),
+{
+    assert forall|i: int| 0 <= i < substs.len() implies #[trigger] dbj_deep_in(substs[i], all_serials(), c) by {
+        assert(dbj_deep(substs[i], c));
+    }
+    subst_full_dbj_deep_in(e, substs, offset, all_serials(), c);
 }
 
 /// Freshness from deep scope.
