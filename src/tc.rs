@@ -1516,66 +1516,79 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t>
+    pub fn whnf(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // THE CORE CONTRACT: on a closed input, the weak head normal form
+            // is definitionally equal to the input, and closed.
+            whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
+            proof { crate::tc_model::deq_any_refl(crate::env_model::to_model_of_env(*old(self).env), to_model_expr(e)); }
             return e
         }
-        if let Some(cached) = self.tc_cache.whnf_cache.get(&e).copied() {
+        // The verified reader rather than a raw `get`: same lookup, and it hands
+        // back `tc_wf`'s claim about the entry.
+        if let Some(cached) = self.cached_whnf(e) {
             return cached
         }
         let mut cursor = e;
         proof {
             // the loop starts with `cursor == e`, so the chain is reflexive
-            crate::tc_model::deq_any_refl(crate::env_model::to_model_of_env(*(*old(self)).env), to_model_expr(e));
+            crate::tc_model::deq_any_refl(crate::env_model::to_model_of_env(*old(self).env), to_model_expr(e));
         }
         loop
             invariant
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 (*self).env == old(self).env,
-                // THE CORE CONTRACT, as a running chain: everything this loop
-                // has done to `e` so far is a reduction.
-                crate::tc_model::deq_any(crate::env_model::to_model_of_env(*(*old(self)).env), to_model_expr(e), to_model_expr(cursor)),
+                // the core contract as a running chain: everything this loop
+                // has done to a closed `e` so far preserves definitional
+                // equality and closedness
+                whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(cursor)),
         {
             let whnfd = self.whnf_no_unfolding(cursor);
             proof {
-                crate::tc_model::deq_any_trans(
-                    crate::env_model::to_model_of_env(*(*old(self)).env),
-                    to_model_expr(e),
-                    to_model_expr(cursor),
-                    to_model_expr(whnfd),
-                );
+                if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
+                    crate::tc_model::deq_any_trans(
+                        crate::env_model::to_model_of_env(*old(self).env),
+                        to_model_expr(e),
+                        to_model_expr(cursor),
+                        to_model_expr(whnfd),
+                    );
+                }
             }
             if let Some(reduce_nat_ok) = self.try_reduce_nat(whnfd) {
                 proof {
-                    crate::tc_model::deq_any_trans(
-                        crate::env_model::to_model_of_env(*(*old(self)).env),
-                        to_model_expr(e),
-                        to_model_expr(whnfd),
-                        to_model_expr(reduce_nat_ok),
-                    );
+                    if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
+                        crate::tc_model::deq_any_trans(
+                            crate::env_model::to_model_of_env(*old(self).env),
+                            to_model_expr(e),
+                            to_model_expr(whnfd),
+                            to_model_expr(reduce_nat_ok),
+                        );
+                    }
                 }
                 cursor = reduce_nat_ok;
             } else if let Some(next_term) = self.unfold_def(whnfd) {
                 proof {
-                    deq_any_of_nofv_pstep_star(
-                        *old(self).env,
-                        to_model_expr(whnfd),
-                        to_model_expr(next_term),
-                    );
-                    crate::tc_model::deq_any_trans(
-                        crate::env_model::to_model_of_env(*(*old(self)).env),
-                        to_model_expr(e),
-                        to_model_expr(whnfd),
-                        to_model_expr(next_term),
-                    );
+                    if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
+                        deq_any_of_nofv_pstep_star(
+                            *old(self).env,
+                            to_model_expr(whnfd),
+                            to_model_expr(next_term),
+                        );
+                        crate::tc_model::deq_any_trans(
+                            crate::env_model::to_model_of_env(*old(self).env),
+                            to_model_expr(e),
+                            to_model_expr(whnfd),
+                            to_model_expr(next_term),
+                        );
+                    }
                 }
                 cursor = next_term;
             } else {
@@ -1593,11 +1606,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(e),
-                to_model_expr(result),
-            ),
+            whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
     {
         self.whnf_no_unfolding_aux(e, true)
     }
@@ -1610,11 +1619,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(e),
-                to_model_expr(result),
-            ),
+            whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
     {
         self.whnf_no_unfolding_aux(e, false)
     }
@@ -1630,11 +1635,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // The reduction claim `whnf`'s chain needs. Five of this match's
             // arms re-assemble the spine unchanged, so they pay it by
             // reflexivity; the four that actually reduce owe a real step.
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(e),
-                to_model_expr(result),
-            ),
+            whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
     {
         // The verified reader rather than a raw `get`: it already does the
         // `obeys_key_model` / `builds_valid_hashers` pair that gives the
@@ -3155,6 +3156,26 @@ pub proof fn deq_any_of_nofv_pstep_star<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b
     crate::tc_model::deq_any_of_defeq(crate::env_model::to_model_of_env(env), a, b);
 }
 
+/// What `whnf` and `whnf_no_unfolding` promise, and what their caches hold:
+/// on a CLOSED input the output is definitionally equal to it, and closed too.
+///
+/// The condition is not a convenience. The kernel's `inst` is `subst_full`,
+/// which leaves a surviving loose index where it was, while the model's beta
+/// and zeta rules use `subst1`, which lowers it; `subst_c_eq_subst_full` says
+/// the two agree exactly when the term is closed. So on an OPEN term the
+/// kernel's reduction and the model's genuinely differ. The kernel never
+/// relies on that -- it rejects loose bound variables -- and this states it.
+///
+/// `deq_any` rather than `pstep_star` because the `Sort` arm simplifies its
+/// level, which is a definitional equality and not a reduction.
+pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) -> bool {
+    crate::expr_model::nlbv(e) <= 0 ==> (crate::tc_model::deq_any(
+        crate::env_model::to_model_of_env(env),
+        e,
+        r,
+    ) && crate::expr_model::nlbv(r) <= 0)
+}
+
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_check@.contains_key(e) ==> crate::tc_model::infer_shadow_claim(
@@ -3163,14 +3184,14 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
             tc.tc_cache.infer_cache_check@[e],
         )
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
-        tc.tc_cache.whnf_cache@.contains_key(e) ==> crate::tc_model::deq_any(
-            crate::env_model::to_model_of_env(*tc.env),
+        tc.tc_cache.whnf_cache@.contains_key(e) ==> whnf_claim(
+            *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_cache@[e]),
         )
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
-        tc.tc_cache.whnf_no_unfolding_cache@.contains_key(e) ==> crate::tc_model::deq_any(
-            crate::env_model::to_model_of_env(*tc.env),
+        tc.tc_cache.whnf_no_unfolding_cache@.contains_key(e) ==> whnf_claim(
+            *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]),
         )
@@ -3429,11 +3450,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn cache_whnf(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(e),
-                to_model_expr(r),
-            ),
+            whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3459,11 +3476,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     )
         requires
             tc_wf(*old(self)),
-            crate::tc_model::deq_any(
-                crate::env_model::to_model_of_env(*(*old(self)).env),
-                to_model_expr(e),
-                to_model_expr(r),
-            ),
+            whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3554,11 +3567,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*self),
         ensures
             match result {
-                Some(r) => crate::tc_model::deq_any(
-                    crate::env_model::to_model_of_env(*self.env),
-                    to_model_expr(e),
-                    to_model_expr(r),
-                ),
+                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
     {
@@ -3581,11 +3590,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*self),
         ensures
             match result {
-                Some(r) => crate::tc_model::deq_any(
-                    crate::env_model::to_model_of_env(*self.env),
-                    to_model_expr(e),
-                    to_model_expr(r),
-                ),
+                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
     {
