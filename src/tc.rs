@@ -1748,6 +1748,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     // a local's type is what the arena records for it
                     crate::expr_arena_bridge::arena_lctx_local(e);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0));
+                    kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0);
                 }
                 binder_type
             },
@@ -1756,6 +1757,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let r = self.infer_sort(level, flag);
                 proof {
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(r), 0));
+                    kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(r), 0);
                 }
                 r
             },
@@ -1782,6 +1784,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let r = self.infer_const(name, levels, flag);
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(e);
+                    kinfer_of_ktypes(
+                        *old(self).env,
+                        ExprSpec::Const(
+                            crate::level_arena_bridge::name_id(name),
+                            crate::level_arena_bridge::to_model_of_levels(levels),
+                        ),
+                        to_model_expr(r),
+                        0,
+                    );
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
                         crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
                         crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
@@ -1816,6 +1827,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         proof {
                             crate::expr_arena_bridge::is_const_shape_model(t);
                             assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
+                            kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
                         }
                         t
                     },
@@ -1833,6 +1845,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         proof {
                             crate::expr_arena_bridge::is_const_shape_model(t);
                             assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
+                            kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
                         }
                         t
                     },
@@ -1919,15 +1932,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         fun = self.infer(fun, flag);
         let ghost mut k: nat = 0;
-        let ghost mut T = to_model_expr(fun);
-        let ghost mut fT: nat = choose|f: nat| #[trigger] ktypes(env0, to_model_expr(fun0), to_model_expr(fun), f);
-        let ghost mut synced = true;
+        let ghost (T0, f0) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env0, to_model_expr(fun0), T, f)
+            && kconv(env0, T, to_model_expr(fun));
+        let ghost mut T = T0;
+        let ghost mut fT: nat = f0;
         proof {
             assert(crate::expr_model::dbj_deep_in(to_model_expr(fun0), L, c0));
             assert(SA.take(0) =~= Seq::<ExprSpec>::empty());
             assert(crate::expr_arena_bridge::ptr_models(ctx@) =~= Seq::<ExprSpec>::empty());
             crate::beta_model::subst_full_empty(to_model_expr(fun), 0);
-            kconv_refl(env0, T);
         }
         while !args.is_empty()
             invariant
@@ -1960,8 +1973,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|j: int| 0 <= j < args@.len() ==> to_model_expr(#[trigger] args@[j]) == SA[n - 1 - j],
                 ktypes(env0, crate::beta_model::spine_app(H, SA.take(k as int)), T, fT),
                 kconv(env0, T, crate::expr_model::subst_full(to_model_expr(fun), crate::expr_arena_bridge::ptr_models(ctx@), 0)),
-                synced ==> T == crate::expr_model::subst_full(to_model_expr(fun), crate::expr_arena_bridge::ptr_models(ctx@), 0),
-                args@.len() == 0 ==> synced,
         {
             match self.ctx.read_expr(fun) {
                 Pi { binder_type, body, .. } => {
@@ -2022,7 +2033,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         T = crate::expr_model::subst_full(to_model_expr(body), cm.push(am), 0);
                         fT = f2;
                         k = k + 1;
-                        synced = true;
                         kconv_refl(env0, T);
                     }
                     proof {
@@ -2051,7 +2061,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     proof {
                         assert(crate::expr_model::dbj_deep_in(to_model_expr(as_pi0), L, c0));
                         kconv_trans(env0, T, to_model_expr(as_pi0), to_model_expr(as_pi));
-                        synced = false;
                     }
                     match self.ctx.read_expr(as_pi) {
                         Pi { .. } => {
@@ -2075,7 +2084,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             scope_pres_of_occ(to_model_expr(e), to_model_expr(r), c0);
             // every argument consumed, and the last step consumed one
             assert(SA.take(n as int) =~= SA);
-            assert(ktypes(env0, em, to_model_expr(r), fT));
+            assert(ktypes(env0, em, T, fT));
+            assert(ktc_marker(T, fT));
         }
         r
     }
@@ -2460,19 +2470,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let r = self.infer(body, flag);
         proof {
             // the let rule, one fuel above the body's derivation
-            let f = choose|f: nat| #[trigger] ktypes(*old(self).env, to_model_expr(body), to_model_expr(r), f);
+            let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(*old(self).env, to_model_expr(body), T, f)
+                && kconv(*old(self).env, T, to_model_expr(r));
             assert(crate::tc_model::fuel_marker(f));
             assert(to_model_expr(body) == crate::expr_model::subst_full(to_model_expr(body0), seq![to_model_expr(val)], 0));
-            assert(ktypes(
-                *old(self).env,
-                ExprSpec::Let(
-                    Box::new(to_model_expr(binder_type)),
-                    Box::new(to_model_expr(val)),
-                    Box::new(to_model_expr(body0)),
-                ),
-                to_model_expr(r),
-                f + 1,
-            ));
+            let lt = ExprSpec::Let(
+                Box::new(to_model_expr(binder_type)),
+                Box::new(to_model_expr(val)),
+                Box::new(to_model_expr(body0)),
+            );
+            assert(ktypes(*old(self).env, lt, T, f + 1));
+            assert(ktc_marker(T, f + 1));
             assert forall|S: vstd::iset::ISet<u32>, c: u16|
                 crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c)
                 && crate::expr_model::dbj_deep_in(to_model_expr(val), S, c)
@@ -6015,10 +6023,27 @@ pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: n
     )
 }
 
-/// What `infer` promises, and what both inference caches hold: the result is
-/// a type of the input in the kernel's judgement.
+/// What `infer` promises, and what both inference caches hold: the input has
+/// a type in the kernel's judgement, and the result is convertible to it --
+/// typing up to conversion, the judgement's own shape (`e : T`, `T == T'`
+/// gives `e : T'`), which `types_to` leaves to its users.
 pub open spec fn kinfer_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
-    exists|f: nat| #[trigger] ktypes(env, e, t, f)
+    exists|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f) && kconv(env, T, t)
+}
+
+pub open spec fn ktc_marker(T: ExprSpec, f: nat) -> bool {
+    true
+}
+
+/// An exact derivation is a claim.
+pub proof fn kinfer_of_ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: nat)
+    requires
+        ktypes(env, e, t, f),
+    ensures
+        kinfer_claim(env, e, t),
+{
+    kconv_refl(env, t);
+    assert(ktc_marker(t, f));
 }
 
 /// ONE ARGUMENT OF `infer_app`: the spine so far has type `T`, convertible
