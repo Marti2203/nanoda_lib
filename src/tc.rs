@@ -1709,6 +1709,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         n_args <= args.len(),
                         n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
                             < 60000,
+                        // what has been peeled so far, in the model's terms
+                        crate::beta_model::spine_bind(to_model_expr(e_fun), n_args as nat) == Some(to_model_expr(e)),
                 // A bare `loop` carries no exit reason, so without this
                 // `ensures` the `break` below reaches the slice with
                 // nothing known about `n_args`.
@@ -1717,6 +1719,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         n_args <= args.len(),
                         n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
                             < 60000,
+                        crate::beta_model::spine_bind(to_model_expr(e_fun), n_args as nat) == Some(to_model_expr(e)),
                 {
                     // `[_arg, _rest @ ..]` on `&args[n_args..]` is exactly
                     // "there is another argument left"; both operands of the
@@ -1726,9 +1729,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         break
                     }
                     match self.ctx.read_expr(e) {
-                        Lambda { body, .. } => {
+                        Lambda { binder_type, body, .. } => {
                             n_args += 1;
                             proof {
+                                crate::beta_model::spine_bind_step(
+                                    to_model_expr(e_fun),
+                                    (n_args - 1) as nat,
+                                    to_model_expr(binder_type),
+                                    to_model_expr(body),
+                                );
                                 assert(crate::expr_model::depth(
                                     crate::expr_arena_bridge::to_model(body),
                                 ) < crate::expr_model::depth(
@@ -1740,11 +1749,74 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         _ => break,
                     }
                 }
+                let ghost argv = args@;
+                let body_e = e;
                 // The full `[0..n]` form rather than `[..n]`: verusfmt cannot
-                // parse the RangeTo shorthand.
-                e = self.ctx.inst(e, &args[0..n_args]);
-                e = self.ctx.foldl_apps(e, args.into_iter().skip(n_args));
-                (true, self.whnf_no_unfolding_aux(e, cheap_proj))
+                // parse the RangeTo shorthand. Bound to a local only so the
+                // proof can name its view.
+                let sl = &args[0..n_args];
+                let e1 = self.ctx.inst(body_e, sl);
+                let e2 = self.ctx.foldl_apps(e1, args.into_iter().skip(n_args));
+                proof {
+                    // N BETA STEPS AT ONCE. The loop peeled `n` binders off the
+                    // head (`spine_bind`); the kernel instantiates the body with
+                    // the first `n` arguments in one `inst` and re-applies the
+                    // rest. The model's `spine_reduce` does the same `n` steps
+                    // one `subst1` at a time, and `spine_reduce_eq_subst_full`
+                    // says the two agree -- on a closed term, again.
+                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    let lam = to_model_expr(e_fun);
+                    let bm = to_model_expr(body_e);
+                    let n = n_args as nat;
+                    let pa = am.subrange(0, n as int);
+                    let pb = am.subrange(n as int, am.len() as int);
+                    assert(sl@ =~= argv.subrange(0, n as int));
+                    assert(crate::expr_arena_bridge::ptr_models(sl@) =~= pa);
+                    assert(to_model_expr(e1) == crate::expr_model::subst_full(bm, pa, 0));
+                    assert(crate::expr_arena_bridge::ptr_models(argv.subrange(n as int, argv.len() as int)) =~= pb);
+                    assert(to_model_expr(e2) == crate::beta_model::spine_app(to_model_expr(e1), pb));
+                    assert(am =~= pa + pb);
+                    assert(em0 == crate::beta_model::spine_app(lam, am));
+                    crate::beta_model::spine_app_concat(lam, pa, pb);
+                    if crate::expr_model::nlbv(em0) <= 0 {
+                        crate::beta_model::spine_app_nlbv_decompose(lam, am);
+                        crate::beta_model::spine_bind_nlbv(lam, n, bm, 0);
+                        assert forall|i: int| 0 <= i < pa.len() implies
+                            crate::expr_model::nlbv(#[trigger] pa[i]) <= 0
+                            && crate::beta_model::max_var_below(pa[i], 60000) by {
+                            assert(pa[i] == am[i]);
+                            assert(am[i] == to_model_expr(argv[i]));
+                            crate::beta_model::nlbv_bound_implies_max_var_below(pa[i], 0);
+                            crate::beta_model::max_var_below_mono(
+                                pa[i],
+                                crate::expr_model::depth(pa[i]),
+                                60000,
+                            );
+                        }
+                        assert forall|i: int| 0 <= i < pb.len() implies
+                            crate::expr_model::nlbv(#[trigger] pb[i]) <= 0 by {
+                            assert(pb[i] == am[i + n]);
+                        }
+                        crate::beta_model::spine_reduce_eq_subst_full(lam, pa, bm, 60000);
+                        crate::beta_model::pstep_star_spine_reduce(fm, lam, pa);
+                        crate::beta_model::pstep_spine_app_star(
+                            fm,
+                            crate::beta_model::spine_app(lam, pa),
+                            crate::beta_model::spine_reduce(lam, pa),
+                            pb,
+                        );
+                        crate::beta_model::defeq_of_pstep_star(fm, em0, to_model_expr(e2));
+                        crate::tc_model::deq_any_of_defeq(fm, em0, to_model_expr(e2));
+                        crate::beta_model::subst_full_nlbv_bound_n(bm, pa, 0);
+                        crate::beta_model::spine_app_nlbv(to_model_expr(e1), pb);
+                    }
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e2)));
+                }
+                let r = self.whnf_no_unfolding_aux(e2, cheap_proj);
+                proof {
+                    whnf_claim_trans(*old(self).env, em0, to_model_expr(e2), to_model_expr(r));
+                }
+                (true, r)
             } else {
                 debug_assert!(args.is_empty());
                 let r = self.ctx.foldl_apps(e_fun, args.into_iter());
