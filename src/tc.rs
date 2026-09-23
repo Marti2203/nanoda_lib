@@ -863,16 +863,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// and the closure captures `self`. Spelled as the `match` `Option::map`
     /// is; same call, same order.
     #[verifier::exec_allows_no_decreases_clause]
-    fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> Option<ExprPtr<'t>>
+    fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // the string literal unfolds to its constructor chain (the model's
+            // own `StringLit` rule), and that is then whnf'd
+            match result {
+                Some(r) => whnf_claim(*old(self).env, ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_len(x)))), to_model_expr(r)),
+                None => true,
+            },
     {
         match self.ctx.str_lit_to_constructor(x) {
-            Some(c) => Some(self.whnf(c)),
+            Some(c) => {
+                let r = self.whnf(c);
+                proof {
+                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    let sl = ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_len(x))));
+                    assert(crate::beta_model::pstep(fm, sl, to_model_expr(c)));
+                    crate::beta_model::pstep_star_one(fm, sl, to_model_expr(c));
+                    crate::beta_model::defeq_of_pstep_star(fm, sl, to_model_expr(c));
+                    crate::tc_model::deq_any_of_defeq(fm, sl, to_model_expr(c));
+                    crate::tc_model::deq_any_trans(fm, sl, to_model_expr(c), to_model_expr(r));
+                }
+                Some(r)
+            },
             None => None,
         }
     }
@@ -1052,33 +1070,58 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn reduce_proj(&mut self, idx: usize, structure: ExprPtr<'t>, cheap: bool) -> Option<
+    fn reduce_proj(&mut self, idx: usize, structure: ExprPtr<'t>, cheap: bool) -> (result: Option<
         ExprPtr<'t>,
-    >
+    >)
         requires
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            // ONE PROJECTION-IOTA STEP, after whnf'ing the structure
+            match result {
+                Some(r) => whnf_claim(
+                    *old(self).env,
+                    ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
+                    to_model_expr(r),
+                ),
+                None => true,
+            },
     {
-        let mut structure = if cheap {
+        // `st`, not `structure`: a local that shadows a parameter named in the
+        // `ensures` makes the postcondition refer to the local. Same value.
+        let mut st = if cheap {
             self.whnf_no_unfolding_cheap_proj(structure)
         } else {
             self.whnf(structure)
         };
-        if let StringLit { ptr, .. } = self.ctx.read_expr(structure) {
+        if let StringLit { ptr, .. } = self.ctx.read_expr(st) {
             if let Some(s) = self.str_lit_to_ctor_reducing(ptr) {
-                structure = s;
+                proof {
+                    whnf_claim_trans(
+                        *old(self).env,
+                        to_model_expr(structure),
+                        to_model_expr(st),
+                        to_model_expr(s),
+                    );
+                }
+                st = s;
             }
         }
-        let (_, name, _, args) = self.ctx.unfold_const_apps(structure)?;
-        let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;
+        let (f, name, _, args) = self.ctx.unfold_const_apps(st)?;
+        // VERUS-REWRITE(accessor-swap): was
+        // `let ConstructorData { num_params, .. } = self.env.get_constructor(&name)?;`
+        // `get_constructor_num_params` is defined as exactly
+        // `get_constructor(n).map(|cd| cd.num_params)`, and `num_params` is the
+        // only field this function reads; the wrapper is what carries the
+        // environment's claim about it.
+        let num_params = crate::env_model::get_constructor_num_params(self.env, &name)?;
         // VERUS-REWRITE(unchecked-add): `num_params + idx` is a `usize` sum
         // with nothing bounding either side. It is guarded rather than widened
         // because there is nothing wider to widen to; the index test below
         // would reject anyway, so this only replaces a wrap with a decline.
-        let i = match (*num_params as usize).checked_add(idx) {
+        let i = match (num_params as usize).checked_add(idx) {
             Some(i) => i,
             None => return None,
         };
@@ -1087,7 +1130,49 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // instead would be a soundness change, not a robustness fix: `None`
         // here routes to a path that can accept.
         match args.get(i).copied() {
-            Some(a) => Some(a),
+            Some(a) => {
+                proof {
+                    let env = *old(self).env;
+                    let fm = crate::env_model::to_model_of_env(env);
+                    let id = crate::level_arena_bridge::name_id(name);
+                    let s0 = to_model_expr(structure);
+                    let sm = to_model_expr(st);
+                    let am2 = crate::expr_arena_bridge::ptr_models(args@);
+                    crate::expr_arena_bridge::is_const_shape_model(f);
+                    let lv = crate::expr_arena_bridge::const_levels_vec(f);
+                    assert(to_model_expr(f) == ExprSpec::Const(id, lv));
+                    assert(sm == crate::beta_model::spine_app(ExprSpec::Const(id, lv), am2));
+                    crate::env_model::ctor_num_params_of_agrees(env, id);
+                    assert(crate::expr_arena_bridge::ctor_num_params_of(id) == Some(num_params));
+                    assert(am2[i as int] == to_model_expr(a));
+                    // `iota_extract`'s trigger, written in its own shape
+                    assert(am2[(num_params as nat + idx as nat) as int] == to_model_expr(a));
+                    assert((num_params as nat + idx as nat) < am2.len());
+                    // the iota step itself, with the structure already a
+                    // constructor application (it steps to itself)
+                    assert(crate::beta_model::iota_extract(idx, sm, to_model_expr(a)));
+                    assert(crate::beta_model::pstep(fm, sm, sm));
+                    assert(crate::beta_model::iota_reduct(sm));
+                    let pm = ExprSpec::Proj(idx, Box::new(sm));
+                    assert(crate::beta_model::pstep(fm, pm, to_model_expr(a)));
+                    crate::beta_model::pstep_star_one(fm, pm, to_model_expr(a));
+                    crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
+                    crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
+                    if crate::expr_model::nlbv(s0) <= 0 {
+                        // the structure, whnf'd, is definitionally equal to what
+                        // it was, and projection is a congruence
+                        crate::tc_model::deq_any_proj_congr(fm, idx, s0, sm);
+                        crate::tc_model::deq_any_trans(
+                            fm,
+                            ExprSpec::Proj(idx, Box::new(s0)),
+                            pm,
+                            to_model_expr(a),
+                        );
+                        crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
+                    }
+                }
+                Some(a)
+            },
             None => crate::util::kernel_fail(
                 "reduce_proj: projection index is past the end of the constructor's arguments",
             ),
@@ -1649,14 +1734,39 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost em0 = to_model_expr(e);
         let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         let (should_cache, eprime) = match self.ctx.read_expr(e_fun) {
-            Proj { idx, structure, .. } => if let Some(e) = self.reduce_proj(
+            Proj { idx, structure, .. } => if let Some(pr) = self.reduce_proj(
                 idx,
                 structure,
                 cheap_proj,
             ) {
-                let e = self.ctx.foldl_apps(e, args.into_iter());
-                let e = self.whnf_no_unfolding_aux(e, cheap_proj);
-                (true, e)
+                let e1 = self.ctx.foldl_apps(pr, args.into_iter());
+                proof {
+                    // the projection steps; the trailing arguments ride along
+                    // by spine congruence
+                    let fm = crate::env_model::to_model_of_env(*old(self).env);
+                    let pm = ExprSpec::Proj(idx, Box::new(to_model_expr(structure)));
+                    assert(to_model_expr(e_fun) == pm);
+                    assert(em0 == crate::beta_model::spine_app(pm, am));
+                    assert(to_model_expr(e1) == crate::beta_model::spine_app(to_model_expr(pr), am));
+                    if crate::expr_model::nlbv(em0) <= 0 {
+                        crate::beta_model::spine_app_nlbv_decompose(pm, am);
+                        assert forall|i: int| 0 <= i < am.len() implies crate::tc_model::deq_any(
+                            fm,
+                            #[trigger] am[i],
+                            am[i],
+                        ) by {
+                            crate::tc_model::deq_any_refl(fm, am[i]);
+                        }
+                        crate::tc_model::deq_any_spine_congr(fm, pm, to_model_expr(pr), am, am);
+                        crate::beta_model::spine_app_nlbv(to_model_expr(pr), am);
+                    }
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(e1)));
+                }
+                let r = self.whnf_no_unfolding_aux(e1, cheap_proj);
+                proof {
+                    whnf_claim_trans(*old(self).env, em0, to_model_expr(e1), to_model_expr(r));
+                }
+                (true, r)
             } else {
                 let r = self.ctx.foldl_apps(e_fun, args.into_iter());
                 proof {
