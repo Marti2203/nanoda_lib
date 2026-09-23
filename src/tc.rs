@@ -1565,6 +1565,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 cursor = reduce_nat_ok;
             } else if let Some(next_term) = self.unfold_def(whnfd) {
                 proof {
+                    deq_any_of_nofv_pstep_star(
+                        *old(self).env,
+                        to_model_expr(whnfd),
+                        to_model_expr(next_term),
+                    );
                     crate::tc_model::deq_any_trans(
                         crate::env_model::to_model_of_env(*(*old(self)).env),
                         to_model_expr(e),
@@ -3128,6 +3133,28 @@ pub struct ExDeclarInfo<'a>(crate::env::DeclarInfo<'a>);
 ///     answer promises nothing. Negative caching costs no proof.
 ///   * `strong_cache` is for strong reduction, which is not used during
 ///     type-checking.
+/// A reduction over the closed-definition model is a definitional equality
+/// over the full one. `unfold_def` and the other delta producers state their
+/// claim as `pstep_star` over `env_model_nofv`; the whnf caches now carry
+/// `deq_any` over `to_model_of_env` (see `tc_wf`). This is the four-line bridge
+/// `delta_bound_model` already writes out by hand at each use, stated once.
+pub proof fn deq_any_of_nofv_pstep_star<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec)
+    requires
+        crate::beta_model::pstep_star(crate::env_model::env_model_nofv(env), a, b),
+    ensures
+        crate::tc_model::deq_any(crate::env_model::to_model_of_env(env), a, b),
+{
+    crate::env_model::env_model_nofv_sub(env);
+    crate::beta_model::pstep_star_env_weaken(
+        crate::env_model::env_model_nofv(env),
+        crate::env_model::to_model_of_env(env),
+        a,
+        b,
+    );
+    crate::beta_model::defeq_of_pstep_star(crate::env_model::to_model_of_env(env), a, b);
+    crate::tc_model::deq_any_of_defeq(crate::env_model::to_model_of_env(env), a, b);
+}
+
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_check@.contains_key(e) ==> crate::tc_model::infer_shadow_claim(
@@ -3856,15 +3883,20 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
             tc_wf(*old(self)),
-            crate::expr_model::nlbv(to_model_expr(e)) <= 0,
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
         ensures
             match result {
+                // The reduction claim needs nothing about `e`: it is one delta
+                // step on the head plus spine congruence. Closedness of `e` only
+                // ever fed the SECOND clause, so it is stated as a condition of
+                // that clause rather than demanded of every caller -- which is
+                // what had been forcing it through the whole cycle.
                 Some(r) => crate::beta_model::pstep_star(
                     crate::env_model::env_model_nofv(*old(self).env),
                     to_model_expr(e),
                     to_model_expr(r),
-                ) && crate::expr_model::nlbv(to_model_expr(r)) <= 0,
+                ) && (crate::expr_model::nlbv(to_model_expr(e)) <= 0
+                    ==> crate::expr_model::nlbv(to_model_expr(r)) <= 0),
                 None => true,
             },
             tc_wf(*final(self)),
@@ -3929,7 +3961,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             let r = self.ctx.foldl_apps(def_val, it);
             proof {
-                crate::beta_model::spine_app_nlbv(to_model_expr(def_val), am);
+                if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
+                    crate::beta_model::spine_app_nlbv(to_model_expr(def_val), am);
+                }
             }
             Some(r)
         } else {
