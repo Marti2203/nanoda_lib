@@ -4000,6 +4000,171 @@ pub proof fn spine_bind_dbj_serials_below(lam: ExprSpec, n: nat, bm: ExprSpec, c
     }
 }
 
+/// Binder congruence through a fresh variable.
+pub proof fn kconv_bind_fresh<'x, 't>(
+    env: Env<'x, 't>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+)
+    requires
+        kconv(env, t1, t2),
+        crate::expr_model::fv_absent(b1, k),
+        crate::expr_model::fv_absent(b2, k),
+        kconv(env, crate::tc_model::inst_free(b1, k), crate::tc_model::inst_free(b2, k)),
+    ensures
+        kconv(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2))),
+{
+    crate::tc_model::deq_p_any_bind_fresh(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(),
+        true,
+        t1,
+        t2,
+        b1,
+        b2,
+        k,
+    );
+}
+
+/// The facts a binder telescope comparison records, depth by depth: at depth
+/// `i` the raw bodies are `b1s[i]`/`b2s[i]` (with `i` loose variables), the
+/// binder types `t1s[i]`/`t2s[i]`, and the local opened for that binder is
+/// `ls[i] == Free(ks[i])` at de Bruijn level `c0 + i`.
+pub open spec fn telescope_ok<'x, 't>(
+    env: Env<'x, 't>,
+    b1s: Seq<ExprSpec>,
+    b2s: Seq<ExprSpec>,
+    t1s: Seq<ExprSpec>,
+    t2s: Seq<ExprSpec>,
+    ls: Seq<ExprSpec>,
+    ks: Seq<u32>,
+    c0: u16,
+    n: nat,
+) -> bool {
+    &&& b1s.len() == n + 1 && b2s.len() == n + 1
+    &&& t1s.len() == n && t2s.len() == n && ls.len() == n && ks.len() == n
+    &&& c0 as nat + n < 0x1_0000
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(Box::new(t1s[i]), Box::new(b1s[i + 1]))
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(Box::new(t2s[i]), Box::new(b2s[i + 1]))
+    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_serials_below(b1s[i], c0) && crate::expr_model::dbj_serials_below(b2s[i], c0)
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] ls[i] == ExprSpec::Free(ks[i])
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ks[i]) == Some((c0 + i) as u16)
+    // each binder's types, instantiated with the locals opened so far
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] kconv(
+        env,
+        crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0),
+        crate::expr_model::subst_full(t2s[i], ls.subrange(0, i), 0),
+    )
+}
+
+/// ONE BINDER of a telescope: with the outer locals `lj` substituted, the
+/// types agree, and the bodies agree once the next local `Free(k)` (level
+/// `cj`, above everything in scope) is substituted too -- so the binders
+/// agree. Freshness from the level, reassociation by `subst_full_push`.
+pub proof fn binder_step<'x, 't>(
+    env: Env<'x, 't>,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    n1: ExprSpec,
+    n2: ExprSpec,
+    lj: Seq<ExprSpec>,
+    k: u32,
+    cj: u16,
+)
+    requires
+        forall|q: int| 0 <= q < lj.len() ==> crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_serials_below(lj[q], cj),
+        crate::expr_model::dbj_serials_below(n1, cj),
+        crate::expr_model::dbj_serials_below(n2, cj),
+        crate::expr_arena_bridge::dbj_serial(k) == Some(cj),
+        kconv(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0)),
+        kconv(env, crate::expr_model::subst_full(n1, lj.push(ExprSpec::Free(k)), 0), crate::expr_model::subst_full(n2, lj.push(ExprSpec::Free(k)), 0)),
+    ensures
+        kconv(
+            env,
+            crate::expr_model::subst_full(ExprSpec::Bind(Box::new(t1), Box::new(n1)), lj, 0),
+            crate::expr_model::subst_full(ExprSpec::Bind(Box::new(t2), Box::new(n2)), lj, 0),
+        ),
+{
+    let s1 = crate::expr_model::subst_full(n1, lj, 1);
+    let s2 = crate::expr_model::subst_full(n2, lj, 1);
+    crate::expr_model::subst_full_dbj_serials_below(n1, lj, 1, cj);
+    crate::expr_model::subst_full_dbj_serials_below(n2, lj, 1, cj);
+    crate::expr_model::dbj_serials_below_fv_absent(s1, k, cj);
+    crate::expr_model::dbj_serials_below_fv_absent(s2, k, cj);
+    crate::expr_model::subst_full_push(n1, lj, ExprSpec::Free(k), 0);
+    crate::expr_model::subst_full_push(n2, lj, ExprSpec::Free(k), 0);
+    kconv_bind_fresh(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0), s1, s2, k);
+}
+
+/// BINDER TELESCOPE CONGRUENCE: if every binder's types agree once the outer
+/// locals are substituted, and the innermost bodies agree once all of them
+/// are, the two telescopes are convertible. Proven from depth `j` inward; each
+/// step is `kconv_bind_fresh`, with freshness from the level (`c0 + j` is above
+/// every local already in scope) and the substitution reassociated by
+/// `subst_full_push`.
+pub proof fn binder_telescope_from<'x, 't>(
+    env: Env<'x, 't>,
+    b1s: Seq<ExprSpec>,
+    b2s: Seq<ExprSpec>,
+    t1s: Seq<ExprSpec>,
+    t2s: Seq<ExprSpec>,
+    ls: Seq<ExprSpec>,
+    ks: Seq<u32>,
+    c0: u16,
+    n: nat,
+    j: nat,
+)
+    requires
+        telescope_ok(env, b1s, b2s, t1s, t2s, ls, ks, c0, n),
+        j <= n,
+        kconv(env, crate::expr_model::subst_full(b1s[n as int], ls, 0), crate::expr_model::subst_full(b2s[n as int], ls, 0)),
+    ensures
+        kconv(
+            env,
+            crate::expr_model::subst_full(b1s[j as int], ls.subrange(0, j as int), 0),
+            crate::expr_model::subst_full(b2s[j as int], ls.subrange(0, j as int), 0),
+        ),
+    decreases n - j,
+{
+    if j == n {
+        assert(ls.subrange(0, n as int) =~= ls);
+    } else {
+        binder_telescope_from(env, b1s, b2s, t1s, t2s, ls, ks, c0, n, j + 1);
+        let lj = ls.subrange(0, j as int);
+        let lj1 = ls.subrange(0, (j + 1) as int);
+        assert(lj1 =~= lj.push(ls[j as int]));
+        let k = ks[j as int];
+        let cj = (c0 + j) as u16;
+        assert(b1s[j as int] == ExprSpec::Bind(Box::new(t1s[j as int]), Box::new(b1s[(j + 1) as int])));
+        assert(b2s[j as int] == ExprSpec::Bind(Box::new(t2s[j as int]), Box::new(b2s[(j + 1) as int])));
+        assert(ls[j as int] == ExprSpec::Free(k));
+        assert(crate::expr_model::dbj_serials_below(b1s[(j + 1) as int], c0) && crate::expr_model::dbj_serials_below(b2s[(j + 1) as int], c0));
+        assert(kconv(env, crate::expr_model::subst_full(t1s[j as int], lj, 0), crate::expr_model::subst_full(t2s[j as int], lj, 0)));
+        assert forall|q: int| 0 <= q < lj.len() implies
+            crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_serials_below(lj[q], cj) by {
+            assert(lj[q] == ls[q]);
+            assert(ls[q] == ExprSpec::Free(ks[q]));
+            assert(crate::expr_arena_bridge::dbj_serial(ks[q]) == Some((c0 + q) as u16));
+        }
+        crate::expr_model::dbj_serials_below_mono(b1s[(j + 1) as int], c0, cj);
+        crate::expr_model::dbj_serials_below_mono(b2s[(j + 1) as int], c0, cj);
+        binder_step(
+            env,
+            t1s[j as int],
+            t2s[j as int],
+            b1s[(j + 1) as int],
+            b2s[(j + 1) as int],
+            lj,
+            k,
+            cj,
+        );
+    }
+}
+
 /// What `whnf` and `whnf_no_unfolding` promise, and what their caches hold:
 /// on a CLOSED input, the output is convertible with it, and closed too.
 ///

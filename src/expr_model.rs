@@ -516,6 +516,53 @@ pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
     }
 }
 
+/// Substituting a prefix `l` under one binder, then `s` at the binder itself,
+/// is substituting the extended prefix `l.push(s)` -- provided every value is
+/// closed, so the second pass cannot reach inside what the first put in. This
+/// is the shape a binder telescope takes when its locals are introduced one at
+/// a time (`subst_full_compose` is the other orientation).
+pub proof fn subst_full_push(e: ExprSpec, l: Seq<ExprSpec>, s: ExprSpec, offset: nat)
+    requires
+        nlbv(s) <= 0,
+        forall|j: int| 0 <= j < l.len() ==> #[trigger] nlbv(l[j]) <= 0,
+    ensures
+        subst_full(subst_full(e, l, offset + 1), seq![s], offset) == subst_full(e, l.push(s), offset),
+    decreases e,
+{
+    let ls = l.push(s);
+    match e {
+        ExprSpec::Var(i) => {
+            let iv = i as nat;
+            if iv < offset {
+            } else if iv == offset {
+                assert(ls[(ls.len() - 1 - (iv - offset)) as int] == s);
+            } else if iv - (offset + 1) < l.len() {
+                let j = (l.len() - 1 - (iv - (offset + 1))) as int;
+                subst_full_noop(l[j], seq![s], offset);
+                assert(ls[(ls.len() - 1 - (iv - offset)) as int] == l[j]);
+            } else {
+            }
+        },
+        ExprSpec::App(f, a) => {
+            subst_full_push(*f, l, s, offset);
+            subst_full_push(*a, l, s, offset);
+        },
+        ExprSpec::Bind(t, b) => {
+            subst_full_push(*t, l, s, offset);
+            subst_full_push(*b, l, s, offset + 1);
+        },
+        ExprSpec::Let(t, v, b) => {
+            subst_full_push(*t, l, s, offset);
+            subst_full_push(*v, l, s, offset);
+            subst_full_push(*b, l, s, offset + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            subst_full_push(*st, l, s, offset);
+        },
+        _ => {},
+    }
+}
+
 /// FRESHNESS FROM SCOPE. A level-local whose serial is `c` cannot occur in a
 /// term whose level-locals are all below `c`. The arena is hash-consed, so a
 /// newly made local can be the very node an old term mentions -- freshness has
