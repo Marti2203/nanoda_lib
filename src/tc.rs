@@ -3475,24 +3475,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::get_major_induct ](
 ) -> (result: Option<NamePtr<'t>>) where 'p: 't
 ;
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::get_bignum_succ_from_expr ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    ensures
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::get_bignum_from_expr ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-) -> (result: Option<num_bigint::BigUint>) where 'p: 't
-    ensures
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
-
 pub assume_specification<'a>[ crate::env::RecursorData::<'a>::major_idx ](
     rd: &crate::env::RecursorData<'a>,
 ) -> (result: usize)

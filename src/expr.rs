@@ -542,27 +542,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         Some(self.mk_app(string_of_list_const, out))
     }
 
-    /// If `e` is a NatLit, or `Const Nat.zero []`, return the appropriate Bignum.
-    pub(crate) fn get_bignum_from_expr(&mut self, e: ExprPtr<'t>) -> Option<BigUint> {
-        if let NatLit { ptr, .. } = self.read_expr(e) {
-            self.read_bignum(ptr).cloned()
-        } else if Some(e) == self.c_nat_zero() {
-            Some(BigUint::zero())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn get_bignum_succ_from_expr(&mut self, e: ExprPtr<'t>) -> Option<ExprPtr<'t>> {
-        if let NatLit { ptr, .. } = self.read_expr(e) {
-            self.mk_nat_lit_quick(self.read_bignum(ptr)? + 1usize)
-        } else if Some(e) == self.c_nat_zero() {
-            self.mk_nat_lit_quick(BigUint::zero() + 1usize)
-        } else {
-            None
-        }
-    }
-
     /// Return the expression representing either `true` or `false`
     pub(crate) fn bool_to_expr(&mut self, b: bool) -> Option<ExprPtr<'t>> {
         if b {
@@ -677,6 +656,101 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 }
+
+::vstd::prelude::verus! {
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// If `e` is a NatLit, or `Const Nat.zero []`, return the appropriate Bignum.
+    ///
+    /// Verified in place. Was an `assume_specification` claiming only its
+    /// frame -- nothing about WHICH number it returns.
+    pub(crate) fn get_bignum_from_expr(&mut self, e: ExprPtr<'t>) -> (result: Option<BigUint>)
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            match result {
+                Some(b) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e))
+                    == Some(crate::nat_lit_model::to_nat(b)),
+                None => true,
+            },
+    {
+        if let NatLit { ptr, .. } = self.read_expr(e) {
+            // VERUS-REWRITE(accessor-swap): was `self.read_bignum(ptr).cloned()`;
+            // `read_bignum_value` is defined as exactly that, and carries the
+            // value.
+            crate::expr_arena_bridge::read_bignum_value(self, ptr)
+        } else {
+            // VERUS-REWRITE(option-eq): was `else if Some(e) == self.c_nat_zero()`.
+            // `Option::eq`'s specification is claim-free, so the comparison told
+            // the verifier nothing; comparing the payload is the same test.
+            match self.c_nat_zero() {
+                Some(z) => if z == e {
+                    proof {
+                        crate::expr_arena_bridge::is_const_shape_model(z);
+                    }
+                    Some(BigUint::zero())
+                } else {
+                    None
+                },
+                None => None,
+            }
+        }
+    }
+
+    /// Verified in place, as `get_bignum_from_expr`.
+    pub(crate) fn get_bignum_succ_from_expr(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        ensures
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            match result {
+                Some(r) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) is Some
+                    && crate::expr_arena_bridge::to_model(r) == crate::expr_model::ExprSpec::NatLit(
+                    crate::expr_model::NatLitPayload(
+                        Ghost(
+                            crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e))->Some_0
+                                + 1,
+                        ),
+                    ),
+                ),
+                None => true,
+            },
+    {
+        if let NatLit { ptr, .. } = self.read_expr(e) {
+            // VERUS-REWRITE(accessor-swap): was `self.read_bignum(ptr)? + 1usize`.
+            // Same value: `read_bignum_value` is `read_bignum(..).cloned()`, and
+            // `biguint_succ` adds one.
+            let v = crate::expr_arena_bridge::read_bignum_value(self, ptr)?;
+            let r = self.mk_nat_lit_quick(crate::nat_lit_model::biguint_succ(v));
+            proof {
+                if let Some(rr) = r {
+                    crate::expr_arena_bridge::is_nat_lit_shape_model(rr);
+                }
+            }
+            r
+        } else {
+            // VERUS-REWRITE(option-eq): as in `get_bignum_from_expr`.
+            match self.c_nat_zero() {
+                Some(z) => if z == e {
+                    proof {
+                        crate::expr_arena_bridge::is_const_shape_model(z);
+                    }
+                    let r = self.mk_nat_lit_quick(crate::nat_lit_model::biguint_succ(BigUint::zero()));
+                    proof {
+                        if let Some(rr) = r {
+                            crate::expr_arena_bridge::is_nat_lit_shape_model(rr);
+                        }
+                    }
+                    r
+                } else {
+                    None
+                },
+                None => None,
+            }
+        }
+    }
+}
+
+} // verus!
 
 ::vstd::prelude::verus! {
 
