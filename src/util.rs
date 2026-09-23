@@ -1301,6 +1301,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 ==> crate::expr_arena_bridge::local_id_of(x) == id
                 && crate::expr_arena_bridge::local_binder_type_of(x) == binder_type
                 && to_model_expr(x) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
+            result.0 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(
+                crate::expr_arena_bridge::expr_id(a),
+            ) == crate::expr_arena_bridge::fvar_dbj_serial(id),
+            result.1 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(
+                crate::expr_arena_bridge::expr_id(x),
+            ) == crate::expr_arena_bridge::fvar_dbj_serial(id),
     {
         (self.read_expr(a), self.read_expr(x))
     }

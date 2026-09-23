@@ -162,6 +162,7 @@ needed a different shape.
 | `is_nat_zero`, `pred_of_nat_succ` | `src/expr.rs` | `c_nat_zero()/c_nat_succ() == Some(p)` → `opt_expr_eq`; `pred_of_nat_succ`'s guarded `App` arm → the guard inside the arm (its false case fell through to `_ => None`); `read_bignum(..).map(|n| n.is_zero()).unwrap_or(false)` and `read_bignum(ptr)?`, `n - 1u8` → `read_bignum_value`, `biguint_is_zero`, `biguint_pred` |
 | `def_eq` | `src/tc.rs` | both `Some(p) == self.ctx.c_bool_true()` → `opt_expr_is` |
 | `try_string_lit_expansion` | `src/tc.rs` | the `matches!(..) \|\| matches!(..)` bound in two steps so the swapped call's claim can be turned around; same calls, same short-circuit |
+| `def_eq_local` | `src/tc.rs` | `x_id == y_id` → `fvar_id_eq` — `FVarId`'s derived `PartialEq` is an unspecified call |
 | `get_applied_def` | `src/tc.rs` | the two `get_declar` lookups → `env_model::get_declar_hint`, which is literally that match and carries the name claim |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |

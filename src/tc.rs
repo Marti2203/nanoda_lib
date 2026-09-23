@@ -3000,7 +3000,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+    fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -3010,6 +3010,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
+            // same level, both in scope: the same live local
+            result ==> kconv(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         match self.ctx.read_expr_pair(x, y) {
             (
@@ -3019,8 +3021,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     local_type_scope(*self, x);
                     local_type_scope(*self, y);
+                    if x_id == y_id {
+                        live_local_unique(*self, x, y);
+                        kconv_refl(*old(self).env, to_model_expr(x));
+                    }
                 }
-                x_id == y_id && self.def_eq(tx, ty)
+                // VERUS-REWRITE(fvar-eq): was `x_id == y_id`; `FVarId`'s derived
+                // `PartialEq` is an unspecified call, `fvar_id_eq` is the same
+                // comparison with a contract.
+                crate::expr_arena_bridge::fvar_id_eq(x_id, y_id) && self.def_eq(tx, ty)
             },
             _ => false,
         }
@@ -3155,6 +3164,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// they run AFTER the verdict on the same pair, purely to CERTIFY it
     /// (`route_stats::shadow_check`), and any disagreement -- a verified
     /// confirmation the original code rejected -- is counted as an alarm.
+    #[verifier::spinoff_prover]
     #[verifier::exec_allows_no_decreases_clause]
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
@@ -6001,6 +6011,36 @@ pub proof fn walk_set_facts<'t>(
         let k = choose|k: int| 0 <= k < live0.len() && live0[k] == t;
         assert(lv[k] == t);
     }
+}
+
+/// ONE NODE PER LEVEL: two in-scope locals at the same level are the same
+/// node -- each is the live one. This is what lets the kernel compare locals
+/// by level while the model names them by node.
+pub proof fn live_local_unique<'x, 't, 'p>(
+    tc: TypeChecker<'x, 't, 'p>,
+    x: crate::util::ExprPtr<'t>,
+    y: crate::util::ExprPtr<'t>,
+)
+    requires
+        live_ok(tc),
+        in_scope(tc, x),
+        in_scope(tc, y),
+        to_model_expr(x) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
+        to_model_expr(y) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(y)),
+        crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(x))
+            == crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(y)),
+    ensures
+        crate::expr_arena_bridge::expr_id(x) == crate::expr_arena_bridge::expr_id(y),
+{
+    broadcast use vstd::iset::lemma_iset_new;
+
+    let (a, b) = (crate::expr_arena_bridge::expr_id(x), crate::expr_arena_bridge::expr_id(y));
+    assert(tc.live@.contains(a));
+    assert(tc.live@.contains(b));
+    let i = choose|i: int| 0 <= i < tc.live@.len() && tc.live@[i] == a;
+    let j = choose|j: int| 0 <= j < tc.live@.len() && tc.live@[j] == b;
+    assert(crate::expr_arena_bridge::dbj_serial(tc.live@[i]) == Some(i as u16));
+    assert(crate::expr_arena_bridge::dbj_serial(tc.live@[j]) == Some(j as u16));
 }
 
 /// Live nodes are below the counter, at their own level.
