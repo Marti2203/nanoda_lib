@@ -3624,11 +3624,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
+            // the names are the head constants' (what `get_applied_def` returns)
+            crate::beta_model::spine_head(to_model_expr(x)) is Const,
+            crate::beta_model::spine_head(to_model_expr(x))->Const_0 == crate::level_arena_bridge::name_id(x_defname),
+            crate::beta_model::spine_head(to_model_expr(y)) is Const,
+            crate::beta_model::spine_head(to_model_expr(y))->Const_0 == crate::level_arena_bridge::name_id(y_defname),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             result is None || result->Some_0 is FoundEqResult,
+            result == Some(DeltaResult::<'t>::FoundEqResult(true)) ==> def_eq_claim(
+                *old(self).env,
+                to_model_expr(x),
+                to_model_expr(y),
+            ),
     {
         if x_defname != y_defname {
             return None
@@ -3666,6 +3676,35 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             l_levels,
                             r_levels,
                         ) {
+                            proof {
+                                let env = *old(self).env;
+                                let (xm, ym) = (to_model_expr(x), to_model_expr(y));
+                                let (a1, a2) = (
+                                    crate::expr_arena_bridge::ptr_models(l_args@),
+                                    crate::expr_arena_bridge::ptr_models(r_args@),
+                                );
+                                crate::beta_model::spine_head_spine_app(to_model_expr(l_fun), a1);
+                                crate::beta_model::spine_head_spine_app(to_model_expr(r_fun), a2);
+                                // the same constant at equal universes
+                                assert(crate::tc_model::deq_leaf(to_model_expr(l_fun), to_model_expr(r_fun)));
+                                crate::tc_model::deq_any_of_leaf(
+                                    crate::env_model::to_model_of_env(env),
+                                    to_model_expr(l_fun),
+                                    to_model_expr(r_fun),
+                                );
+                                kconv_of_deq(env, to_model_expr(l_fun), to_model_expr(r_fun));
+                                if crate::expr_model::nlbv(xm) <= 0 && crate::expr_model::nlbv(ym) <= 0 {
+                                    crate::beta_model::spine_app_nlbv_decompose(to_model_expr(l_fun), a1);
+                                    crate::beta_model::spine_app_nlbv_decompose(to_model_expr(r_fun), a2);
+                                    assert forall|j: int| 0 <= j < a1.len() implies kconv(env, #[trigger] a1[j], a2[j]) by {
+                                        assert(a1[j] == to_model_expr(l_args@[j]));
+                                        assert(a2[j] == to_model_expr(r_args@[j]));
+                                        assert(crate::expr_model::nlbv(a1[j]) <= 0);
+                                        assert(crate::expr_model::nlbv(a2[j]) <= 0);
+                                    }
+                                    kconv_spine_pairwise(env, to_model_expr(l_fun), to_model_expr(r_fun), a1, a2);
+                                }
+                            }
                             Some(FoundEqResult(true))
                         } else {
                             self.failure_cache_insert(x, y);
@@ -3763,6 +3802,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            result ==> l_args@.len() == r_args@.len() && forall|j: int| 0 <= j < l_args@.len() ==> def_eq_claim(
+                *old(self).env,
+                to_model_expr(#[trigger] l_args@[j]),
+                to_model_expr(r_args@[j]),
+            ),
     {
         if l_args.len() != r_args.len() {
             return false
@@ -3777,6 +3821,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 l_args.len() == r_args.len(),
                 forall|j: int| 0 <= j < l_args@.len() ==> in_scope(*self, #[trigger] l_args@[j]),
                 forall|j: int| 0 <= j < r_args@.len() ==> in_scope(*self, #[trigger] r_args@[j]),
+                forall|j: int| i <= j < l_args@.len() ==> def_eq_claim(
+                    *old(self).env,
+                    to_model_expr(#[trigger] l_args@[j]),
+                    to_model_expr(r_args@[j]),
+                ),
             decreases i,
         {
             i -= 1;
@@ -3794,20 +3843,32 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// After each reduction, check whether we can show definitional equality without having
     /// to continue unfolding.
     #[verifier::exec_allows_no_decreases_clause]
-    fn lazy_delta_step(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> (result: DeltaResult<'t>)
+    fn lazy_delta_step(&mut self, x_in: ExprPtr<'t>, y_in: ExprPtr<'t>) -> (result: DeltaResult<'t>)
         requires
             tc_wf(*old(self)),
-            in_scope(*old(self), x),
-            in_scope(*old(self), y),
+            in_scope(*old(self), x_in),
+            in_scope(*old(self), y_in),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             match result {
-                DeltaResult::Exhausted(a, b) => in_scope(*final(self), a) && in_scope(*final(self), b),
-                _ => true,
+                DeltaResult::Exhausted(a, b) => in_scope(*final(self), a) && in_scope(*final(self), b)
+                    && whnf_claim(*old(self).env, to_model_expr(x_in), to_model_expr(a))
+                    && whnf_claim(*old(self).env, to_model_expr(y_in), to_model_expr(b)),
+                DeltaResult::FoundEqResult(q) => q ==> def_eq_claim(*old(self).env, to_model_expr(x_in), to_model_expr(y_in)),
             },
     {
+        // VERUS-REWRITE(mut-param): the parameters were `mut x`, `mut y`. The
+        // loop's claim is about the ENTRY values, which a mutated parameter
+        // no longer names inside the loop; naming them and binding the
+        // mutable locals from them is the same code.
+        let mut x = x_in;
+        let mut y = y_in;
+        proof {
+            whnf_claim_refl(*old(self).env, to_model_expr(x));
+            whnf_claim_refl(*old(self).env, to_model_expr(y));
+        }
         loop
             invariant
                 tc_wf(*self),
@@ -3815,22 +3876,47 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 in_scope(*self, x),
                 in_scope(*self, y),
+                whnf_claim(*old(self).env, to_model_expr(x_in), to_model_expr(x)),
+                whnf_claim(*old(self).env, to_model_expr(y_in), to_model_expr(y)),
         {
             if let Some(r) = self.delta_try_nat(x, y) {
+                proof {
+                    if r == DeltaResult::<'t>::FoundEqResult(true) {
+                        def_eq_claim_via(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(y_in), to_model_expr(y));
+                    }
+                }
                 return r
             }
             let (r1, r2) = (self.get_applied_def(x), self.get_applied_def(y));
             match (r1, r2) {
                 (None, None) => return Exhausted(x, y),
                 (Some(..), None) => if let Some(yprime) = self.try_unfold_proj_app(y) {
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yprime));
+                        scope_pres_in_scope(*self, y, yprime);
+                    }
                     y = yprime;
                 } else {
-                    x = self.delta(x);
+                    let xd = self.delta(x);
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xd));
+                        scope_pres_in_scope(*self, x, xd);
+                    }
+                    x = xd;
                 },
                 (None, Some(..)) => if let Some(xprime) = self.try_unfold_proj_app(x) {
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xprime));
+                        scope_pres_in_scope(*self, x, xprime);
+                    }
                     x = xprime;
                 } else {
-                    y = self.delta(y);
+                    let yd = self.delta(y);
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yd));
+                        scope_pres_in_scope(*self, y, yd);
+                    }
+                    y = yd;
                 },
                 // VERUS-REWRITE(guarded-arm): the two `is_lt` guards became the
                 // head of this arm's if/else chain. Same three cases in the
@@ -3838,9 +3924,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // case.
                 (Some((x_name, l_hint)), Some((y_name, r_hint))) => {
                     if l_hint.is_lt(&r_hint) {
-                        y = self.delta(y);
+                        let yd = self.delta(y);
+                        proof {
+                            whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yd));
+                            scope_pres_in_scope(*self, y, yd);
+                        }
+                        y = yd;
                     } else if r_hint.is_lt(&l_hint) {
-                        x = self.delta(x);
+                        let xd = self.delta(x);
+                        proof {
+                            whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xd));
+                            scope_pres_in_scope(*self, x, xd);
+                        }
+                        x = xd;
                     } else if let Some(r) = self.try_eq_const_app(
                         x,
                         x_name,
@@ -3849,14 +3945,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         y_name,
                         r_hint,
                     ) {
+                        proof {
+                            if r == DeltaResult::<'t>::FoundEqResult(true) {
+                                def_eq_claim_via(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(y_in), to_model_expr(y));
+                            }
+                        }
                         return r
                     } else {
-                        x = self.delta(x);
-                        y = self.delta(y);
+                        let xd = self.delta(x);
+                        proof {
+                            whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xd));
+                            scope_pres_in_scope(*self, x, xd);
+                        }
+                        x = xd;
+                        let yd = self.delta(y);
+                        proof {
+                            whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yd));
+                            scope_pres_in_scope(*self, y, yd);
+                        }
+                        y = yd;
                     }
                 },
             }
             if let Some(quick_result) = self.def_eq_quick_check(x, y) {
+                proof {
+                    if quick_result {
+                        def_eq_claim_via(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(y_in), to_model_expr(y));
+                    }
+                }
                 return FoundEqResult(quick_result)
             }
         }
@@ -6912,6 +7028,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
         ensures
             result is Some ==> crate::beta_model::spine_head(to_model_expr(e)) is Const,
+            // the name returned is the head constant's
+            result is Some ==> crate::beta_model::spine_head(to_model_expr(e))->Const_0
+                == crate::level_arena_bridge::name_id(result->Some_0.0),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -6923,10 +7042,14 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::is_const_shape(head));
                 crate::expr_arena_bridge::is_const_shape_model(head);
             }
-            if let Some(Declar::Definition { info, hint, .. }) = self.env.get_declar(&name) {
-                return Some((info.name, *hint))
-            } else if let Some(Declar::Theorem { info, .. }) = self.env.get_declar(&name) {
-                return Some((info.name, ReducibilityHint::Opaque))
+            // VERUS-REWRITE(accessor-swap): was the two lookups
+            // `if let Some(Declar::Definition { info, hint, .. }) = self.env.get_declar(&name)
+            // { return Some((info.name, *hint)) } else if let Some(Declar::Theorem { info, .. })
+            // = .. { return Some((info.name, ReducibilityHint::Opaque)) }`.
+            // `env_model::get_declar_hint` is literally that match, and carries
+            // the environment's claim that `info.name` is the lookup key.
+            if let Some(r) = crate::env_model::get_declar_hint(self.env, &name) {
+                return Some(r)
             }
         }
         None

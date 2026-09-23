@@ -473,11 +473,16 @@ pub uninterp spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<
     ReducibilityHintSpec,
 >;
 
+/// The returned name is the declaration's own `info.name`, and it is the name
+/// it was looked up by: the parser inserts every declaration under
+/// `info.name` (`parser.rs`, `declars.insert(name, ..)` with `info = DeclarInfo
+/// { name, .. }`). `lazy_delta_step` relies on exactly this when it compares
+/// two definitions by the names this returns.
 pub assume_specification<'x, 'a>[ get_declar_hint ](env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result:
     Option<(NamePtr<'a>, ReducibilityHint)>)
     ensures
         match result {
-            Some((_, hint)) => to_model_of_env(*env).contains_key(name_id(*n))
+            Some((dn, hint)) => dn == *n && to_model_of_env(*env).contains_key(name_id(*n))
                 && to_model_of_declar_hint(*env).contains_key(name_id(*n))
                 && to_model_of_declar_hint(*env)[name_id(*n)] == to_model(hint),
             None => !to_model_of_env(*env).contains_key(name_id(*n)),
