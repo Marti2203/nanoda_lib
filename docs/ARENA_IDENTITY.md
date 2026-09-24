@@ -57,13 +57,33 @@ merges only when no false axiom remains.
 
 ## Known-false while the branch is open
 
-Marked `ARENA-IDENTITY STAGE 2` in the source. Each is false only for
-pointers from two different arenas.
+Each is false only for pointers from two different arenas.
 
 | item | file | fixed in stage |
 |---|---|---|
-| `Ptr::eq`: `result == (*a == *b)` | `src/util_model.rs` | 4 |
-| `PartialEqSpecImpl for Ptr`: `eq_spec` is `==` | `src/util_model.rs` | 4 |
-| `name_id_injective` (now `external_body`) | `src/level_arena_bridge.rs` | 4 |
-| `expr_id_injective` (now `external_body`) | `src/expr_arena_bridge.rs` | 4 |
 | `ptr_obeys_key_model` and its tuple siblings | `src/util_model.rs` | 5 |
+
+Fixed in stage 4: `Ptr::eq`'s specification (now `result == (a.raw == b.raw)`,
+and pointer equality when the tags agree), `PartialEqSpecImpl for Ptr`, and
+`name_id_injective` / `expr_id_injective`, which are proven again under
+`owns(c, a) && owns(c, b)`.
+
+## What stage 4 added
+
+- `owns(c, p)` on every reader, allocation and verified function that takes
+  or returns a pointer; `owns_all` for pointer sequences. Ownership is a
+  function of `arena_ids(c)`, so frames carry it across calls by congruence.
+- `expr_children_owned` / `level_children_owned` / `name_children_owned`:
+  readers ensure a node's children are owned, allocation requires it.
+- The name cache carries the export arena's tag (a type-invariant clause);
+  the export tier's id is DEFINED as that tag.
+- `env_arena_ids(env)` / `env_owns` / `env_matches(env, c)`: environment
+  lookups and records (`inductive_data_owned`, `constructor_data_owned`,
+  `recursor_data_owned`) hand out pointers of the environment's arenas;
+  `tc_wf` and the shadow routes require the environment to match the context.
+- Cache invariants (`tc_wf`'s five caches, the expression caches, the shadow
+  memo's certificates) carry ownership of keys and values.
+- Comparisons that run with no context in scope (`ptr_in_seq`,
+  `ctor_app_params_ok`, closures) are stated on `raw`, which is what the
+  kernel's `==` computes; `owned_raw_eq` turns that into pointer equality
+  where both pointers are known owned.

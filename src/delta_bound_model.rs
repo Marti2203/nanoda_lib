@@ -229,10 +229,13 @@ pub fn verified_ensure_pi_capped<'t, 'p: 't, 'x>(
     cur: ExprPtr<'t>,
 ) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>)>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), cur),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(cur)) <= 0,
     ensures
+        result matches Some((r0, r1, r2)) ==> crate::util_model::owns(*final(ctx), r0) && crate::util_model::owns(*final(ctx), r1) && crate::util_model::owns(*final(ctx), r2),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -283,10 +286,13 @@ pub fn verified_sort_of_capped<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<LevelPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), ty),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -346,6 +352,8 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(
     env: &Env<'x, 't>,
     fuel: u32,
 ) -> (result: Option<u32>)
+    requires
+        crate::env_model::env_matches(*env, *ctx),
     ensures
         match result {
             Some(k) => k <= 60000 && env_global_cap(*env) <= k as nat && env_global_size_cap(*env)
@@ -358,6 +366,7 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < names.len()
         invariant
+            crate::env_model::env_matches(*env, *ctx),
             i <= names@.len(),
             mx <= 60000,
             forall|j: int|
@@ -566,6 +575,8 @@ impl<'e, 'x, 't> EnvCapCert<'e, 'x, 't> {
 
     /// Scan once, certify forever (for this environment).
     pub fn make(ctx: &TcCtx<'t, '_>, env: &'e Env<'x, 't>, fuel: u32) -> (result: Option<Self>)
+        requires
+            crate::env_model::env_matches(*env, *ctx),
         ensures
             match result {
                 Some(c) => c.spec_env() == *env && c.spec_cap() <= 60000,
@@ -608,6 +619,9 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -762,6 +776,9 @@ pub fn verified_defeq_whnf_capped<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -925,6 +942,12 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), name),
+        crate::util_model::owns(*old(ctx), t1),
+        crate::util_model::owns(*old(ctx), t2),
+        crate::util_model::owns(*old(ctx), b1),
+        crate::util_model::owns(*old(ctx), b2),
         memo.wf(),
         memo.spec_env() == *env,
         deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
@@ -1023,6 +1046,12 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), name),
+        crate::util_model::owns(*old(ctx), t1),
+        crate::util_model::owns(*old(ctx), t2),
+        crate::util_model::owns(*old(ctx), b1),
+        crate::util_model::owns(*old(ctx), b2),
         memo.wf(),
         memo.spec_env() == *env,
         deq_p_any(
@@ -1133,6 +1162,9 @@ pub fn verified_conv<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -1174,6 +1206,9 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -1212,6 +1247,11 @@ pub fn verified_conv_spine<'t, 'p: 't, 'x>(
     }
     while i < n
         invariant
+            crate::util_model::owns_all(*ctx, args1@),
+            crate::util_model::owns_all(*ctx, args2@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -1278,11 +1318,15 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(
     max_rounds: u32,
 ) -> (r: (ExprPtr<'t>, ExprPtr<'t>))
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
     ensures
+        crate::util_model::owns(*final(ctx), r.0) && crate::util_model::owns(*final(ctx), r.1),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -1301,6 +1345,11 @@ pub fn verified_delta_chain<'t, 'p: 't, 'x>(
     let mut j: u32 = 0;
     while j < max_rounds
         invariant
+            crate::util_model::owns(*ctx, cx),
+            crate::util_model::owns(*ctx, cy),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -1480,6 +1529,12 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(
     opens: u32,
 ) -> (result: bool)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), name),
+        crate::util_model::owns(*old(ctx), t1),
+        crate::util_model::owns(*old(ctx), t2),
+        crate::util_model::owns(*old(ctx), b1),
+        crate::util_model::owns(*old(ctx), b2),
         memo.wf(),
         memo.spec_env() == *env,
         deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
@@ -1560,6 +1615,9 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
     opens: u32,
 ) -> (result: bool)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -1737,6 +1795,11 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < ax.len()
         invariant
+            crate::util_model::owns_all(*ctx, ax@),
+            crate::util_model::owns_all(*ctx, ay@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -1781,10 +1844,13 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -2257,6 +2323,10 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
         let mut i: usize = 0;
         while i < args.len()
             invariant
+                crate::util_model::owns_all(*ctx, args@),
+                crate::util_model::owns(*ctx, cur_ty),
+                crate::env_model::env_matches(*env, *old(ctx)),
+                crate::util_model::owns(*old(ctx), e),
                 ctx.dbj_level_counter == old(ctx).dbj_level_counter,
                 crate::util_model::same_arenas(*old(ctx), *ctx),
                 memo.wf(),
@@ -2518,10 +2588,13 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -2621,6 +2694,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     }
     while i < np as usize
         invariant
+            crate::util_model::owns_all(*ctx, args_s@),
+            crate::util_model::owns(*ctx, ind_name),
+            crate::util_model::owns(*ctx, cur),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), e),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -2666,6 +2744,9 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
             assert(nlbv(to_model(body)) <= 1);
         }
         let arg_slice: &[ExprPtr<'t>] = &args_s[i..i + 1];
+        assert(crate::util_model::owns_all(*ctx, arg_slice@)) by {
+            assert(arg_slice@[0] == args_s@[i as int]);
+        }
         let new_ty = match verified_inst(ctx, body, arg_slice, 0, 100000) {
             Some(v) => v,
             None => return None,
@@ -2784,6 +2865,11 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     let mut j: usize = 0;
     while j < idx
         invariant
+            crate::util_model::owns(*ctx, ind_name),
+            crate::util_model::owns(*ctx, structure),
+            crate::util_model::owns(*ctx, cur),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), e),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -2973,9 +3059,12 @@ pub fn verified_infer_shadow<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -3008,9 +3097,12 @@ fn verified_infer_shadow_uncached<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -3090,6 +3182,8 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), ty),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
@@ -3137,7 +3231,10 @@ pub fn verified_is_prop_capped<'t, 'p: 't, 'x>(
 /// the kernel's own "only when the other side is a saturated constructor
 /// application" condition. No claim: a wrong answer only decides whether the
 /// expansion is attempted.
-pub fn is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>) -> bool {
+pub fn is_ctor_app<'t, 'p: 't, 'x>(ctx: &TcCtx<'t, 'p>, env: &Env<'x, 't>, e: ExprPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, e),
+{
     match ctx.unfold_const_apps(e) {
         Some((_f, name, _levels, _args)) => get_constructor_num_fields(env, &name).is_some(),
         None => false,
@@ -3225,9 +3322,12 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
     x: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -3289,6 +3389,10 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < (nump as usize)
         invariant
+            crate::util_model::owns_all(*ctx, args@),
+            crate::util_model::owns_all(*ctx, new_args@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= nump as usize,
@@ -3297,12 +3401,20 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
             forall|j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
         decreases (nump as usize) - i,
     {
-        new_args.push(args[i]);
+        let pushed = args[i];
+        proof {
+            crate::util_model::owns_all_push(*ctx, new_args@, pushed);
+        }
+        new_args.push(pushed);
         i = i + 1;
     }
     let mut j: usize = 0;
     while j < (nf as usize)
         invariant
+            crate::util_model::owns(*ctx, ind_name),
+            crate::util_model::owns_all(*ctx, new_args@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             j <= nf as usize,
@@ -3317,7 +3429,11 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
         decreases (nf as usize) - j,
     {
         let pj = ctx.mk_proj(ind_name, j, x);
-        new_args.push(pj);
+        let pushed = pj;
+        proof {
+            crate::util_model::owns_all_push(*ctx, new_args@, pushed);
+        }
+        new_args.push(pushed);
         j = j + 1;
     }
     let ctor_const = ctx.mk_const(ctor, levels);
@@ -3392,9 +3508,13 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -3473,6 +3593,11 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < (nump as usize)
         invariant
+            crate::util_model::owns_all(*ctx, args@),
+            crate::util_model::owns_all(*ctx, new_args@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= nump as usize,
@@ -3481,12 +3606,21 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
             forall|j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
         decreases (nump as usize) - i,
     {
-        new_args.push(args[i]);
+        let pushed = args[i];
+        proof {
+            crate::util_model::owns_all_push(*ctx, new_args@, pushed);
+        }
+        new_args.push(pushed);
         i = i + 1;
     }
     let mut j: usize = 0;
     while j < (nf as usize)
         invariant
+            crate::util_model::owns(*ctx, ind_name),
+            crate::util_model::owns_all(*ctx, new_args@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             j <= nf as usize,
@@ -3501,7 +3635,11 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
         decreases (nf as usize) - j,
     {
         let pj = ctx.mk_proj(ind_name, j, x);
-        new_args.push(pj);
+        let pushed = pj;
+        proof {
+            crate::util_model::owns_all_push(*ctx, new_args@, pushed);
+        }
+        new_args.push(pushed);
         j = j + 1;
     }
     let ctor_const = ctx.mk_const(ctor, levels);
@@ -3630,6 +3768,9 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -3711,6 +3852,9 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -3833,6 +3977,9 @@ pub fn verified_conv_eta_fn<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -3945,6 +4092,9 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -4386,6 +4536,9 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -4447,6 +4600,9 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -4502,6 +4658,11 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
     }
     while i < n
         invariant
+            crate::util_model::owns_all(*ctx, args1@),
+            crate::util_model::owns_all(*ctx, args2@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -4578,8 +4739,12 @@ pub fn mk_eta_expansion<'t, 'p: 't>(
     f: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::util_model::owns(*old(ctx), bn),
+        crate::util_model::owns(*old(ctx), dom),
+        crate::util_model::owns(*old(ctx), f),
         nlbv(to_model(f)) == 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         deq_eta(to_model(result), to_model(f)),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -4646,10 +4811,13 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -4725,6 +4893,14 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
     }
     let c = ctx.mk_const(ctor_name, ilv);
     let params: &[ExprPtr<'t>] = &iargs[0..cnp as usize];
+    assert(crate::util_model::owns_all(*ctx, params@)) by {
+        assert forall|q: int| 0 <= q < params@.len() implies #[trigger] crate::util_model::owns_in(
+            crate::util_model::arena_ids(*ctx),
+            params@[q],
+        ) by {
+            assert(params@[q] == iargs@[q]);
+        }
+    }
     let ctor_app = verified_foldl_apps(ctx, c, params);
     if ctx.num_loose_bvars(ctor_app) != 0 {
         return None;
@@ -4742,6 +4918,11 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < args.len()
         invariant
+            crate::util_model::owns(*ctx, ctor_app),
+            crate::util_model::owns_all(*ctx, args@),
+            crate::util_model::owns_all(*ctx, args2@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= args.len(),
@@ -4941,6 +5122,8 @@ fn verified_block_ind_app<'t, 'p: 't>(
     arities: &[usize],
 ) -> (result: Option<bool>)
     requires
+        crate::util_model::owns(*old(ctx), e),
+        crate::util_model::owns_all(*old(ctx), ind_consts@),
         ind_consts@.len() == arities@.len(),
         forall|i: int| 0 <= i < ind_consts@.len() ==> is_const_shape(#[trigger] ind_consts@[i]),
     ensures
@@ -4973,6 +5156,9 @@ fn verified_block_ind_app<'t, 'p: 't>(
     let mut i: usize = 0;
     while i < ind_consts.len()
         invariant
+            crate::util_model::owns_all(*ctx, args@),
+            crate::util_model::owns(*old(ctx), e),
+            crate::util_model::owns_all(*old(ctx), ind_consts@),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= ind_consts@.len(),
@@ -5024,6 +5210,9 @@ pub fn verified_positive_arg<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns_all(*old(ctx), ind_consts@),
+        crate::util_model::owns(*old(ctx), ty),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
@@ -5136,6 +5325,11 @@ pub fn verified_ctor_ok<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns_all(*old(ctx), ind_consts@),
+        crate::util_model::owns(*old(ctx), parent),
+        crate::util_model::owns(*old(ctx), codom),
+        crate::util_model::owns(*old(ctx), ty),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
@@ -5336,6 +5530,9 @@ pub fn verified_ind_ty_ok<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), codom),
+        crate::util_model::owns(*old(ctx), ty),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(ty)) <= 0,
@@ -5462,9 +5659,12 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
     x: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -5506,6 +5706,10 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
     let mut i: usize = 0;
     while i < args.len()
         invariant
+            crate::util_model::owns_all(*ctx, args@),
+            crate::util_model::owns_all(*ctx, new_args@),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= args@.len(),
@@ -5513,7 +5717,11 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
             forall|j: int| 0 <= j < i ==> #[trigger] new_args@[j] == args@[j],
         decreases args.len() - i,
     {
-        new_args.push(args[i]);
+        let pushed = args[i];
+        proof {
+            crate::util_model::owns_all_push(*ctx, new_args@, pushed);
+        }
+        new_args.push(pushed);
         i = i + 1;
     }
     assert(new_args@ =~= args@);
@@ -5556,9 +5764,12 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
     x: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -5668,10 +5879,13 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
     rounds: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -5699,6 +5913,9 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
     }
     while i < rounds
         invariant
+            crate::util_model::owns(*ctx, cur),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), x),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -5772,6 +5989,9 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -5968,6 +6188,9 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -6100,6 +6323,9 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
@@ -6178,6 +6404,9 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -6381,10 +6610,13 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(
     x: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -6513,6 +6745,179 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(
     Some(r)
 }
 
+/// `verified_conv_inner_p`'s congruence rules: projection, then application
+/// (spine-wise when both sides are applications), then binders. Split out for
+/// the solver's resource limit; one rank below its caller.
+#[verifier::spinoff_prover]
+pub fn verified_conv_congr_p<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    budget: u32,
+    both_app: bool,
+) -> (result: Option<bool>)
+    requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
+        memo.wf(),
+        memo.spec_env() == *env,
+        budget > 0,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
+        match result {
+            Some(true) => deq_p_any(
+                to_model_of_declar_ty(*env),
+                to_model_of_env(*env),
+                arena_lctx(), false,
+                to_model(x),
+                to_model(y),
+            ),
+            _ => true,
+        },
+    decreases budget, size(to_model(x)) + size(to_model(y)), 2int,
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dtym = to_model_of_declar_ty(*env);
+    let ghost lcm = arena_lctx();
+    // --- projection congruence (`def_eq_proj`, which `def_eq` tries with
+    // the constant and local leaves, before the congruence group) ---
+
+    let xe_proj = ctx.read_expr(x);
+    let ye_proj = ctx.read_expr(y);
+    match (expr_as_proj(&xe_proj), expr_as_proj(&ye_proj)) {
+        (Some((_, i1, s1)), Some((_, i2, s2))) => {
+            if i1 == i2 {
+                if let Some(true) = verified_conv_p(ctx, env, memo, s1, s2, fuel, budget) {
+                    proof {
+                        deq_p_any_proj_congr(dtym, em, lcm, false, i1, to_model(s1), to_model(s2));
+                    }
+                    conv_stat(4);
+                    return Some(true);
+                }
+            }
+        },
+        _ => {},
+    }
+    // --- structural congruence (real-shape gated) ---
+    let xe = ctx.read_expr(x);
+    let ye = ctx.read_expr(y);
+    // SPINE-WISE congruence (2026-09-05): the kernel's `def_eq_app` compares
+    // the two spines' heads and arguments pairwise; the node-by-node arm
+    // below spent one budget unit per application layer, so a 10-argument
+    // spine exhausted the budget walking down its own head. Here every
+    // head/argument pair is checked at the SAME budget level.
+    if both_app {
+        if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, budget) {
+            return Some(true);
+        }
+    }
+    match (expr_as_app(&xe), expr_as_app(&ye)) {
+        (Some((f1, a1)), Some((f2, a2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, memo, f1, f2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, budget) {
+                    proof {
+                        deq_p_any_app_congr(
+                            dtym,
+                            em,
+                            lcm, false,
+                            to_model(f1),
+                            to_model(f2),
+                            to_model(a1),
+                            to_model(a2),
+                        );
+                    }
+                    conv_stat(2);
+                    return Some(true);
+                }
+            }
+        },
+        _ => {},
+    }
+    match (expr_as_pi(&xe), expr_as_pi(&ye)) {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
+                    proof {
+                        deq_p_any_bind_congr(
+                            dtym,
+                            em,
+                            lcm, false,
+                            to_model(t1),
+                            to_model(t2),
+                            to_model(b1),
+                            to_model(b2),
+                        );
+                    }
+                    conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv_bind_fresh_p(
+                    ctx,
+                    env,
+                    memo,
+                    n1,
+                    s1,
+                    t1,
+                    t2,
+                    b1,
+                    b2,
+                    fuel,
+                    budget,
+                ) {
+                    return Some(true);
+                }
+            }
+        },
+        _ => {},
+    }
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
+            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
+                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
+                    proof {
+                        deq_p_any_bind_congr(
+                            dtym,
+                            em,
+                            lcm, false,
+                            to_model(t1),
+                            to_model(t2),
+                            to_model(b1),
+                            to_model(b2),
+                        );
+                    }
+                    conv_stat(3);
+                    return Some(true);
+                }
+                if let Some(true) = verified_conv_bind_fresh_p(
+                    ctx,
+                    env,
+                    memo,
+                    n1,
+                    s1,
+                    t1,
+                    t2,
+                    b1,
+                    b2,
+                    fuel,
+                    budget,
+                ) {
+                    return Some(true);
+                }
+            }
+        },
+        _ => {},
+    }
+    None
+}
+
+
 // Was pinned at 40 for the same reason as its twin above. After
 // `pstep_chain_valid` was retriggered (instantiations 6,828 -> 2,713) this one
 // verifies at 20, so the pin is halved rather than inherited.
@@ -6532,6 +6937,9 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
     budget: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
     ensures
@@ -6789,133 +7197,10 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             conv_trace(3, x, y, budget);
         }
     }
-    // --- projection congruence (`def_eq_proj`, which `def_eq` tries with
-    // the constant and local leaves, before the congruence group) ---
-
-    let xe_proj = ctx.read_expr(x);
-    let ye_proj = ctx.read_expr(y);
-    match (expr_as_proj(&xe_proj), expr_as_proj(&ye_proj)) {
-        (Some((_, i1, s1)), Some((_, i2, s2))) => {
-            if i1 == i2 {
-                if let Some(true) = verified_conv_p(ctx, env, memo, s1, s2, fuel, budget) {
-                    proof {
-                        deq_p_any_proj_congr(dtym, em, lcm, false, i1, to_model(s1), to_model(s2));
-                    }
-                    conv_stat(4);
-                    return Some(true);
-                }
-            }
-        },
-        _ => {},
-    }
-    // --- structural congruence (real-shape gated) ---
-    let xe = ctx.read_expr(x);
-    let ye = ctx.read_expr(y);
-    // SPINE-WISE congruence (2026-09-05): the kernel's `def_eq_app` compares
-    // the two spines' heads and arguments pairwise; the node-by-node arm
-    // below spent one budget unit per application layer, so a 10-argument
-    // spine exhausted the budget walking down its own head. Here every
-    // head/argument pair is checked at the SAME budget level.
-    if x_app_sh && y_app_sh {
-        if let Some(true) = verified_conv_spine_p(ctx, env, memo, x, y, fuel, budget) {
-            return Some(true);
-        }
-    }
-    match (expr_as_app(&xe), expr_as_app(&ye)) {
-        (Some((f1, a1)), Some((f2, a2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, f1, f2, fuel, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, a1, a2, fuel, budget) {
-                    proof {
-                        deq_p_any_app_congr(
-                            dtym,
-                            em,
-                            lcm, false,
-                            to_model(f1),
-                            to_model(f2),
-                            to_model(a1),
-                            to_model(a2),
-                        );
-                    }
-                    conv_stat(2);
-                    return Some(true);
-                }
-            }
-        },
-        _ => {},
-    }
-    match (expr_as_pi(&xe), expr_as_pi(&ye)) {
-        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
-                    proof {
-                        deq_p_any_bind_congr(
-                            dtym,
-                            em,
-                            lcm, false,
-                            to_model(t1),
-                            to_model(t2),
-                            to_model(b1),
-                            to_model(b2),
-                        );
-                    }
-                    conv_stat(3);
-                    return Some(true);
-                }
-                if let Some(true) = verified_conv_bind_fresh_p(
-                    ctx,
-                    env,
-                    memo,
-                    n1,
-                    s1,
-                    t1,
-                    t2,
-                    b1,
-                    b2,
-                    fuel,
-                    budget,
-                ) {
-                    return Some(true);
-                }
-            }
-        },
-        _ => {},
-    }
-    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
-        (Some((n1, s1, t1, b1)), Some((_, _, t2, b2))) => {
-            if let Some(true) = verified_conv_p(ctx, env, memo, t1, t2, fuel, budget) {
-                if let Some(true) = verified_conv_p(ctx, env, memo, b1, b2, fuel, budget) {
-                    proof {
-                        deq_p_any_bind_congr(
-                            dtym,
-                            em,
-                            lcm, false,
-                            to_model(t1),
-                            to_model(t2),
-                            to_model(b1),
-                            to_model(b2),
-                        );
-                    }
-                    conv_stat(3);
-                    return Some(true);
-                }
-                if let Some(true) = verified_conv_bind_fresh_p(
-                    ctx,
-                    env,
-                    memo,
-                    n1,
-                    s1,
-                    t1,
-                    t2,
-                    b1,
-                    b2,
-                    fuel,
-                    budget,
-                ) {
-                    return Some(true);
-                }
-            }
-        },
-        _ => {},
+    // --- projection and structural congruence, in their own function: the
+    // solver's resource limit (every node read carries its ownership facts).
+    if let Some(true) = verified_conv_congr_p(ctx, env, memo, x, y, fuel, budget, x_app_sh && y_app_sh) {
+        return Some(true);
     }
     // --- quotient, eta and K-like, in their own function: the solver's
     // resource limit again.
@@ -7003,8 +7288,11 @@ pub fn verified_delta_free<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -7064,8 +7352,10 @@ pub fn verified_try_unfold_proj_app_measured<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -7101,11 +7391,18 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<DeltaRoundResult<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(x)) <= 0,
         nlbv(to_model(y)) <= 0,
     ensures
+        result matches Some(DeltaRoundResult::Continue(a, b)) ==> crate::util_model::owns(*final(ctx), a)
+            && crate::util_model::owns(*final(ctx), b),
+        result matches Some(DeltaRoundResult::Exhausted(a, b)) ==> crate::util_model::owns(*final(ctx), a)
+            && crate::util_model::owns(*final(ctx), b),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),

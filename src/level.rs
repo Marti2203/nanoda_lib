@@ -126,6 +126,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// catch-all, needs the simplified-form invariant and is not addressed
     /// here.)
     pub(crate) fn is_any_max(&self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, level),
         ensures
             result == matches!(to_model(level), LevelSpec::Max(_, _) | LevelSpec::IMax(_, _)),
     {
@@ -133,6 +135,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub(crate) fn is_param(&self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, level),
         ensures
             result == matches!(to_model(level), LevelSpec::Param(_)),
     {
@@ -151,12 +155,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     fn subst_simp(&mut self, level: LevelPtr<'t>, ks: LevelsPtr<'t>, vs: LevelsPtr<'t>) -> (result:
         LevelPtr<'t>)
         requires
+            crate::util_model::owns(*old(self), level),
+            crate::util_model::owns(*old(self), ks),
+            crate::util_model::owns(*old(self), vs),
             to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
             forall|j: int|
                 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(
                     ks,
                 )[j] is Param,
         ensures
+            crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -223,6 +231,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// one that was assumed, now proven from `leq_core`'s.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn leq(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), l),
+            crate::util_model::owns(*old(self), r),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -267,6 +278,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         diff: isize,
     ) -> (result: bool)
         requires
+            crate::util_model::owns(*old(self), param),
+            crate::util_model::owns(*old(self), lhs),
+            crate::util_model::owns(*old(self), rhs),
             to_model(param) is Param,
             // `by_cases` only ever fires on a parameter that IS undecided in
             // the pair -- `leq_core` knows this because it matched
@@ -475,6 +489,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::rlimit(20)]
     fn leq_core(&mut self, l_in: LevelPtr<'t>, r_in: LevelPtr<'t>, diff: isize) -> (result: bool)
         requires
+            crate::util_model::owns(*old(self), l_in),
+            crate::util_model::owns(*old(self), r_in),
             imax_normal(to_model(l_in)),
             imax_normal(to_model(r_in)),
         ensures
@@ -497,7 +513,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let res = a == x && diff >= 0;
                 proof {
                     if res {
-                        level_ptr_eq_iff_same_model_param(l_in, r_in);
+                        level_ptr_eq_iff_same_model_param(*self, l_in, r_in);
                         assert(to_model(l_in) == to_model(r_in));
                     }
                 }
@@ -779,6 +795,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// as a contract.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn is_zero(&mut self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), level),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -793,6 +811,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// the node is a `Succ` and its predecessor is zero under every assignment.
     #[verifier::exec_allows_no_decreases_clause]
     fn is_one(&mut self, l: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), l),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -818,6 +838,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. The mirror image of `is_zero`: `1 <= level`.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn is_nonzero(&mut self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), level),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -842,6 +864,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// one-directional contract is enough to build a two-directional one.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn eq_antisymm(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), l),
+            crate::util_model::owns(*old(self), r),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -863,6 +888,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// mismatch can be lost.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn eq_antisymm_many(&mut self, xs: LevelsPtr<'t>, ys: LevelsPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), xs),
+            crate::util_model::owns(*old(self), ys),
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -887,9 +915,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut out = true;
         while i < n
             invariant
+                crate::util_model::owns_all(*self, xs_v@),
+                crate::util_model::owns_all(*self, ys_v@),
+                crate::util_model::owns(*old(self), xs),
+                crate::util_model::owns(*old(self), ys),
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
+                crate::util_model::owns_all(*old(self), xs_v@),
+                crate::util_model::owns_all(*old(self), ys_v@),
                 n == xs_v@.len(),
                 xs_v@.len() == ys_v@.len(),
                 xs_v@.len() == to_model_of_levels(xs).len(),
@@ -935,6 +969,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// is why the kernel does not.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn is_never_zero(&self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, level),
         ensures
             result ==> forall|rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
     {
@@ -991,6 +1027,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// The negation, and the direction the kernel actually consumes: `false`
     /// means "definitely not Prop". Verified in place, body unchanged.
     pub fn may_be_prop(&self, level: LevelPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, level),
         ensures
             !result ==> forall|rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) > 0,
     {
@@ -1008,6 +1046,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn contains_param(&self, uparams: LevelsPtr<'t>, candidate: NamePtr<'t>) -> (result:
         bool)
+        requires
+            crate::util_model::owns(*self, uparams),
+            crate::util_model::owns(*self, candidate),
         ensures
             result == (exists|i: int|
                 0 <= i < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(
@@ -1019,6 +1060,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost it0 = it;
         let found = it.any(
             |lptr: LevelPtr<'t>| -> (r: bool)
+                requires
+                    crate::util_model::owns(*self, lptr),
                 ensures
                     r == (to_model(lptr) == LevelSpec::Param(
                         crate::level_arena_bridge::name_id(candidate),
@@ -1029,7 +1072,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             proof {
                                 if crate::level_arena_bridge::name_id(nm)
                                     == crate::level_arena_bridge::name_id(candidate) {
-                                    crate::level_arena_bridge::name_id_injective(nm, candidate);
+                                    crate::level_arena_bridge::name_id_injective(*self, nm, candidate);
                                 }
                                 assert(to_model(lptr) == LevelSpec::Param(
                                     crate::level_arena_bridge::name_id(nm),
@@ -1102,6 +1145,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn all_uparams_defined(&self, level: LevelPtr<'t>, params: LevelsPtr<'t>) -> (result:
         bool)
+        requires
+            crate::util_model::owns(*self, level),
+            crate::util_model::owns(*self, params),
         ensures
             result ==> forall|n: u64| #[trigger]
                 param_names(to_model(level)).contains(n) ==> level_names(
@@ -1175,14 +1221,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let found = ls.iter().copied().any(
                     |x: LevelPtr<'t>| -> (r: bool)
                         ensures
-                            r == (x == level),
+                            r == (x.raw == level.raw),
                         { x == level },
                 );
                 proof {
                     broadcast use vstd::std_specs::iter::group_iter_axioms;
 
                     if found {
-                        let j = choose|j: int| 0 <= j < ls@.len() && #[trigger] ls@[j] == level;
+                        let j = choose|j: int| 0 <= j < ls@.len() && #[trigger] ls@[j].raw == level.raw;
+                        crate::util_model::owned_raw_eq(*self, ls@[j], level);
                         assert(to_model(ls@[j]) == to_model(level));
                         assert(to_model_of_levels(params)[j] == to_model(level));
                         let n = level_spec_param_name(to_model(level));
@@ -1206,7 +1253,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// unchanged; only the contract is new.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn combining(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), l),
+            crate::util_model::owns(*old(self), r),
         ensures
+            crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -1300,7 +1351,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// `is_one` would have to promise.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn simplify(&mut self, ptr: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), ptr),
         ensures
+            crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -1487,12 +1541,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         vs: LevelsPtr<'t>,
     ) -> (result: LevelsPtr<'t>)
         requires
+            crate::util_model::owns(*old(self), uparams),
+            crate::util_model::owns(*old(self), ks),
+            crate::util_model::owns(*old(self), vs),
             to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
             forall|j: int|
                 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(
                     ks,
                 )[j] is Param,
         ensures
+            crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             to_model_of_levels(result) =~= subst_levels_spec(
                 to_model_of_levels(uparams),
@@ -1511,7 +1569,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut out: Vec<LevelPtr<'t>> = Vec::new();
         for l in it: ls.iter().copied()
             invariant
+                crate::util_model::owns_all(*self, out@),
+                crate::util_model::owns(*old(self), uparams),
                 crate::util_model::same_arenas(*old(self), *self),
+                crate::util_model::owns_all(*old(self), ls@),
+                crate::util_model::owns_all(*old(self), out@),
+                crate::util_model::owns(*old(self), ks),
+                crate::util_model::owns(*old(self), vs),
                 it.seq() == ls@,
                 ls@.len() == to_model_of_levels(uparams).len(),
                 forall|j: int|
@@ -1561,12 +1625,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         vs: LevelsPtr<'t>,
     ) -> (result: LevelPtr<'t>)
         requires
+            crate::util_model::owns(*old(self), level),
+            crate::util_model::owns(*old(self), ks),
+            crate::util_model::owns(*old(self), vs),
             to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
             forall|j: int|
                 0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(
                     ks,
                 )[j] is Param,
         ensures
+            crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             to_model(result) == subst_level_spec(
                 to_model(level),
@@ -1603,6 +1671,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let (ks_read, vs_read) = (self.read_levels(ks), self.read_levels(vs));
                 for (k, v) in it: ks_read.iter().copied().zip(vs_read.iter().copied())
                     invariant
+                        crate::util_model::owns(*old(self), level),
+                        crate::util_model::owns(*old(self), ks),
+                        crate::util_model::owns(*old(self), vs),
+                        crate::util_model::owns_all(*self, ks_read@),
+                        crate::util_model::owns_all(*self, vs_read@),
+                        crate::util_model::owns(*self, level),
                         ks_read@.len() == to_model_of_levels(ks).len(),
                         vs_read@.len() == to_model_of_levels(vs).len(),
                         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
@@ -1631,7 +1705,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     if level == k {
                         proof {
                             let i = it.index();
-                            level_ptr_eq_iff_same_model_param(level, k);
+                            crate::util_model::owned_raw_eq(*self, level, k);
+                            level_ptr_eq_iff_same_model_param(*self, level, k);
                             assert(to_model_of_levels(ks)[i] == LevelSpec::Param(q));
                             assert(names[i] == q);
                             find_level_idx_first_match(names, q, i as nat);
@@ -1641,7 +1716,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     }
                     proof {
                         let i = it.index();
-                        level_ptr_eq_iff_same_model_param(level, k);
+                        level_ptr_eq_iff_same_model_param(*self, level, k);
                         assert(names[i] != q);
                         scanned = scanned + 1;
                     }

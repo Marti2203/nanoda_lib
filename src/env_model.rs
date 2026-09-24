@@ -250,6 +250,46 @@ pub fn verified_is_lt(a: &ReducibilityHint, b: &ReducibilityHint) -> (result: bo
 #[verifier::external_body]
 pub struct ExEnv<'x, 'a>(Env<'x, 'a>) where 'a: 'x;
 
+/// The arenas an environment's pointers index: its declarations are stored
+/// in some context's dag (temporary declarations) or the export file's. See
+/// `docs/ARENA_IDENTITY.md`. Every lookup below says its result belongs to
+/// these; a checker's environment and context agree on them (`tc_wf`).
+pub uninterp spec fn env_arena_ids<'x, 'a>(env: Env<'x, 'a>) -> (nat, nat);
+
+/// `p` belongs to `env`'s arenas (compare `util_model::owns`).
+pub open spec fn env_owns<'x, 'a, A>(env: Env<'x, 'a>, p: crate::util::Ptr<A>) -> bool {
+    crate::util_model::owns_in(env_arena_ids(env), p)
+}
+
+/// A declaration header's pointers belong to `env`'s arenas.
+pub open spec fn info_owned<'x, 'a>(env: Env<'x, 'a>, i: crate::env::DeclarInfo<'a>) -> bool {
+    env_owns(env, i.name) && env_owns(env, i.uparams) && env_owns(env, i.ty)
+}
+
+/// An environment's records point into its own arenas. Stated per record kind
+/// and ensured by the lookup that hands the record out.
+pub open spec fn inductive_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::InductiveData<'a>) -> bool {
+    &&& info_owned(env, d.info)
+    &&& forall|k: int| 0 <= k < d.all_ind_names@.len() ==> env_owns(env, #[trigger] d.all_ind_names@[k])
+    &&& forall|k: int| 0 <= k < d.all_ctor_names@.len() ==> env_owns(env, #[trigger] d.all_ctor_names@[k])
+}
+
+pub open spec fn constructor_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::ConstructorData<'a>) -> bool {
+    info_owned(env, d.info) && env_owns(env, d.inductive_name)
+}
+
+pub open spec fn recursor_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::RecursorData<'a>) -> bool {
+    &&& info_owned(env, d.info)
+    &&& forall|k: int| 0 <= k < d.all_inductives@.len() ==> env_owns(env, #[trigger] d.all_inductives@[k])
+    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> env_owns(env, #[trigger] d.rec_rules@[k].ctor_name)
+    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> env_owns(env, #[trigger] d.rec_rules@[k].val)
+}
+
+/// `env`'s pointers are `c`'s: then `env_owns` is `owns(c, _)`.
+pub open spec fn env_matches<'x, 'a, 't, 'p>(env: Env<'x, 'a>, c: crate::util::TcCtx<'t, 'p>) -> bool {
+    env_arena_ids(env) == crate::util_model::arena_ids(c)
+}
+
 pub uninterp spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
 
 /// The environment as the reduction and typing models see it: its
@@ -277,7 +317,7 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::get_declar_val ](
 ) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
     ensures
         match result {
-            Some((uparams, val)) => to_model_of_env(*env).contains_key(name_id(*n))
+            Some((uparams, val)) => env_owns(*env, uparams) && env_owns(*env, val) && to_model_of_env(*env).contains_key(name_id(*n))
                 && to_model_of_env(*env)[name_id(*n)] == (
                 level_names(to_model_of_levels(uparams)),
                 expr_to_model(val),
@@ -302,6 +342,7 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::visible_declar_names ](
     env: &Env<'x, 'a>,
 ) -> (result: Vec<NamePtr<'a>>) where 'a: 'x
     ensures
+        forall|i: int| 0 <= i < result@.len() ==> #[trigger] env_owns(*env, result@[i]),
         forall|id: u64| #[trigger]
             to_model_of_env(*env).contains_key(id) ==> exists|i: int|
                 0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
@@ -455,7 +496,7 @@ pub assume_specification<'x, 'a>[ get_declar_info_ty ](
 ) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
     ensures
         match result {
-            Some((uparams, ty)) => to_model_of_declar_ty(*env).contains_key(name_id(*n))
+            Some((uparams, ty)) => env_owns(*env, uparams) && env_owns(*env, ty) && to_model_of_declar_ty(*env).contains_key(name_id(*n))
                 && to_model_of_declar_ty(*env)[name_id(*n)] == (
                 level_names(to_model_of_levels(uparams)),
                 expr_to_model(ty),
@@ -545,7 +586,10 @@ pub assume_specification<'x, 'a>[ get_recursor_data ](
 ) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
     ensures
         match result {
-            Some((np, nm, nmin, major, uparams, rules)) => (forall|j: int|
+            Some((np, nm, nmin, major, uparams, rules)) => env_owns(*env, uparams) && (forall|i: int|
+                0 <= i < rules@.len() ==> env_owns(*env, #[trigger] rec_rule_ctor_name_of(rules@[i])))
+                && (forall|i: int|
+                0 <= i < rules@.len() ==> env_owns(*env, #[trigger] rec_rule_val_of(rules@[i]))) && (forall|j: int|
                 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
                     uparams,
                 )[j] is Param) && to_model_of_recursors(*env).contains_key(name_id(*n))
@@ -583,7 +627,7 @@ pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
 ) -> (result: Option<NamePtr<'a>>)
     ensures
         match result {
-            Some(c) => to_model_of_struct_ctor(*env).contains_key(name_id(*n))
+            Some(c) => env_owns(*env, c) && to_model_of_struct_ctor(*env).contains_key(name_id(*n))
                 && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
             None => true,
         },
@@ -634,29 +678,35 @@ pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_declar ](
 ) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
 ;
 
-/// CLAIM-FREE, same terms as `get_declar` above. `tc.rs`'s `mk_nullary_ctor`
-/// reads the inductive's constructor list; what it promises its callers is
-/// about the EXPRESSION it builds, not about the environment, so nothing is
-/// stated here.
+/// Claims only that the record's pointers belong to the environment's arenas
+/// (`inductive_data_owned`) -- nothing about what the record says. `tc.rs`'s
+/// `mk_nullary_ctor` reads the inductive's constructor list; what it promises
+/// its callers is about the EXPRESSION it builds, not about the environment.
 pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_inductive ](
     env: &'b Env<'x, 'a>,
     n: &NamePtr<'a>,
 ) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> inductive_data_owned(*env, *d),
 ;
 
-/// CLAIM-FREE, same terms as the two above.
+/// Same terms as `get_inductive` above.
 pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_structure ](
     env: &'b Env<'x, 'a>,
     n: &NamePtr<'a>,
     rec_ok: bool,
 ) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> inductive_data_owned(*env, *d),
 ;
 
-/// CLAIM-FREE, same terms as the three above.
+/// Same terms as `get_inductive` above (`constructor_data_owned`).
 pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_constructor ](
     env: &'b Env<'x, 'a>,
     n: &NamePtr<'a>,
 ) -> (result: Option<&'b crate::env::ConstructorData<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> constructor_data_owned(*env, *d),
 ;
 
 pub assume_specification<'x, 'a>[ Env::<'x, 'a>::can_be_struct ](

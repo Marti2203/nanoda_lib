@@ -100,13 +100,19 @@ pub open spec fn name_id<'a>(n: NamePtr<'a>) -> u64 {
     n.raw as u64
 }
 
-// ARENA-IDENTITY STAGE 2: false across arenas (equal `raw`, different
-// `arena`); gets a same-arena precondition in stage 4.
-#[verifier::external_body]
-pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
+/// Within one context: two pointers from different arenas can share an
+/// index, which is why both must belong to `c`.
+pub proof fn name_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'a>, n2: NamePtr<'a>)
+    requires
+        crate::util_model::owns(c, n1),
+        crate::util_model::owns(c, n2),
     ensures
         (n1 == n2) <==> (name_id(n1) == name_id(n2)),
 {
+    if n1.raw == n2.raw {
+        assert(n1.ph == n2.ph);
+        assert(n1.arena == n2.arena);
+    }
 }
 
 /// Were `assume_specification`s; `Ptr`'s own `PartialEq` is specified now
@@ -114,7 +120,8 @@ pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
 #[allow(dead_code)]
 pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
     ensures
-        result == (a == b),
+        result == (name_id(a) == name_id(b)),
+        a.arena@ == b.arena@ ==> result == (a == b),
 {
     a == b
 }
@@ -139,8 +146,10 @@ pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
 /// Same assumption as before, not a new one -- and the witness form is now
 /// DERIVED from it rather than separately assumed.
 #[verifier::external_body]
-pub proof fn level_ptr_eq_iff_same_model_param<'a>(a: LevelPtr<'a>, b: LevelPtr<'a>)
+pub proof fn level_ptr_eq_iff_same_model_param<'t, 'p, 'a>(c: TcCtx<'t, 'p>, a: LevelPtr<'a>, b: LevelPtr<'a>)
     requires
+        crate::util_model::owns(c, a),
+        crate::util_model::owns(c, b),
         to_model(a) is Param,
         to_model(b) is Param,
     ensures
@@ -148,19 +157,22 @@ pub proof fn level_ptr_eq_iff_same_model_param<'a>(a: LevelPtr<'a>, b: LevelPtr<
 {
 }
 
-pub proof fn level_ptr_eq_iff_same_param<'a>(
+pub proof fn level_ptr_eq_iff_same_param<'t, 'p, 'a>(
+    c: TcCtx<'t, 'p>,
     a: LevelPtr<'a>,
     b: LevelPtr<'a>,
     na: NamePtr<'a>,
     nb: NamePtr<'a>,
 )
     requires
+        crate::util_model::owns(c, a),
+        crate::util_model::owns(c, b),
         to_model(a) == LevelSpec::Param(name_id(na)),
         to_model(b) == LevelSpec::Param(name_id(nb)),
     ensures
         (a == b) <==> (name_id(na) == name_id(nb)),
 {
-    level_ptr_eq_iff_same_model_param(a, b);
+    level_ptr_eq_iff_same_model_param(c, a, b);
 }
 
 /// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
@@ -176,7 +188,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_levels ](
     ctx: &TcCtx<'t, 'p>,
     p: LevelsPtr<'t>,
 ) -> (result: std::sync::Arc<[LevelPtr<'t>]>) where 'p: 't
+    requires
+        crate::util_model::owns(*ctx, p),
     ensures
+        crate::util_model::owns_all(*ctx, result@),
         result@.len() == to_model_of_levels(p).len(),
         forall|i: int|
             0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
@@ -188,7 +203,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_levels ](
 pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> (result: Vec<
     LevelPtr<'t>,
 >)
+    requires
+        crate::util_model::owns(*ctx, p),
     ensures
+        crate::util_model::owns_all(*ctx, result@),
         result@.len() == to_model_of_levels(p).len(),
         forall|i: int|
             0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
@@ -200,7 +218,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
     ctx: &mut TcCtx<'t, 'p>,
     ls: &[LevelPtr<'t>],
 ) -> (result: LevelsPtr<'t>) where 'p: 't
+    requires
+        crate::util_model::owns_all(*old(ctx), ls@),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         to_model_of_levels(result).len() == ls@.len(),
         forall|i: int|
             0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
@@ -237,8 +258,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_level ](
     l: Level<'t>,
 ) -> (result: LevelPtr<'t>) where 'p: 't
     requires
+        level_children_owned(*old(ctx), l),
         level_hash_ok(l),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         to_model(result) == to_model_of_level(l),
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
@@ -249,6 +272,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::zero ](ctx: &TcCtx<'t, 'p>) -
     't,
 >) where 'p: 't
     ensures
+        crate::util_model::owns(*ctx, result),
         to_model(result) == LevelSpec::Zero,
 ;
 
@@ -491,17 +515,33 @@ pub proof fn level_model_at_computes_nesting<'a>(p0: LevelPtr<'a>, h: u64)
     assert(level_model_at(ls, 0) == LevelSpec::Zero);
 }
 
+/// Every pointer inside the level node belongs to `c` (see
+/// `expr_children_owned`).
+pub open spec fn level_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, l: crate::level::Level<'t>) -> bool {
+    match l {
+        crate::level::Level::Zero => true,
+        crate::level::Level::Succ(p, _) => crate::util_model::owns(c, p),
+        crate::level::Level::Max(a, b, _) => crate::util_model::owns(c, a) && crate::util_model::owns(c, b),
+        crate::level::Level::IMax(a, b, _) => crate::util_model::owns(c, a) && crate::util_model::owns(c, b),
+        crate::level::Level::Param(n, _) => crate::util_model::owns(c, n),
+    }
+}
+
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_level ](
     ctx: &TcCtx<'t, 'p>,
     ptr: LevelPtr<'t>,
 ) -> (result: Level<'t>) where 'p: 't
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
+        level_children_owned(*ctx, result),
         to_model_of_level(result) == to_model(ptr),
 ;
 
 #[allow(dead_code)]
 pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
     ensures
+        result matches Some(n) ==> (*l matches Level::Param(p, _) && p == n),
         match result {
             Some(n) => to_model_of_level(*l) == LevelSpec::Param(name_id(n)),
             None => !matches!(to_model_of_level(*l), LevelSpec::Param(_)),
@@ -544,10 +584,14 @@ pub fn verified_subst_level<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<LevelPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), level),
+        crate::util_model::owns(*old(ctx), ks),
+        crate::util_model::owns(*old(ctx), vs),
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall|j: int|
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -589,10 +633,14 @@ pub fn verified_subst_levels<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<LevelsPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), uparams),
+        crate::util_model::owns(*old(ctx), ks),
+        crate::util_model::owns(*old(ctx), vs),
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall|j: int|
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -640,6 +688,8 @@ pub open spec fn distinct_params(ls: Seq<LevelSpec>) -> bool {
 
 pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsPtr<'t>) -> (result:
     bool)
+    requires
+        crate::util_model::owns(*ctx, ls),
     ensures
         result ==> distinct_params(to_model_of_levels(ls)),
 {
@@ -649,6 +699,8 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
     let mut i: usize = 0;
     while i < n
         invariant
+            crate::util_model::owns(*ctx, ls),
+            crate::util_model::owns_all(*ctx, v@),
             n == v@.len(),
             v@.len() == m.len(),
             i <= n,
@@ -664,6 +716,8 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
                 let mut j: usize = 0;
                 while j < n
                     invariant
+                        crate::util_model::owns(*ctx, ls),
+                        crate::util_model::owns_all(*ctx, v@),
                         n == v@.len(),
                         v@.len() == m.len(),
                         i < n,
@@ -681,7 +735,6 @@ pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsP
                                     return false;
                                 }
                                 proof {
-                                    name_id_injective(ni, nj);
                                     assert(m[j as int] == LevelSpec::Param(name_id(nj)));
                                 }
                             },

@@ -213,9 +213,85 @@ pub struct ExLeanDag<'t>(crate::util::LeanDag<'t>);
 /// into its dag.
 pub uninterp spec fn dag_arena<'a>(d: crate::util::LeanDag<'a>) -> nat;
 
-/// A context's two arenas: its own dag's id and its export file's dag's id.
+/// A context's two arenas: its own dag's id, and its export file's, which
+/// is DEFINED as the tag the export file's name cache carries (so the cached
+/// names are the export file's by construction, with no linking axiom).
 pub open spec fn arena_ids<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> (nat, nat) {
-    (dag_arena(*c.dag), dag_arena(c.export_file.dag))
+    (dag_arena(*c.dag), c.export_file.name_cache.arena_id())
+}
+
+/// The pointer indexes the context's own dag (bit 31 set), rather than the
+/// export file's.
+pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
+    p.raw >= 0x8000_0000u32
+}
+
+/// An export-file pointer of the export arena `a`.
+pub open spec fn export_tagged<A>(a: nat, p: crate::util::Ptr<A>) -> bool {
+    !ptr_is_tc(p) && p.arena@ == a
+}
+
+/// `p` carries the id of the arena its marker selects, out of the pair
+/// `ids` (the context's own dag, the export file).
+pub open spec fn owns_in<A>(ids: (nat, nat), p: crate::util::Ptr<A>) -> bool {
+    p.arena@ == if ptr_is_tc(p) { ids.0 } else { ids.1 }
+}
+
+pub open spec fn owns_all_in<A>(ids: (nat, nat), s: Seq<crate::util::Ptr<A>>) -> bool {
+    forall|i: int| 0 <= i < s.len() ==> #[trigger] owns_in(ids, s[i])
+}
+
+/// `p` belongs to `c`. Every reader requires this, and every allocation
+/// ensures it of its result. Two pointers `c` owns with the same `raw` are
+/// the same pointer. Stated through `arena_ids` so that a frame
+/// (`same_arenas`) carries every ownership fact across a call by congruence,
+/// with no quantifier to re-instantiate.
+pub open spec fn owns<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, p: crate::util::Ptr<A>) -> bool {
+    owns_in(arena_ids(c), p)
+}
+
+/// Two pointers one context owns are equal exactly when their indices are:
+/// equal `raw` puts them in the same tier, and so under the same tag.
+pub proof fn owned_raw_eq<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, a: crate::util::Ptr<A>, b: crate::util::Ptr<A>)
+    requires
+        owns(c, a),
+        owns(c, b),
+    ensures
+        (a == b) <==> (a.raw == b.raw),
+{
+    owned_raw_eq_in(arena_ids(c), a, b);
+}
+
+/// `owned_raw_eq` for pointers of one arena pair, with no context at hand.
+pub proof fn owned_raw_eq_in<A>(ids: (nat, nat), a: crate::util::Ptr<A>, b: crate::util::Ptr<A>)
+    requires
+        owns_in(ids, a),
+        owns_in(ids, b),
+    ensures
+        (a == b) <==> (a.raw == b.raw),
+{
+    if a.raw == b.raw {
+        assert(a.ph == b.ph);
+        assert(a.arena@ == b.arena@);
+    }
+}
+
+pub proof fn owns_all_push<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate::util::Ptr<A>>, v: crate::util::Ptr<A>)
+    requires
+        owns_all(c, s),
+        owns(c, v),
+    ensures
+        owns_all(c, s.push(v)),
+{
+    assert forall|i: int| 0 <= i < s.push(v).len() implies #[trigger] owns_in(arena_ids(c), s.push(v)[i]) by {
+        if i < s.len() {
+            assert(s.push(v)[i] == s[i]);
+        }
+    }
+}
+
+pub open spec fn owns_all<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate::util::Ptr<A>>) -> bool {
+    owns_all_in(arena_ids(c), s)
 }
 
 /// The frame every `&mut` context function keeps: the context still indexes
@@ -245,14 +321,14 @@ pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
 /// the real `==` said nothing -- and the kernel's own code uses `==`, not the
 /// wrappers, so without this no kernel function that compares two pointers can
 /// be verified in place.
-// ARENA-IDENTITY STAGE 2: false across arenas (runtime `==` compares `raw`
-// only); becomes `result == (a.raw == b.raw)` in stage 4.
 pub assume_specification<A>[ <crate::util::Ptr<A> as PartialEq>::eq ](
     a: &crate::util::Ptr<A>,
     b: &crate::util::Ptr<A>,
 ) -> (result: bool)
     ensures
-        result == (*a == *b),
+        result == (a.raw == b.raw),
+        // with the arena known the same, `==` is equality of pointers
+        a.arena@ == b.arena@ ==> result == (*a == *b),
 ;
 
 /// `Ptr`'s equality, registered through vstd's `PartialEqSpec` extension as
@@ -277,7 +353,7 @@ impl<A> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
     }
 
     open spec fn eq_spec(&self, other: &crate::util::Ptr<A>) -> bool {
-        *self == *other
+        self.raw == other.raw
     }
 }
 

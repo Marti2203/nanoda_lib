@@ -2014,8 +2014,9 @@ verus! {
 /// the zip desugars to. Same pairs, same order, same early exit.
 fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>]) -> (result: bool)
     ensures
+        // compared by index, as the kernel's `==` does
         result == (ctor_apps@.len() >= local_params@.len() && forall|i: int|
-            0 <= i < local_params@.len() ==> #[trigger] ctor_apps@[i] == local_params@[i]),
+            0 <= i < local_params@.len() ==> #[trigger] ctor_apps@[i].raw == local_params@[i].raw),
 {
     if ctor_apps.len() < local_params.len() {
         return false
@@ -2027,7 +2028,7 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
             0 <= i <= n,
             n == local_params@.len(),
             n <= ctor_apps@.len(),
-            forall|k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k] == local_params@[k],
+            forall|k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k].raw == local_params@[k].raw,
         decreases n - i,
     {
         if ctor_apps[i] != local_params[i] {
@@ -2052,6 +2053,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// function can actually reach.
     fn init_k_target(&mut self, st: &mut InductiveCheckState<'t>)
         requires
+            crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
             old(st).is_zero is Some,
             old(st).all_inductives_incl_specialized@.len() == 1 && old(
                 st,
@@ -2089,7 +2091,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// silently in release.
     #[verifier::exec_allows_no_decreases_clause]
     fn gen_elim_level(&mut self, st: &InductiveCheckState<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::inductive_model::st_owned(*(*old(self)).ctx, *st),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             !(exists|i: int|
                 0 <= i < to_model_of_levels(st.uparams).len() && #[trigger] to_model_of_levels(
                     st.uparams,
@@ -2112,6 +2117,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = 1u64;
         loop
             invariant
+                crate::util_model::owns(*self.ctx, p),
+                crate::util_model::owns(*self.ctx, st.uparams),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
         {
             let candidate = self.ctx.append_index_after(p, i);
@@ -2142,7 +2149,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// vectors are built in step by the caller, so they match; nothing in the
     /// code says so, and this is a `()`-returning function with nothing to
     /// decline to, so the mismatch aborts rather than silently skipping.
-    fn mk_majors(&mut self, st: &mut InductiveCheckState<'t>) {
+    fn mk_majors(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
+    {
         let n = st.ind_consts.len();
         if st.local_indices.len() < n {
             crate::util::kernel_check(false, "mk_majors: local_indices is shorter than ind_consts");
@@ -2151,6 +2161,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut idx: usize = 0;
         while idx < n
             invariant
+                crate::util_model::owns_all(*self.ctx, st.local_params@),
+                crate::util_model::owns_all(*self.ctx, st.ind_consts@),
+                forall|i: int| 0 <= i < st.local_indices@.len() ==> crate::util_model::owns_all(*self.ctx, #[trigger] st.local_indices@[i]@),
                 n == st.ind_consts@.len(),
                 n <= st.local_indices@.len(),
                 idx <= n,

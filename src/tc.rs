@@ -777,9 +777,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn ensure_pi(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -804,9 +806,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn infer_sort_of(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: LevelPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -824,6 +828,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_eta_struct(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -849,6 +855,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_eta_struct_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -896,6 +904,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ghost mut c: int = np;
                 for i in (*num_params as usize)..args.len()
                     invariant
+                        crate::util_model::owns_all(*self.ctx, args@),
+                        crate::util_model::owns(*self.ctx, *inductive_name),
+                        crate::util_model::owns(*(*old(self)).ctx, x),
+                        crate::util_model::owns(*(*old(self)).ctx, y),
                         tc_wf(*self),
                         (*self).env == old(self).env,
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -957,8 +969,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn str_lit_to_ctor_reducing(&mut self, x: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
             tc_wf(*old(self)),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1004,6 +1018,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_string_lit_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -1038,6 +1054,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_string_lit_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -1071,6 +1089,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_unit(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -1136,10 +1156,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1284,9 +1307,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn try_reduce_nat(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1452,9 +1477,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, structure),
             tc_wf(*old(self)),
             in_scope(*old(self), structure),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1565,9 +1592,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn infer_then_whnf(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1594,9 +1623,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         flag: InferFlag,
     ) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+            crate::util_model::owns(*(*old(self)).ctx, structure),
             tc_wf(*old(self)),
             in_scope(*old(self), structure),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1762,6 +1794,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for i in 0..(*num_params)
             invariant
+                crate::util_model::owns_all(*self.ctx, struct_ty_args@),
+                crate::util_model::owns(*self.ctx, ctor_ty),
+                crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+                crate::util_model::owns(*(*old(self)).ctx, structure),
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -1859,6 +1895,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for i in 0..idx
             invariant
+                crate::util_model::owns(*self.ctx, inductive_info.name),
+                crate::util_model::owns(*self.ctx, ctor_ty),
+                crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+                crate::util_model::owns(*(*old(self)).ctx, structure),
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -1990,9 +2030,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::spinoff_prover]
     pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2140,9 +2182,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2218,6 +2262,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while !args.is_empty()
             invariant
+                crate::util_model::owns(*self.ctx, fun),
+                crate::util_model::owns_all(*self.ctx, args@),
+                crate::util_model::owns_all(*self.ctx, ctx@),
+                crate::util_model::owns(*(*old(self)).ctx, e),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -2282,6 +2330,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.ctx.eager_mode = outer_scope_eager_setting;
                     }
                     let ghost ctx_pre = ctx@;
+                    proof {
+                        crate::util_model::owns_all_push(*self.ctx, ctx@, arg);
+                    }
                     ctx.push(arg);
                     proof {
                         // the next argument is SA[k]
@@ -2375,9 +2426,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::spinoff_prover]
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2418,6 +2471,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             e,
         )
             invariant
+                crate::util_model::owns(*self.ctx, e),
+                crate::util_model::owns_all(*self.ctx, locals@),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
@@ -2487,6 +2542,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     walk_set(L, self.live@, start_pos),
                 );
                 assert(ids_of(locals@.push(local)) =~= ids_of(locals@).push(crate::expr_arena_bridge::expr_id(local)));
+            }
+            proof {
+                crate::util_model::owns_all_push(*self.ctx, locals@, local);
             }
             locals.push(local);
             proof {
@@ -2560,6 +2618,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Some(local) = locals.pop()
             invariant
+                crate::util_model::owns_all(*self.ctx, locals@),
+                crate::util_model::owns(*self.ctx, abstrd),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
@@ -2660,9 +2720,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_pi(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2693,6 +2755,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant
+                crate::util_model::owns(*self.ctx, e),
+                crate::util_model::owns_all(*self.ctx, locals@),
+                crate::util_model::owns_all(*self.ctx, universes@),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
@@ -2739,6 +2804,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost B0 = self.ctx.dbj_level_counter;
             let dom_univ = self.infer_sort_of(binder_type, flag);
             let ghost pre_u = universes@;
+            proof {
+                crate::util_model::owns_all_push(*self.ctx, universes@, dom_univ);
+            }
             universes.push(dom_univ);
             crate::util::kernel_check(
                 self.ctx.dbj_level_counter < u16::MAX,
@@ -2752,6 +2820,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let loc = locals@[pre.len() as int];
                 opened_locals_push(pre, c0, walk_set(L, live_k, c0), loc);
                 assert(locals@ =~= pre.push(loc));
+                crate::util_model::owns_all_push(*self.ctx, pre, loc);
                 walk_set_grows(L, live_k, crate::expr_arena_bridge::expr_id(loc), c0);
                 opened_locals_weaken(locals@, c0, walk_set(L, live_k, c0), walk_set(L, self.live@, c0));
                 assert(ids_of(locals@) =~= ids_of(pre).push(crate::expr_arena_bridge::expr_id(loc)));
@@ -2808,6 +2877,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant
+                crate::util_model::owns_all(*self.ctx, locals@),
+                crate::util_model::owns_all(*self.ctx, universes@),
+                crate::util_model::owns(*self.ctx, infd),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
@@ -2856,6 +2928,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         flag: InferFlag,
     ) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, binder_type),
+            crate::util_model::owns(*(*old(self)).ctx, val),
+            crate::util_model::owns(*(*old(self)).ctx, body),
             tc_wf(*old(self)),
             in_scope(*old(self), binder_type),
             in_scope(*old(self), val),
@@ -2863,6 +2938,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::expr_model::nlbv(to_model_expr(body)) <= 1,
             crate::expr_model::dbj_deep_in(to_model_expr(body), live_set(*old(self)), old(self).ctx.dbj_level_counter),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2935,9 +3011,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn whnf(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2963,6 +3041,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                crate::util_model::owns(*self.ctx, cursor),
+                crate::util_model::owns(*(*old(self)).ctx, e),
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -3017,9 +3097,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn whnf_no_unfolding_cheap_proj(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3033,9 +3115,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3049,9 +3133,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3146,6 +3232,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant
+                        crate::util_model::owns_all(*self.ctx, args@),
+                        crate::util_model::owns(*(*old(self)).ctx, e),
                         tc_wf(*self),
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                         crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -3338,6 +3426,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3409,6 +3499,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_binder_multi(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3431,6 +3523,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_binder_aux(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3463,6 +3557,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                crate::util_model::owns(*self.ctx, x),
+                crate::util_model::owns(*self.ctx, y),
+                crate::util_model::owns_all(*self.ctx, locals@),
                 live_walk(self.live@, old(self).live@, L, locals@, c0),
                 crate::expr_model::dbj_deep_in(to_model_expr(x), L, c0),
                 crate::expr_model::dbj_deep_in(to_model_expr(y), L, c0),
@@ -3547,6 +3644,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let loc = locals@[pre.len() as int];
                     live_walk_push(live_k, old(self).live@, L, pre, c0, loc);
                     assert(locals@ =~= pre.push(loc));
+                    crate::util_model::owns_all_push(*self.ctx, pre, loc);
                     binder_walk_step(
                         *old(self).env,
                         b1s,
@@ -3620,6 +3718,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3653,6 +3753,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_local(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3690,6 +3792,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_app(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3727,6 +3831,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < args1.len()
             invariant
+                crate::util_model::owns_all(*self.ctx, args1@),
+                crate::util_model::owns_all(*self.ctx, args2@),
+                crate::util_model::owns(*(*old(self)).ctx, x),
+                crate::util_model::owns(*(*old(self)).ctx, y),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3798,6 +3906,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, u),
+            crate::util_model::owns(*(*old(self)).ctx, v),
             tc_wf(*old(self)),
             in_scope(*old(self), u),
             in_scope(*old(self), v),
@@ -3824,6 +3934,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -3990,9 +4102,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn to_ctor_when_k(&mut self, major: ExprPtr<'t>, rec: &RecursorData<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::env_model::recursor_data_owned(*old(self).env, *rec),
+            crate::util_model::owns(*(*old(self)).ctx, major),
             tc_wf(*old(self)),
             in_scope(*old(self), major),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4058,9 +4173,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn iota_try_eta_struct(&mut self, ind_name: NamePtr<'t>, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, ind_name),
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4116,9 +4234,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         args: &[ExprPtr<'t>],
     ) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, const_name),
+            crate::util_model::owns(*(*old(self)).ctx, const_levels),
+            crate::util_model::owns_all(*(*old(self)).ctx, args@),
             tc_wf(*old(self)),
             forall|i: int| 0 <= i < args@.len() ==> in_scope(*old(self), #[trigger] args@[i]),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4356,7 +4478,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(crate::env_model::to_model_of_env(*self.env).rec_data(rid) == Some(rd));
             // the rule
             let cname = crate::expr_arena_bridge::const_name_of(major_ctor);
-            crate::tc_model::find_rule_of_find_index(rec_rules@, cname);
+            assert forall|k: int| 0 <= k < crate::tc_model::rec_rule_ctor_names(rec_rules@).len() implies #[trigger] crate::util_model::owns_in(
+                crate::util_model::arena_ids(*self.ctx),
+                crate::tc_model::rec_rule_ctor_names(rec_rules@)[k],
+            ) by {
+                assert(crate::tc_model::rec_rule_ctor_names(rec_rules@)[k] == crate::tc_model::rec_rule_ctor_name_of(rec_rules@[k]));
+            }
+            crate::tc_model::find_rule_of_find_index(*self.ctx, rec_rules@, cname);
             let ri = crate::util_model::find_index(crate::tc_model::rec_rule_ctor_names(rec_rules@), cname)->Some_0 as int;
             crate::tc_model::find_index_hit(crate::tc_model::rec_rule_ctor_names(rec_rules@), cname);
             assert(rec_rules@[ri] == rec_rule);
@@ -4397,9 +4525,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, c_name),
+            crate::util_model::owns_all(*(*old(self)).ctx, args@),
             tc_wf(*old(self)),
             forall|i: int| 0 <= i < args@.len() ==> in_scope(*old(self), #[trigger] args@[i]),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4520,9 +4651,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn delta(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4553,6 +4686,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_quick_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -4614,6 +4749,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         y_hint: ReducibilityHint,
     ) -> (result: Option<DeltaResult<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, x_defname),
+            crate::util_model::owns(*(*old(self)).ctx, y),
+            crate::util_model::owns(*(*old(self)).ctx, y_defname),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -4706,9 +4845,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_unfold_proj_app(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4731,6 +4872,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn delta_try_nat(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<DeltaResult<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -4784,6 +4927,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn args_def_eq_rev(&mut self, l_args: &Vec<ExprPtr<'t>>, r_args: &Vec<ExprPtr<'t>>) -> (result:
         bool)
         requires
+            crate::util_model::owns_all(*(*old(self)).ctx, l_args@),
+            crate::util_model::owns_all(*(*old(self)).ctx, r_args@),
             tc_wf(*old(self)),
             forall|i: int| 0 <= i < l_args@.len() ==> in_scope(*old(self), #[trigger] l_args@[i]),
             forall|i: int| 0 <= i < r_args@.len() ==> in_scope(*old(self), #[trigger] r_args@[i]),
@@ -4805,6 +4950,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = l_args.len();
         while i > 0
             invariant
+                crate::util_model::owns_all(*(*old(self)).ctx, l_args@),
+                crate::util_model::owns_all(*(*old(self)).ctx, r_args@),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4838,10 +4985,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn lazy_delta_step(&mut self, x_in: ExprPtr<'t>, y_in: ExprPtr<'t>) -> (result: DeltaResult<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x_in),
+            crate::util_model::owns(*(*old(self)).ctx, y_in),
             tc_wf(*old(self)),
             in_scope(*old(self), x_in),
             in_scope(*old(self), y_in),
         ensures
+            result matches DeltaResult::Exhausted(a, b) ==> crate::util_model::owns(*(*final(self)).ctx, a) && crate::util_model::owns(*(*final(self)).ctx, b),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4866,6 +5016,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                crate::util_model::owns(*self.ctx, x),
+                crate::util_model::owns(*self.ctx, y),
+                crate::util_model::owns(*(*old(self)).ctx, x_in),
+                crate::util_model::owns(*(*old(self)).ctx, y_in),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4976,9 +5130,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn is_prop(&mut self, e: ExprPtr<'t>) -> (result: (bool, ExprPtr<'t>))
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4997,9 +5153,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn may_be_prop(&mut self, e: ExprPtr<'t>) -> (result: (bool, ExprPtr<'t>))
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -5017,9 +5175,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn is_proof(&mut self, e: ExprPtr<'t>) -> (result: (bool, ExprPtr<'t>))
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -5036,6 +5196,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -5073,6 +5235,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_eta_expansion(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -5098,6 +5262,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn try_eta_expansion_aux(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             in_scope(*old(self), x),
             in_scope(*old(self), y),
@@ -5520,11 +5686,6 @@ pub assume_specification[ route_stats::bump_legacy_false ]()
 // cycle's contracts at this stage are the `tc_wf` frame only, so its callees
 // need to be callable, not to promise anything. Each gets a real contract when
 // the function that consumes it does.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::get_major_induct ](
-    ctx: &TcCtx<'t, 'p>,
-    rec: &crate::env::RecursorData<'t>,
-) -> (result: Option<NamePtr<'t>>) where 'p: 't
-;
 
 pub assume_specification<'a>[ crate::env::RecursorData::<'a>::major_idx ](
     rd: &crate::env::RecursorData<'a>,
@@ -5535,6 +5696,8 @@ pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_recursor ](
     env: &'b Env<'x, 'a>,
     n: &NamePtr<'a>,
 ) -> (result: Option<&'b crate::env::RecursorData<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> crate::env_model::recursor_data_owned(*env, *d),
 ;
 
 pub assume_specification[ route_stats::legacy_branch ](tag: u8)
@@ -8696,33 +8859,45 @@ pub proof fn local_type_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, x: crate:
     assert(crate::expr_model::dbj_deep_in(t, live_set(tc), tc.ctx.dbj_level_counter));
 }
 
+/// `p` belongs to the checker's context (`util_model::owns`), stated over
+/// the checker so a `&self` method's postcondition can say it.
+pub open spec fn tc_owns<'x, 't, 'p, A>(tc: TypeChecker<'x, 't, 'p>, p: crate::util::Ptr<A>) -> bool {
+    crate::util_model::owns(*tc.ctx, p)
+}
+
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
+    &&& crate::env_model::env_matches(*tc.env, *tc.ctx)
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_check@.contains_key(e) ==> kinfer_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.infer_cache_check@[e]),
         ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_check@[e]))
+            && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.infer_cache_check@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_no_check@.contains_key(e) ==> kinfer_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.infer_cache_no_check@[e]),
         ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_no_check@[e]))
+            && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.infer_cache_no_check@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.whnf_cache@.contains_key(e) ==> whnf_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_cache@[e]),
-        )
+        ) && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_cache@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.whnf_no_unfolding_cache@.contains_key(e) ==> whnf_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]),
-        )
+        ) && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_no_unfolding_cache@[e])
     &&& forall|p: crate::util::SortedPair<'t>| #[trigger]
         tc.tc_cache.eq_cache@.contains(p) ==> def_eq_claim(*tc.env, to_model_expr(p.0), to_model_expr(p.1))
+            && tc_owns(tc, p.0) && tc_owns(tc, p.1)
+    // the declaration being checked belongs to the checker's arenas
+    &&& (tc.declar_info matches Some(d) ==> tc_owns(tc, d.name) && tc_owns(tc, d.uparams) && tc_owns(tc, d.ty))
     // The shadow memo is a claim-bearing cache as well -- its entries are
     // certificates carrying their own reduction claim -- so its wellformedness
     // belongs here beside the other four rather than in every signature that
@@ -8777,6 +8952,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     fn failure_cache_insert(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
@@ -8806,7 +8983,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         declar_info: Option<DeclarInfo<'t>>,
     ) -> (result: Self)
         requires
+            declar_info matches Some(d) ==> crate::util_model::owns(*old(dag), d.name)
+                && crate::util_model::owns(*old(dag), d.uparams) && crate::util_model::owns(*old(dag), d.ty),
             old(dag).dbj_level_counter == 0,
+            crate::env_model::env_matches(*env, *old(dag)),
             // Vacuous for a freshly built `TcCtx` -- the cache is empty -- but
             // it has to be said, because `tc_wf` now carries it.
             crate::expr_arena_bridge::dsubst_cache_sound(*old(dag)),
@@ -8843,6 +9023,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// route: core, delta, join, conv, proof-irrelevance.)
     fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: u8)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
@@ -8888,6 +9070,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
@@ -8934,6 +9118,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             tc_wf(*final(self)),
@@ -8959,6 +9145,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn cache_infer_no_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(to_model_expr(e), to_model_expr(r)),
@@ -8978,6 +9166,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     pub fn cache_infer_check(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(to_model_expr(e), to_model_expr(r)),
@@ -8999,6 +9189,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn cache_whnf(&mut self, e: crate::util::ExprPtr<'t>, r: crate::util::ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
@@ -9027,6 +9219,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         r: crate::util::ExprPtr<'t>,
     )
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
@@ -9057,6 +9251,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn cache_eq(&mut self, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
             def_eq_claim(*(*old(self)).env, to_model_expr(x), to_model_expr(y)),
         ensures
@@ -9089,8 +9285,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         crate::util::ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*self.ctx, e),
             tc_wf(*self),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r),
             match result {
                 Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
                     to_model_expr(e),
@@ -9114,8 +9312,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         crate::util::ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*self.ctx, e),
             tc_wf(*self),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r),
             match result {
                 Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
                     to_model_expr(e),
@@ -9140,8 +9340,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         crate::util::ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*self.ctx, e),
             tc_wf(*self),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r),
             match result {
                 Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
                 None => true,
@@ -9163,8 +9365,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         crate::util::ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*self.ctx, e),
             tc_wf(*self),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r),
             match result {
                 Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
                 None => true,
@@ -9189,6 +9393,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     pub fn cached_eq(&self, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>) -> (result:
         bool)
         requires
+            crate::util_model::owns(*self.ctx, x),
+            crate::util_model::owns(*self.ctx, y),
             tc_wf(*self),
         ensures
             result ==> def_eq_claim(*self.env, to_model_expr(x), to_model_expr(y)),
@@ -9218,6 +9424,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// `level.rs`'s predicates (register entry 10). Arms unchanged.
     fn def_eq_sort(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             result == Some(true) ==> exists|l: LevelPtr<'t>, r: LevelPtr<'t>|
@@ -9253,6 +9461,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// VERUS-REWRITE(match-as-tail): arm result bound to a local.
     fn def_eq_const(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
             result ==> crate::expr_arena_bridge::is_const_shape(x)
@@ -9318,8 +9528,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         flag: InferFlag,
     ) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, c_name),
+            crate::util_model::owns(*(*old(self)).ctx, c_uparams),
             tc_wf(*old(self)),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9353,6 +9566,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let mut i: usize = 0;
                     while i < n
                         invariant
+                            crate::util_model::owns_all(*self.ctx, ls@),
+                            crate::util_model::owns(*self.ctx, this_declar_info.uparams),
+                            crate::util_model::owns(*(*old(self)).ctx, c_name),
+                            crate::util_model::owns(*(*old(self)).ctx, c_uparams),
                             n == ls@.len(),
                             i <= n,
                         decreases n - i,
@@ -9410,8 +9627,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e_type),
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9492,6 +9712,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let np = (*num_params) as usize;
         for i in 0..np
             invariant
+                crate::util_model::owns(*self.ctx, out),
+                crate::util_model::owns_all(*self.ctx, args@),
+                crate::util_model::owns(*(*old(self)).ctx, e_type),
+                crate::util_model::owns(*(*old(self)).ctx, e),
                 np <= args.len(),
                 tc_wf(*self),
                 (*self).env == old(self).env,
@@ -9543,6 +9767,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost pre = am.subrange(0, np as int);
         for j in 0..nf
             invariant
+                crate::util_model::owns(*self.ctx, out),
+                crate::util_model::owns(*self.ctx, c_name),
+                crate::util_model::owns(*(*old(self)).ctx, e_type),
+                crate::util_model::owns(*(*old(self)).ctx, e),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -9612,8 +9840,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ExprPtr<'t>,
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9685,9 +9915,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     fn unfold_def(&mut self, e: ExprPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             match result {
                 // The reduction claim needs nothing about `e`: it is one delta
                 // step on the head plus spine congruence. Closedness of `e` only
@@ -9805,7 +10037,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// What callers actually use it for is the head name, and that is proven.
     fn is_ctor_app(&self, e: ExprPtr<'t>) -> (result: Option<NamePtr<'t>>)
+        requires
+            crate::util_model::owns(*self.ctx, e),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r),
+            result matches Some(r) ==> tc_owns(*self, r),
             result matches Some(n) ==> crate::beta_model::spine_head(
                 to_model_expr(e),
             ) matches ExprSpec::Const(id, _) ==> id == crate::level_arena_bridge::name_id(n),
@@ -9844,8 +10080,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         (NamePtr<'t>, ReducibilityHint),
     >)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            result matches Some((r0, r1)) ==> crate::util_model::owns(*(*final(self)).ctx, r0),
             result is Some ==> crate::beta_model::spine_head(to_model_expr(e)) is Const,
             // the name returned is the head constant's
             result is Some ==> crate::beta_model::spine_head(to_model_expr(e))->Const_0
@@ -9887,7 +10125,13 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn get_rec_rule(&self, rec_rules: &[RecRule<'t>], major_const: ExprPtr<'t>) -> (result: Option<
         RecRule<'t>,
     >)
+        requires
+            crate::util_model::owns(*self.ctx, major_const),
+            forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_ctor_name_of(rec_rules@[k])),
+            forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_val_of(rec_rules@[k])),
         ensures
+            result matches Some(r) ==> tc_owns(*self, r.val) && tc_owns(*self, r.ctor_name),
+            result is Some ==> tc_owns(*self, crate::expr_arena_bridge::const_name_of(major_const)),
             match result {
                 // the FIRST rule for the constructor -- the model's `find_rule`
                 Some(r) => crate::expr_arena_bridge::is_const_shape(major_const) && match crate::util_model::find_index(
@@ -9916,16 +10160,24 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut i: usize = 0;
             while i < rec_rules.len()
                 invariant
+                    crate::util_model::owns(*self.ctx, major_const),
                     crate::expr_arena_bridge::is_const_shape(major_const),
                     crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name,
                     names == crate::tc_model::rec_rule_ctor_names(rec_rules@),
                     i <= rec_rules@.len(),
                     forall|j: int| 0 <= j < i ==> #[trigger] names[j] != major_ctor_name,
+                    forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_ctor_name_of(rec_rules@[k])),
+                    forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_val_of(rec_rules@[k])),
+                    crate::util_model::owns(*self.ctx, major_ctor_name),
                 decreases rec_rules.len() - i,
             {
                 let r = rec_rules[i];
+                proof {
+                    crate::util_model::owned_raw_eq(*self.ctx, r.ctor_name, major_ctor_name);
+                }
                 if r.ctor_name == major_ctor_name {
                     proof {
+                        assert(crate::util_model::owns(*self.ctx, crate::tc_model::rec_rule_val_of(rec_rules@[i as int])));
                         assert(names[i as int] == major_ctor_name);
                         crate::util_model::find_index_first(names, major_ctor_name, i as int);
                     }
@@ -9945,8 +10197,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// returned is the same either way.
     fn infer_sort(&mut self, l: LevelPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::owns(*(*old(self)).ctx, l),
             tc_wf(*old(self)),
         ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
             to_model_expr(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(to_model_level(l)))),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,

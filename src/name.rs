@@ -60,7 +60,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// them, and this function is one of its two non-degeneracy witnesses.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn get_pfx(&self, n0: NamePtr<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*self, n0),
         ensures
+            crate::util_model::owns(*self, result),
             crate::name_arena_bridge::to_model_name(result) == crate::name_model::root_of(
                 crate::name_arena_bridge::to_model_name(n0),
             ),
@@ -71,10 +74,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         // no `ensures`; the postcondition is discharged at each return instead.
         loop
             invariant
+                crate::util_model::owns(*self, n0),
                 crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n))
                     == crate::name_model::root_of(crate::name_arena_bridge::to_model_name(n0)),
                 crate::name_arena_bridge::to_model_name(anonymous)
                     == crate::name_model::NameSpec::Anon,
+                crate::util_model::owns(*self, n),
+                crate::util_model::owns(*self, anonymous),
         {
             match self.read_name(n) {
                 Anon => return n,
@@ -84,7 +90,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 // `sfx` bound only so the proof can name the node's shape.
                 Str(pfx, sfx, ..) => {
                     proof {
-                        crate::name_arena_bridge::to_model_name_injective(pfx, anonymous);
+                        crate::name_arena_bridge::to_model_name_injective(*self, pfx, anonymous);
                         assert(crate::name_arena_bridge::to_model_name(n)
                             == crate::name_model::NameSpec::Str(
                             Box::new(crate::name_arena_bridge::to_model_name(pfx)),
@@ -109,7 +115,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 Num(pfx, sfx, ..) => {
                     proof {
-                        crate::name_arena_bridge::to_model_name_injective(pfx, anonymous);
+                        crate::name_arena_bridge::to_model_name_injective(*self, pfx, anonymous);
                         assert(crate::name_arena_bridge::to_model_name(n)
                             == crate::name_model::NameSpec::Num(
                             Box::new(crate::name_arena_bridge::to_model_name(pfx)),
@@ -145,7 +151,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         outgoing: NamePtr<'t>,
         incoming: NamePtr<'t>,
     ) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), n),
+            crate::util_model::owns(*old(self), outgoing),
+            crate::util_model::owns(*old(self), incoming),
         ensures
+            crate::util_model::owns(*final(self), result),
             crate::name_arena_bridge::to_model_name(result) == crate::name_model::replace_pfx_full(
                 crate::name_arena_bridge::to_model_name(n),
                 crate::name_arena_bridge::to_model_name(outgoing),
@@ -154,7 +165,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
-            crate::name_arena_bridge::to_model_name_injective(n, outgoing);
+            crate::name_arena_bridge::to_model_name_injective(*self, n, outgoing);
         }
         match self.read_name(n) {
             Anon => match self.read_name(outgoing) {
@@ -185,7 +196,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// verifiable without one; see the commit message.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn concat_name(&mut self, n1: NamePtr<'t>, n2: NamePtr<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), n1),
+            crate::util_model::owns(*old(self), n2),
         ensures
+            crate::util_model::owns(*final(self), result),
             crate::name_arena_bridge::to_model_name(result) == crate::name_model::concat_full(
                 crate::name_arena_bridge::to_model_name(n1),
                 crate::name_arena_bridge::to_model_name(n2),

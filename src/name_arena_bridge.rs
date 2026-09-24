@@ -429,8 +429,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
     n: Name<'t>,
 ) -> (result: NamePtr<'t>) where 'p: 't
     requires
+        name_children_owned(*old(ctx), n),
         name_hash_ok(n),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         to_model_name(result) == to_model_of_name(n),
         // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
         // dag, never the memo caches.
@@ -439,11 +441,24 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
+/// Every pointer inside the name node belongs to `c` (see
+/// `expr_children_owned`).
+pub open spec fn name_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, n: crate::name::Name<'t>) -> bool {
+    match n {
+        crate::name::Name::Anon => true,
+        crate::name::Name::Str(pfx, sfx, _) => crate::util_model::owns(c, pfx) && crate::util_model::owns(c, sfx),
+        crate::name::Name::Num(pfx, _, _) => crate::util_model::owns(c, pfx),
+    }
+}
+
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
     ctx: &TcCtx<'t, 'p>,
     ptr: NamePtr<'t>,
 ) -> (result: Name<'t>) where 'p: 't
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
+        name_children_owned(*ctx, result),
         to_model_of_name(result) == to_model_name(ptr),
 ;
 
@@ -470,7 +485,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
 /// `name_hash_ok`, which the constructors prove from `hash64!`'s
 /// specification, and the parser builds names with the same macro.
 #[verifier::external_body]
-pub proof fn to_model_name_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
+pub proof fn to_model_name_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'a>, n2: NamePtr<'a>)
+    requires
+        crate::util_model::owns(c, n1),
+        crate::util_model::owns(c, n2),
     ensures
         (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2)),
 {
@@ -479,6 +497,7 @@ pub proof fn to_model_name_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::anonymous ](ctx: &TcCtx<'t, 'p>) -> (result:
     NamePtr<'t>) where 'p: 't
     ensures
+        crate::util_model::owns(*ctx, result),
         to_model_name(result) == NameSpec::Anon,
 ;
 
@@ -491,6 +510,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
     s: &'static str,
 ) -> (result: NamePtr<'t>) where 'p: 't
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
@@ -515,7 +535,10 @@ pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_afte
     n: NamePtr<'t>,
     idx: u64,
 ) -> (result: NamePtr<'t>)
+    requires
+        crate::util_model::owns(*old(ctx), n),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         name_id(result) == append_index_after_id(n, idx),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),

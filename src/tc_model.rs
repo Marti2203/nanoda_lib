@@ -150,14 +150,20 @@ use num_traits::Pow;
 use crate::expr_arena_bridge::EnvSpec;
 use vstd::prelude::*;
 
-/// First rule's constructor name (exec-only gate for the K-like leaf; its
-/// correctness is certified downstream by proof irrelevance + iota).
-#[allow(dead_code)]
-pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) -> Option<NamePtr<'t>> {
-    rules.get(0).map(|r| r.ctor_name)
-}
-
 verus! {
+
+/// First rule's constructor name (the gate for the K-like leaf; its
+/// correctness is certified downstream by proof irrelevance + iota).
+pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) -> (result: Option<NamePtr<'t>>)
+    ensures
+        result matches Some(n) ==> rules@.len() > 0 && n == rec_rule_ctor_name_of(rules@[0]),
+{
+    if rules.len() == 0 {
+        None
+    } else {
+        Some(rules[0].ctor_name)
+    }
+}
 
 /// TRANSPARENT. Its three fields are already `pub`, so nothing had to change
 /// in the kernel: opaque, each accessor needed an uninterpreted `*_of` keyed by
@@ -180,10 +186,6 @@ pub(crate) fn rec_rule_ctor_name<'t>(r: &RecRule<'t>) -> (result: NamePtr<'t>)
     r.ctor_name
 }
 
-pub assume_specification<'t>[ first_rule_ctor_name ](
-    rules: &std::sync::Arc<[RecRule<'t>]>,
-) -> (result: Option<NamePtr<'t>>)
-;
 
 /// Small helper so `verified_reduce_rec_step`'s `ensures` can use `.
 /// subrange(...)` (a valid quantifier trigger) instead of a fresh
@@ -228,8 +230,15 @@ pub open spec fn rec_rule_ctor_names<'a>(rec_rules: Seq<RecRule<'a>>) -> Seq<Nam
 pub fn verified_find_rec_rule<'t>(
     rec_rules: &[RecRule<'t>],
     major_ctor_name: NamePtr<'t>,
+    Ghost(ids): Ghost<(nat, nat)>,
 ) -> (result: Option<RecRule<'t>>)
+    requires
+        // the names are compared by index, which is by name within one arena
+        crate::util_model::owns_all_in(ids, rec_rule_ctor_names(rec_rules@)),
+        crate::util_model::owns_in(ids, major_ctor_name),
+        forall|i: int| 0 <= i < rec_rules@.len() ==> crate::util_model::owns_in(ids, #[trigger] rec_rule_val_of(rec_rules@[i])),
     ensures
+        result matches Some(r) ==> crate::util_model::owns_in(ids, rec_rule_val_of(r)),
         match find_index(rec_rule_ctor_names(rec_rules@), major_ctor_name) {
             Some(i) => result == Some(rec_rules@[i as int]),
             None => result is None,
@@ -244,6 +253,9 @@ pub fn verified_find_rec_rule<'t>(
         let first = rec_rules[0];
         let first_name = rec_rule_ctor_name(&first);
         assert(first_name == names[0]);
+        proof {
+            crate::util_model::owned_raw_eq_in(ids, first_name, major_ctor_name);
+        }
         if name_ptr_eq(first_name, major_ctor_name) {
             assert(names[0] == major_ctor_name);
             assert(rec_rules@[0] == first);
@@ -262,7 +274,15 @@ pub fn verified_find_rec_rule<'t>(
                 Some(i) => Some((i + 1) as nat),
                 None => None,
             });
-            let result = verified_find_rec_rule(sub, major_ctor_name);
+            assert(crate::util_model::owns_all_in(ids, sub_names)) by {
+                assert forall|i: int| 0 <= i < sub_names.len() implies #[trigger] crate::util_model::owns_in(ids, sub_names[i]) by {
+                    assert(sub_names[i] == names[i + 1]);
+                }
+            }
+            assert forall|i: int| 0 <= i < sub@.len() implies crate::util_model::owns_in(ids, #[trigger] rec_rule_val_of(sub@[i])) by {
+                assert(sub@[i] == rec_rules@[i + 1]);
+            }
+            let result = verified_find_rec_rule(sub, major_ctor_name, Ghost(ids));
             assert(match find_index(sub_names, major_ctor_name) {
                 Some(i) => result == Some(sub@[i as int]),
                 None => result is None,
@@ -297,8 +317,11 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -449,10 +472,13 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -560,7 +586,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             return None;
         }
     }
-    let rule = match verified_find_rec_rule(&rules, cname) {
+    let rule = match verified_find_rec_rule(&rules, cname, Ghost(crate::util_model::arena_ids(*ctx))) {
         Some(rr) => rr,
         None => {
             match env.get_declar_val(&cname) {
@@ -666,7 +692,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
         assert(to_model_of_recursors(*env)[rid] == rd);
         assert(to_model_of_env(*env).rec_data(rid) == Some(rd));
         // The rule.
-        find_rule_of_find_index(rules@, cname);
+        find_rule_of_find_index(*ctx, rules@, cname);
         find_index_hit(rec_rule_ctor_names(rules@), cname);
         let ri = find_index(rec_rule_ctor_names(rules@), cname)->Some_0 as int;
         assert(0 <= ri < rules@.len());
@@ -738,10 +764,13 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -828,10 +857,13 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -853,6 +885,9 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
     // depth of a reduction no longer has to fit on the stack.
     loop
         invariant
+            crate::util_model::owns(*ctx, cur),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), e),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -932,10 +967,13 @@ pub fn verified_whnf_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -962,10 +1000,13 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -984,6 +1025,9 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
     // and with no fuel each of those is a stack frame per reduction step.
     loop
         invariant
+            crate::util_model::owns(*ctx, cur),
+            crate::env_model::env_matches(*env, *old(ctx)),
+            crate::util_model::owns(*old(ctx), e),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -1042,10 +1086,13 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), e),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(e)) <= 0,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -1192,10 +1239,13 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
     v: ExprPtr<'t>,
 ) -> (result: Option<(ExprPtr<'t>, num_bigint::BigUint)>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), v),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(v)) <= 0,
     ensures
+        result matches Some((r0, r1)) ==> crate::util_model::owns(*final(ctx), r0),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -1330,7 +1380,7 @@ impl<'x, 't> WhnfCert<'x, 't> {
     spec fn inv(self) -> bool {
         pstep_star(env_model_nofv(self.env@), to_model(self.e), to_model(self.r)) && nlbv(
             to_model(self.r),
-        ) <= 0
+        ) <= 0 && crate::env_model::env_owns(self.env@, self.e) && crate::env_model::env_owns(self.env@, self.r)
     }
 
     pub closed spec fn spec_env(self) -> Env<'x, 't> {
@@ -1362,9 +1412,17 @@ impl<'x, 't> WhnfCert<'x, 't> {
     /// Does this entry answer the question being asked? One key now, not two:
     /// the claim no longer mentions a cap, so the term alone identifies it.
     pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
+        requires
+            crate::env_model::env_owns(self.spec_env(), e),
         ensures
             result == (self.spec_src() == e),
     {
+        proof {
+            use_type_invariant(self);
+            if self.e.raw == e.raw {
+                assert(self.e.ph == e.ph);
+            }
+        }
         expr_ptr_eq(self.e, e)
     }
 
@@ -1373,6 +1431,8 @@ impl<'x, 't> WhnfCert<'x, 't> {
         requires
             pstep_star(env_model_nofv(*env), to_model(e), to_model(r)),
             nlbv(to_model(r)) <= 0,
+            crate::env_model::env_owns(*env, e),
+            crate::env_model::env_owns(*env, r),
         ensures
             result.spec_env() == *env,
             result.spec_src() == e,
@@ -1499,7 +1559,9 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         requires
             self.wf(),
             self.spec_env() == *env,
+            crate::env_model::env_owns(*env, e),
         ensures
+            result matches Some(r) ==> crate::env_model::env_owns(*env, r),
             result == self.spec_get(e),
             match result {
                 Some(r) => pstep_star(env_model_nofv(*env), to_model(e), to_model(r)) && nlbv(
@@ -1553,7 +1615,9 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         requires
             self.wf(),
             self.spec_env() == *env,
+            crate::env_model::env_owns(*env, e),
         ensures
+            result matches Some(r) ==> crate::env_model::env_owns(*env, r),
             result == self.spec_get_infer(e),
             match result {
                 Some(r) => infer_shadow_claim(*env, e, r),
@@ -1607,6 +1671,8 @@ impl<'x, 't> WhnfMemo<'x, 't> {
         requires
             self.wf(),
             self.spec_env() == *env,
+            crate::env_model::env_owns(*env, x),
+            crate::env_model::env_owns(*env, y),
         ensures
             result ==> deq_p_any(
                 to_model_of_declar_ty(*env),
@@ -1694,7 +1760,7 @@ pub struct InferCert<'x, 't> {
 impl<'x, 't> InferCert<'x, 't> {
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
-        infer_shadow_claim(self.env@, self.e, self.r)
+        infer_shadow_claim(self.env@, self.e, self.r) && crate::env_model::env_owns(self.env@, self.e) && crate::env_model::env_owns(self.env@, self.r)
     }
 
     pub closed spec fn spec_env(self) -> Env<'x, 't> {
@@ -1724,9 +1790,17 @@ impl<'x, 't> InferCert<'x, 't> {
     }
 
     pub fn hit(&self, e: ExprPtr<'t>) -> (result: bool)
+        requires
+            crate::env_model::env_owns(self.spec_env(), e),
         ensures
             result == (self.spec_src() == e),
     {
+        proof {
+            use_type_invariant(self);
+            if self.e.raw == e.raw {
+                assert(self.e.ph == e.ph);
+            }
+        }
         expr_ptr_eq(self.e, e)
     }
 
@@ -1734,6 +1808,8 @@ impl<'x, 't> InferCert<'x, 't> {
     pub fn make(e: ExprPtr<'t>, r: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
         requires
             infer_shadow_claim(*env, e, r),
+            crate::env_model::env_owns(*env, e),
+            crate::env_model::env_owns(*env, r),
         ensures
             result.spec_env() == *env,
             result.spec_src() == e,
@@ -1763,7 +1839,7 @@ impl<'x, 't> ConvCert<'x, 't> {
             arena_lctx(), false,
             to_model(self.x),
             to_model(self.y),
-        )
+        ) && crate::env_model::env_owns(self.env@, self.x) && crate::env_model::env_owns(self.env@, self.y)
     }
 
     pub closed spec fn spec_env(self) -> Env<'x, 't> {
@@ -1786,15 +1862,29 @@ impl<'x, 't> ConvCert<'x, 't> {
     }
 
     pub fn hit(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+        requires
+            crate::env_model::env_owns(self.spec_env(), x),
+            crate::env_model::env_owns(self.spec_env(), y),
         ensures
             result == (self.spec_x() == x && self.spec_y() == y),
     {
+        proof {
+            use_type_invariant(self);
+            if self.x.raw == x.raw {
+                assert(self.x.ph == x.ph);
+            }
+            if self.y.raw == y.raw {
+                assert(self.y.ph == y.ph);
+            }
+        }
         expr_ptr_eq(self.x, x) && expr_ptr_eq(self.y, y)
     }
 
     /// The only constructor: the caller must already hold the claim.
     pub fn make(x: ExprPtr<'t>, y: ExprPtr<'t>, env: &Env<'x, 't>) -> (result: Self)
         requires
+            crate::env_model::env_owns(*env, x),
+            crate::env_model::env_owns(*env, y),
             deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
@@ -1836,7 +1926,10 @@ pub proof fn find_index_hit<T>(s: Seq<T>, v: T)
 
 /// The exec rule scan (`find_index` by constructor NAME) agrees with the
 /// model's `find_rule` (by constructor id): `name_id` is injective.
-pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr<'a>)
+pub proof fn find_rule_of_find_index<'t, 'p, 'a>(c: TcCtx<'t, 'p>, rules: Seq<RecRule<'a>>, cname: NamePtr<'a>)
+    requires
+        crate::util_model::owns_all(c, rec_rule_ctor_names(rules)),
+        crate::util_model::owns(c, cname),
     ensures
         find_rule(rec_rules_model(rules), name_id(cname)) == (match find_index(
             rec_rule_ctor_names(rules),
@@ -1853,13 +1946,17 @@ pub proof fn find_rule_of_find_index<'a>(rules: Seq<RecRule<'a>>, cname: NamePtr
         assert(names.len() == 0);
         assert(model.len() == 0);
     } else {
-        name_id_injective(rec_rule_ctor_name_of(rules[0]), cname);
+        assert(crate::util_model::owns(c, names[0]));
+        name_id_injective(c, rec_rule_ctor_name_of(rules[0]), cname);
         assert(names[0] == rec_rule_ctor_name_of(rules[0]));
         assert(model[0].ctor_id == name_id(rec_rule_ctor_name_of(rules[0])));
         let rest = rules.subrange(1, rules.len() as int);
         assert(names.subrange(1, names.len() as int) =~= rec_rule_ctor_names(rest));
         assert(model.drop_first() =~= rec_rules_model(rest));
-        find_rule_of_find_index(rest, cname);
+        assert forall|i: int| 0 <= i < rec_rule_ctor_names(rest).len() implies #[trigger] crate::util_model::owns(c, rec_rule_ctor_names(rest)[i]) by {
+            assert(rec_rule_ctor_names(rest)[i] == names[i + 1]);
+        }
+        find_rule_of_find_index(c, rest, cname);
     }
 }
 
@@ -2094,6 +2191,9 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(
     y: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -2133,6 +2233,9 @@ pub fn verified_def_eq_const<'t, 'p: 't>(
     y: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: bool)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -2621,6 +2724,9 @@ pub fn verified_def_eq_core<'t, 'p: 't>(
     y: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -2771,6 +2877,9 @@ pub fn verified_def_eq_app<'t, 'p: 't>(
     y: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -2806,6 +2915,10 @@ pub fn verified_def_eq_app<'t, 'p: 't>(
     let mut i: usize = 0;
     while i < args1.len()
         invariant
+            crate::util_model::owns_all(*ctx, args1@),
+            crate::util_model::owns_all(*ctx, args2@),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= args1.len(),
@@ -7393,6 +7506,9 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(
     x: ExprPtr<'t>,
     y: ExprPtr<'t>,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -7434,6 +7550,8 @@ pub fn verified_def_eq<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
@@ -7588,6 +7706,7 @@ pub fn verified_def_eq<'t, 'p: 't>(
 /// Walks backwards because `replace_dbj_level` pops the counter's top.
 fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t>>)
     requires
+        crate::util_model::owns_all(*old(ctx), locals@),
         old(ctx).dbj_level_counter as int >= locals@.len() as int,
     ensures
         final(ctx).dbj_level_counter as int == old(ctx).dbj_level_counter as int
@@ -7598,6 +7717,7 @@ fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t
     let mut k: usize = locals.len();
     while k > 0
         invariant
+            crate::util_model::owns_all(*old(ctx), locals@),
             k <= locals@.len(),
             old(ctx).dbj_level_counter as int >= locals@.len() as int,
             ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int - (
@@ -7618,6 +7738,8 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
@@ -7715,6 +7837,11 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
     // one fresh local per layer, until neither side matches anymore.
     while true
         invariant
+            crate::util_model::owns(*ctx, cur_x),
+            crate::util_model::owns(*ctx, cur_y),
+            crate::util_model::owns_all(*ctx, locals@),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int
                 + locals@.len() as int,
             crate::util_model::same_arenas(*old(ctx), *ctx),
@@ -7843,6 +7970,8 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
         depth(to_model(x)) <= 60000,
         depth(to_model(y)) <= 60000,
     ensures
@@ -7949,7 +8078,11 @@ pub fn verified_get_applied_def<'t, 'p: 't, 'x>(
     e: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<(NamePtr<'t>, ReducibilityHint)>)
+    requires
+        crate::env_model::env_matches(*env, *ctx),
+        crate::util_model::owns(*ctx, e),
     ensures
+        result matches Some((r0, r1)) ==> crate::util_model::owns(*ctx, r0),
         match result {
             Some((_, hint)) => exists|fun: ExprPtr<'t>, args: Seq<ExprPtr<'t>>|
                 to_model(e) == spine_app(to_model(fun), args_model_of(args)) && is_const_shape(fun)
@@ -8003,6 +8136,11 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     y_hint: ReducibilityHint,
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), x_defname),
+        crate::util_model::owns(*old(ctx), y),
+        crate::util_model::owns(*old(ctx), y_defname),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -8046,6 +8184,12 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     let mut i: usize = 0;
     while i < l_args.len()
         invariant
+            crate::util_model::owns_all(*ctx, l_args@),
+            crate::util_model::owns_all(*ctx, r_args@),
+            crate::util_model::owns(*old(ctx), x),
+            crate::util_model::owns(*old(ctx), x_defname),
+            crate::util_model::owns(*old(ctx), y),
+            crate::util_model::owns(*old(ctx), y_defname),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= l_args.len(),
@@ -8146,12 +8290,14 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
     Ghost(d): Ghost<nat>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
         depth(to_model(e)) <= d,
         d <= 60000,
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -8189,7 +8335,10 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
 /// trust boundary.
 pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>) -> (result:
     ExprPtr<'t>)
+    requires
+        crate::util_model::owns(*old(ctx), l),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))),
@@ -8217,7 +8366,12 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(
     c_uparams: LevelsPtr<'t>,
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
+    requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), c_name),
+        crate::util_model::owns(*old(ctx), c_uparams),
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {

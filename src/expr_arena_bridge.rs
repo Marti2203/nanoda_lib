@@ -510,12 +510,18 @@ pub open spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32 {
     ptr.raw
 }
 
-// ARENA-IDENTITY STAGE 2: false across arenas; see `name_id_injective`.
-#[verifier::external_body]
-pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
+/// Within one context (see `name_id_injective`).
+pub proof fn expr_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, a: ExprPtr<'a>, b: ExprPtr<'a>)
+    requires
+        crate::util_model::owns(c, a),
+        crate::util_model::owns(c, b),
     ensures
         (a == b) <==> (expr_id(a) == expr_id(b)),
 {
+    if a.raw == b.raw {
+        assert(a.ph == b.ph);
+        assert(a.arena == b.arena);
+    }
 }
 
 /// Was an `assume_specification`; `Ptr`'s own `PartialEq` is specified now
@@ -523,7 +529,8 @@ pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
 #[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
     ensures
-        result == (a == b),
+        result == (a.raw == b.raw),
+        a.arena@ == b.arena@ ==> result == (a == b),
 {
     a == b
 }
@@ -568,7 +575,7 @@ pub open spec fn subst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
             to_model(k.0),
             crate::level_model::level_names(to_model_of_levels(k.1)),
             to_model_of_levels(k.2),
-        )
+        ) && crate::util_model::owns(ctx, k.0) && crate::util_model::owns(ctx, k.1) && crate::util_model::owns(ctx, k.2) && crate::util_model::owns(ctx, ctx.expr_cache.subst_cache@[k])
 }
 
 /// Same invariant for the OUTER level-substitution cache. `subst_expr_levels`
@@ -581,7 +588,7 @@ pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
             to_model(k.0),
             crate::level_model::level_names(to_model_of_levels(k.1)),
             to_model_of_levels(k.2),
-        )
+        ) && crate::util_model::owns(ctx, k.0) && crate::util_model::owns(ctx, k.1) && crate::util_model::owns(ctx, k.2) && crate::util_model::owns(ctx, ctx.expr_cache.dsubst_cache@[k])
 }
 
 /// The instantiation cache. Unlike the level caches, this one is keyed by
@@ -591,7 +598,8 @@ pub open spec fn dsubst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
 pub open spec fn inst_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, substs: Seq<ExprPtr<'t>>) -> bool {
     forall|k: (ExprPtr<'t>, u16)| #[trigger]
         ctx.expr_cache.inst_cache@.contains_key(k) ==> to_model(ctx.expr_cache.inst_cache@[k])
-            == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat)
+            == subst_full(to_model(k.0), ptr_models(substs), k.1 as nat) && crate::util_model::owns(ctx, k.0)
+            && crate::util_model::owns(ctx, ctx.expr_cache.inst_cache@[k])
 }
 
 /// The de Bruijn-LEVEL abstraction's cache. Keyed by the full triple, unlike the
@@ -603,7 +611,8 @@ pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
         ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==> to_model(
             ctx.expr_cache.abstr_cache_levels@[k],
         ) == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
-            && crate::expr_model::levels_fit(to_model(k.0), k.2)
+            && crate::expr_model::levels_fit(to_model(k.0), k.2) && crate::util_model::owns(ctx, k.0)
+            && crate::util_model::owns(ctx, ctx.expr_cache.abstr_cache_levels@[k])
 }
 
 /// The abstraction cache. Keyed `(expr, offset)` like the instantiation one and
@@ -612,7 +621,8 @@ pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
 pub open spec fn abstr_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, locals: Seq<ExprPtr<'t>>) -> bool {
     forall|k: (ExprPtr<'t>, u16)| #[trigger]
         ctx.expr_cache.abstr_cache@.contains_key(k) ==> to_model(ctx.expr_cache.abstr_cache@[k])
-            == abstr_full(to_model(k.0), local_ids(locals), k.1 as nat)
+            == abstr_full(to_model(k.0), local_ids(locals), k.1 as nat) && crate::util_model::owns(ctx, k.0)
+            && crate::util_model::owns(ctx, ctx.expr_cache.abstr_cache@[k])
 }
 
 /// The `expr_id`s of a list of locals -- `abstr_full`'s own `Seq<u32>` argument.
@@ -669,11 +679,40 @@ pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
 }
 
 
+/// Every pointer inside the node belongs to `c`. `read_expr` ensures it of
+/// what it returns and `alloc_expr` requires it of what it stores: a node
+/// never points into another arena.
+pub open spec fn expr_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, e: Expr<'t>) -> bool {
+    match e {
+        Expr::StringLit { ptr, .. } => crate::util_model::owns(c, ptr),
+        Expr::NatLit { ptr, .. } => crate::util_model::owns(c, ptr),
+        Expr::Proj { ty_name, structure, .. } => crate::util_model::owns(c, ty_name)
+            && crate::util_model::owns(c, structure),
+        Expr::Var { .. } => true,
+        Expr::Sort { level, .. } => crate::util_model::owns(c, level),
+        Expr::Const { name, levels, .. } => crate::util_model::owns(c, name)
+            && crate::util_model::owns(c, levels),
+        Expr::App { fun, arg, .. } => crate::util_model::owns(c, fun) && crate::util_model::owns(c, arg),
+        Expr::Pi { binder_name, binder_type, body, .. } => crate::util_model::owns(c, binder_name)
+            && crate::util_model::owns(c, binder_type) && crate::util_model::owns(c, body),
+        Expr::Lambda { binder_name, binder_type, body, .. } => crate::util_model::owns(c, binder_name)
+            && crate::util_model::owns(c, binder_type) && crate::util_model::owns(c, body),
+        Expr::Let { binder_name, binder_type, val, body, .. } => crate::util_model::owns(c, binder_name)
+            && crate::util_model::owns(c, binder_type) && crate::util_model::owns(c, val)
+            && crate::util_model::owns(c, body),
+        Expr::Local { binder_name, binder_type, .. } => crate::util_model::owns(c, binder_name)
+            && crate::util_model::owns(c, binder_type),
+    }
+}
+
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
     ctx: &TcCtx<'t, 'p>,
     ptr: ExprPtr<'t>,
 ) -> (result: Expr<'t>) where 'p: 't
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
+        expr_children_owned(*ctx, result),
         to_model_of_expr(result) == to_model(ptr),
         node_cache_ok(result),
         // `const_name_of`/`const_levels_of` are uninterpreted, so until now the
@@ -730,6 +769,8 @@ pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
 /// Was an `assume_specification` over a `(ptr, e)` pair -- the last one of that
 /// shape. Reads the node itself now, so both halves are proven.
 pub fn expr_is_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
         result ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
         !result ==> !matches!(to_model(ptr), ExprSpec::Free(_)),
@@ -786,6 +827,7 @@ pub fn expr_is_closed_leaf<'t>(_ptr: ExprPtr<'t>, e: &Expr<'t>) -> (result: bool
 #[allow(dead_code)]
 pub fn expr_as_app<'t>(e: &Expr<'t>) -> (result: Option<(ExprPtr<'t>, ExprPtr<'t>)>)
     ensures
+        result matches Some((f, a)) ==> (*e matches Expr::App { fun, arg, .. } && fun == f && arg == a),
         match result {
             Some((f, a)) => to_model_of_expr(*e) == ExprSpec::App(
                 Box::new(to_model(f)),
@@ -973,7 +1015,10 @@ pub(crate) fn fvar_id_eq(a: FVarId, b: FVarId) -> (result: bool)
 pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<
     (FVarId, ExprPtr<'t>),
 >)
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
+        result matches Some((r0, r1)) ==> crate::util_model::owns(*ctx, r1),
         match result {
             Some((id, t)) => is_local_shape(ptr) && local_id_of(ptr) == id && local_binder_type_of(
                 ptr,
@@ -1044,11 +1089,14 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
     binder_type: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>) where 'p: 't
     requires
+        crate::util_model::owns(*old(ctx), binder_name),
+        crate::util_model::owns(*old(ctx), binder_type),
         old(ctx).dbj_level_counter < u16::MAX,
         // a local's type is closed: `local_type_wf` states it of EVERY local,
         // so creating one has to establish it
         nlbv(to_model(binder_type)) == 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,
         to_model(result) == ExprSpec::Free(expr_id(result)),
@@ -1082,6 +1130,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
     e: ExprPtr<'t>,
 ) -> (result: ()) where 'p: 't
     requires
+        crate::util_model::owns(*old(ctx), e),
         old(ctx).dbj_level_counter > 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter - 1,
@@ -1245,6 +1294,8 @@ pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
 pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<
     u32,
 >)
+    requires
+        crate::util_model::owns(*ctx, e),
     ensures
         match result {
             Some(n) => n as nat == size(to_model(e)) && n <= 60000,
@@ -1388,6 +1439,9 @@ pub fn verified_fv_absent<'t, 'p: 't>(
     local: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*ctx, e),
+        crate::util_model::owns(*ctx, local),
     ensures
         match result {
             Some(true) => fv_absent(to_model(e), expr_id(local)),
@@ -1464,7 +1518,7 @@ pub fn verified_fv_absent<'t, 'p: 't>(
             return None;
         }
         proof {
-            expr_id_injective(e, local);
+            expr_id_injective(*ctx, e, local);
         }
         return Some(true);
     }
@@ -1489,6 +1543,8 @@ pub fn verified_fv_absent<'t, 'p: 't>(
 /// `Some(true)` certifies the term contains no string literal
 /// (`string_free`), by the same walk as `verified_fv_absent`.
 pub fn verified_string_free<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*ctx, e),
     ensures
         result == Some(true) ==> crate::beta_model::string_free(to_model(e)),
     decreases fuel,
@@ -1603,7 +1659,10 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
     n: crate::util::BigUintPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>)
+    requires
+        crate::util_model::owns(*old(ctx), n),
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -1724,7 +1783,10 @@ pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
 pub fn expr_as_nat_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: Option<
     crate::util::BigUintPtr<'t>,
 >)
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*ctx, r),
         match result {
             Some(p) => is_nat_lit_shape(ptr) && nat_lit_ptr_of(ptr) == p,
             None => !is_nat_lit_shape(ptr),
@@ -1753,6 +1815,8 @@ pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
 
 /// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
 pub fn expr_as_string_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, ptr),
     ensures
         result == is_string_lit_shape(ptr),
 {
@@ -1805,7 +1869,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
     ctx: &mut TcCtx<'t, 'p>,
     s: StringPtr<'t>,
 ) -> (result: Option<ExprPtr<'t>>) where 'p: 't
+    requires
+        crate::util_model::owns(*old(ctx), s),
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
         match result {
             Some(r) => {
@@ -1824,6 +1891,8 @@ pub assume_specification<'t, 'p>[ read_bignum_value ](
     ctx: &TcCtx<'t, 'p>,
     p: crate::util::BigUintPtr<'t>,
 ) -> (result: Option<num_bigint::BigUint>) where 'p: 't
+    requires
+        crate::util_model::owns(*ctx, p),
     ensures
         match result {
             Some(v) => crate::nat_lit_model::to_nat(v) == bignum_ptr_value(p),
@@ -1848,6 +1917,7 @@ pub assume_specification<'t, 'p>[ read_bignum_value ](
 #[allow(dead_code)]
 pub fn expr_as_sort<'t>(e: &Expr<'t>) -> (result: Option<LevelPtr<'t>>)
     ensures
+        result matches Some(l) ==> (*e matches Expr::Sort { level, .. } && level == l),
         match result {
             Some(level) => to_model_of_expr(*e) == ExprSpec::Sort(level_to_model(level)),
             None => !matches!(to_model_of_expr(*e), ExprSpec::Sort(_)),
@@ -1864,6 +1934,7 @@ pub fn expr_as_pi<'t>(e: &Expr<'t>) -> (result: Option<
     (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>),
 >)
     ensures
+        result matches Some((n, _, ty, b)) ==> (*e matches Expr::Pi { binder_name, binder_type, body, .. } && binder_name == n && binder_type == ty && body == b),
         match result {
             Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
                 Box::new(to_model(ty)),
@@ -1885,6 +1956,7 @@ pub fn expr_as_lambda<'t>(e: &Expr<'t>) -> (result: Option<
     (NamePtr<'t>, BinderStyle, ExprPtr<'t>, ExprPtr<'t>),
 >)
     ensures
+        result matches Some((n, _, ty, b)) ==> (*e matches Expr::Lambda { binder_name, binder_type, body, .. } && binder_name == n && binder_type == ty && body == b),
         match result {
             Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
                 Box::new(to_model(ty)),
@@ -1906,6 +1978,7 @@ pub fn expr_as_let<'t>(e: &Expr<'t>) -> (result: Option<
     (NamePtr<'t>, ExprPtr<'t>, ExprPtr<'t>, ExprPtr<'t>, bool),
 >)
     ensures
+        result matches Some((n, ty, v, b, _)) ==> (*e matches Expr::Let { binder_name, binder_type, val, body, .. } && binder_name == n && binder_type == ty && val == v && body == b),
         match result {
             Some((_, ty, v, body, _)) => to_model_of_expr(*e) == ExprSpec::Let(
                 Box::new(to_model(ty)),
@@ -1926,6 +1999,7 @@ pub fn expr_as_let<'t>(e: &Expr<'t>) -> (result: Option<
 #[allow(dead_code)]
 pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, ExprPtr<'t>)>)
     ensures
+        result matches Some((n, _, s)) ==> (*e matches Expr::Proj { ty_name, structure, .. } && ty_name == n && structure == s),
         match result {
             Some((_, idx, s)) => to_model_of_expr(*e) == ExprSpec::Proj(idx, Box::new(to_model(s))),
             None => !matches!(to_model_of_expr(*e), ExprSpec::Proj(_, _)),
@@ -1950,6 +2024,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
     n: num_bigint::BigUint,
 ) -> (result: Option<crate::util::BigUintPtr<'t>>) where 'p: 't
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         match result {
             Some(p) => bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
             None => true,
@@ -1970,12 +2045,14 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
     e: Expr<'t>,
 ) -> (result: ExprPtr<'t>) where 'p: 't
     requires
+        expr_children_owned(*old(ctx), e),
         // what `read_expr` promises of every stored node has to hold of what
         // is stored: the cached flags are right, and a local's type is closed
         // (`local_type_wf`)
         node_cache_ok(e),
         e matches Expr::Local { binder_type, .. } ==> nlbv(to_model(binder_type)) == 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         to_model(result) == to_model_of_expr(e),
         // The same clause `read_expr` carries, on the write side. `const_name_of`
         // and `const_levels_of` are uninterpreted, so `to_model(result)` alone
@@ -2042,9 +2119,12 @@ pub fn verified_inst<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
+        crate::util_model::owns_all(*old(ctx), substs@),
         offset == 0,
         offset as nat + depth(to_model(e)) <= 60000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         (match result {
             Some(r) => to_model(r) == subst_full(
                 to_model(e),
@@ -2112,6 +2192,8 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
     e: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::util_model::owns_all(*old(ctx), binders@),
+        crate::util_model::owns(*old(ctx), e),
         (forall|i: int|
             #![trigger binders@[i]]
             0 <= i < binders@.len() ==> {
@@ -2125,6 +2207,7 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
         // that cap is documented with.
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
@@ -2185,6 +2268,8 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
     e: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::util_model::owns_all(*old(ctx), binders@),
+        crate::util_model::owns(*old(ctx), e),
         (forall|i: int|
             #![trigger binders@[i]]
             0 <= i < binders@.len() ==> {
@@ -2198,6 +2283,7 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
         // that cap is documented with.
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
@@ -2264,10 +2350,14 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
+        crate::util_model::owns(*old(ctx), ks),
+        crate::util_model::owns(*old(ctx), vs),
         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
         forall|j: int|
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -2495,7 +2585,11 @@ pub fn verified_foldl_apps<'t, 'p: 't>(
     fun: ExprPtr<'t>,
     args: &[ExprPtr<'t>],
 ) -> (result: ExprPtr<'t>)
+    requires
+        crate::util_model::owns(*old(ctx), fun),
+        crate::util_model::owns_all(*old(ctx), args@),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(result) == spine_app(
@@ -2599,7 +2693,10 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(
     args_len: usize,
     fuel: u32,
 ) -> (result: Option<(ExprPtr<'t>, usize)>)
+    requires
+        crate::util_model::owns(*ctx, e),
     ensures
+        result matches Some((r0, r1)) ==> crate::util_model::owns(*ctx, r0),
         match result {
             Some((body, n)) => n <= args_len && spine_bind(to_model(e), n as nat) == Some(
                 to_model(body),
@@ -2659,6 +2756,8 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
     Ghost(bound): Ghost<nat>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e_fun),
+        crate::util_model::owns_all(*old(ctx), args@),
         args.len() > 0,
         nlbv(to_model(e_fun)) <= 0,
         forall|i: int|
@@ -2669,6 +2768,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
         depth(to_model(e_fun)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -2829,6 +2929,10 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(
     Ghost(bound): Ghost<nat>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e_fun),
+        crate::util_model::owns(*old(ctx), val),
+        crate::util_model::owns(*old(ctx), body),
+        crate::util_model::owns_all(*old(ctx), args@),
         exists|t_model: ExprSpec|
             to_model(e_fun) == ExprSpec::Let(
                 Box::new(t_model),
@@ -2846,6 +2950,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(
         depth(to_model(body)) <= 60000,
         bound + 10 <= 0xFFFF_0000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -2980,12 +3085,14 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(
     Ghost(d): Ghost<nat>,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
         max_var_below(to_model(e), bound),
         depth(to_model(e)) <= d,
         d <= 60000,
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
@@ -3271,9 +3378,11 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(
     fuel: u32,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
+        crate::util_model::owns(*old(ctx), e),
         nlbv(to_model(e)) <= 0,
         depth(to_model(e)) <= 60000,
     ensures
+        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {

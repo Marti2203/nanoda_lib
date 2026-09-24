@@ -417,7 +417,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// from `alloc_expr`'s storage contract like the other twelve, once that
     /// contract says what the two uninterpreted `Const` accessors are.
     pub fn mk_const(&mut self, name: NamePtr<'t>, levels: LevelsPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), name),
+            crate::util_model::owns(*old(self), levels),
         ensures
+            crate::util_model::owns(*final(self), result),
             crate::expr_arena_bridge::is_const_shape(result),
             crate::expr_arena_bridge::const_name_of(result) == name,
             crate::expr_arena_bridge::const_levels_of(result) == levels,
@@ -710,7 +714,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// its own `assume_specification`; both now derive from `alloc_expr`'s
     /// storage contract and `alloc_bignum`'s.
     pub fn mk_nat_lit(&mut self, num_ptr: BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::owns(*old(self), num_ptr),
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             match result {
                 Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
                     && crate::expr_arena_bridge::nat_lit_value(e)
@@ -732,6 +739,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// going `alloc_bignum` and `mk_nat_lit`
     pub fn mk_nat_lit_quick(&mut self, n: BigUint) -> (result: Option<ExprPtr<'t>>)
         ensures
+            result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(e) => crate::expr_arena_bridge::is_nat_lit_shape(e)
@@ -855,6 +863,7 @@ impl<'a> LeanDag<'a> {
             list: self.find_name("List"),
             list_nil: self.find_name("List.nil"),
             list_cons: self.find_name("List.cons"),
+            arena: vstd::prelude::Ghost::assume_new(),
         }
     }
 }
@@ -873,7 +882,7 @@ impl<'a> LeanDag<'a> {
 /// uses is built by `LeanDag::mk_name_cache` while reading the export file,
 /// unverified -- that is where "the export file was read correctly" is
 /// assumed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct NameCache<'p> {
     eager_reduce: Option<NamePtr<'p>>,
     quot: Option<NamePtr<'p>>,
@@ -907,9 +916,18 @@ pub struct NameCache<'p> {
     list: Option<NamePtr<'p>>,
     list_nil: Option<NamePtr<'p>>,
     list_cons: Option<NamePtr<'p>>,
+    /// The export file's arena id: every cached name is an export-file
+    /// pointer carrying it. The export tier's identity is DEFINED as this
+    /// (`util_model::arena_ids`).
+    arena: Ghost<nat>,
 }
 
 impl<'p> NameCache<'p> {
+    /// The export file's arena id (see the `arena` field).
+    pub closed spec fn arena_id(&self) -> nat {
+        self.arena@
+    }
+
     #[verifier::type_invariant]
     spec fn inv(&self) -> bool {
         &&& (self.quot_mk matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(2u8))
@@ -935,18 +953,62 @@ impl<'p> NameCache<'p> {
         &&& (self.string matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::string_type_id())
         &&& (self.bool_false matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_false_id())
         &&& (self.bool_true matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_true_id())
+        &&& (self.eager_reduce matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.quot matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.quot_mk matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.quot_lift matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.quot_ind matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_zero matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_succ matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_add matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_sub matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_mul matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_pow matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_mod matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_div matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_beq matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_ble matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_gcd matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_xor matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_land matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_lor matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_shr matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.nat_shl matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.string matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.string_of_list matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.bool_false matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.bool_true matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.char matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.char_of_nat matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.list matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.list_nil matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
+        &&& (self.list_cons matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
     }
 
-    pub fn eager_reduce(&self) -> Option<NamePtr<'p>> {
+    pub fn eager_reduce(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.eager_reduce
     }
 
-    pub fn quot(&self) -> Option<NamePtr<'p>> {
+    pub fn quot(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.quot
     }
 
     pub fn quot_mk(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(2u8),
     {
         proof {
@@ -957,6 +1019,7 @@ impl<'p> NameCache<'p> {
 
     pub fn quot_lift(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(0u8),
     {
         proof {
@@ -967,6 +1030,7 @@ impl<'p> NameCache<'p> {
 
     pub fn quot_ind(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(1u8),
     {
         proof {
@@ -977,6 +1041,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_type_id(),
     {
         proof {
@@ -987,6 +1052,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_zero(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_zero_id(),
     {
         proof {
@@ -997,6 +1063,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_succ(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_succ_id(),
     {
         proof {
@@ -1007,6 +1074,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_add(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(0u8),
     {
         proof {
@@ -1017,6 +1085,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_sub(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(1u8),
     {
         proof {
@@ -1027,6 +1096,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_mul(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(2u8),
     {
         proof {
@@ -1037,6 +1107,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_pow(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(5u8),
     {
         proof {
@@ -1047,6 +1118,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_mod(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(4u8),
     {
         proof {
@@ -1057,6 +1129,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_div(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(3u8),
     {
         proof {
@@ -1067,6 +1140,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_beq(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(7u8),
     {
         proof {
@@ -1077,6 +1151,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_ble(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(8u8),
     {
         proof {
@@ -1087,6 +1162,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_gcd(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(6u8),
     {
         proof {
@@ -1097,6 +1173,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_xor(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(11u8),
     {
         proof {
@@ -1107,6 +1184,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_land(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(9u8),
     {
         proof {
@@ -1117,6 +1195,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_lor(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(10u8),
     {
         proof {
@@ -1127,6 +1206,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_shr(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(13u8),
     {
         proof {
@@ -1137,6 +1217,7 @@ impl<'p> NameCache<'p> {
 
     pub fn nat_shl(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(12u8),
     {
         proof {
@@ -1147,6 +1228,7 @@ impl<'p> NameCache<'p> {
 
     pub fn string(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::string_type_id(),
     {
         proof {
@@ -1155,12 +1237,19 @@ impl<'p> NameCache<'p> {
         self.string
     }
 
-    pub fn string_of_list(&self) -> Option<NamePtr<'p>> {
+    pub fn string_of_list(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.string_of_list
     }
 
     pub fn bool_false(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_false_id(),
     {
         proof {
@@ -1171,6 +1260,7 @@ impl<'p> NameCache<'p> {
 
     pub fn bool_true(&self) -> (result: Option<NamePtr<'p>>)
         ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
             result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_true_id(),
     {
         proof {
@@ -1179,23 +1269,53 @@ impl<'p> NameCache<'p> {
         self.bool_true
     }
 
-    pub fn char(&self) -> Option<NamePtr<'p>> {
+    pub fn char(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.char
     }
 
-    pub fn char_of_nat(&self) -> Option<NamePtr<'p>> {
+    pub fn char_of_nat(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.char_of_nat
     }
 
-    pub fn list(&self) -> Option<NamePtr<'p>> {
+    pub fn list(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.list
     }
 
-    pub fn list_nil(&self) -> Option<NamePtr<'p>> {
+    pub fn list_nil(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.list_nil
     }
 
-    pub fn list_cons(&self) -> Option<NamePtr<'p>> {
+    pub fn list_cons(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.list_cons
     }
 
@@ -1547,7 +1667,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN -- body unchanged, and its denotation contract is
     /// now DERIVED from `alloc_expr`'s storage primitive rather than assumed.
     pub fn mk_app(&mut self, fun: ExprPtr<'t>, arg: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), fun),
+            crate::util_model::owns(*old(self), arg),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::App(
                 Box::new(to_model_expr(fun)),
                 Box::new(to_model_expr(arg)),
@@ -1564,7 +1688,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn mk_proj(&mut self, ty_name: NamePtr<'t>, idx: usize, structure: ExprPtr<'t>) -> (result:
         ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), ty_name),
+            crate::util_model::owns(*old(self), structure),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1583,7 +1711,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
         body: ExprPtr<'t>,
     ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), binder_name),
+            crate::util_model::owns(*old(self), binder_type),
+            crate::util_model::owns(*old(self), body),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Bind(
                 Box::new(to_model_expr(binder_type)),
                 Box::new(to_model_expr(body)),
@@ -1617,9 +1750,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// the facts through the tuple so `tc.rs`'s pair-matching functions
     /// (`def_eq_sort`, `def_eq_const`, ...) can use them.
     pub fn read_expr_pair(&self, a: ExprPtr<'t>, x: ExprPtr<'t>) -> (result: (Expr<'t>, Expr<'t>))
+        requires
+            crate::util_model::owns(*self, a),
+            crate::util_model::owns(*self, x),
         ensures
             to_model_of_expr(result.0) == to_model_expr(a),
             to_model_of_expr(result.1) == to_model_expr(x),
+            crate::expr_arena_bridge::expr_children_owned(*self, result.0),
+            crate::expr_arena_bridge::expr_children_owned(*self, result.1),
             result.0 matches Expr::Const { name, levels, .. }
                 ==> crate::expr_arena_bridge::const_name_of(a) == name
                 && crate::expr_arena_bridge::const_levels_of(a) == levels,
@@ -1651,7 +1789,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
         body: ExprPtr<'t>,
     ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), binder_name),
+            crate::util_model::owns(*old(self), binder_type),
+            crate::util_model::owns(*old(self), body),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Bind(
                 Box::new(to_model_expr(binder_type)),
                 Box::new(to_model_expr(body)),
@@ -1679,7 +1822,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn succ(&mut self, l: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), l),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1690,7 +1836,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn max(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), l),
+            crate::util_model::owns(*old(self), r),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1701,7 +1851,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn imax(&mut self, l: LevelPtr<'t>, r: LevelPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), l),
+            crate::util_model::owns(*old(self), r),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1712,7 +1866,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn param(&mut self, n: NamePtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), n),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model(result) == LevelSpec::Param(name_id(n)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1723,7 +1880,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn str(&mut self, pfx: NamePtr<'t>, sfx: StringPtr<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), pfx),
+            crate::util_model::owns(*old(self), sfx),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1734,7 +1895,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn num(&mut self, pfx: NamePtr<'t>, sfx: u64) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), pfx),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1752,7 +1916,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         body: ExprPtr<'t>,
         nondep: bool,
     ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), binder_name),
+            crate::util_model::owns(*old(self), binder_type),
+            crate::util_model::owns(*old(self), val),
+            crate::util_model::owns(*old(self), body),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Let(
                 Box::new(to_model_expr(binder_type)),
                 Box::new(to_model_expr(val)),
@@ -1782,7 +1952,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn mk_sort(&mut self, level: LevelPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), level),
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Sort(to_model(level)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1805,6 +1978,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             dbj_level < num_open_binders,
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1817,6 +1991,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             dbj_idx < u16::MAX,
         ensures
+            crate::util_model::owns(*final(self), result),
             to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -1833,12 +2008,23 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         Level<'t>,
         Level<'t>,
     ))
+        requires
+            crate::util_model::owns(*self, a),
+            crate::util_model::owns(*self, x),
         ensures
             to_model_of_level(result.0) == to_model(a),
             to_model_of_level(result.1) == to_model(x),
+            crate::level_arena_bridge::level_children_owned(*self, result.0),
+            crate::level_arena_bridge::level_children_owned(*self, result.1),
     {
         (self.read_level(a), self.read_level(x))
     }
 }
 
 } // verus!
+
+impl<'p> std::fmt::Debug for NameCache<'p> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NameCache").finish_non_exhaustive()
+    }
+}

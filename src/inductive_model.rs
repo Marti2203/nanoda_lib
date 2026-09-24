@@ -80,7 +80,7 @@ use crate::level_arena_bridge::to_model as level_to_model;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
-use crate::level_arena_bridge::{name_id, name_id_injective};
+use crate::level_arena_bridge::name_id;
 #[cfg(verus_only)]
 use crate::level_model::level_names;
 #[cfg(verus_only)]
@@ -133,6 +133,28 @@ pub struct ExCtorHeader<'a>(crate::inductive::CtorHeader<'a>);
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 pub struct ExInductiveCheckState<'a>(crate::inductive::InductiveCheckState<'a>);
+
+/// Every pointer the inductive-checking state holds belongs to `c` (the two
+/// nested-type maps are opaque and never read by verified code).
+pub(crate) open spec fn st_owned<'t, 'p, 'a>(c: crate::util::TcCtx<'t, 'p>, st: crate::inductive::InductiveCheckState<'a>) -> bool {
+    &&& crate::util_model::owns(c, st.uparams)
+    &&& crate::util_model::owns_all(c, st.local_params@)
+    &&& forall|i: int| 0 <= i < st.local_indices@.len() ==> crate::util_model::owns_all(c, #[trigger] st.local_indices@[i]@)
+    &&& forall|i: int| 0 <= i < st.all_inductives_incl_specialized@.len() ==> {
+        let h = #[trigger] st.all_inductives_incl_specialized@[i];
+        &&& crate::util_model::owns(c, h.name)
+        &&& crate::util_model::owns(c, h.ty)
+        &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(c, #[trigger] h.ctors@[j].name)
+        &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(c, #[trigger] h.ctors@[j].ty)
+    }
+    &&& crate::util_model::owns_all(c, st.ind_consts@)
+    &&& crate::util_model::owns_all(c, st.majors@)
+    &&& crate::util_model::owns_all(c, st.motives@)
+    &&& forall|i: int| 0 <= i < st.minors@.len() ==> crate::util_model::owns_all(c, #[trigger] st.minors@[i]@)
+    &&& (st.block_codom matches Some(l) ==> crate::util_model::owns(c, l))
+    &&& (st.rec_uparams matches Some(l) ==> crate::util_model::owns(c, l))
+    &&& (st.elim_level matches Some(l) ==> crate::util_model::owns(c, l))
+}
 
 /// The three `Declar` payload types, registered OPAQUELY. Making `Declar`
 /// itself matchable needs its variants' payload types known to Verus, but not
@@ -227,9 +249,6 @@ pub fn name_in_slice<'t>(target_names: &[NamePtr<'t>], name: NamePtr<'t>) -> (re
         decreases target_names.len() - i,
     {
         if name_ptr_eq(target_names[i], name) {
-            proof {
-                name_id_injective(target_names@[i as int], name);
-            }
             let ghost mapped: Seq<u64> = Seq::new(
                 target_names@.len(),
                 |k: int| name_id(target_names@[k]),
@@ -239,9 +258,6 @@ pub fn name_in_slice<'t>(target_names: &[NamePtr<'t>], name: NamePtr<'t>) -> (re
                 assert(0 <= i < target_names@.len() && mapped[i as int] == name_id(name));
             }
             return true;
-        }
-        proof {
-            name_id_injective(target_names@[i as int], name);
         }
         i += 1;
     }
@@ -267,6 +283,9 @@ pub fn verified_find_const_named<'t, 'p: 't>(
     target_names: &[NamePtr<'t>],
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*ctx, e),
+        crate::util_model::owns_all(*ctx, target_names@),
     ensures
         match result {
             Some(r) => r == contains_const_named(
@@ -378,7 +397,10 @@ pub fn verified_extract_const_names<'t, 'p: 't>(
     ctx: &TcCtx<'t, 'p>,
     haystack: &[ExprPtr<'t>],
 ) -> (result: Option<Vec<NamePtr<'t>>>)
+    requires
+        crate::util_model::owns_all(*ctx, haystack@),
     ensures
+        result matches Some(names) ==> crate::util_model::owns_all(*ctx, names@),
         match result {
             Some(names) => names@.len() == haystack@.len() && forall|i: int|
                 0 <= i < haystack@.len() ==> {
@@ -392,6 +414,8 @@ pub fn verified_extract_const_names<'t, 'p: 't>(
     let mut i: usize = 0;
     while i < haystack.len()
         invariant
+            crate::util_model::owns_all(*ctx, haystack@),
+            crate::util_model::owns_all(*ctx, result@),
             i <= haystack.len(),
             result@.len() == i,
             forall|j: int|
@@ -427,6 +451,9 @@ pub fn verified_has_ind_occ<'t, 'p: 't>(
     haystack: &[ExprPtr<'t>],
     fuel: u32,
 ) -> (result: Option<bool>)
+    requires
+        crate::util_model::owns(*ctx, e),
+        crate::util_model::owns_all(*ctx, haystack@),
     ensures
         match result {
             Some(r) => r == contains_const_named(
@@ -536,6 +563,8 @@ pub fn verified_pi_telescope_size<'t, 'p: 't>(
     e: ExprPtr<'t>,
     fuel: u32,
 ) -> (result: Option<u16>)
+    requires
+        crate::util_model::owns(*ctx, e),
     ensures
         match result {
             Some(r) => r as nat == pi_telescope_size_spec(to_model(e)),
@@ -645,8 +674,10 @@ pub fn verified_id_set_eq<'t>(a: &[NamePtr<'t>], b: &[NamePtr<'t>]) -> (result: 
 /// `exists`: a quantifier written out twice in two places is two quantifiers
 /// as far as instantiation goes, and the subset claim below needs this one
 /// under another quantifier.
+/// Compares indices (`raw`), which is what the kernel's `==` does; for
+/// pointers of one context that is pointer equality (`owned_raw_eq`).
 pub open spec fn ptr_in_seq<'t>(haystack: Seq<ExprPtr<'t>>, needle: ExprPtr<'t>) -> bool {
-    exists|j: int| 0 <= j < haystack.len() && #[trigger] haystack[j] == needle
+    exists|j: int| 0 <= j < haystack.len() && #[trigger] haystack[j].raw == needle.raw
 }
 
 pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (result: bool)
@@ -657,7 +688,7 @@ pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (
     while i < haystack.len()
         invariant
             i <= haystack.len(),
-            forall|j: int| 0 <= j < i ==> #[trigger] haystack@[j] != needle,
+            forall|j: int| 0 <= j < i ==> #[trigger] haystack@[j].raw != needle.raw,
         decreases haystack.len() - i,
     {
         if expr_ptr_eq(haystack[i], needle) {
@@ -722,6 +753,9 @@ pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), cursor),
+        crate::util_model::owns_all(*old(ctx), non_prop_elems@),
         memo.wf(),
         memo.spec_env() == *env,
         nlbv(to_model(cursor)) <= 0,
@@ -822,6 +856,8 @@ pub fn verified_large_elim_ok<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<bool>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        only_ctor_ty matches Some(q) ==> crate::util_model::owns(*old(ctx), q),
         memo.wf(),
         memo.spec_env() == *env,
         match only_ctor_ty {
@@ -878,6 +914,8 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(
     i: u64,
 ) -> (result: NamePtr<'t>)
     requires
+        crate::util_model::owns(*old(ctx), p),
+        crate::util_model::owns(*old(ctx), uparams),
         1 <= i,
         i as nat <= to_model_of_levels(uparams).len() + 1,
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
@@ -887,6 +925,7 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(
                 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j]
                     == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // FRESHNESS: what the search exists to guarantee -- the name it
@@ -922,8 +961,10 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(
     uparams: LevelsPtr<'t>,
 ) -> (result: NamePtr<'t>)
     requires
+        crate::util_model::owns(*old(ctx), uparams),
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // FRESHNESS, carried up from the search: the elimination universe
@@ -963,6 +1004,9 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
     fuel: u32,
 ) -> (result: Option<(LevelPtr<'t>, LevelsPtr<'t>, bool)>)
     requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        only_ctor_ty matches Some(q) ==> crate::util_model::owns(*old(ctx), q),
+        crate::util_model::owns(*old(ctx), uparams),
         memo.wf(),
         memo.spec_env() == *env,
         match only_ctor_ty {
@@ -971,6 +1015,7 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
         },
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
     ensures
+        result matches Some((r0, r1, r2)) ==> crate::util_model::owns(*final(ctx), r0) && crate::util_model::owns(*final(ctx), r1),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
@@ -1009,8 +1054,12 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
             let mut i: usize = 0;
             while i < uparams_vec.len()
                 invariant
+                    crate::env_model::env_matches(*env, *old(ctx)),
+                    crate::util_model::owns(*old(ctx), uparams),
                     ctx.dbj_level_counter == old(ctx).dbj_level_counter,
                     crate::util_model::same_arenas(*old(ctx), *ctx),
+                    crate::util_model::owns_all(*ctx, uparams_vec@),
+                    crate::util_model::owns_all(*ctx, base@),
                     i <= uparams_vec.len(),
                 decreases uparams_vec.len() - i,
             {
@@ -1057,6 +1106,12 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
     this_minor: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::util_model::owns_all(*old(ctx), local_params@),
+        crate::util_model::owns_all(*old(ctx), motives@),
+        crate::util_model::owns_all(*old(ctx), flat_mapped_minors@),
+        crate::util_model::owns_all(*old(ctx), all_ctor_args@),
+        crate::util_model::owns_all(*old(ctx), handled_rec_args@),
+        crate::util_model::owns(*old(ctx), this_minor),
         ({
             let m = to_model(this_minor);
             matches!(m, ExprSpec::Free(_))
@@ -1097,6 +1152,7 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
         all_ctor_args@.len() + handled_rec_args@.len() + flat_mapped_minors@.len() + motives@.len()
             + local_params@.len() <= 50,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         pi_telescope_size_spec(to_model(result)) == local_params@.len() + motives@.len()
@@ -1251,6 +1307,12 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
     major: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>)
     requires
+        crate::util_model::owns_all(*old(ctx), local_params@),
+        crate::util_model::owns_all(*old(ctx), motives@),
+        crate::util_model::owns_all(*old(ctx), flat_mapped_minors@),
+        crate::util_model::owns_all(*old(ctx), local_indices@),
+        crate::util_model::owns(*old(ctx), motive),
+        crate::util_model::owns(*old(ctx), major),
         matches!(to_model(major), ExprSpec::Free(_)),
         forall|i: int|
             #![trigger local_indices@[i]]
@@ -1286,6 +1348,7 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
         local_indices@.len() + flat_mapped_minors@.len() + motives@.len() + local_params@.len()
             <= 50,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         pi_telescope_size_spec(to_model(result)) == local_params@.len() + motives@.len()

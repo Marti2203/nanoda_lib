@@ -70,8 +70,11 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
     binder_type: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>) where 'p: 't
     requires
+        crate::util_model::owns(*old(ctx), binder_name),
+        crate::util_model::owns(*old(ctx), binder_type),
         crate::expr_model::nlbv(to_model(binder_type)) == 0,
     ensures
+        crate::util_model::owns(*final(ctx), result),
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_binder_type_of(result) == binder_type,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
@@ -105,7 +108,12 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
     alpha_style: BinderStyle,
     arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
+    requires
+        crate::util_model::owns(*old(ctx), u),
+        crate::util_model::owns(*old(ctx), alpha_name),
+        crate::util_model::owns(*old(ctx), anon),
     ensures
+        crate::util_model::owns(*final(ctx), expected),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(expected) == ExprSpec::Bind(
@@ -217,7 +225,13 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     r_style: BinderStyle,
     arrow_style: BinderStyle,
 ) -> (expected: ExprPtr<'t>)
+    requires
+        crate::util_model::owns(*old(ctx), u),
+        crate::util_model::owns(*old(ctx), a_name),
+        crate::util_model::owns(*old(ctx), r_name),
+        crate::util_model::owns(*old(ctx), anon),
     ensures
+        crate::util_model::owns(*final(ctx), expected),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(expected) == ExprSpec::Bind(
