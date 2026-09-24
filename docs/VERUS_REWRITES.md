@@ -215,8 +215,8 @@ still a rejection — but each is an improvement.
 | `reduce_rec` | `src/tc.rs` | `checked_sub(..).unwrap()` — underflows when a constructor supplies fewer arguments than its telescope claims |
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |
 | `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
-| `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop`, wrapping `u64` silently |
-| `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder overflowed silently in release builds (debug panicked) once the open levels reached `u16::MAX`; now checked at exactly that point, so no term the original handled is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
+| `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` (panics at `u64::MAX` -- the crate builds with overflow checks) |
+| `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
 
 ---
 

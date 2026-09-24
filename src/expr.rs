@@ -1379,7 +1379,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// The depth ceiling is REAL, not an artefact. `abstr_aux` tracks binder
     /// depth in a `u16` `offset`, so a term nested deeper than `u16::MAX`
-    /// overflows it -- silently, in release. Lean terms are never remotely that
+    /// overflows it (a panic: the crate builds with overflow checks). Lean terms are never remotely that
     /// deep, but the kernel does not check, so the limit is stated here rather
     /// than assumed away.
     #[verifier::exec_allows_no_decreases_clause]
@@ -1809,8 +1809,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
-                    // in release builds once the open levels reached `u16::MAX`.
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
+                    // (this crate builds with overflow checks); the same panic,
+                    // made explicit so the result can carry `levels_fit`.
                     crate::util::kernel_check(
                         num_open_binders < u16::MAX,
                         "abstr_levels: too many open de Bruijn levels",
@@ -1840,8 +1841,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
-                    // in release builds once the open levels reached `u16::MAX`.
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
+                    // (this crate builds with overflow checks); the same panic,
+                    // made explicit so the result can carry `levels_fit`.
                     crate::util::kernel_check(
                         num_open_binders < u16::MAX,
                         "abstr_levels: too many open de Bruijn levels",
@@ -1871,8 +1873,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
-                    // in release builds once the open levels reached `u16::MAX`.
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
+                    // (this crate builds with overflow checks); the same panic,
+                    // made explicit so the result can carry `levels_fit`.
                     crate::util::kernel_check(
                         num_open_binders < u16::MAX,
                         "abstr_levels: too many open de Bruijn levels",
