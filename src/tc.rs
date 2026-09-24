@@ -874,7 +874,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // VERUS-REWRITE(tested-env): as in `infer_proj`, the constructor is
             // tested to be the structure's recorded one, with its recorded
             // field count; never fails on a well-formed environment.
-            if !opt_name_is(crate::env_model::get_structure_first_ctor(self.env, inductive_name, true), name) {
+            if crate::env_model::get_structure_first_ctor(self.env, inductive_name, true) != Some(name) {
                 return None
             }
             match crate::env_model::get_constructor_num_fields(self.env, &name) {
@@ -1095,7 +1095,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // constructor and its field count are tested against the environment
         // model's records; `get_structure`/`get_constructor` state nothing.
         // Never fails on a well-formed environment.
-        if !opt_name_is(crate::env_model::get_structure_first_ctor(self.env, &name, false), *ctor_name) {
+        if crate::env_model::get_structure_first_ctor(self.env, &name, false) != Some(*ctor_name) {
             return None
         }
         match crate::env_model::get_constructor_num_fields(self.env, ctor_name) {
@@ -1303,16 +1303,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `args.as_slice()` with `[arg]` and `[arg1, arg2]`. Slice patterns are
         // unsupported outright, so the arity is tested and the elements
         // indexed; same three cases, same order.
-        // VERUS-REWRITE(guarded-arm): the two `Const` arms had guards
-        // (`if args.len() == 1 && ..`, `if args.len() == 2`). A guarded arm
-        // whose body makes `&mut self` calls makes this function's frame
-        // postcondition unprovable -- every assert inside passes, the
-        // postcondition still fails. Collapsed into one arm with the same
-        // conditions tested in the same order by an if/else-if chain.
-        // VERUS-REWRITE(option-eq): every `Some(name) == name_cache.nat_x`
-        // became `opt_name_is(name_cache.nat_x, name)` -- `Option::eq`'s vstd
-        // specification is claim-free, so the comparison told the verifier
-        // nothing. Same test.
+        // VERUS-REWRITE(slice-pattern): the two `Const` arms matched
+        // `args.as_slice()` against `[arg]` and `[arg1, arg2]`, and slice
+        // patterns are unsupported. Collapsed into one arm testing the same
+        // lengths in the same order by an if/else-if chain.
         let out = match self.ctx.read_expr(f) {
             Const { name, levels, .. } => {
                 // VERUS-REWRITE(nat-levels-guard): Nat's operators and `Nat.succ`
@@ -1323,7 +1317,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // on ill-formed input only.
                 if self.ctx.read_levels(levels).len() != 0 {
                     None
-                } else if args.len() == 1 && opt_name_is(self.ctx.export_file.name_cache.nat_succ, name) {
+                } else if args.len() == 1 && Some(name) == self.ctx.export_file.name_cache.nat_succ {
                     let arg = args[0];
                     let v_expr = self.whnf(arg);
                     let r = self.ctx.get_bignum_succ_from_expr(v_expr);
@@ -1360,33 +1354,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 } else if args.len() == 2 {
                     let arg1 = args[0];
                     let arg2 = args[1];
-                    let op = if opt_name_is(self.ctx.export_file.name_cache.nat_add, name) {
+                    let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
                         NatBinOp::Add
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_sub, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
                         NatBinOp::Sub
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_mul, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
                         NatBinOp::Mul
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_pow, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
                         NatBinOp::Pow
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_mod, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
                         NatBinOp::Mod
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_div, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
                         NatBinOp::Div
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_beq, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
                         NatBinOp::Beq
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_ble, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
                         NatBinOp::Ble
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_land, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
                         NatBinOp::LAnd
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_lor, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
                         NatBinOp::LOr
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_xor, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
                         NatBinOp::XOr
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_gcd, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
                         NatBinOp::Gcd
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_shl, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
                         NatBinOp::Shl
-                    } else if opt_name_is(self.ctx.export_file.name_cache.nat_shr, name) {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
                         NatBinOp::Shr
                     } else {
                         return None
@@ -1676,7 +1670,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // inductive's (`Lean`'s invariant for a structure).
         let first_ctor = crate::env_model::get_structure_first_ctor(self.env, &struct_ty_name, true);
         crate::util::kernel_check(
-            opt_name_is(first_ctor, all_ctor_names[0]),
+            first_ctor == Some(all_ctor_names[0]),
             "infer_proj: the structure's constructor disagrees with the environment",
         );
         let ctor_np = crate::env_model::get_constructor_num_params(self.env, &all_ctor_names[0]);
@@ -3121,12 +3115,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 (false, r)
             },
-            // VERUS-REWRITE(guarded-arm): the `if !args.is_empty()` guard moves
-            // into the arm body -- a guarded arm whose body calls `&mut self`
-            // makes the postcondition unprovable. The unguarded `Lambda` arm
-            // that followed is the `else`, and its `debug_assert!` is now
-            // true by construction.
-            Lambda { .. } => if !args.is_empty() {
+            Lambda { .. } if !args.is_empty() => {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant
@@ -3211,7 +3200,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     whnf_claim_trans(*old(self).env, em0, to_model_expr(e2), to_model_expr(r));
                 }
                 (true, r)
-            } else {
+            },
+            Lambda { .. } => {
                 debug_assert!(args.is_empty());
                 let r = self.ctx.foldl_apps(e_fun, args.into_iter());
                 proof {
@@ -3853,15 +3843,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 
-        // VERUS-REWRITE(option-eq): both `Some(p) == self.ctx.c_bool_true()`
-        // became `opt_expr_is(self.ctx.c_bool_true(), p)` -- `Option::eq`'s
-        // vstd specification is claim-free. Same test.
-        if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && opt_expr_is(
-            self.ctx.c_bool_true(),
-            y_n,
-        ) {
+        if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n) == self.ctx.c_bool_true() {
             let x_nn = self.whnf(x_n);
-            if opt_expr_is(self.ctx.c_bool_true(), x_nn) {
+            if Some(x_nn) == self.ctx.c_bool_true() {
                 proof {
                     // both are `Bool.true`: the same constant, no universes
                     crate::expr_arena_bridge::is_const_shape_model(x_nn);
@@ -4012,15 +3996,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             scope_pres_in_scope(*self, major, major_ty);
         }
         let f = self.ctx.unfold_apps_fun(major_ty);
-        // VERUS-REWRITE(guarded-arm): the guard moves into the arm body; a
-        // guarded arm whose body calls `&mut self` makes the frame
-        // postcondition unprovable. Same condition, same order -- the guard's
-        // false case was the arm below it.
         match (self.ctx.read_expr(f), self.ctx.get_major_induct(rec)) {
-            (Const { name, .. }, Some(n)) => {
-                if name != n {
-                    return None
-                }
+            (Const { name, .. }, Some(n)) if name == n => {
                 let new_ctor_app = self.mk_nullary_ctor(major_ty, rec.num_params as usize)?;
                 proof {
                     scope_pres_trans(to_model_expr(major), to_model_expr(major_ty), to_model_expr(new_ctor_app));
@@ -4086,13 +4063,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 scope_pres_in_scope(*self, e, e_type);
             }
             let e_type_f = self.ctx.unfold_apps_fun(e_type);
-            // VERUS-REWRITE(guarded-arm): as above.
             match self.ctx.read_expr(e_type_f) {
-                Const { name, .. } => {
-                    if name != ind_name {
-                        e
-                    } else if self.may_be_prop(e_type).0 {
-                        // If it's a prop, return the original `e`
+                Const { name, .. } if name == ind_name => {
+                    // If it's a prop, return the original `e`
+                    if self.may_be_prop(e_type).0 {
                         e
                     } else {
                         // if it's not a prop, try to eta expand
@@ -4453,13 +4427,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let qmk = self.whnf(qmk0);
         let rest_idx = qi + 1;
         let (qmk_const, qmk_args) = self.ctx.unfold_apps(qmk);
-        // VERUS-REWRITE(guarded-arm): as above. The `?` keeps its meaning --
-        // a missing `quot_mk` still declines from this function.
         let mk_name = match self.ctx.read_expr(qmk_const) {
-            Const { name, .. } => {
-                if !(name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3) {
-                    return None
-                }
+            Const { name, .. } if name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3 => {
                 proof {
                     // read the name cache HERE, before anything below can touch it
                     crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
@@ -4657,17 +4626,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if self.failure_cache_contains(x, y) {
             return None
         }
-        // VERUS-REWRITE(guarded-arm): both arms below carried guards -- the
-        // inner one made `&mut self` calls from inside the guard itself. A
-        // guarded arm whose body calls `&mut self` makes this function's frame
-        // postcondition unprovable. Same conditions, same order, same
-        // short-circuit; the guard's false case is the arm that followed it.
-
         match self.ctx.read_expr_pair(x, y) {
-            (App { .. }, App { .. }) => {
-                if x_defname != y_defname {
-                    return None
-                }
+            (App { .. }, App { .. }) if (x_defname == y_defname) => {
                 let (l_fun, l_args) = self.ctx.unfold_apps(x);
                 let (r_fun, r_args) = self.ctx.unfold_apps(y);
                 proof {
@@ -4675,12 +4635,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     spine_scope(*self, y, r_fun, r_args@);
                 }
                 match self.ctx.read_expr_pair(l_fun, r_fun) {
-                    (Const { levels: l_levels, .. }, Const { levels: r_levels, .. }) => {
-                        if l_args.len() == r_args.len() && !self.failure_cache_contains(x, y)
-                            && self.args_def_eq_rev(&l_args, &r_args) && self.ctx.eq_antisymm_many(
-                            l_levels,
-                            r_levels,
-                        ) {
+                    (Const { levels: l_levels, .. }, Const { levels: r_levels, .. })
+                        if l_args.len() == r_args.len()
+                            && !self.failure_cache_contains(x, y)
+                            && self.args_def_eq_rev(&l_args, &r_args)
+                            && self.ctx.eq_antisymm_many(l_levels, r_levels) => {
                             proof {
                                 let env = *old(self).env;
                                 let (xm, ym) = (to_model_expr(x), to_model_expr(y));
@@ -4711,10 +4670,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 }
                             }
                             Some(FoundEqResult(true))
-                        } else {
-                            self.failure_cache_insert(x, y);
-                            None
-                        }
+                    },
+                    (Const { .. }, Const { .. }) => {
+                        self.failure_cache_insert(x, y);
+                        None
                     },
                     _ => crate::util::kernel_fail("try_eq_const_app: expected a constant head"),
                 }
@@ -4929,26 +4888,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                     y = yd;
                 },
-                // VERUS-REWRITE(guarded-arm): the two `is_lt` guards became the
-                // head of this arm's if/else chain. Same three cases in the
-                // same order -- the third arm was already the guards' false
-                // case.
+                (Some((_, l_hint)), Some((_, r_hint))) if l_hint.is_lt(&r_hint) => {
+                    let yd = self.delta(y);
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yd));
+                        scope_pres_in_scope(*self, y, yd);
+                    }
+                    y = yd;
+                },
+                (Some((_, l_hint)), Some((_, r_hint))) if r_hint.is_lt(&l_hint) => {
+                    let xd = self.delta(x);
+                    proof {
+                        whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xd));
+                        scope_pres_in_scope(*self, x, xd);
+                    }
+                    x = xd;
+                },
                 (Some((x_name, l_hint)), Some((y_name, r_hint))) => {
-                    if l_hint.is_lt(&r_hint) {
-                        let yd = self.delta(y);
-                        proof {
-                            whnf_claim_trans(*old(self).env, to_model_expr(y_in), to_model_expr(y), to_model_expr(yd));
-                            scope_pres_in_scope(*self, y, yd);
-                        }
-                        y = yd;
-                    } else if r_hint.is_lt(&l_hint) {
-                        let xd = self.delta(x);
-                        proof {
-                            whnf_claim_trans(*old(self).env, to_model_expr(x_in), to_model_expr(x), to_model_expr(xd));
-                            scope_pres_in_scope(*self, x, xd);
-                        }
-                        x = xd;
-                    } else if let Some(r) = self.try_eq_const_app(
+                    if let Some(r) = self.try_eq_const_app(
                         x,
                         x_name,
                         l_hint,
@@ -5913,16 +5870,6 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
     }
 }
 
-/// `Some(e) == opt`, with the specification vstd's `Option::eq` lacks.
-fn opt_expr_is<'t>(opt: Option<ExprPtr<'t>>, e: ExprPtr<'t>) -> (result: bool)
-    ensures
-        result == (opt == Some(e)),
-{
-    match opt {
-        Some(m) => m == e,
-        None => false,
-    }
-}
 
 /// What `pred_of_nat_succ` returns is the argument of a `Nat.succ` the input
 /// is convertible with -- itself, or its literal's unfolding.
@@ -5976,16 +5923,6 @@ pub proof fn def_eq_claim_via<'x, 't>(env: Env<'x, 't>, x: ExprSpec, xn: ExprSpe
     }
 }
 
-/// `Some(n) == opt`, with the specification vstd's `Option::eq` lacks.
-fn opt_name_is<'t>(opt: Option<NamePtr<'t>>, n: NamePtr<'t>) -> (result: bool)
-    ensures
-        result == (opt == Some(n)),
-{
-    match opt {
-        Some(m) => m == n,
-        None => false,
-    }
-}
 
 /// A spine is in scope exactly when its head and every argument are.
 pub proof fn spine_app_dbj_deep_in(h: ExprSpec, args: Seq<ExprSpec>, SS: ISet<u32>, c: u16)
@@ -9476,7 +9413,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // that never fail on a well-formed environment: the structure's
         // constructor is the one the environment model records, and so is its
         // field count. `get_structure`/`get_constructor` state nothing.
-        if !opt_name_is(crate::env_model::get_structure_first_ctor(self.env, &c_name, false), ctor_name0) {
+        if crate::env_model::get_structure_first_ctor(self.env, &c_name, false) != Some(ctor_name0) {
             return None
         }
         match crate::env_model::get_constructor_num_fields(self.env, &ctor_name0) {

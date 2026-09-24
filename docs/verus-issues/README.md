@@ -72,3 +72,30 @@ debugging.
 **Where it bit nanoda.** `TypeChecker::infer_proj` (`src/tc.rs`) carries a
 quantified invariant over the constructor telescope keyed by the loop
 index; both of its loops use the ghost-copy workaround (`pi`, `fi`).
+
+## Match guards drop the resolution of a mutable reference
+
+**File:** `match_guard_resolution.rs`, found against verus-fork `5e83a13e2`,
+2026-09-24. **Fixed on the fork** in `8f4061822` (branch
+`fix-guard-resolution`), with a regression test in
+`rust_verify_test/tests/mut_refs_patterns.rs`.
+
+**Symptom.** A `&mut self` function whose match has a guarded arm that
+mutates `self` cannot prove any `ensures` about `final(self)`; the same match
+with the guard moved into the arm body verifies. A guard of `true`, or
+mutation only in an unguarded arm, is fine.
+
+**Cause.** `resolution_inference.rs` emits a `has_resolved` assumption at the
+first point a place is safe to resolve. On the path where the guarded arm's
+PATTERN fails, that point is the start of a `MatchIntermediate` block, which
+has no AST position, and `apply_resolutions` skips it
+(`AstPosition::MatchIntermediate => continue`). Later blocks do not re-emit it,
+because their predecessor could already resolve. Upstream already flagged the
+effect as a completeness TODO in `test_match_guards`.
+
+**Fix.** A `MatchIntermediate` block has no instructions, so the place holds
+the same value at the start of each successor: forward the resolution there
+(recursively). Sound for the same reason the original emission point was.
+Verified against the repro, three false-postcondition twins (still rejected),
+and the `match`, `mut_refs*` and `mutable_params` suites (one expectation in
+`test_match_guards` updated: its TODO now passes).

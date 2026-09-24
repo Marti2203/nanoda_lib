@@ -17,6 +17,29 @@ Current: **29 rewrites across 25 functions.**
 These are not decisions. Each exists because something is missing upstream, and
 each would revert if that were supplied.
 
+### Match guards with mutation in the arm — 0 rewrites, CLOSED (fork `8f4061822`)
+
+Seven functions had their match guards moved into the arm body, recorded as
+"a guarded arm whose body calls `&mut self` makes the postcondition
+unprovable". The cause was a Verus bug, not a limitation: resolution
+inference dropped any resolution whose first safe point was a
+`MatchIntermediate` block (where a failed pattern and a failed guard rejoin),
+so on the fallthrough path of every guarded arm a mutable reference was never
+resolved and `final(self)` was unconstrained. Upstream had it as a
+completeness TODO in `test_match_guards`. Fixed on the fork (branch
+`fix-guard-resolution`) by forwarding such resolutions to the block's
+successors; repro in `docs/verus-issues/`. All seven are back to the
+kernel's guards (`try_reduce_nat` keeps a rewrite, now tagged for its slice
+patterns).
+
+### `Option` equality — 0 rewrites, CLOSED
+
+Five comparisons `Some(p) == c` had been rewritten through `opt_expr_eq` /
+`opt_expr_is` / `opt_name_is` because `<Option<T> as PartialEq>::eq` is
+claim-free in vstd. That reason had gone stale: `Ptr` implements
+`PartialEqSpecImpl` (`util_model.rs`), so vstd's trait-level `eq` contract
+applies to `Option<Ptr<_>>`. Retested and reverted.
+
 ### `Iterator::any` — 0 rewrites, CLOSED
 
 Both `all_uparams_defined` and `contains_param` are back to the kernel's own
@@ -159,8 +182,7 @@ needed a different shape.
 | `def_eq_binder_aux`, `whnf_no_unfolding_aux` | `src/tc.rs` | or-pattern of two tuples; slice pattern |
 | `infer_const` | `src/tc.rs` | accessor shape, and an arity check hoisted one frame |
 | `infer` | `src/tc.rs` | both cache lookups go through the verified readers `cached_infer_check`/`cached_infer_no_check` — same lookups, and they hand back the caches' claims |
-| `is_nat_zero`, `pred_of_nat_succ` | `src/expr.rs` | `c_nat_zero()/c_nat_succ() == Some(p)` → `opt_expr_eq`; `pred_of_nat_succ`'s guarded `App` arm → the guard inside the arm (its false case fell through to `_ => None`); `read_bignum(..).map(|n| n.is_zero()).unwrap_or(false)` and `read_bignum(ptr)?`, `n - 1u8` → `read_bignum_value`, `biguint_is_zero`, `biguint_pred` |
-| `def_eq` | `src/tc.rs` | both `Some(p) == self.ctx.c_bool_true()` → `opt_expr_is` |
+| `is_nat_zero`, `pred_of_nat_succ` | `src/expr.rs` | `read_bignum(..).map(|n| n.is_zero()).unwrap_or(false)` and `read_bignum(ptr)?`, `n - 1u8` → `read_bignum_value`, `biguint_is_zero`, `biguint_pred` |
 | `try_string_lit_expansion` | `src/tc.rs` | the `matches!(..) \|\| matches!(..)` bound in two steps so the swapped call's claim can be turned around; same calls, same short-circuit |
 | `def_eq_local` | `src/tc.rs` | `x_id == y_id` → `fvar_id_eq` — `FVarId`'s derived `PartialEq` is an unspecified call |
 | `reduce_rec` | `src/tc.rs` | the recursor's counts, major index and rules read through `env_model::get_recursor_data` (literally those fields, with the environment model's claim) instead of off `rec`; the three argument iterators bound to names so the proof can state what each yields; `args.len()` read once so the proof knows the length fits a `usize` |

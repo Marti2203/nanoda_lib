@@ -636,19 +636,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // value.
             crate::expr_arena_bridge::read_bignum_value(self, ptr)
         } else {
-            // VERUS-REWRITE(option-eq): was `else if Some(e) == self.c_nat_zero()`.
-            // `Option::eq`'s specification is claim-free, so the comparison told
-            // the verifier nothing; comparing the payload is the same test.
-            match self.c_nat_zero() {
-                Some(z) => if z == e {
-                    proof {
-                        crate::expr_arena_bridge::is_const_shape_model(z);
-                    }
-                    Some(BigUint::zero())
-                } else {
-                    None
-                },
-                None => None,
+            if Some(e) == self.c_nat_zero() {
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(e);
+                }
+                Some(BigUint::zero())
+            } else {
+                None
             }
         }
     }
@@ -708,23 +702,19 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
             r
         } else {
-            // VERUS-REWRITE(option-eq): as in `get_bignum_from_expr`.
-            match self.c_nat_zero() {
-                Some(z) => if z == e {
-                    proof {
-                        crate::expr_arena_bridge::is_const_shape_model(z);
+            if Some(e) == self.c_nat_zero() {
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(e);
+                }
+                let r = self.mk_nat_lit_quick(crate::nat_lit_model::biguint_succ(BigUint::zero()));
+                proof {
+                    if let Some(rr) = r {
+                        crate::expr_arena_bridge::is_nat_lit_shape_model(rr);
                     }
-                    let r = self.mk_nat_lit_quick(crate::nat_lit_model::biguint_succ(BigUint::zero()));
-                    proof {
-                        if let Some(rr) = r {
-                            crate::expr_arena_bridge::is_nat_lit_shape_model(rr);
-                        }
-                    }
-                    r
-                } else {
-                    None
-                },
-                None => None,
+                }
+                r
+            } else {
+                None
             }
         }
     }
@@ -742,9 +732,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 && crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) == Some(0nat),
     {
         match self.read_expr(e) {
-            // VERUS-REWRITE(option-eq): was `self.c_nat_zero() == Some(e)`.
             Const { .. } => {
-                let r = opt_expr_eq(self.c_nat_zero(), e);
+                let r = self.c_nat_zero() == Some(e);
                 proof {
                     if r {
                         crate::expr_arena_bridge::is_const_shape_model(e);
@@ -796,18 +785,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             },
     {
         match self.read_expr(e) {
-            // VERUS-REWRITE(guarded-arm): the guard `if self.c_nat_succ() ==
-            // Some(fun)` moves into the arm; its false case fell through to
-            // `_ => None`, which is what the `else` returns. VERUS-REWRITE(
-            // option-eq): the comparison through `opt_expr_eq`.
-            App { fun, arg, .. } => if opt_expr_eq(self.c_nat_succ(), fun) {
+            App { fun, arg, .. } if self.c_nat_succ() == Some(fun) => {
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(fun);
                     assert(crate::expr_arena_bridge::const_levels_vec(fun) =~= Seq::<crate::level_model::LevelSpec>::empty());
                 }
                 Some(arg)
-            } else {
-                None
             },
             NatLit { ptr, .. } => {
                 // VERUS-REWRITE(accessor-swap): was `self.read_bignum(ptr)?`;
@@ -937,16 +920,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
-/// `opt == Some(e)`, with the specification vstd's `Option::eq` lacks.
-fn opt_expr_eq<'t>(opt: Option<ExprPtr<'t>>, e: ExprPtr<'t>) -> (result: bool)
-    ensures
-        result == (opt == Some(e)),
-{
-    match opt {
-        Some(m) => m == e,
-        None => false,
-    }
-}
 
 } // verus!
 
