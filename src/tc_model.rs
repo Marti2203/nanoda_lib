@@ -1284,14 +1284,15 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
 /// specification at all. Nothing about any claim depends on it: a wrong answer
 /// here could only send a lookup to the wrong slot, and a lookup only ever
 /// returns a certificate that already carries its own proof.
-pub uninterp spec fn ptr_raw<'t>(e: ExprPtr<'t>) -> u32;
+pub open spec fn ptr_raw<'t>(e: ExprPtr<'t>) -> u32 {
+    crate::util_model::ptr_raw(e)
+}
 
-#[verifier::external_body]
 fn ptr_bits<'t>(e: ExprPtr<'t>) -> (result: u32)
     ensures
         result == ptr_raw(e),
 {
-    e.raw_bits()
+    e.raw()
 }
 
 pub struct WhnfCert<'x, 't> {
