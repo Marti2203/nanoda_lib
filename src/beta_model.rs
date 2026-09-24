@@ -26,10 +26,10 @@
 //! the textbook proof and the actual algorithm, not papered over.
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{
-    bool_false_id, bool_true_id, ctor_num_params_of, nat_bin_op_of, nat_succ_id, nat_zero_id,
+    bool_false_id, bool_true_id, nat_bin_op_of, nat_succ_id, nat_zero_id,
 };
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{rec_data_of, RecDataSpec, RecRuleSpec};
+use crate::expr_arena_bridge::{RecDataSpec, RecRuleSpec};
 #[cfg(verus_only)]
 use crate::expr_model::depth;
 #[cfg(verus_only)]
@@ -46,6 +46,8 @@ use crate::expr_model::NatLitPayload;
 use crate::expr_model::{abstr_full, find_from_end, has_fv};
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::EnvSpec;
 use vstd::prelude::*;
 
 verus! {
@@ -176,12 +178,11 @@ pub open spec fn subst1(body: ExprSpec, arg: ExprSpec) -> ExprSpec {
 /// Parallel reduction, parameterized by `env`: a `Const(id, levels)`'s
 /// delta-unfolding target, `env[id]`'s body with its own level parameters
 /// substituted by `levels` (via `subst_expr_levels_rel`), when `env` has
-/// `id`. `env` is DELIBERATELY a bare `Map<u64, (Seq<u64>, ExprSpec)>` --
-/// "which constant ids have a known definition, and what's its (model-
-/// erased) level-parameter-name list and body" -- not a model of the real
-/// `Env` struct itself; every real-environment concern (arity checks,
-/// `temp_declars` visibility) belongs to the real-code BRIDGE, not this
-/// file's reduction theory. Level substitution itself IS modeled here
+/// `id`. `env` is an `EnvSpec`: which constant ids have a known definition
+/// (level-parameter names and body), plus the recursor and constructor
+/// tables the iota rules read -- all of ONE environment. Every other
+/// real-environment concern (`temp_declars` visibility, arity checks)
+/// belongs to the real-code bridge, not this file's reduction theory. Level substitution itself IS modeled here
 /// (not deferred to the bridge) since it's genuinely part of what delta
 /// reduction means, not an arena-specific detail.
 ///
@@ -200,7 +201,7 @@ pub open spec fn subst1(body: ExprSpec, arg: ExprSpec) -> ExprSpec {
 /// `subst_expr_levels_rel_*` preservation lemmas give exactly those, so the
 /// existing headroom machinery carries over unchanged. `pstep_diamond`'s
 /// own `Const` case remains trivial regardless, since it's restricted to
-/// `env == Map::empty()` (see its own doc comment) -- `env.contains_key
+/// `env == EnvSpec::empty()` (see its own doc comment) -- `env.contains_key
 /// (id)` is always false there, so delta never actually fires in that
 /// proof.
 /// The level-free constant `Const(id, [])` -- the target `pstep`'s `NatLit`
@@ -273,7 +274,7 @@ pub proof fn string_lit_expand_no_fv(chars: Seq<nat>)
 {
 }
 
-pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool
+pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
     decreases e1,
 {
     ||| e1 == e2
@@ -299,7 +300,7 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
             // the pidx-free marker trigger (match-arm exists law).
             ||| (exists|f2: ExprSpec, a2: ExprSpec|
                 (#[trigger] rec_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
-                    && rec_ready(ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == rec_result(
+                    && rec_ready(env, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == rec_result(env, 
                     ExprSpec::App(Box::new(f2), Box::new(a2)),
                 ))
             // NAT-LITERAL FOLDING (rec-iota P3): step function and argument
@@ -335,15 +336,13 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
         // argument. Parallel by necessity, not taste: an `==`-pinned
         // non-parallel form breaks Takahashi's iota-vs-congruence
         // critical pair (see the proj-iota design notes). Constructor
-        // arity comes from the ARENA-GLOBAL `ctor_num_params_of` (no
-        // env parameter -- `env_model::get_constructor_num_params` ties
-        // per-env lookups to it).
+        // arity comes from the environment's own table.
         ,
         ExprSpec::Proj(pidx, inner) => (match e2 {
             ExprSpec::Proj(pidx2, inner2) => pidx == pidx2 && pstep(env, *inner, *inner2),
             _ => false,
         }) || (exists|inner2: ExprSpec|
-            (#[trigger] iota_reduct(inner2)) && pstep(env, *inner, inner2) && iota_extract(
+            (#[trigger] iota_reduct(inner2)) && pstep(env, *inner, inner2) && iota_extract(env, 
                 pidx,
                 inner2,
                 e2,
@@ -389,13 +388,13 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
 /// mutual-recursion fuel gotcha -- so `pstep`'s arm inlines the same
 /// formula and `pstep_proj_cases`/`pstep_iota_intro` below tie the two).
 pub open spec fn pstep_iota(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     inner: ExprSpec,
     e2: ExprSpec,
 ) -> bool {
     exists|inner2: ExprSpec|
-        (#[trigger] iota_reduct(inner2)) && pstep(env, inner, inner2) && iota_extract(
+        (#[trigger] iota_reduct(inner2)) && pstep(env, inner, inner2) && iota_extract(env, 
             pidx,
             inner2,
             e2,
@@ -709,17 +708,17 @@ pub open spec fn nat_fold_result(s: ExprSpec) -> ExprSpec {
     }
 }
 
-pub open spec fn rule_rhs_ok(rule: RecRuleSpec) -> bool {
+pub open spec fn rule_rhs_ok(env: EnvSpec, rule: RecRuleSpec) -> bool {
     &&& nlbv(rule.rhs) == 0
     &&& !crate::expr_model::has_fv(rule.rhs)
     &&& string_free(rule.rhs)
     &&& rule.rhs is Bind
-    &&& crate::expr_arena_bridge::ctor_num_params_of(rule.ctor_id) is Some
+    &&& env.ctor_num_params(rule.ctor_id) is Some
 }
 
-pub open spec fn rec_ready(s: ExprSpec) -> bool {
+pub open spec fn rec_ready(env: EnvSpec, s: ExprSpec) -> bool {
     match spine_head(s) {
-        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+        ExprSpec::Const(rid, lv) => match env.rec_data(rid) {
             Some(rd) => {
                 let args = spine_args(s);
                 rec_prefix(rd) <= rd.major_idx && rd.major_idx < args.len() && args.len() <= 64
@@ -736,7 +735,7 @@ pub open spec fn rec_ready(s: ExprSpec) -> bool {
                                 // its constructor is one -- facts about the
                                 // export the parser does not check, so the
                                 // rule fires only where they hold
-                                 && rule_rhs_ok(rule)
+                                 && rule_rhs_ok(env, rule)
                             },
                             None => false,
                         },
@@ -754,9 +753,9 @@ pub open spec fn rec_ready(s: ExprSpec) -> bool {
 /// a right-hand side of size at most 500). The caps exist for the parallel
 /// reduction's confluence proofs; the kernel has none, and the conversion
 /// leaf `deq_rec` uses this form.
-pub open spec fn rec_ready_u(s: ExprSpec) -> bool {
+pub open spec fn rec_ready_u(env: EnvSpec, s: ExprSpec) -> bool {
     match spine_head(s) {
-        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+        ExprSpec::Const(rid, lv) => match env.rec_data(rid) {
             Some(rd) => {
                 let args = spine_args(s);
                 rec_prefix(rd) <= rd.major_idx && rd.major_idx < args.len()
@@ -783,9 +782,9 @@ pub open spec fn rec_ready_u(s: ExprSpec) -> bool {
 /// of the major's spine -- extra leading arguments are the inductive's
 /// own parameters, which nested inductives may repeat), then the
 /// arguments after the major. Exactly `TypeChecker::reduce_rec`.
-pub open spec fn rec_result(s: ExprSpec) -> ExprSpec {
+pub open spec fn rec_result(env: EnvSpec, s: ExprSpec) -> ExprSpec {
     match spine_head(s) {
-        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+        ExprSpec::Const(rid, lv) => match env.rec_data(rid) {
             Some(rd) => {
                 let args = spine_args(s);
                 let major = args[rd.major_idx as int];
@@ -945,7 +944,7 @@ pub proof fn args_size_sum_split(args: Seq<ExprSpec>, i: int)
 /// the nested matches of `rec_ready`/`rec_result` are opened; every
 /// commutation/bound lemma below goes through it.
 #[verifier::spinoff_prover]
-pub proof fn rec_unpack(s: ExprSpec) -> (r: (
+pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
     u64,
     Seq<LevelSpec>,
     Seq<ExprSpec>,
@@ -958,14 +957,14 @@ pub proof fn rec_unpack(s: ExprSpec) -> (r: (
     ExprSpec,
 ))
     requires
-        rec_ready(s),
+        rec_ready(env, s),
     ensures
         ({
             let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = r;
             &&& spine_head(s) == ExprSpec::Const(rid, lv)
             &&& spine_args(s) == args
             &&& s == spine_app(ExprSpec::Const(rid, lv), args)
-            &&& rec_data_of(rid) == Some(rd)
+            &&& env.rec_data(rid) == Some(rd)
             &&& rec_prefix(rd) <= rd.major_idx
             &&& rd.major_idx < args.len()
             &&& rd.uparams.len() == lv.len()
@@ -981,7 +980,7 @@ pub proof fn rec_unpack(s: ExprSpec) -> (r: (
             &&& cargs.len() <= 64
             &&& size(rd.rules[ri].rhs) <= 500
             &&& body == crate::expr_model::subst_expr_levels(rd.rules[ri].rhs, rd.uparams, lv)
-            &&& rec_result(s) == spine_app(
+            &&& rec_result(env, s) == spine_app(
                 spine_app(
                     spine_app(body, args.subrange(0, rec_prefix(rd) as int)),
                     cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int),
@@ -994,8 +993,8 @@ pub proof fn rec_unpack(s: ExprSpec) -> (r: (
             &&& depth(body) <= 500
             &&& forall|cap: nat| #[trigger] string_lits_ok(body, cap)
             &&& body is Bind
-            &&& spine_head(rec_result(s)) == body
-            &&& ctor_num_params_of(cid) is Some
+            &&& spine_head(rec_result(env, s)) == body
+            &&& env.ctor_num_params(cid) is Some
         }),
 {
     spine_recompose(s);
@@ -1007,7 +1006,7 @@ pub proof fn rec_unpack(s: ExprSpec) -> (r: (
         },
     };
     let args = spine_args(s);
-    let rd = rec_data_of(rid)->Some_0;
+    let rd = env.rec_data(rid)->Some_0;
     let major = args[rd.major_idx as int];
     spine_recompose(major);
     let (cid, clv) = match spine_head(major) {
@@ -1068,18 +1067,18 @@ pub proof fn spine_head_spine_app(head: ExprSpec, args: Seq<ExprSpec>)
 // twins actually went flaky. Pinned pre-emptively rather than after a red
 // tree. See docs/VERUS_REWRITES.md for the survey.
 #[verifier::rlimit(40)]
-pub proof fn rec_result_bounds(s: ExprSpec, bound: nat, cap: nat, k: nat)
+pub proof fn rec_result_bounds(env: EnvSpec, s: ExprSpec, bound: nat, cap: nat, k: nat)
     requires
-        rec_ready(s),
+        rec_ready(env, s),
     ensures
-        depth(rec_result(s)) <= depth(s) + 700,
-        max_var_below(s, bound) ==> max_var_below(rec_result(s), bound + 500),
-        size(rec_result(s)) <= size(s) + 500,
-        string_lits_ok(s, cap) ==> string_lits_ok(rec_result(s), cap),
-        !has_escaping_ref(s, k) ==> !has_escaping_ref(rec_result(s), k),
-        nlbv(rec_result(s)) <= nlbv(s),
+        depth(rec_result(env, s)) <= depth(s) + 700,
+        max_var_below(s, bound) ==> max_var_below(rec_result(env, s), bound + 500),
+        size(rec_result(env, s)) <= size(s) + 500,
+        string_lits_ok(s, cap) ==> string_lits_ok(rec_result(env, s), cap),
+        !has_escaping_ref(s, k) ==> !has_escaping_ref(rec_result(env, s), k),
+        nlbv(rec_result(env, s)) <= nlbv(s),
 {
-    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(s);
+    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(env, s);
     let head = ExprSpec::Const(rid, lv);
     let chead = ExprSpec::Const(cid, clv);
     let pre = args.subrange(0, rec_prefix(rd) as int);
@@ -1088,7 +1087,7 @@ pub proof fn rec_result_bounds(s: ExprSpec, bound: nat, cap: nat, k: nat)
     let s1 = spine_app(body, pre);
     let s2 = spine_app(s1, flds);
     let r = spine_app(s2, trail);
-    assert(rec_result(s) == r);
+    assert(rec_result(env, s) == r);
     // element facts of args / cargs from s
     spine_app_depth_decompose(head, args);
     spine_app_depth_decompose(chead, cargs);
@@ -1286,30 +1285,30 @@ pub open spec fn rec_reduct(f2: ExprSpec, a2: ExprSpec) -> bool {
 /// arm's exact shape) because an exists nested inside a recursive spec
 /// fn is not reliably introducible from outside (the recursive-exists
 /// encoding gotcha, already bitten once on `pstep_star`).
-pub open spec fn iota_extract(pidx: usize, inner2: ExprSpec, e2: ExprSpec) -> bool {
+pub open spec fn iota_extract(env: EnvSpec, pidx: usize, inner2: ExprSpec, e2: ExprSpec) -> bool {
     exists|cid: u64, lv: Seq<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
         #![trigger spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + pidx as nat) as int]]
-        inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && ctor_num_params_of(cid) == Some(np)
+        inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && env.ctor_num_params(cid) == Some(np)
             && ((np as nat + pidx as nat) < args2.len()) && (e2 == args2[(np as nat
             + pidx as nat) as int])
 }
 
 /// `pstep`'s recursor-iota disjunct, named.
 pub open spec fn pstep_rec(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: ExprSpec,
     a: ExprSpec,
     e2: ExprSpec,
 ) -> bool {
     exists|f2: ExprSpec, a2: ExprSpec|
-        (#[trigger] rec_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(
+        (#[trigger] rec_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(env, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
-        ) && e2 == rec_result(ExprSpec::App(Box::new(f2), Box::new(a2)))
+        ) && e2 == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2)))
 }
 
 /// DESTRUCTOR for the rec disjunct.
 pub proof fn pstep_rec_destruct(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: ExprSpec,
     a: ExprSpec,
     e2: ExprSpec,
@@ -1319,21 +1318,21 @@ pub proof fn pstep_rec_destruct(
     ensures
         ({
             let (f2, a2) = r;
-            pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(
+            pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(env, 
                 ExprSpec::App(Box::new(f2), Box::new(a2)),
-            ) && e2 == rec_result(ExprSpec::App(Box::new(f2), Box::new(a2)))
+            ) && e2 == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2)))
         }),
 {
     let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
-        (#[trigger] rec_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(
+        (#[trigger] rec_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2) && rec_ready(env, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
-        ) && e2 == rec_result(ExprSpec::App(Box::new(f2), Box::new(a2)));
+        ) && e2 == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2)));
     (f2, a2)
 }
 
 /// INTRO for the rec disjunct from its pieces.
 pub proof fn pstep_rec_intro(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: Box<ExprSpec>,
     a: Box<ExprSpec>,
     f2: ExprSpec,
@@ -1343,15 +1342,15 @@ pub proof fn pstep_rec_intro(
     requires
         pstep(env, *f, f2),
         pstep(env, *a, a2),
-        rec_ready(ExprSpec::App(Box::new(f2), Box::new(a2))),
-        e2 == rec_result(ExprSpec::App(Box::new(f2), Box::new(a2))),
+        rec_ready(env, ExprSpec::App(Box::new(f2), Box::new(a2))),
+        e2 == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2))),
     ensures
         pstep(env, ExprSpec::App(f, a), e2),
 {
     assert(rec_reduct(f2, a2));
-    assert(rec_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && rec_ready(
+    assert(rec_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && rec_ready(env, 
         ExprSpec::App(Box::new(f2), Box::new(a2)),
-    ) && e2 == rec_result(ExprSpec::App(Box::new(f2), Box::new(a2))));
+    ) && e2 == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2))));
 }
 
 /// Marker trigger for the nat-fold disjunct (match-arm exists law).
@@ -1361,7 +1360,7 @@ pub open spec fn fold_reduct(f2: ExprSpec, a2: ExprSpec) -> bool {
 
 /// `pstep`'s nat-fold disjunct, named.
 pub open spec fn pstep_fold(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: ExprSpec,
     a: ExprSpec,
     e2: ExprSpec,
@@ -1374,7 +1373,7 @@ pub open spec fn pstep_fold(
 }
 
 pub proof fn pstep_fold_destruct(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: ExprSpec,
     a: ExprSpec,
     e2: ExprSpec,
@@ -1398,7 +1397,7 @@ pub proof fn pstep_fold_destruct(
 }
 
 pub proof fn pstep_fold_intro(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: Box<ExprSpec>,
     a: Box<ExprSpec>,
     f2: ExprSpec,
@@ -1453,7 +1452,7 @@ pub proof fn nat_fold_result_leaf(s: ExprSpec)
 
 /// One argument of a spine steps (many steps) under the spine.
 pub proof fn pstep_star_spine_update(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     head: ExprSpec,
     args: Seq<ExprSpec>,
     i: int,
@@ -1488,7 +1487,7 @@ pub proof fn pstep_star_spine_update(
 /// pieces in one call, so the ten-plus family lemmas' iota cases don't
 /// each restate the two-level choose.
 pub proof fn pstep_iota_destruct(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     inner: ExprSpec,
     e2: ExprSpec,
@@ -1499,20 +1498,20 @@ pub proof fn pstep_iota_destruct(
         ({
             let (inner2, cid, lv, args2, np) = r;
             pstep(env, inner, inner2) && inner2 == spine_app(ExprSpec::Const(cid, lv), args2)
-                && ctor_num_params_of(cid) == Some(np) && ((np as nat + pidx as nat) < args2.len())
+                && env.ctor_num_params(cid) == Some(np) && ((np as nat + pidx as nat) < args2.len())
                 && (e2 == args2[(np as nat + pidx as nat) as int])
         }),
 {
     let inner2 = choose|inner2: ExprSpec|
-        (#[trigger] iota_reduct(inner2)) && pstep(env, inner, inner2) && iota_extract(
+        (#[trigger] iota_reduct(inner2)) && pstep(env, inner, inner2) && iota_extract(env, 
             pidx,
             inner2,
             e2,
         );
-    assert(pstep(env, inner, inner2) && iota_extract(pidx, inner2, e2));
+    assert(pstep(env, inner, inner2) && iota_extract(env, pidx, inner2, e2));
     let (cid, lv, args2, np) = choose|cid: u64, lv: Seq<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
         #![trigger spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + pidx as nat) as int]]
-        inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && ctor_num_params_of(cid) == Some(np)
+        inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && env.ctor_num_params(cid) == Some(np)
             && ((np as nat + pidx as nat) < args2.len()) && (e2 == args2[(np as nat
             + pidx as nat) as int]);
     (inner2, cid, lv, args2, np)
@@ -1521,7 +1520,7 @@ pub proof fn pstep_iota_destruct(
 /// INTRO from the reduct spine's pieces directly (the map lemmas'
 /// convenience: they re-fire the rule on shifted/substituted spines).
 pub proof fn pstep_iota_intro_pieces(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     inner: Box<ExprSpec>,
     e2: ExprSpec,
@@ -1534,19 +1533,19 @@ pub proof fn pstep_iota_intro_pieces(
     requires
         pstep(env, *inner, inner2),
         inner2 == spine_app(ExprSpec::Const(cid, lv), args2),
-        ctor_num_params_of(cid) == Some(np),
+        env.ctor_num_params(cid) == Some(np),
         (np as nat + pidx as nat) < args2.len(),
         e2 == args2[(np as nat + pidx as nat) as int],
     ensures
         pstep(env, ExprSpec::Proj(pidx, inner), e2),
 {
     assert(iota_reduct(inner2));
-    assert(iota_extract(pidx, inner2, e2)) by {
-        assert(inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && ctor_num_params_of(cid)
+    assert(iota_extract(env, pidx, inner2, e2)) by {
+        assert(inner2 == spine_app(ExprSpec::Const(cid, lv), args2) && env.ctor_num_params(cid)
             == Some(np) && ((np as nat + pidx as nat) < args2.len()) && (e2 == args2[(np as nat
             + pidx as nat) as int]));
     };
-    assert(iota_reduct(inner2) && pstep(env, *inner, inner2) && iota_extract(pidx, inner2, e2));
+    assert(iota_reduct(inner2) && pstep(env, *inner, inner2) && iota_extract(env, pidx, inner2, e2));
 }
 
 /// THE P4 BRIDGE: a `Proj` whose structure `pstep_star`-reaches an
@@ -1558,7 +1557,7 @@ pub proof fn pstep_iota_intro_pieces(
 /// side relation.
 #[verifier::spinoff_prover]
 pub proof fn pstep_star_iota(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     structure: ExprSpec,
     cid: u64,
@@ -1568,7 +1567,7 @@ pub proof fn pstep_star_iota(
 )
     requires
         pstep_star(env, structure, spine_app(ExprSpec::Const(cid, lv), args)),
-        ctor_num_params_of(cid) == Some(np),
+        env.ctor_num_params(cid) == Some(np),
         (np as nat + pidx as nat) < args.len(),
     ensures
         pstep_star(
@@ -1723,15 +1722,14 @@ pub proof fn subst_expr_levels_string_lits_ok(
 /// against ANY `env2` (it has no keys to check).
 #[verifier::spinoff_prover]
 pub proof fn pstep_env_weaken(
-    env1: Map<u64, (Seq<u64>, ExprSpec)>,
-    env2: Map<u64, (Seq<u64>, ExprSpec)>,
+    env1: EnvSpec,
+    env2: EnvSpec,
     e1: ExprSpec,
     e2: ExprSpec,
 )
     requires
         pstep(env1, e1, e2),
-        forall|k: u64| #[trigger]
-            env1.contains_key(k) ==> env2.contains_key(k) && env1[k] == env2[k],
+        env1.sub(env2),
     ensures
         pstep(env2, e1, e2),
     decreases e1,
@@ -1856,15 +1854,14 @@ pub proof fn pstep_env_weaken(
 /// `pstep_env_weaken` lifted from a single `pstep` step to a `pstep_star`
 /// chain -- maps `pstep_env_weaken` over each link of the witness chain.
 pub proof fn pstep_star_env_weaken(
-    env1: Map<u64, (Seq<u64>, ExprSpec)>,
-    env2: Map<u64, (Seq<u64>, ExprSpec)>,
+    env1: EnvSpec,
+    env2: EnvSpec,
     e1: ExprSpec,
     e2: ExprSpec,
 )
     requires
         pstep_star(env1, e1, e2),
-        forall|k: u64| #[trigger]
-            env1.contains_key(k) ==> env2.contains_key(k) && env1[k] == env2[k],
+        env1.sub(env2),
     ensures
         pstep_star(env2, e1, e2),
 {
@@ -4610,7 +4607,7 @@ pub proof fn spine_app_concat(base: ExprSpec, args1: Seq<ExprSpec>, args2: Seq<E
 /// measure on "how many steps" (parallel reduction can grow a term's
 /// size, so there's no obvious structural bound on chain length).
 pub open spec fn pstep_chain_valid(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     chain: Seq<ExprSpec>,
 ) -> bool {
     forall|i: int|
@@ -4628,7 +4625,7 @@ pub open spec fn pstep_chain_valid(
 /// transitive and whose transitivity is a genuinely hard, classically
 /// subtle property this file deliberately avoids needing.
 pub open spec fn pstep_star(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     e1: ExprSpec,
     e2: ExprSpec,
 ) -> bool {
@@ -4640,7 +4637,7 @@ pub open spec fn pstep_star(
 }
 
 /// `pstep_star` is reflexive: the length-1 chain `[e]`.
-pub proof fn pstep_star_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
+pub proof fn pstep_star_refl(env: EnvSpec, e: ExprSpec)
     ensures
         pstep_star(env, e, e),
 {
@@ -4653,7 +4650,7 @@ pub proof fn pstep_star_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
 
 /// A single `pstep` step is (trivially) a `pstep_star` step: the
 /// length-2 chain `[e1, e2]`.
-pub proof fn pstep_star_one(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+pub proof fn pstep_star_one(env: EnvSpec, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep(env, e1, e2),
     ensures
@@ -4682,7 +4679,7 @@ pub proof fn pstep_star_one(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e
 /// `pstep`'s own redex structure at all.
 #[verifier::spinoff_prover]
 pub proof fn pstep_star_trans(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     e1: ExprSpec,
     e2: ExprSpec,
     e3: ExprSpec,
@@ -4772,13 +4769,13 @@ pub proof fn pstep_star_trans(
 /// claims (e.g. "these two constructor-projection sub-terms are
 /// definitionally equal", not "one reduces to the other"), which is
 /// exactly what `defeq` is for.
-pub open spec fn defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec) -> bool {
+pub open spec fn defeq(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool {
     exists|z: ExprSpec| #[trigger] pstep_star(env, e1, z) && #[trigger] pstep_star(env, e2, z)
 }
 
 /// `defeq` is reflexive: `e` joins with itself via the empty (length-1)
 /// reduction chain.
-pub proof fn defeq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
+pub proof fn defeq_refl(env: EnvSpec, e: ExprSpec)
     ensures
         defeq(env, e, e),
 {
@@ -4788,7 +4785,7 @@ pub proof fn defeq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, e: ExprSpec)
 /// `defeq` is symmetric by construction -- the witness `z` for `defeq(env,
 /// e1, e2)` is already exactly the witness `defeq(env, e2, e1)` needs, in
 /// the other order.
-pub proof fn defeq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+pub proof fn defeq_symm(env: EnvSpec, e1: ExprSpec, e2: ExprSpec)
     requires
         defeq(env, e1, e2),
     ensures
@@ -4799,7 +4796,7 @@ pub proof fn defeq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: E
 /// A `pstep_star` fact is automatically a `defeq` fact -- take `e2`
 /// itself as the common reduct (`e2` trivially `pstep_star`-reaches
 /// itself via `pstep_star_refl`).
-pub proof fn defeq_of_pstep_star(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: ExprSpec)
+pub proof fn defeq_of_pstep_star(env: EnvSpec, e1: ExprSpec, e2: ExprSpec)
     requires
         pstep_star(env, e1, e2),
     ensures
@@ -4816,7 +4813,7 @@ pub proof fn defeq_of_pstep_star(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSp
 /// transitivity of `pstep` itself either.
 #[verifier::spinoff_prover]
 pub proof fn pstep_star_app_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     a: ExprSpec,
@@ -4867,7 +4864,7 @@ pub proof fn pstep_star_app_congr(
 /// first needed, see `feedback_defeq_witness_vs_pstep_star`) -- the ONLY
 /// `App`-congruence lemma this file had was the function-side one above.
 pub proof fn pstep_star_app_arg_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f: ExprSpec,
     x: ExprSpec,
     y: ExprSpec,
@@ -4914,7 +4911,7 @@ pub proof fn pstep_star_app_arg_congr(
 /// spine_app(y, args))` for any fixed `args`. By induction on
 /// `args.len()`, matching `spine_app`'s own back-peeling recursion.
 pub proof fn pstep_spine_app_star(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     args: Seq<ExprSpec>,
@@ -4945,7 +4942,7 @@ pub proof fn pstep_spine_app_star(
 /// `Proj` congruence for `pstep_star` (`pstep`'s `Proj` arm is already
 /// exactly inner-position congruence).
 pub proof fn pstep_star_proj_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     x: ExprSpec,
     y: ExprSpec,
@@ -5236,7 +5233,7 @@ pub proof fn args_size_sum_snoc(args: Seq<ExprSpec>, last: ExprSpec)
 /// transitivity) is free.
 #[verifier::spinoff_prover]
 pub proof fn pstep_star_spine_reduce(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     head: ExprSpec,
     args: Seq<ExprSpec>,
 )

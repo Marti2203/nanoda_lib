@@ -817,7 +817,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Some(r) => !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(r))
                     && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(r)) <= 0
                     && crate::beta_model::pstep(
-                    vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty(),
                     crate::expr_model::ExprSpec::NatLit(
                         crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                     ),
@@ -853,7 +853,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         crate::expr_arena_bridge::nat_zero_id(),
                     );
                     assert(crate::beta_model::pstep(
-                        vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty(),
                         crate::expr_model::ExprSpec::NatLit(
                             crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                         ),
@@ -896,7 +896,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(succ_c)) == 0);
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(pred)) == 0);
                 assert(crate::beta_model::pstep(
-                    vstd::map::Map::<u64, (Seq<u64>, crate::expr_model::ExprSpec)>::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty(),
                     crate::expr_model::ExprSpec::NatLit(
                         crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                     ),

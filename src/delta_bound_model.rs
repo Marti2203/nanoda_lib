@@ -105,8 +105,6 @@ use crate::expr_arena_bridge::{
 use crate::expr_arena_bridge::{
     const_id, const_levels_vec, const_levels_vec_model, is_const_shape, is_const_shape_model, to_model,
 };
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_fields_of, ctor_num_params_of, struct_ctor_of};
 use crate::expr_arena_bridge::{
     expr_as_app, expr_as_let, expr_as_local, expr_as_nat_lit, expr_as_sort, expr_as_string_lit, verified_foldl_apps,
     verified_inst, verified_nat_lit_to_constructor, verified_subst_expr_levels, verified_whnf_no_unfolding_step,
@@ -202,6 +200,8 @@ use crate::tc_model::{
 use crate::tc_model::{ConvCert, InferCert};
 use crate::util::{ExprPtr, LevelPtr, LevelsPtr, NamePtr, StringPtr, TcCtx};
 #[allow(unused_imports)]
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::EnvSpec;
 use vstd::prelude::*;
 
 verus! {
@@ -2567,14 +2567,14 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     };
     let ghost ctor_id = name_id(ctor_name);
     proof {
-        assert(struct_ctor_of(ind_id) == Some(ctor_id));
+        assert(to_model_of_env(*env).struct_ctor(ind_id) == Some(ctor_id));
     }
     let np = match get_constructor_num_params(env, &ctor_name) {
         Some(n) => n,
         None => return None,
     };
     proof {
-        assert(ctor_num_params_of(ctor_id) == Some(np));
+        assert(to_model_of_env(*env).ctor_num_params(ctor_id) == Some(np));
     }
     if (np as usize) > args_s.len() {
         return None;
@@ -3145,8 +3145,8 @@ pub open spec fn eta_struct_claim<'t, 'x>(
             x,
             xt,
             f,
-        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
-            == Some(cid) && ctor_num_fields_of(cid) == Some(nf as u16) && to_model(r) == spine_app(
+        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && to_model_of_env(env).struct_ctor(ind)
+            == Some(cid) && to_model_of_env(env).ctor_num_fields(cid) == Some(nf as u16) && to_model(r) == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))),
         )
@@ -3179,8 +3179,8 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
             x,
             xt,
             f,
-        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && struct_ctor_of(ind)
-            == Some(cid) && ctor_num_fields_of(cid) == Some(nf as u16) && to_model(r) == spine_app(
+        ) && struct_type_of_u(to_model_of_env(env), to_model(xt), ind, params) && to_model_of_env(env).struct_ctor(ind)
+            == Some(cid) && to_model_of_env(env).ctor_num_fields(cid) == Some(nf as u16) && to_model(r) == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))),
         );
@@ -3643,14 +3643,14 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(
         _ => return None,
     }
     proof {
-        assert(struct_ctor_of(name_id(name)) == Some(name_id(ctor)));
-        assert(ctor_num_fields_of(name_id(ctor)) == Some(0u16));
-        assert(unit_like_head(name_id(name)));
+        assert(to_model_of_env(*env).struct_ctor(name_id(name)) == Some(name_id(ctor)));
+        assert(to_model_of_env(*env).ctor_num_fields(name_id(ctor)) == Some(0u16));
+        assert(unit_like_head(to_model_of_env(*env), name_id(name)));
         is_const_shape_model(hd);
         const_levels_vec_model(hd);
         assert(to_model(hd) == ExprSpec::Const(const_id(hd), const_levels_vec(hd)));
         assert(const_id(hd) == name_id(name));
-        assert(unit_like_type(to_model(xtw)));
+        assert(unit_like_type(to_model_of_env(*env), to_model(xtw)));
         assert(pstep_star(em, to_model(xt), to_model(xtw)));
         assert(unit_like_type_u(em, to_model(xt)));
     }
@@ -4567,7 +4567,7 @@ pub fn mk_eta_expansion<'t, 'p: 't>(
 /// representation. Out of `verified_conv_inner` to keep that query in budget.
 #[verifier::spinoff_prover]
 pub proof fn nat_succ_pair_deq<'t>(
-    em: Map<u64, (Seq<u64>, ExprSpec)>,
+    em: EnvSpec,
     x: ExprPtr<'t>,
     y: ExprPtr<'t>,
     xp: ExprPtr<'t>,
@@ -6963,7 +6963,7 @@ pub fn verified_delta_free<'t, 'p: 't, 'x>(
     match verified_unfold_def_step_free(ctx, env, e, fuel) {
         Some(unfolded) => {
             let ghost cm = env_model_nofv(*env);
-            let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+            let ghost mt = crate::expr_arena_bridge::EnvSpec::empty();
             let sz = match verified_size(ctx, unfolded, 100000) {
                 Some(v) => v,
                 None => return Some(unfolded),
@@ -7014,7 +7014,7 @@ pub fn verified_try_unfold_proj_app_measured<'t, 'p: 't>(
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
             Some(r) => {
-                &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e), to_model(r))
                 &&& r != e
                 &&& nlbv(to_model(r)) <= 0
             },
@@ -7114,14 +7114,14 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(yprime) => {
                     proof {
                         assert forall|k: u64| #[trigger]
-                            Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(
+                            crate::expr_arena_bridge::EnvSpec::empty().contains_key(
                                 k,
                             ) implies env_model_nofv(*env).contains_key(k) && Map::<
                             u64,
                             (Seq<u64>, ExprSpec),
                         >::empty()[k] == env_model_nofv(*env)[k] by {}
                         pstep_star_env_weaken(
-                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty(),
                             env_model_nofv(*env),
                             to_model(y),
                             to_model(yprime),
@@ -7143,14 +7143,14 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(xprime) => {
                     proof {
                         assert forall|k: u64| #[trigger]
-                            Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(
+                            crate::expr_arena_bridge::EnvSpec::empty().contains_key(
                                 k,
                             ) implies env_model_nofv(*env).contains_key(k) && Map::<
                             u64,
                             (Seq<u64>, ExprSpec),
                         >::empty()[k] == env_model_nofv(*env)[k] by {}
                         pstep_star_env_weaken(
-                            Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty(),
                             env_model_nofv(*env),
                             to_model(x),
                             to_model(xprime),

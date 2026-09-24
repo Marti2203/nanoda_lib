@@ -96,7 +96,7 @@ use crate::expr_arena_bridge::{
     is_const_shape_model,
 };
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{ctor_num_fields_of, ctor_num_params_of, quot_kind_of, struct_ctor_of};
+use crate::expr_arena_bridge::quot_kind_of;
 use crate::expr_arena_bridge::{
     expr_as_app, expr_as_lambda, expr_as_local, expr_as_pi, expr_as_proj, expr_as_sort, expr_ptr_eq, fvar_id_eq,
     verified_inst, verified_whnf_no_unfolding_step_plain,
@@ -110,7 +110,7 @@ use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, local_id_of
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_nat_lit_shape, is_nat_lit_shape_model, nat_lit_value};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{rec_data_of, RecDataSpec, RecRuleSpec};
+use crate::expr_arena_bridge::{RecDataSpec, RecRuleSpec};
 #[cfg(verus_only)]
 use crate::expr_model::has_fv;
 #[allow(unused_imports)]
@@ -146,6 +146,8 @@ use num_bigint::BigUint;
 #[allow(unused_imports)]
 use num_traits::Pow;
 #[allow(unused_imports)]
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::EnvSpec;
 use vstd::prelude::*;
 
 /// First rule's constructor name (exec-only gate for the K-like leaf; its
@@ -509,12 +511,12 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
                         NatLitPayload(Ghost(bignum_ptr_value(nptr))),
                     ));
                     assert forall|j: u64| #[trigger]
-                        Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(
+                        crate::expr_arena_bridge::EnvSpec::empty().contains_key(
                             j,
-                        ) implies cm.contains_key(j) && Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j]
+                        ) implies cm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty()[j]
                         == cm[j] by {}
                     pstep_env_weaken(
-                        Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty(),
                         cm,
                         to_model(majw0),
                         to_model(c),
@@ -628,6 +630,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
     let s2 = verified_foldl_apps(ctx, s1, field_args);
     let r = verified_foldl_apps(ctx, s2, post_args);
     proof {
+        env_model_nofv_sub(*env);
         // Model views.
         is_const_shape_model(fun);
         const_levels_vec_model(fun);
@@ -659,7 +662,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             rules: rec_rules_model(rules@),
         };
         assert(to_model_of_recursors(*env)[rid] == rd);
-        assert(rec_data_of(rid) == Some(rd));
+        assert(to_model_of_env(*env).rec_data(rid) == Some(rd));
         // The rule.
         find_rule_of_find_index(rules@, cname);
         find_index_hit(rec_rule_ctor_names(rules@), cname);
@@ -687,7 +690,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
         spine_destruct_app(chm, cam);
         assert(am2[mi] == to_model(majw));
         assert(rec_prefix(rd) == nprefix as nat);
-        assert(rec_ready(sp2));
+        assert(rec_ready(cm, sp2));
         // The rule instance equals the exec result.
         let bm = crate::expr_model::subst_expr_levels(to_model(rhs), rd.uparams, lv);
         assert(to_model(body) == bm);
@@ -697,7 +700,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             cam.len() as int,
         ));
         assert(args_model_of(post_args@) =~= am2.subrange(mi + 1, am2.len() as int));
-        assert(to_model(r) == rec_result(sp2));
+        assert(to_model(r) == rec_result(cm, sp2));
         // One recursor step at the outermost application node.
         let init = am2.subrange(0, am2.len() - 1);
         let last = am2[am2.len() - 1];
@@ -719,7 +722,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             }
         }
         crate::beta_model::spine_app_nlbv(head, am2);
-        crate::beta_model::rec_result_bounds(sp2, 0, 0, 0);
+        crate::beta_model::rec_result_bounds(cm, sp2, 0, 0, 0);
     }
     Some(r)
 }
@@ -782,6 +785,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
     let field = cargs[i];
     let r = verified_foldl_apps(ctx, field, args.as_slice());
     proof {
+        env_model_nofv_sub(*env);
         let ghost cargs_model = Seq::new(cargs@.len(), |j: int| to_model(cargs@[j]));
         is_const_shape_model(fun);
         const_levels_vec_model(fun);
@@ -832,7 +836,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
         nlbv(to_model(result)) <= 0,
 {
     let ghost cm = env_model_nofv(*env);
-    let ghost mt = Map::<u64, (Seq<u64>, ExprSpec)>::empty();
+    let ghost mt = crate::expr_arena_bridge::EnvSpec::empty();
     proof {
         pstep_star_refl(cm, to_model(e));
     }
@@ -849,7 +853,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
             memo.wf(),
             memo.spec_env() == *env,
             cm == env_model_nofv(*env),
-            mt == Map::<u64, (Seq<u64>, ExprSpec)>::empty(),
+            mt == crate::expr_arena_bridge::EnvSpec::empty(),
             nlbv(to_model(cur)) <= 0,
             pstep_star(cm, to_model(e), to_model(cur)),
     {
@@ -2180,7 +2184,7 @@ pub fn verified_def_eq_const<'t, 'p: 't>(
 /// `verified_def_eq_app`'s pairwise `deq_core_claim` facts into a
 /// whole-term equality whenever every pair lands on the `deq` disjunct.
 pub proof fn deq_spine_app_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     fx: ExprSpec,
     fy: ExprSpec,
     ax: Seq<ExprSpec>,
@@ -2223,7 +2227,7 @@ pub proof fn deq_spine_app_congr(
 /// height index is well-foundedness plumbing, not semantic content).
 /// Non-recursive, so it inlines and both directions (witnessing from any
 /// concrete height, extracting via choose) work freely.
-pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec) -> bool {
+pub open spec fn deq_any(env: EnvSpec, x: ExprSpec, y: ExprSpec) -> bool {
     exists|h: nat| #[trigger] deq(env, x, y, h)
 }
 
@@ -2236,18 +2240,18 @@ pub open spec fn deq_any(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 /// the whole-term `deq_any` lift available whenever that sub-claim's
 /// `deq` disjunct holds. `open`, purely notational.
 pub open spec fn nat_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    (nat_repr_is_zero(x) && nat_repr_is_zero(y) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>|
+    (nat_repr_is_zero(x) && nat_repr_is_zero(y) && (forall|env: EnvSpec|
      #[trigger]
-        full_def_eq(env, x, y)) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+        full_def_eq(env, x, y)) && (forall|env: EnvSpec| #[trigger]
         deq_any(env, to_model(x), to_model(y)))) || (is_nat_lit_shape(x) && is_nat_lit_shape(y)
-        && to_model(x) == to_model(y) && (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+        && to_model(x) == to_model(y) && (forall|env: EnvSpec| #[trigger]
         deq_any(env, to_model(x), to_model(y)))) || (exists|xp: ExprPtr<'t>, yp: ExprPtr<'t>|
         nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp) && deq_full_claim(
             xp,
             yp,
-        ) && ((forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+        ) && ((forall|env: EnvSpec| #[trigger]
             deq_any(env, to_model(xp), to_model(yp))) ==> (forall|
-            env: Map<u64, (Seq<u64>, ExprSpec)>,
+            env: EnvSpec,
         | #[trigger]
             deq_any(env, to_model(x), to_model(y)))))
 }
@@ -2270,9 +2274,9 @@ pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: na
             0 <= i < argsx.len() ==> deq_core_claim(#[trigger] argsx[i], argsy[i], h)) && ((forall|
             i: int,
         |
-            0 <= i < argsx.len() ==> forall|env2: Map<u64, (Seq<u64>, ExprSpec)>|
+            0 <= i < argsx.len() ==> forall|env2: EnvSpec|
                 deq(env2, to_model(#[trigger] argsx[i]), to_model(argsy[i]), h)) ==> (forall|
-            env2: Map<u64, (Seq<u64>, ExprSpec)>,
+            env2: EnvSpec,
         | #[trigger]
             deq_any(env2, to_model(x), to_model(y))))
 }
@@ -2285,7 +2289,7 @@ pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: na
 /// unfolding rule) for the literal representation. The connecting edge
 /// `verified_def_eq_nat`'s pred case needs on each side.
 pub proof fn nat_repr_pred_reaches_succ_app<'t>(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     e: ExprPtr<'t>,
     p: ExprPtr<'t>,
 )
@@ -2334,7 +2338,7 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(
 /// The equivalence-relation API at the `deq_any` level -- what
 /// consumers actually want (heights erased, monotonicity handled
 /// internally via `deq_mono`).
-pub proof fn deq_any_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn deq_any_of_defeq(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
         defeq(env, x, y),
     ensures
@@ -2344,7 +2348,7 @@ pub proof fn deq_any_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, 
     assert(deq(env, x, y, 0));
 }
 
-pub proof fn deq_any_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn deq_any_of_leaf(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
         deq_leaf(x, y),
     ensures
@@ -2354,7 +2358,7 @@ pub proof fn deq_any_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y
     assert(deq(env, x, y, 0));
 }
 
-pub proof fn deq_any_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec)
+pub proof fn deq_any_refl(env: EnvSpec, x: ExprSpec)
     ensures
         deq_any(env, x, x),
 {
@@ -2362,7 +2366,7 @@ pub proof fn deq_any_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec)
     assert(deq(env, x, x, 0));
 }
 
-pub proof fn deq_any_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn deq_any_symm(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
         deq_any(env, x, y),
     ensures
@@ -2374,7 +2378,7 @@ pub proof fn deq_any_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: E
 }
 
 pub proof fn deq_any_trans(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,
@@ -2402,7 +2406,7 @@ pub proof fn deq_any_trans(
 /// equal arguments give equal spines. Induction on the argument list, one
 /// `deq_any_app_congr` per step.
 pub proof fn deq_any_spine_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     h1: ExprSpec,
     h2: ExprSpec,
     a1: Seq<ExprSpec>,
@@ -2437,7 +2441,7 @@ pub proof fn deq_any_spine_congr(
 }
 
 pub proof fn deq_any_app_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
@@ -2472,7 +2476,7 @@ pub proof fn deq_any_app_congr(
 }
 
 pub proof fn deq_any_bind_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -2507,7 +2511,7 @@ pub proof fn deq_any_bind_congr(
 }
 
 pub proof fn deq_any_proj_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
@@ -2535,7 +2539,7 @@ pub proof fn deq_any_proj_congr(
 /// minus the three `deq` now subsumes. As more paths strengthen,
 /// verdicts migrate into the first disjunct with no signature change.
 pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq_any(env, to_model(x), to_model(y)))
+    (forall|env: EnvSpec| #[trigger] deq_any(env, to_model(x), to_model(y)))
         || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y)) || (exists|
         pidx: usize,
         sx: ExprPtr<'t>,
@@ -2571,7 +2575,7 @@ pub open spec fn deq_full_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// cannot express (see `verified_def_eq_core`'s doc), or from a Proj
 /// whose children hit that local case (shape-only fallback).
 pub open spec fn deq_core_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: nat) -> bool {
-    (forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger] deq(env, to_model(x), to_model(y), h))
+    (forall|env: EnvSpec| #[trigger] deq(env, to_model(x), to_model(y), h))
         || (is_local_shape(x) && is_local_shape(y) && local_id_of(x) == local_id_of(y)) || (exists|
         pidx: usize,
         sx: ExprPtr<'t>,
@@ -2633,7 +2637,7 @@ pub fn verified_def_eq_core<'t, 'p: 't>(
         if r {
             proof {
                 assert(deq_leaf(to_model(x), to_model(y)));
-                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                assert forall|env: EnvSpec| #[trigger]
                     deq(env, to_model(x), to_model(y), fuel as nat) by {
                     deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
                 }
@@ -2663,7 +2667,7 @@ pub fn verified_def_eq_core<'t, 'p: 't>(
                 ));
             }
             assert(deq_leaf(to_model(x), to_model(y)));
-            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            assert forall|env: EnvSpec| #[trigger]
                 deq(env, to_model(x), to_model(y), fuel as nat) by {
                 deq_of_leaf(env, to_model(x), to_model(y), fuel as nat);
             }
@@ -2697,9 +2701,9 @@ pub fn verified_def_eq_core<'t, 'p: 't>(
                     proof {
                         assert(to_model(x) == ExprSpec::Proj(x_idx, Box::new(to_model(x_struct))));
                         assert(to_model(y) == ExprSpec::Proj(x_idx, Box::new(to_model(y_struct))));
-                        if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                        if forall|env: EnvSpec| #[trigger]
                             deq(env, to_model(x_struct), to_model(y_struct), (fuel - 1) as nat) {
-                            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                            assert forall|env: EnvSpec| #[trigger]
                                 deq(env, to_model(x), to_model(y), fuel as nat) by {
                                 assert(deq(
                                     env,
@@ -2915,7 +2919,7 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
 /// relation (closing BOTH disjuncts under congruence/transitivity at
 /// once) is still real, substantial future work.
 pub open spec fn full_def_eq<'t>(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprPtr<'t>,
     y: ExprPtr<'t>,
 ) -> bool {
@@ -2979,7 +2983,7 @@ pub open spec fn proj_step_marker(bt: ExprSpec, body: ExprSpec) -> bool {
 /// which covers the kernel's "no loose bvars" shortcut.
 pub open spec fn proj_field_type(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3039,7 +3043,7 @@ pub open spec fn proj_field_type(
 
 pub open spec fn types_to(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     e: ExprSpec,
@@ -3205,7 +3209,7 @@ pub open spec fn types_to(
                 sty,
                 f2,
             ) && deq_p(dty, denv, lctx, io, sty, spine_app(ExprSpec::Const(ind_id, ls), args), f2)
-                && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
+                && denv.struct_ctor(ind_id) == Some(ctor_id) && denv.ctor_num_params(ctor_id) == Some(
                 np,
             ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (
             np as nat) <= args.len() && proj_field_type(
@@ -3228,7 +3232,7 @@ pub open spec fn types_to(
 
 pub proof fn types_to_nat_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     e: ExprSpec,
@@ -3249,7 +3253,7 @@ pub proof fn types_to_nat_lit(
 
 pub proof fn types_to_string_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     e: ExprSpec,
@@ -3280,7 +3284,7 @@ pub proof fn types_to_string_lit(
 #[verifier::spinoff_prover]
 pub proof fn types_to_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     e: ExprSpec,
@@ -3386,7 +3390,7 @@ pub proof fn types_to_mono(
                 sty,
                 h,
             ) && deq_p(dty, denv, lctx, io, sty, spine_app(ExprSpec::Const(ind_id, ls), args), h)
-                && struct_ctor_of(ind_id) == Some(ctor_id) && ctor_num_params_of(ctor_id) == Some(
+                && denv.struct_ctor(ind_id) == Some(ctor_id) && denv.ctor_num_params(ctor_id) == Some(
                 np,
             ) && types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, h) && (np as nat)
                 <= args.len() && proj_field_type(
@@ -3503,7 +3507,7 @@ pub proof fn types_to_mono(
 /// recursive-exists note).
 pub proof fn types_to_free(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     lid: u32,
@@ -3518,7 +3522,7 @@ pub proof fn types_to_free(
 
 pub proof fn types_to_sort(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     l: LevelSpec,
@@ -3538,7 +3542,7 @@ pub proof fn types_to_sort(
 
 pub proof fn types_to_const(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     cid: u64,
@@ -3564,7 +3568,7 @@ pub open spec fn app_marker(ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: Exp
 
 pub proof fn types_to_app(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     f: ExprSpec,
@@ -3600,7 +3604,7 @@ pub proof fn types_to_app(
 /// a common one, which is returned.
 pub proof fn types_to_app_lift(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     f: ExprSpec,
@@ -3640,7 +3644,7 @@ pub proof fn types_to_app_lift(
 
 pub proof fn types_to_let(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     ty0: ExprSpec,
@@ -3669,7 +3673,7 @@ pub proof fn types_to_let(
 /// Constructor lemma for the `Proj` rule.
 pub proof fn types_to_proj(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     idx: usize,
@@ -3689,8 +3693,8 @@ pub proof fn types_to_proj(
         f2 < fuel,
         types_to(dty, denv, lctx, io, s, sty, f2),
         pstep_star(denv, sty, spine_app(ExprSpec::Const(ind_id, ls), args)),
-        struct_ctor_of(ind_id) == Some(ctor_id),
-        ctor_num_params_of(ctor_id) == Some(np),
+        denv.struct_ctor(ind_id) == Some(ctor_id),
+        denv.ctor_num_params(ctor_id) == Some(np),
         types_to(dty, denv, lctx, io, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2),
         (np as nat) <= args.len(),
         proj_field_type(dty, denv, lctx, io, f2, ctor_ty0, args, np as nat, 0, idx as nat, s, t),
@@ -3704,7 +3708,7 @@ pub proof fn types_to_proj(
 /// `proj_field_type` is monotone in its height: every step is a `deq_p` at it.
 pub proof fn proj_field_type_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h1: nat,
@@ -3806,7 +3810,7 @@ pub proof fn proj_field_type_mono(
 /// The three steps of `proj_field_type` from a typed conversion to the binder.
 pub proof fn proj_field_type_param_step_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3846,7 +3850,7 @@ pub proof fn proj_field_type_param_step_p(
 
 pub proof fn proj_field_type_field_step_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3884,7 +3888,7 @@ pub proof fn proj_field_type_field_step_p(
 
 pub proof fn proj_field_type_final_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3906,7 +3910,7 @@ pub proof fn proj_field_type_final_p(
 /// One parameter step of `proj_field_type`.
 pub proof fn proj_field_type_param_step(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3948,7 +3952,7 @@ pub proof fn proj_field_type_param_step(
 /// One field step of `proj_field_type`.
 pub proof fn proj_field_type_field_step(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -3988,7 +3992,7 @@ pub proof fn proj_field_type_field_step(
 /// The final step of `proj_field_type`: the field type is the binder type.
 pub proof fn proj_field_type_final(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     h: nat,
@@ -4010,7 +4014,7 @@ pub proof fn proj_field_type_final(
 
 pub proof fn types_to_lambda(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     binder_type: ExprSpec,
@@ -4051,7 +4055,7 @@ pub proof fn types_to_lambda(
 
 pub proof fn types_to_pi(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     binder_type: ExprSpec,
@@ -4118,7 +4122,7 @@ pub open spec fn proof_type_marker(a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSp
 /// is a proposition, and a derivation's type is only convertible to that.
 pub open spec fn is_proof_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     ty: ExprSpec,
@@ -4145,7 +4149,7 @@ pub open spec fn is_proof_type_m(
 /// shadow route once had; nothing on the live certifier read the old form.)
 pub open spec fn proof_irrel_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -4201,8 +4205,8 @@ pub open spec fn unit_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> b
 
 /// "This constant names a structure with one constructor that takes no
 /// fields" -- a type with exactly one element.
-pub open spec fn unit_like_head(id: u64) -> bool {
-    exists|c: u64| #[trigger] struct_ctor_of(id) == Some(c) && ctor_num_fields_of(c) == Some(0u16)
+pub open spec fn unit_like_head(denv: EnvSpec, id: u64) -> bool {
+    exists|c: u64| #[trigger] denv.struct_ctor(id) == Some(c) && denv.ctor_num_fields(c) == Some(0u16)
 }
 
 /// The same, up to reduction: the kernel whnfs the inferred type before
@@ -4210,7 +4214,7 @@ pub open spec fn unit_like_head(id: u64) -> bool {
 /// REDUCES to such a structure.
 pub open spec fn unit_like_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4218,7 +4222,7 @@ pub open spec fn unit_like_type_m(
 ) -> bool
     decreases h, 3int, 0nat,
 {
-    exists|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, denv, lctx, io, tx, r, h) && unit_like_type(r)
+    exists|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, denv, lctx, io, tx, r, h) && unit_like_type(denv, r)
 }
 
 /// Marker triggers for the two type conditions: their witnesses sit under
@@ -4232,20 +4236,20 @@ pub open spec fn struct_type_marker(ils: Seq<LevelSpec>, rest: Seq<ExprSpec>) ->
 }
 
 /// "This type is such a structure, applied to whatever parameters."
-pub open spec fn unit_like_type(tx: ExprSpec) -> bool {
+pub open spec fn unit_like_type(denv: EnvSpec, tx: ExprSpec) -> bool {
     exists|id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>| #[trigger]
-        spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(id)
+        spine_app(ExprSpec::Const(id, ls), args) == tx && unit_like_head(denv, id)
 }
 
 /// The shadow's untyped forms of the two type conditions: the certified
 /// routes establish them by reduction and untyped conversion, and the lift
 /// lemmas below place them at a height in the typed family.
-pub open spec fn unit_like_type_u(denv: Map<u64, (Seq<u64>, ExprSpec)>, tx: ExprSpec) -> bool {
-    exists|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r)
+pub open spec fn unit_like_type_u(denv: EnvSpec, tx: ExprSpec) -> bool {
+    exists|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(denv, r)
 }
 
 pub open spec fn struct_type_of_u(
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     tx: ExprSpec,
     ind: u64,
     params: Seq<ExprSpec>,
@@ -4257,7 +4261,7 @@ pub open spec fn struct_type_of_u(
 /// Reduction to a unit-like type holds at every height.
 pub proof fn unit_like_type_of_u(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4268,7 +4272,7 @@ pub proof fn unit_like_type_of_u(
     ensures
         unit_like_type_m(dty, denv, lctx, io, tx, h),
 {
-    let r = choose|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(r);
+    let r = choose|r: ExprSpec| #[trigger] pstep_star(denv, tx, r) && unit_like_type(denv, r);
     deq_p_of_pstep_star(dty, denv, lctx, io, tx, r, h);
     assert(unit_like_marker(r));
 }
@@ -4276,7 +4280,7 @@ pub proof fn unit_like_type_of_u(
 /// An untyped structure-type fact holds from some height on; this returns one.
 pub proof fn struct_type_of_lift(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4321,7 +4325,7 @@ pub open spec fn eta_struct_marker(
 /// accepts, because `tx` need not whnf to a constant-headed application.
 pub open spec fn struct_type_of(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4348,7 +4352,7 @@ pub open spec fn eta_ctor_marker(cls: Seq<LevelSpec>, fields: Seq<ExprSpec>, ty0
 #[verifier::opaque]
 pub open spec fn ctor_typed_like(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4373,7 +4377,7 @@ pub open spec fn ctor_typed_like(
 
 pub proof fn ctor_typed_like_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -4417,7 +4421,7 @@ pub proof fn ctor_typed_like_mono(
 /// to the structure whose sole constructor is the one being applied.
 pub open spec fn eta_struct_expand(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -4446,8 +4450,8 @@ pub open spec fn eta_struct_expand(
             params,
             nf,
             h,
-        )) && struct_ctor_of(ind) == Some(cid)
-            && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
+        )) && denv.struct_ctor(ind) == Some(cid)
+            && denv.ctor_num_fields(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
         )
@@ -4457,7 +4461,7 @@ pub open spec fn eta_struct_expand(
 /// every disjunct, and either side may be the one being expanded.
 pub open spec fn eta_struct_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -4478,7 +4482,7 @@ pub open spec fn eta_struct_pair(
 /// the same way, with a marker trigger over its four witnesses.
 pub open spec fn unit_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -4642,9 +4646,9 @@ pub open spec fn deq_quot(x: ExprSpec, y: ExprSpec) -> bool {
 /// The recursor leaf, uncapped: a recursor applied to a constructor spine in
 /// its major position converts to the rule instance -- `reduce_rec`'s step.
 /// Symmetric like `deq_quot`.
-pub open spec fn deq_rec(x: ExprSpec, y: ExprSpec) -> bool {
-    (crate::beta_model::rec_ready_u(x) && y == crate::beta_model::rec_result(x)) || (
-    crate::beta_model::rec_ready_u(y) && x == crate::beta_model::rec_result(y))
+pub open spec fn deq_rec(denv: EnvSpec, x: ExprSpec, y: ExprSpec) -> bool {
+    (crate::beta_model::rec_ready_u(denv, x) && y == crate::beta_model::rec_result(denv, x)) || (
+    crate::beta_model::rec_ready_u(denv, y) && x == crate::beta_model::rec_result(denv, y))
 }
 
 /// Introduction for the quotient leaf: from the spine shapes alone, the
@@ -4689,7 +4693,7 @@ pub proof fn deq_quot_intro(
 }
 
 pub open spec fn deq_c(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4700,7 +4704,7 @@ pub open spec fn deq_c(
     ||| deq_leaf(x, y)
     ||| deq_eta(x, y)
     ||| deq_quot(x, y)
-    ||| deq_rec(x, y)
+    ||| deq_rec(env, x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_c(env, *f1, *f2, (h - 1) as nat)
             && deq_c(env, *a1, *a2, (h - 1) as nat),
@@ -4737,7 +4741,7 @@ pub open spec fn deq_c(
 /// A chain of `deq_c` steps at height `h` -- `pstep_chain_valid`'s
 /// direct analogue.
 pub open spec fn deq_chain_valid(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     ch: Seq<ExprSpec>,
     h: nat,
 ) -> bool
@@ -4755,7 +4759,7 @@ pub open spec fn deq_chain_valid(
 /// transitive (`deq_trans`, chain concatenation -- free, exactly like
 /// `pstep_star_trans`), congruent (`deq_app_congr` etc.), and subsumes
 /// both `defeq` and the leaf equalities (length-2 chains).
-pub open spec fn deq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat) -> bool
+pub open spec fn deq(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat) -> bool
     decreases h, 2int,
 {
     exists|ch: Seq<ExprSpec>|
@@ -4764,7 +4768,7 @@ pub open spec fn deq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSp
 
 /// `deq_c` is monotone in its height index.
 pub proof fn deq_c_mono(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4777,7 +4781,7 @@ pub proof fn deq_c_mono(
         deq_c(env, x, y, h2),
     decreases h1, 0int,
 {
-    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) || deq_rec(x, y) {
+    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) || deq_rec(env, x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -4868,7 +4872,7 @@ pub proof fn deq_c_mono(
 /// `deq_c` is symmetric, height-preserving: `defeq` by its own lemma,
 /// `deq_leaf` by the symmetry of its interp equalities, congruence by
 /// the IH on sub-derivations.
-pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_c_symm(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_c(env, x, y, h),
     ensures
@@ -4883,8 +4887,8 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
         assert(deq_eta(y, x));
     } else if deq_quot(x, y) {
         assert(deq_quot(y, x));
-    } else if deq_rec(x, y) {
-        assert(deq_rec(y, x));
+    } else if deq_rec(env, x, y) {
+        assert(deq_rec(env, y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -4963,7 +4967,7 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
 }
 
 /// A single `deq_c` step is a `deq` fact: the length-2 chain.
-pub proof fn deq_of_deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_deq_c(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_c(env, x, y, h),
     ensures
@@ -4986,7 +4990,7 @@ pub proof fn deq_of_deq_c(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: E
 }
 
 /// Constructor lemma: joinability is `deq` at any height.
-pub proof fn deq_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_defeq(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         defeq(env, x, y),
     ensures
@@ -4996,7 +5000,7 @@ pub proof fn deq_of_defeq(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: E
 }
 
 /// Constructor lemma: a leaf level-equality is `deq` at any height.
-pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_leaf(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_leaf(x, y),
     ensures
@@ -5006,7 +5010,7 @@ pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 }
 
 /// Constructor lemma: an eta pair is `deq` at any height.
-pub proof fn deq_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_quot(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_quot(x, y),
     ensures
@@ -5016,16 +5020,16 @@ pub proof fn deq_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 }
 
 /// Constructor lemma: a recursor step is `deq` at any height.
-pub proof fn deq_of_rec(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_rec(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
-        deq_rec(x, y),
+        deq_rec(env, x, y),
     ensures
         deq(env, x, y, h),
 {
     deq_of_deq_c(env, x, y, h);
 }
 
-pub proof fn deq_any_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn deq_any_of_quot(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
         deq_quot(x, y),
     ensures
@@ -5035,7 +5039,7 @@ pub proof fn deq_any_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y
     assert(deq(env, x, y, 0));
 }
 
-pub proof fn deq_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_of_eta(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_eta(x, y),
     ensures
@@ -5045,7 +5049,7 @@ pub proof fn deq_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
 }
 
 /// `deq_any` form of the eta constructor.
-pub proof fn deq_any_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec)
+pub proof fn deq_any_of_eta(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
         deq_eta(x, y),
     ensures
@@ -5056,7 +5060,7 @@ pub proof fn deq_any_of_eta(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y:
 }
 
 /// `deq` is reflexive at every height: the length-1 chain.
-pub proof fn deq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, h: nat)
+pub proof fn deq_refl(env: EnvSpec, x: ExprSpec, h: nat)
     ensures
         deq(env, x, x, h),
 {
@@ -5070,7 +5074,7 @@ pub proof fn deq_refl(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, h: nat)
 /// `deq` is monotone in its height index: per-link `deq_c_mono` over
 /// the witness chain.
 pub proof fn deq_mono(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -5100,7 +5104,7 @@ pub proof fn deq_mono(
 
 /// `deq` is symmetric, height-preserving: reverse the witness chain and
 /// flip each link with `deq_c_symm`.
-pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn deq_symm(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq(env, x, y, h),
     ensures
@@ -5133,7 +5137,7 @@ pub proof fn deq_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprS
 /// `pstep_star_trans` (and unlike every attempt to keep transitivity as
 /// a constructor inside a recursive relation, see `deq_c`'s doc).
 pub proof fn deq_trans(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,
@@ -5198,7 +5202,7 @@ pub proof fn deq_trans(
 /// step one height up (the fixed side rides along via `deq_c`
 /// reflexivity through `defeq`).
 pub proof fn deq_app_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
@@ -5282,7 +5286,7 @@ pub proof fn deq_app_congr(
 /// `deq` congruence at `Bind`, both positions varying (same two-segment
 /// chain-mapping as `deq_app_congr`).
 pub proof fn deq_bind_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5370,7 +5374,7 @@ pub proof fn deq_bind_congr(
 /// fresh-instance disjunct of `deq_c`'s `Bind` case takes the opened-body
 /// chain as is.
 pub proof fn deq_bind_fresh(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5450,7 +5454,7 @@ pub proof fn deq_bind_fresh(
 
 /// `deq_any` form of `deq_bind_fresh` (heights joined by `deq_mono`).
 pub proof fn deq_any_bind_fresh(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5489,7 +5493,7 @@ pub proof fn deq_any_bind_fresh(
 
 /// `deq` congruence at `Proj` (single mapped chain).
 pub proof fn deq_proj_congr(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
@@ -5538,7 +5542,7 @@ pub proof fn deq_proj_congr(
 /// not identified at the type-comparison layer here.
 pub open spec fn deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5612,7 +5616,7 @@ pub open spec fn deq_p_c(
 /// A chain of `deq_p_c` steps -- `deq_chain_valid`'s typed analogue.
 pub open spec fn deq_p_chain_valid(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     ch: Seq<ExprSpec>,
@@ -5631,7 +5635,7 @@ pub open spec fn deq_p_chain_valid(
 /// the same encoding reasons.
 pub open spec fn deq_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5653,7 +5657,7 @@ pub open spec fn deq_p(
 /// Height-erased form, like `deq_any`.
 pub open spec fn deq_p_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5665,7 +5669,7 @@ pub open spec fn deq_p_any(
 /// `deq_p_c` subsumes `deq_c` (first disjunct, definitional).
 pub proof fn deq_p_c_of_deq_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5682,7 +5686,7 @@ pub proof fn deq_p_c_of_deq_c(
 /// `deq_p_c` is monotone in its height index.
 pub proof fn deq_p_c_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5813,7 +5817,7 @@ pub proof fn deq_p_c_mono(
 /// the proposition-equality conjunct), congruence by the IH.
 pub proof fn deq_p_c_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5959,7 +5963,7 @@ pub proof fn deq_p_c_symm(
 /// A single typed step is a `deq_p` fact: the length-2 chain.
 pub proof fn deq_p_of_deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -5993,7 +5997,7 @@ pub proof fn deq_p_of_deq_p_c(
 /// partner, which `deq_c` admits outright.
 pub proof fn deq_p_of_pstep_star(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6015,7 +6019,7 @@ pub proof fn deq_p_of_pstep_star(
 /// the witness chain.
 pub proof fn deq_p_of_deq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6048,7 +6052,7 @@ pub proof fn deq_p_of_deq(
 /// and that is `deq_p_mono`.
 pub proof fn proof_irrel_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6089,7 +6093,7 @@ pub proof fn proof_irrel_pair_mono(
 /// asks for a derivation below it and a conversion at it.
 pub proof fn is_proof_type_m_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     ty: ExprSpec,
@@ -6120,7 +6124,7 @@ pub proof fn is_proof_type_m_mono(
 
 pub proof fn unit_like_type_m_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -6134,14 +6138,14 @@ pub proof fn unit_like_type_m_mono(
         unit_like_type_m(dty, env, lctx, io, tx, h2),
     decreases h1, 2int,
 {
-    let r = choose|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, env, lctx, io, tx, r, h1) && unit_like_type(r);
+    let r = choose|r: ExprSpec| #[trigger] unit_like_marker(r) && deq_p(dty, env, lctx, io, tx, r, h1) && unit_like_type(env, r);
     deq_p_mono(dty, env, lctx, io, tx, r, h1, h2);
     assert(unit_like_marker(r));
 }
 
 pub proof fn struct_type_of_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     tx: ExprSpec,
@@ -6165,7 +6169,7 @@ pub proof fn struct_type_of_mono(
 
 pub proof fn unit_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6195,7 +6199,7 @@ pub proof fn unit_pair_mono(
 
 pub proof fn eta_struct_expand_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6231,8 +6235,8 @@ pub proof fn eta_struct_expand_mono(
             params,
             nf,
             h1,
-        )) && struct_ctor_of(ind) == Some(cid)
-            && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
+        )) && env.struct_ctor(ind) == Some(cid)
+            && env.ctor_num_fields(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
         );
@@ -6246,7 +6250,7 @@ pub proof fn eta_struct_expand_mono(
 
 pub proof fn eta_struct_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6271,7 +6275,7 @@ pub proof fn eta_struct_pair_mono(
 /// An irrelevance pair at height `hi` is `deq_p` at any height above it.
 pub proof fn deq_p_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6295,7 +6299,7 @@ pub proof fn deq_p_of_irrel(
 /// chain.
 pub proof fn deq_p_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6316,7 +6320,7 @@ pub proof fn deq_p_of_unit(
 
 pub proof fn deq_p_any_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6336,7 +6340,7 @@ pub proof fn deq_p_any_of_unit(
 /// leaves do.
 pub proof fn deq_p_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6357,7 +6361,7 @@ pub proof fn deq_p_of_eta_struct(
 
 pub proof fn deq_p_any_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6376,7 +6380,7 @@ pub proof fn deq_p_any_of_eta_struct(
 /// `deq_p` is reflexive at every height: the length-1 chain.
 pub proof fn deq_p_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6395,7 +6399,7 @@ pub proof fn deq_p_refl(
 /// `deq_p` is monotone in its height index.
 pub proof fn deq_p_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6436,7 +6440,7 @@ pub proof fn deq_p_mono(
 /// `deq_p` is symmetric, height-preserving: chain reversal.
 pub proof fn deq_p_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6482,7 +6486,7 @@ pub proof fn deq_p_symm(
 /// `deq_p` is transitive -- for FREE, by chain concatenation.
 pub proof fn deq_p_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6563,7 +6567,7 @@ pub proof fn deq_p_trans(
 /// fact).
 pub proof fn deq_p_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     f1: ExprSpec,
@@ -6675,7 +6679,7 @@ pub proof fn deq_p_app_congr(
 /// `deq_p` congruence at `Bind`.
 pub proof fn deq_p_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     t1: ExprSpec,
@@ -6787,7 +6791,7 @@ pub proof fn deq_p_bind_congr(
 /// `deq_p` congruence at `Proj`.
 pub proof fn deq_p_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     pidx: usize,
@@ -6847,7 +6851,7 @@ pub proof fn deq_p_proj_congr(
 /// `deq_p_any` API -- height-erased typed equality, mirroring `deq_any`'s.
 pub proof fn deq_p_any_of_deq_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6865,7 +6869,7 @@ pub proof fn deq_p_any_of_deq_any(
 
 pub proof fn deq_p_any_of_defeq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6882,7 +6886,7 @@ pub proof fn deq_p_any_of_defeq(
 
 pub proof fn deq_p_any_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -6902,7 +6906,7 @@ pub proof fn deq_p_any_of_irrel(
 /// `deq_p_mono` to a common height (2026-09-06, for the conversion route).
 pub proof fn deq_p_any_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     f1: ExprSpec,
@@ -6944,7 +6948,7 @@ pub proof fn deq_p_any_app_congr(
 
 pub proof fn deq_p_any_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     t1: ExprSpec,
@@ -6986,7 +6990,7 @@ pub proof fn deq_p_any_bind_congr(
 
 pub proof fn deq_p_any_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     pidx: usize,
@@ -7018,7 +7022,7 @@ pub proof fn deq_p_any_proj_congr(
 
 pub proof fn deq_p_any_of_leaf(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -7042,7 +7046,7 @@ pub proof fn deq_p_any_of_leaf(
 #[verifier::spinoff_prover]
 pub proof fn deq_p_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     t1: ExprSpec,
@@ -7145,7 +7149,7 @@ pub proof fn deq_p_bind_fresh(
 /// `deq_p_any` face of `deq_p_bind_fresh`.
 pub proof fn deq_p_any_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     t1: ExprSpec,
@@ -7192,7 +7196,7 @@ pub proof fn deq_p_any_bind_fresh(
 /// K-like recursor leaf): `x ~ y` gives `x args ~ y args`.
 pub proof fn deq_p_any_spine_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -7224,7 +7228,7 @@ pub proof fn deq_p_any_spine_congr(
 /// `pstep_star_spine_update` twin).
 pub proof fn deq_p_any_spine_update(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     head: ExprSpec,
@@ -7262,7 +7266,7 @@ pub proof fn deq_p_any_spine_update(
 
 pub proof fn deq_p_any_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -7276,7 +7280,7 @@ pub proof fn deq_p_any_refl(
 
 pub proof fn deq_p_any_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -7294,7 +7298,7 @@ pub proof fn deq_p_any_symm(
 
 pub proof fn deq_p_any_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
     io: bool,
     x: ExprSpec,
@@ -7333,7 +7337,7 @@ pub proof fn deq_p_any_trans(
 /// claim (see `feedback_defeq_witness_vs_pstep_star` for why this
 /// couldn't just reuse `def_eq_witness`).
 pub proof fn nat_repr_is_zero_reaches_canonical<'t>(
-    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
     e: ExprPtr<'t>,
 )
     requires
@@ -7426,7 +7430,7 @@ pub fn verified_def_eq<'t, 'p: 't>(
 {
     if expr_ptr_eq(x, y) {
         proof {
-            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            assert forall|env: EnvSpec| #[trigger]
                 deq_any(env, to_model(x), to_model(y)) by {
                 deq_refl(env, to_model(x), 0);
                 assert(deq(env, to_model(x), to_model(y), 0));
@@ -7437,9 +7441,9 @@ pub fn verified_def_eq<'t, 'p: 't>(
     match verified_def_eq_core(ctx, x, y, fuel) {
         Some(true) => {
             proof {
-                if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                if forall|env: EnvSpec| #[trigger]
                     deq(env, to_model(x), to_model(y), fuel as nat) {
-                    assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    assert forall|env: EnvSpec| #[trigger]
                         deq_any(env, to_model(x), to_model(y)) by {
                         assert(deq(env, to_model(x), to_model(y), fuel as nat));
                     }
@@ -7480,11 +7484,11 @@ pub fn verified_def_eq<'t, 'p: 't>(
                         fuel as nat,
                     )) && deq_core_claim(fx, fy, fuel as nat);
             if (forall|i: int|
-                0 <= i < argsx.len() ==> forall|env: Map<u64, (Seq<u64>, ExprSpec)>|
+                0 <= i < argsx.len() ==> forall|env: EnvSpec|
                     deq(env, to_model(#[trigger] argsx[i]), to_model(argsy[i]), fuel as nat)) && (
-            forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            forall|env: EnvSpec| #[trigger]
                 deq(env, to_model(fx), to_model(fy), fuel as nat)) {
-                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                assert forall|env: EnvSpec| #[trigger]
                     deq_any(env, to_model(x), to_model(y)) by {
                     let ax = args_model_of(argsx);
                     let ay = args_model_of(argsy);
@@ -7830,13 +7834,13 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
 {
     if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
         proof {
-            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            assert forall|env: EnvSpec| #[trigger]
                 full_def_eq(env, x, y) by {
                 nat_repr_is_zero_reaches_canonical(env, x);
                 nat_repr_is_zero_reaches_canonical(env, y);
                 assert(defeq(env, to_model(x), to_model(y)));
             }
-            assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            assert forall|env: EnvSpec| #[trigger]
                 deq_any(env, to_model(x), to_model(y)) by {
                 nat_repr_is_zero_reaches_canonical(env, x);
                 nat_repr_is_zero_reaches_canonical(env, y);
@@ -7852,7 +7856,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
         let b = expr_ptr_eq(x, y);
         proof {
             if b {
-                assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                assert forall|env: EnvSpec| #[trigger]
                     deq_any(env, to_model(x), to_model(y)) by {
                     deq_any_refl(env, to_model(x));
                 }
@@ -7880,11 +7884,11 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
             let r = verified_def_eq(ctx, xp, yp, fuel - 1);
             proof {
                 if r == Some(true) {
-                    if forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                    if forall|env: EnvSpec| #[trigger]
                         deq_any(env, to_model(xp), to_model(yp)) {
                         // Lift through the canonical successor application:
                         // x ~ App(succ, xp) ~ App(succ, yp) ~ y.
-                        assert forall|env: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+                        assert forall|env: EnvSpec| #[trigger]
                             deq_any(env, to_model(x), to_model(y)) by {
                             let sc = const_expr_no_levels(nat_succ_id());
                             let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
@@ -8068,9 +8072,9 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
         // if every arg pair's verdict was deq-expressible the spines
         // are deq under every env (mirrors verified_def_eq's app path).
         if forall|i: int|
-            0 <= i < l_args@.len() ==> forall|env2: Map<u64, (Seq<u64>, ExprSpec)>|
+            0 <= i < l_args@.len() ==> forall|env2: EnvSpec|
                 deq(env2, to_model(#[trigger] l_args@[i]), to_model(r_args@[i]), fuel as nat) {
-            assert forall|env2: Map<u64, (Seq<u64>, ExprSpec)>| #[trigger]
+            assert forall|env2: EnvSpec| #[trigger]
                 deq_any(env2, to_model(x), to_model(y)) by {
                 let ax = args_model_of(l_args@);
                 let ay = args_model_of(r_args@);
@@ -8127,7 +8131,7 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         match result {
             Some(r) => {
-                &&& pstep_star(Map::<u64, (Seq<u64>, ExprSpec)>::empty(), to_model(e), to_model(r))
+                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e), to_model(r))
                 &&& r != e
                 &&& nlbv(to_model(r)) <= 0
                 &&& max_var_below(to_model(r), bound + d * d * d + d * d)

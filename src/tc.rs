@@ -1104,7 +1104,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let y_type = self.infer(y, InferOnly);
         let b = self.def_eq(x_ty, y_type);
         proof {
-            assert(crate::tc_model::unit_like_head(crate::level_arena_bridge::name_id(name)));
+            let em = crate::env_model::to_model_of_env(*self.env);
+            let cid = crate::level_arena_bridge::name_id(*ctor_name);
+            assert(em.struct_ctor(crate::level_arena_bridge::name_id(name)) == Some(cid));
+            assert(em.ctor_num_fields(cid) == Some(0u16));
+            assert(crate::tc_model::unit_like_head(em, crate::level_arena_bridge::name_id(name)));
             crate::expr_arena_bridge::is_const_shape_model(xf);
             crate::expr_arena_bridge::const_levels_vec_model(xf);
             assert(crate::beta_model::spine_app(
@@ -1507,14 +1511,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let lv = crate::expr_arena_bridge::const_levels_vec(f);
                     assert(to_model_expr(f) == ExprSpec::Const(id, lv));
                     assert(sm == crate::beta_model::spine_app(ExprSpec::Const(id, lv), am2));
-                    assert(crate::expr_arena_bridge::ctor_num_params_of(id) == Some(num_params));
+                    assert(crate::env_model::to_model_of_env(env).ctor_num_params(id) == Some(num_params));
                     assert(am2[i as int] == to_model_expr(a));
                     // `iota_extract`'s trigger, written in its own shape
                     assert(am2[(num_params as nat + idx as nat) as int] == to_model_expr(a));
                     assert((num_params as nat + idx as nat) < am2.len());
                     // the iota step itself, with the structure already a
                     // constructor application (it steps to itself)
-                    assert(crate::beta_model::iota_extract(idx, sm, to_model_expr(a)));
+                    assert(crate::beta_model::iota_extract(crate::env_model::to_model_of_env(env), idx, sm, to_model_expr(a)));
                     assert(crate::beta_model::pstep(fm, sm, sm));
                     assert(crate::beta_model::iota_reduct(sm));
                     let pm = ExprSpec::Proj(idx, Box::new(sm));
@@ -4303,7 +4307,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 uparams: crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(rd_uparams)),
                 rules: crate::env_model::rec_rules_model(rec_rules@),
             };
-            assert(crate::expr_arena_bridge::rec_data_of(rid) == Some(rd));
+            assert(crate::env_model::to_model_of_env(*self.env).rec_data(rid) == Some(rd));
             // the rule
             let cname = crate::expr_arena_bridge::const_name_of(major_ctor);
             crate::tc_model::find_rule_of_find_index(rec_rules@, cname);
@@ -7373,14 +7377,14 @@ pub proof fn walk_set_unique<'t>(
 /// A parallel step with no definitions is a kernel conversion.
 pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
-        crate::beta_model::pstep(vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty(), x, y),
+        crate::beta_model::pstep(crate::expr_arena_bridge::EnvSpec::empty(), x, y),
     ensures
         kconv(env, x, y),
 {
     let fm = crate::env_model::to_model_of_env(env);
-    assert forall|j: u64| #[trigger] vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j)
-        implies fm.contains_key(j) && vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == fm[j] by {}
-    crate::beta_model::pstep_env_weaken(vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty(), fm, x, y);
+    assert forall|j: u64| #[trigger] crate::expr_arena_bridge::EnvSpec::empty().contains_key(j)
+        implies fm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty()[j] == fm[j] by {}
+    crate::beta_model::pstep_env_weaken(crate::expr_arena_bridge::EnvSpec::empty(), fm, x, y);
     crate::beta_model::pstep_star_one(fm, x, y);
     crate::beta_model::defeq_of_pstep_star(fm, x, y);
     crate::tc_model::deq_any_of_defeq(fm, x, y);
@@ -7428,8 +7432,8 @@ pub proof fn eta_expand_claim<'x, 't>(
         tm == crate::beta_model::spine_app(ExprSpec::Const(ind, lv), am),
         np <= am.len(),
         nf < 0x1_0000,
-        crate::expr_arena_bridge::struct_ctor_of(ind) == Some(cid),
-        crate::expr_arena_bridge::ctor_num_fields_of(cid) == Some(nf as u16),
+        crate::env_model::to_model_of_env(env).struct_ctor(ind) == Some(cid),
+        crate::env_model::to_model_of_env(env).ctor_num_fields(cid) == Some(nf as u16),
         r == crate::beta_model::spine_app(ExprSpec::Const(cid, ls), am.subrange(0, np as int) + eta_projs(x, nf)),
     ensures
         kconv(env, x, r),
@@ -7525,7 +7529,7 @@ pub proof fn unit_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: E
         def_eq_claim(env, A, B),
         crate::expr_model::nlbv(A) <= 0,
         crate::expr_model::nlbv(B) <= 0,
-        crate::tc_model::unit_like_head(ind),
+        crate::tc_model::unit_like_head(crate::env_model::to_model_of_env(env), ind),
         exists|ls: Seq<crate::level_model::LevelSpec>, args: Seq<ExprSpec>| #[trigger]
             crate::beta_model::spine_app(ExprSpec::Const(ind, ls), args) == A,
     ensures
@@ -7553,7 +7557,7 @@ pub proof fn unit_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: E
     crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, A, B, H);
     crate::tc_model::deq_p_symm(dty, denv, lctx, true, Ty, B, H);
     crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, B, Ty, H);
-    assert(crate::tc_model::unit_like_type(A));
+    assert(crate::tc_model::unit_like_type(crate::env_model::to_model_of_env(env), A));
     assert(crate::tc_model::unit_like_marker(A));
     assert(crate::tc_model::unit_like_type_m(dty, denv, lctx, true, Tx, H));
     assert(crate::tc_model::unit_marker(Tx, Ty, fx, fy));
@@ -7589,8 +7593,8 @@ pub proof fn struct_eta_claim<'x, 't>(
         y == crate::beta_model::spine_app(ExprSpec::Const(cid, ylv), am),
         am.len() == np + nf,
         nf < 0x1_0000,
-        crate::expr_arena_bridge::struct_ctor_of(ind) == Some(cid),
-        crate::expr_arena_bridge::ctor_num_fields_of(cid) == Some(nf as u16),
+        crate::env_model::to_model_of_env(env).struct_ctor(ind) == Some(cid),
+        crate::env_model::to_model_of_env(env).ctor_num_fields(cid) == Some(nf as u16),
         forall|k: int| np <= k < np + nf ==> #[trigger] def_eq_claim(
             env,
             ExprSpec::Proj((k - np) as usize, Box::new(x)),
@@ -7672,7 +7676,7 @@ pub proof fn rec_step_claim<'x, 't>(
     r: ExprSpec,
 )
     requires
-        crate::expr_arena_bridge::rec_data_of(rid) == Some(rd),
+        crate::env_model::to_model_of_env(env).rec_data(rid) == Some(rd),
         crate::beta_model::rec_prefix(rd) <= rd.major_idx,
         rd.major_idx < am.len(),
         rd.uparams.len() == lv.len(),
@@ -7738,11 +7742,11 @@ pub proof fn rec_step_claim<'x, 't>(
         assert(am2[mi] == mm);
         assert(crate::beta_model::spine_head(mm) == ExprSpec::Const(cid, clv));
         assert(crate::beta_model::spine_args(mm) =~= cam);
-        assert(crate::beta_model::rec_ready_u(x2));
+        assert(crate::beta_model::rec_ready_u(crate::env_model::to_model_of_env(env), x2));
         assert(am2.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= pre);
         assert(am2.subrange(mi + 1, am2.len() as int) =~= post);
-        assert(crate::beta_model::rec_result(x2) == r);
-        assert(crate::tc_model::deq_rec(x2, r));
+        assert(crate::beta_model::rec_result(crate::env_model::to_model_of_env(env), x2) == r);
+        assert(crate::tc_model::deq_rec(crate::env_model::to_model_of_env(env), x2, r));
         crate::tc_model::deq_of_rec(crate::env_model::to_model_of_env(env), x2, r, 0);
         kconv_of_deq(env, x2, r);
         kconv_trans(env, x, x2, r);
