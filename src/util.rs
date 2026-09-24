@@ -1777,6 +1777,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
+        requires
+            dbj_idx < u16::MAX,
         ensures
             to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
             final(self).expr_cache == old(self).expr_cache,

@@ -383,6 +383,7 @@ pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
 /// inference needed and the fuel-free one does not. `!has_fv` is the real
 /// condition: a definition whose value mentions a free variable cannot be
 /// substituted into an arbitrary context.
+#[verifier::opaque]
 pub open spec fn env_model_nofv<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)> {
     to_model_of_env(env).restrict(
         to_model_of_env(env).dom().filter(|id: u64| !has_fv(to_model_of_env(env)[id].1)),
@@ -398,6 +399,7 @@ pub proof fn env_model_nofv_has<'x, 'a>(env: Env<'x, 'a>, id: u64)
         env_model_nofv(env).contains_key(id),
         env_model_nofv(env)[id] == to_model_of_env(env)[id],
 {
+    reveal(env_model_nofv);
 }
 
 /// The uncapped model is a sub-map of the full model (for `pstep_star_env_weaken`).
@@ -407,6 +409,7 @@ pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
             env_model_nofv(env).contains_key(id) ==> to_model_of_env(env).contains_key(id)
                 && env_model_nofv(env)[id] == to_model_of_env(env)[id],
 {
+    reveal(env_model_nofv);
 }
 
 #[verifier::external_body]

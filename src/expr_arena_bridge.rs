@@ -1986,6 +1986,12 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
     ctx: &mut TcCtx<'t, 'p>,
     e: Expr<'t>,
 ) -> (result: ExprPtr<'t>) where 'p: 't
+    requires
+        // what `read_expr` promises of every stored node has to hold of what
+        // is stored: the cached flags are right, and a local's type is closed
+        // (`local_type_wf`)
+        node_cache_ok(e),
+        e matches Expr::Local { binder_type, .. } ==> nlbv(to_model(binder_type)) == 0,
     ensures
         to_model(result) == to_model_of_expr(e),
         // The same clause `read_expr` carries, on the write side. `const_name_of`

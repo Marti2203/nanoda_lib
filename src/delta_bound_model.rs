@@ -3790,6 +3790,104 @@ pub fn verified_proof_irrel_shadow<'t, 'p: 't, 'x>(
     }
 }
 
+/// The eta leaf of `verified_conv_inner` (the kernel's `def_eq_eta`): one
+/// side a lambda, the other not, compared through the other side's eta
+/// expansion. Out of `verified_conv_inner` to keep that query in budget; the
+/// caller passes its own `budget - 1`, which is what the recursive
+/// comparison always used.
+#[verifier::spinoff_prover]
+pub fn verified_conv_eta_fn<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    fuel: u32,
+    budget: u32,
+) -> (result: Option<bool>)
+    requires
+        memo.wf(),
+        memo.spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
+        match result {
+            Some(true) => deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+            _ => true,
+        },
+    decreases budget, 2int,
+{
+    let ghost em = to_model_of_env(*env);
+    let xe = ctx.read_expr(x);
+    let ye = ctx.read_expr(y);
+    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
+        (Some(_), None) => {
+            if ctx.num_loose_bvars(y) == 0 {
+                if let Some(y_ty) = verified_infer_shadow(ctx, env, memo, y) {
+                    if ctx.num_loose_bvars(y_ty) != 0 {
+                        return None;
+                    }
+                    let y_tyw = verified_whnf_free(ctx, env, memo, y_ty);
+                    let tyl = ctx.read_expr(y_tyw);
+                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
+                        let new_lambda = mk_eta_expansion(ctx, bn, bs, dom, y);
+                        if let Some(true) = verified_conv(
+                            ctx,
+                            env,
+                            memo,
+                            x,
+                            new_lambda,
+                            fuel,
+                            budget,
+                        ) {
+                            proof {
+                                deq_any_of_eta(em, to_model(new_lambda), to_model(y));
+                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                            }
+                            conv_stat(35);
+                            return Some(true);
+                        }
+                    }
+                }
+            }
+        },
+        (None, Some(_)) => {
+            if ctx.num_loose_bvars(x) == 0 {
+                if let Some(x_ty) = verified_infer_shadow(ctx, env, memo, x) {
+                    if ctx.num_loose_bvars(x_ty) != 0 {
+                        return None;
+                    }
+                    let x_tyw = verified_whnf_free(ctx, env, memo, x_ty);
+                    let tyl = ctx.read_expr(x_tyw);
+                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
+                        let new_lambda = mk_eta_expansion(ctx, bn, bs, dom, x);
+                        if let Some(true) = verified_conv(
+                            ctx,
+                            env,
+                            memo,
+                            new_lambda,
+                            y,
+                            fuel,
+                            budget,
+                        ) {
+                            proof {
+                                deq_any_of_eta(em, to_model(new_lambda), to_model(x));
+                                deq_any_symm(em, to_model(new_lambda), to_model(x));
+                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
+                            }
+                            conv_stat(35);
+                            return Some(true);
+                        }
+                    }
+                }
+            }
+        },
+        _ => {},
+    }
+    None
+}
+
 // Sat at the default rlimit boundary: this function and its `_p` twin passed
 // and failed across identical runs of the SAME commit (`6d44b35` verified green
 // when committed, then reported `rlimit exceeded` on a re-run with no source
@@ -4143,97 +4241,8 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(
     // propositions as equal (see `types_to`'s application rule). Taking the
     // binder from `f`'s own type makes `f #0` well-typed by construction.
 
-    match (expr_as_lambda(&xe), expr_as_lambda(&ye)) {
-        (Some(_), None) => {
-            if ctx.num_loose_bvars(y) == 0 {
-                if let Some(y_ty) = verified_infer_shadow(ctx, env, memo, y) {
-                    if ctx.num_loose_bvars(y_ty) != 0 {
-                        return None;
-                    }
-                    let y_tyw = verified_whnf_free(ctx, env, memo, y_ty);
-                    let tyl = ctx.read_expr(y_tyw);
-                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
-                        let v0 = ctx.mk_var(0);
-                        let body = ctx.mk_app(y, v0);
-                        let new_lambda = ctx.mk_lambda(bn, bs, dom, body);
-                        if let Some(true) = verified_conv(
-                            ctx,
-                            env,
-                            memo,
-                            x,
-                            new_lambda,
-                            fuel,
-                            budget - 1,
-                        ) {
-                            proof {
-                                nlbv_shift_noop(1, 0, to_model(y));
-                                assert(to_model(new_lambda) == ExprSpec::Bind(
-                                    Box::new(to_model(dom)),
-                                    Box::new(
-                                        ExprSpec::App(
-                                            Box::new(shift(1, 0, to_model(y))),
-                                            Box::new(ExprSpec::Var(0)),
-                                        ),
-                                    ),
-                                ));
-                                assert(eta_expands_to(to_model(new_lambda), to_model(y)));
-                                assert(deq_eta(to_model(new_lambda), to_model(y)));
-                                deq_any_of_eta(em, to_model(new_lambda), to_model(y));
-                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
-                            }
-                            conv_stat(35);
-                            return Some(true);
-                        }
-                    }
-                }
-            }
-        },
-        (None, Some(_)) => {
-            if ctx.num_loose_bvars(x) == 0 {
-                if let Some(x_ty) = verified_infer_shadow(ctx, env, memo, x) {
-                    if ctx.num_loose_bvars(x_ty) != 0 {
-                        return None;
-                    }
-                    let x_tyw = verified_whnf_free(ctx, env, memo, x_ty);
-                    let tyl = ctx.read_expr(x_tyw);
-                    if let Some((bn, bs, dom, _)) = expr_as_pi(&tyl) {
-                        let v0 = ctx.mk_var(0);
-                        let body = ctx.mk_app(x, v0);
-                        let new_lambda = ctx.mk_lambda(bn, bs, dom, body);
-                        if let Some(true) = verified_conv(
-                            ctx,
-                            env,
-                            memo,
-                            new_lambda,
-                            y,
-                            fuel,
-                            budget - 1,
-                        ) {
-                            proof {
-                                nlbv_shift_noop(1, 0, to_model(x));
-                                assert(to_model(new_lambda) == ExprSpec::Bind(
-                                    Box::new(to_model(dom)),
-                                    Box::new(
-                                        ExprSpec::App(
-                                            Box::new(shift(1, 0, to_model(x))),
-                                            Box::new(ExprSpec::Var(0)),
-                                        ),
-                                    ),
-                                ));
-                                assert(eta_expands_to(to_model(new_lambda), to_model(x)));
-                                assert(deq_eta(to_model(new_lambda), to_model(x)));
-                                deq_any_of_eta(em, to_model(new_lambda), to_model(x));
-                                deq_any_symm(em, to_model(new_lambda), to_model(x));
-                                deq_any_trans(em, to_model(x), to_model(new_lambda), to_model(y));
-                            }
-                            conv_stat(35);
-                            return Some(true);
-                        }
-                    }
-                }
-            }
-        },
-        _ => {},
+    if let Some(true) = verified_conv_eta_fn(ctx, env, memo, x, y, fuel, budget - 1) {
+        return Some(true);
     }
     // --- quotient computation (the kernel's `reduce_quot`) ---
     // The `_p` family has had this leaf all along; the reduction-only family
@@ -4525,6 +4534,35 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
     }
     conv_stat(2);
     Some(true)
+}
+
+/// `fun _ : dom => f #0`, the eta expansion of a closed `f`. Out of
+/// `verified_conv_inner` to keep that query in budget.
+pub fn mk_eta_expansion<'t, 'p: 't>(
+    ctx: &mut TcCtx<'t, 'p>,
+    bn: NamePtr<'t>,
+    bs: BinderStyle,
+    dom: ExprPtr<'t>,
+    f: ExprPtr<'t>,
+) -> (result: ExprPtr<'t>)
+    requires
+        nlbv(to_model(f)) == 0,
+    ensures
+        deq_eta(to_model(result), to_model(f)),
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+{
+    let v0 = ctx.mk_var(0);
+    let body = ctx.mk_app(f, v0);
+    let r = ctx.mk_lambda(bn, bs, dom, body);
+    proof {
+        nlbv_shift_noop(1, 0, to_model(f));
+        assert(to_model(r) == ExprSpec::Bind(
+            Box::new(to_model(dom)),
+            Box::new(ExprSpec::App(Box::new(shift(1, 0, to_model(f))), Box::new(ExprSpec::Var(0)))),
+        ));
+        assert(eta_expands_to(to_model(r), to_model(f)));
+    }
+    r
 }
 
 /// Two successor representations with convertible predecessors are
