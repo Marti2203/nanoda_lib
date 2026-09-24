@@ -338,6 +338,18 @@ pub mod route_stats {
     /// original checker accepted and no verified route could confirm, so the
     /// residual gap can be read instead of guessed at.
     pub static UNCERTIFIED_SHOWN: AtomicU64 = AtomicU64::new(0);
+    pub fn print_uncert<'t, 'p>(
+        ctx: &crate::util::TcCtx<'t, 'p>,
+        x: crate::util::ExprPtr<'t>,
+        y: crate::util::ExprPtr<'t>,
+    ) {
+        let cap = knob("NANODA_UNCERTIFIED", 0) as u64;
+        if cap > 0 && UNCERTIFIED_SHOWN.fetch_add(1, Ordering::Relaxed) < cap {
+            let branch = LEGACY_BRANCH.with(|c| c.get());
+            let leaf = LAST_LEAF.with(|c| c.get());
+            eprintln!("UNCERTIFIED branch={} last-leaf={}\n  x = {:?}\n  y = {:?}", branch, leaf, ctx.debug_print(x), ctx.debug_print(y));
+        }
+    }
 
     pub static CONVFAIL_SHOWN: AtomicU64 = AtomicU64::new(0);
     pub fn conv_fail_print_budget() -> bool {
@@ -5541,6 +5553,9 @@ pub assume_specification[ route_stats::uncert_events ]() -> (result: u64)
 pub assume_specification[ route_stats::route_hit ](which: usize)
 ;
 
+pub assume_specification<'t, 'p>[ route_stats::print_uncert ](ctx: &crate::util::TcCtx<'t, 'p>, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>)
+;
+
 pub assume_specification[ route_stats::bump_uncert_events ]()
 ;
 
@@ -9005,6 +9020,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         route_stats::route_hit(which as usize);
         if which == 0 && verdict {
             route_stats::bump_uncert_events();
+            route_stats::print_uncert(self.ctx, x, y);
             // `+ 1` on a u64 that Verus will not assume is bounded; the
             // checked form is equivalent everywhere the original does not
             // overflow. Shadow code, so no register entry.
