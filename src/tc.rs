@@ -7233,6 +7233,58 @@ pub proof fn scope_pres_of_closed(e: ExprSpec, r: ExprSpec)
     }
 }
 
+/// The projections `x.0 .. x.(n-1)` an eta expansion applies.
+pub open spec fn eta_projs(x: ExprSpec, n: nat) -> Seq<ExprSpec> {
+    Seq::new(n, |i: int| ExprSpec::Proj(i as usize, Box::new(x)))
+}
+
+/// STRUCTURE ETA from the kernel's facts: `x` has a type convertible to the
+/// structure `ind` applied to its arguments, and the expansion is the
+/// structure's constructor applied to the parameters and `x`'s projections.
+#[verifier::spinoff_prover]
+pub proof fn eta_expand_claim<'x, 't>(
+    env: Env<'x, 't>,
+    x: ExprSpec,
+    tm: ExprSpec,
+    ind: u64,
+    lv: Seq<crate::level_model::LevelSpec>,
+    am: Seq<ExprSpec>,
+    cid: u64,
+    ls: Seq<crate::level_model::LevelSpec>,
+    np: nat,
+    nf: nat,
+    r: ExprSpec,
+)
+    requires
+        kinfer_claim(env, x, tm),
+        tm == crate::beta_model::spine_app(ExprSpec::Const(ind, lv), am),
+        np <= am.len(),
+        nf < 0x1_0000,
+        crate::expr_arena_bridge::struct_ctor_of(ind) == Some(cid),
+        crate::expr_arena_bridge::ctor_num_fields_of(cid) == Some(nf as u16),
+        r == crate::beta_model::spine_app(ExprSpec::Const(cid, ls), am.subrange(0, np as int) + eta_projs(x, nf)),
+    ensures
+        kconv(env, x, r),
+{
+    let dty = crate::env_model::to_model_of_declar_ty(env);
+    let denv = crate::env_model::to_model_of_env(env);
+    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, tm);
+    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T, tm, h);
+    let params = am.subrange(0, np as int);
+    let rest = am.subrange(np as int, am.len() as int);
+    assert(params + rest =~= am);
+    assert(crate::tc_model::struct_type_marker(lv, rest));
+    assert(crate::tc_model::struct_type_of(dty, denv, lctx, true, T, ind, params, h));
+    let H: nat = if f + 1 >= h { f + 1 } else { h };
+    crate::tc_model::struct_type_of_mono(dty, denv, lctx, true, T, ind, params, h, H);
+    assert(crate::tc_model::eta_struct_marker(T, f, ind, cid, ls, params, nf));
+    assert(eta_projs(x, nf) =~= Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))));
+    assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, true, x, r, H));
+    crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, true, x, r, H);
+}
+
 /// ONE RECURSOR STEP, `reduce_rec`'s: the major premise is replaced by a
 /// convertible constructor spine, and the recursor application then steps to
 /// the rule instance (the uncapped leaf `deq_rec`). Scope and closedness ride
@@ -8926,7 +8978,18 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> crate::expr_model::nlbv(to_model_expr(r)) <= 0,
                 None => true,
             },
+            // STRUCTURE ETA: if `e` has type `e_type`, it converts to its own
+            // expansion
+            match result {
+                Some(r) => kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(e_type)) ==> kconv(
+                    *old(self).env,
+                    to_model_expr(e),
+                    to_model_expr(r),
+                ),
+                None => true,
+            },
     {
+        let ghost env0 = *self.env;
         // `c_name = Point`
         let (_f, c_name, c_levels, args) = self.ctx.unfold_const_apps(e_type)?;
         // `Point` declaration
@@ -8941,6 +9004,23 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Well-formed environments do not do that, and nothing in the code says
         // so; declining is what the `Option` return is for.
         let ConstructorData { num_params, num_fields, .. } = self.env.get_constructor(&ctor_name0)?;
+        // VERUS-REWRITE(tested-env): as in `infer_proj`, two consistency checks
+        // that never fail on a well-formed environment: the structure's
+        // constructor is the one the environment model records, and so is its
+        // field count. `get_structure`/`get_constructor` state nothing.
+        if !opt_name_is(crate::env_model::get_structure_first_ctor(self.env, &c_name, false), ctor_name0) {
+            return None
+        }
+        match crate::env_model::get_constructor_num_fields(self.env, &ctor_name0) {
+            Some(k) => if k != *num_fields {
+                return None
+            },
+            None => return None,
+        }
+        proof {
+            crate::env_model::struct_ctor_of_agrees(env0, crate::level_arena_bridge::name_id(c_name));
+            crate::env_model::ctor_num_fields_of_agrees(env0, crate::level_arena_bridge::name_id(ctor_name0));
+        }
         // VERUS-REWRITE(unchecked-index): `args[i]` below was unguarded. For a
         // well-typed `e_type` the head application supplies at least as many
         // arguments as the structure has parameters, but that is a fact about
@@ -8951,8 +9031,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Const { name := Point.mk, levels := .. }
 
         let mut out = self.ctx.mk_const(ctor_name0, c_levels);
+        let ghost outc = to_model_expr(out);
+        let ghost out_c0 = out;
+        let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         proof {
             crate::expr_arena_bridge::is_const_shape_model(out);
+            assert(crate::expr_arena_bridge::ptr_models(args@.subrange(0, 0)) =~= Seq::<ExprSpec>::empty());
         }
         // apply the params taken from the inferred type
         // `Point.mk (A : Type) (B : Type)`
@@ -8973,9 +9057,16 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
                     ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c),
                 (crate::expr_model::nlbv(to_model_expr(e_type)) <= 0 && crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(out)) <= 0),
+                am == crate::expr_arena_bridge::ptr_models(args@),
+                to_model_expr(out) == crate::beta_model::spine_app(outc, am.subrange(0, i as int)),
         {
             let ghost out0 = out;
             out = self.ctx.mk_app(out, args[i]);
+            proof {
+                let s = am.subrange(0, i as int + 1);
+                assert(s.subrange(0, s.len() - 1) =~= am.subrange(0, i as int));
+                assert(s[s.len() - 1] == to_model_expr(args@[i as int]));
+            }
             proof {
                 if crate::expr_model::nlbv(to_model_expr(e_type)) <= 0 {
                     let am = crate::expr_arena_bridge::ptr_models(args@);
@@ -8998,6 +9089,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `Proj {idx := 0, struct := e}`
         // `Point.mk A B (Point.0 e) (Point.1 e)`
         let nf = (*num_fields) as usize;
+        let ghost em = to_model_expr(e);
+        let ghost pre = am.subrange(0, np as int);
         for j in 0..nf
             invariant
                 tc_wf(*self),
@@ -9009,10 +9102,17 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
                     ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c),
                 (crate::expr_model::nlbv(to_model_expr(e_type)) <= 0 && crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(out)) <= 0),
+                em == to_model_expr(e),
+                to_model_expr(out) == crate::beta_model::spine_app(outc, pre + eta_projs(em, j as nat)),
         {
             let ghost out0 = out;
             let proj = self.ctx.mk_proj(c_name, j, e);
             out = self.ctx.mk_app(out, proj);
+            proof {
+                let s = pre + eta_projs(em, j as nat + 1);
+                assert(s.subrange(0, s.len() - 1) =~= pre + eta_projs(em, j as nat));
+                assert(s[s.len() - 1] == ExprSpec::Proj(j, Box::new(em)));
+            }
             proof {
                 assert forall|S: vstd::iset::ISet<u32>, c: u16|
                     crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
@@ -9024,6 +9124,30 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 assert(to_model_expr(proj) == ExprSpec::Proj(j, Box::new(to_model_expr(e))));
                 assert(crate::expr_model::nlbv(to_model_expr(proj)) == crate::expr_model::nlbv(to_model_expr(e)));
+            }
+        }
+        proof {
+            crate::expr_arena_bridge::is_const_shape_model(_f);
+            crate::expr_arena_bridge::const_levels_vec_model(_f);
+            crate::expr_arena_bridge::const_levels_vec_model(out);
+            assert(to_model_expr(_f) == ExprSpec::Const(
+                crate::level_arena_bridge::name_id(c_name),
+                crate::expr_arena_bridge::const_levels_vec(_f),
+            ));
+            if kinfer_claim(env0, em, to_model_expr(e_type)) {
+                eta_expand_claim(
+                    env0,
+                    em,
+                    to_model_expr(e_type),
+                    crate::level_arena_bridge::name_id(c_name),
+                    crate::expr_arena_bridge::const_levels_vec(_f),
+                    am,
+                    crate::level_arena_bridge::name_id(ctor_name0),
+                    crate::expr_arena_bridge::const_levels_vec(out_c0),
+                    np as nat,
+                    nf as nat,
+                    to_model_expr(out),
+                );
             }
         }
         Some(out)
