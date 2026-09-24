@@ -57,16 +57,11 @@ merges only when no false axiom remains.
 
 ## Known-false while the branch is open
 
-Each is false only for pointers from two different arenas.
-
-| item | file | fixed in stage |
-|---|---|---|
-| `ptr_obeys_key_model` and its tuple siblings | `src/util_model.rs` | 5 |
-
-Fixed in stage 4: `Ptr::eq`'s specification (now `result == (a.raw == b.raw)`,
-and pointer equality when the tags agree), `PartialEqSpecImpl for Ptr`, and
-`name_id_injective` / `expr_id_injective`, which are proven again under
-`owns(c, a) && owns(c, b)`.
+None as of stage 5. Stage 4 fixed `Ptr::eq`'s specification (now
+`result == (a.raw == b.raw)`, and pointer equality when the tags agree),
+`PartialEqSpecImpl for Ptr`, and `name_id_injective` / `expr_id_injective`
+(proven again under `owns(c, a) && owns(c, b)`). Stage 5 replaced the
+`obeys_key_model` axioms for pointer keys (below).
 
 ## What stage 4 added
 
@@ -87,3 +82,15 @@ and pointer equality when the tags agree), `PartialEqSpecImpl for Ptr`, and
   `ctor_app_params_ok`, closures) are stated on `raw`, which is what the
   kernel's `==` computes; `owned_raw_eq` turns that into pointer equality
   where both pointers are known owned.
+
+## What stage 5 changed
+
+The five type-wide key-model axioms (`ptr_obeys_key_model` and the
+`(Ptr, u16)`, `(Ptr, u16, u16)`, pointer-triple and `SortedPair` variants)
+are gone. In their place, one axiom per key shape claims only what the
+runtime `==` makes true: a key set on which componentwise-equal `raw` means
+equal key obeys vstd's relativized `keys_obey_model`. The `*_owned_keys` and
+`*_map_keys` lemmas derive that premise from ownership, and every cache
+operation in verified code calls one against the table's state at that
+point. The congruence-failure cache carries no claim and no longer asks for
+a key model at all.

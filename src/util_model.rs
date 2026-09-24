@@ -68,7 +68,7 @@ pub struct ExTcCache<'t>(crate::util::TcCache<'t>);
 pub struct ExSortedPair<'a>(crate::util::SortedPair<'a>);
 
 #[cfg(verus_only)]
-use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
+use vstd::std_specs::hash::{builds_valid_hashers, keys_obey_model};
 
 // ---------------------------------------------------------------------
 // The two facts vstd needs before a `FxHashMap` has a usable `Map` view.
@@ -100,52 +100,243 @@ pub proof fn build_hasher_default_valid_unique()
 {
 }
 
-/// `Ptr` obeys the hash-table key model: its `Hash` is derived over a single
-/// `u32` so it is deterministic, its derived `==` is exactly spec equality
-/// (`Ptr::eq`'s specification, `ExPtr` being transparent), and `Clone` is
-/// `Copy`. Stated for the tuple key shapes the kernel's caches actually use.
+// THE HASH-TABLE KEY MODEL FOR POINTERS. `Ptr`'s runtime `==` and `Hash`
+// see only `raw` (the arena tag is ghost), so `==` is faithful exactly on key
+// sets in which equal `raw` means equal pointer -- which is what vstd's
+// relativized `keys_obey_model` asks (fork `3c44a005a`). Hashing is over
+// `raw` and deterministic, and `Clone` is `Copy`. One axiom per key shape the
+// kernel's caches use; each premise is the runtime `==` of that shape
+// (componentwise `raw`, and `u16` equality), and the `*_owned_keys` lemmas
+// below derive it from "every key belongs to one context".
+
 #[verifier::external_body]
-pub proof fn ptr_triple_obeys_key_model<A, B, C>()
+pub proof fn ptr_keys_obey_model<A>(s: Set<Ptr<A>>)
+    requires
+        forall|a: Ptr<A>, b: Ptr<A>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a.raw == b.raw ==> a == b,
     ensures
-        obeys_key_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(),
+        keys_obey_model::<Ptr<A>>(s),
 {
 }
 
-/// And for the `(pointer, start, open-binders)` triple `abstr_cache_levels` uses.
 #[verifier::external_body]
-pub proof fn ptr_u16_u16_obeys_key_model<A>()
+pub proof fn ptr_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16)>)
+    requires
+        forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 ==> a == b,
     ensures
-        obeys_key_model::<(Ptr<A>, u16, u16)>(),
+        keys_obey_model::<(Ptr<A>, u16)>(s),
 {
 }
 
-/// Same, for the `(pointer, offset)` keys `inst_cache`/`abstr_cache` use.
 #[verifier::external_body]
-pub proof fn ptr_u16_obeys_key_model<A>()
+pub proof fn ptr_u16_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16, u16)>)
+    requires
+        forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 && a.2 == b.2 ==> a == b,
     ensures
-        obeys_key_model::<(Ptr<A>, u16)>(),
+        keys_obey_model::<(Ptr<A>, u16, u16)>(s),
 {
 }
 
-/// And for the bare pointer keys, which is what `TcCache`'s four
-/// claim-carrying caches use (`infer_cache_check`, both whnf caches keyed by
-/// `ExprPtr`). Same justification as the tuple shapes above: `Ptr`'s `Hash` is
-/// derived over one `u32`, its `==` is spec equality, and `Clone` is `Copy`.
 #[verifier::external_body]
-pub proof fn ptr_obeys_key_model<A>()
+pub proof fn ptr_triple_keys_obey_model<A, B, C>(s: Set<(Ptr<A>, Ptr<B>, Ptr<C>)>)
+    requires
+        forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw && a.2.raw
+                == b.2.raw ==> a == b,
     ensures
-        obeys_key_model::<Ptr<A>>(),
+        keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(s),
 {
 }
 
-/// And for `eq_cache`'s key, which is a pair of pointers rather than a single
-/// one. Same justification: `SortedPair` derives `Hash`/`Eq` over its two
-/// `Ptr` fields and is `Copy`.
+/// `SortedPair` derives `==`/`Hash` over its two pointers.
 #[verifier::external_body]
-pub proof fn sorted_pair_obeys_key_model<'t>()
+pub proof fn sorted_pair_keys_obey_model<'t>(s: Set<crate::util::SortedPair<'t>>)
+    requires
+        forall|a: crate::util::SortedPair<'t>, b: crate::util::SortedPair<'t>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw ==> a == b,
     ensures
-        obeys_key_model::<crate::util::SortedPair<'t>>(),
+        keys_obey_model::<crate::util::SortedPair<'t>>(s),
 {
+}
+
+pub proof fn ptr_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set<Ptr<A>>)
+    requires
+        forall|k: Ptr<A>| #[trigger] s.contains(k) ==> owns(c, k),
+    ensures
+        keys_obey_model::<Ptr<A>>(s),
+{
+    assert forall|a: Ptr<A>, b: Ptr<A>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a.raw == b.raw implies a == b by {
+        owned_raw_eq(c, a, b);
+    }
+    ptr_keys_obey_model(s);
+}
+
+pub proof fn ptr_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set<(Ptr<A>, u16)>)
+    requires
+        forall|k: (Ptr<A>, u16)| #[trigger] s.contains(k) ==> owns(c, k.0),
+    ensures
+        keys_obey_model::<(Ptr<A>, u16)>(s),
+{
+    assert forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 implies a == b by {
+        owned_raw_eq(c, a.0, b.0);
+    }
+    ptr_u16_keys_obey_model(s);
+}
+
+pub proof fn ptr_u16_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set<(Ptr<A>, u16, u16)>)
+    requires
+        forall|k: (Ptr<A>, u16, u16)| #[trigger] s.contains(k) ==> owns(c, k.0),
+    ensures
+        keys_obey_model::<(Ptr<A>, u16, u16)>(s),
+{
+    assert forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 && a.2 == b.2 implies a
+            == b by {
+        owned_raw_eq(c, a.0, b.0);
+    }
+    ptr_u16_u16_keys_obey_model(s);
+}
+
+pub proof fn ptr_triple_owned_keys<'t, 'p, A, B, C>(c: crate::util::TcCtx<'t, 'p>, s: Set<(Ptr<A>, Ptr<B>, Ptr<C>)>)
+    requires
+        forall|k: (Ptr<A>, Ptr<B>, Ptr<C>)| #[trigger] s.contains(k) ==> owns(c, k.0) && owns(c, k.1)
+            && owns(c, k.2),
+    ensures
+        keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(s),
+{
+    assert forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw && a.2.raw == b.2.raw
+        implies a == b by {
+        owned_raw_eq(c, a.0, b.0);
+        owned_raw_eq(c, a.1, b.1);
+        owned_raw_eq(c, a.2, b.2);
+    }
+    ptr_triple_keys_obey_model(s);
+}
+
+pub proof fn sorted_pair_owned_keys<'t, 'p>(c: crate::util::TcCtx<'t, 'p>, s: Set<crate::util::SortedPair<'t>>)
+    requires
+        forall|k: crate::util::SortedPair<'t>| #[trigger] s.contains(k) ==> owns(c, k.0) && owns(c, k.1),
+    ensures
+        keys_obey_model::<crate::util::SortedPair<'t>>(s),
+{
+    assert forall|a: crate::util::SortedPair<'t>, b: crate::util::SortedPair<'t>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw implies a == b by {
+        owned_raw_eq(c, a.0, b.0);
+        owned_raw_eq(c, a.1, b.1);
+    }
+    sorted_pair_keys_obey_model(s);
+}
+
+// The key sets a map operation needs (vstd's `keys_obey_model` of the
+// table's keys plus the one looked up or inserted), from the tables' own
+// ownership invariants.
+
+pub proof fn ptr_map_keys<'t, 'p, A, V>(c: crate::util::TcCtx<'t, 'p>, m: Map<Ptr<A>, V>, key: Ptr<A>)
+    requires
+        forall|k: Ptr<A>| #[trigger] m.contains_key(k) ==> owns(c, k),
+        owns(c, key),
+    ensures
+        keys_obey_model::<Ptr<A>>(m.dom().insert(key)),
+{
+    assert forall|k: Ptr<A>| #[trigger] m.dom().insert(key).contains(k) implies owns(c, k) by {
+        if k != key {
+            assert(m.contains_key(k));
+        }
+    }
+    ptr_owned_keys(c, m.dom().insert(key));
+}
+
+pub proof fn ptr_u16_map_keys<'t, 'p, A, V>(c: crate::util::TcCtx<'t, 'p>, m: Map<(Ptr<A>, u16), V>, key: (Ptr<A>, u16))
+    requires
+        forall|k: (Ptr<A>, u16)| #[trigger] m.contains_key(k) ==> owns(c, k.0),
+        owns(c, key.0),
+    ensures
+        keys_obey_model::<(Ptr<A>, u16)>(m.dom().insert(key)),
+{
+    assert forall|k: (Ptr<A>, u16)| #[trigger] m.dom().insert(key).contains(k) implies owns(c, k.0) by {
+        if k != key {
+            assert(m.contains_key(k));
+        }
+    }
+    ptr_u16_owned_keys(c, m.dom().insert(key));
+}
+
+pub proof fn ptr_u16_u16_map_keys<'t, 'p, A, V>(
+    c: crate::util::TcCtx<'t, 'p>,
+    m: Map<(Ptr<A>, u16, u16), V>,
+    key: (Ptr<A>, u16, u16),
+)
+    requires
+        forall|k: (Ptr<A>, u16, u16)| #[trigger] m.contains_key(k) ==> owns(c, k.0),
+        owns(c, key.0),
+    ensures
+        keys_obey_model::<(Ptr<A>, u16, u16)>(m.dom().insert(key)),
+{
+    assert forall|k: (Ptr<A>, u16, u16)| #[trigger] m.dom().insert(key).contains(k) implies owns(c, k.0) by {
+        if k != key {
+            assert(m.contains_key(k));
+        }
+    }
+    ptr_u16_u16_owned_keys(c, m.dom().insert(key));
+}
+
+pub proof fn ptr_triple_map_keys<'t, 'p, A, B, C, V>(
+    c: crate::util::TcCtx<'t, 'p>,
+    m: Map<(Ptr<A>, Ptr<B>, Ptr<C>), V>,
+    key: (Ptr<A>, Ptr<B>, Ptr<C>),
+)
+    requires
+        forall|k: (Ptr<A>, Ptr<B>, Ptr<C>)| #[trigger] m.contains_key(k) ==> owns(c, k.0) && owns(c, k.1)
+            && owns(c, k.2),
+        owns(c, key.0),
+        owns(c, key.1),
+        owns(c, key.2),
+    ensures
+        keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(m.dom().insert(key)),
+{
+    assert forall|k: (Ptr<A>, Ptr<B>, Ptr<C>)| #[trigger] m.dom().insert(key).contains(k) implies owns(c, k.0)
+        && owns(c, k.1) && owns(c, k.2) by {
+        if k != key {
+            assert(m.contains_key(k));
+        }
+    }
+    ptr_triple_owned_keys(c, m.dom().insert(key));
+}
+
+pub proof fn sorted_pair_set_keys<'t, 'p>(
+    c: crate::util::TcCtx<'t, 'p>,
+    s: Set<crate::util::SortedPair<'t>>,
+    key: crate::util::SortedPair<'t>,
+)
+    requires
+        forall|k: crate::util::SortedPair<'t>| #[trigger] s.contains(k) ==> owns(c, k.0) && owns(c, k.1),
+        owns(c, key.0),
+        owns(c, key.1),
+    ensures
+        keys_obey_model::<crate::util::SortedPair<'t>>(s.insert(key)),
+{
+    assert forall|k: crate::util::SortedPair<'t>| #[trigger] s.insert(key).contains(k) implies owns(c, k.0)
+        && owns(c, k.1) by {
+        if k != key {
+            assert(s.contains(k));
+        }
+    }
+    sorted_pair_owned_keys(c, s.insert(key));
 }
 
 // TcCtx's three composite field types, registered so `TcCtx` itself can be a

@@ -1843,7 +1843,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         proof {
             crate::util_model::build_hasher_default_valid_fx();
-            crate::util_model::ptr_u16_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::ptr_u16_u16_map_keys(*self, self.expr_cache.abstr_cache_levels@, (e, start_pos, num_open_binders));
         }
         if !self.has_fvars(e) {
             proof {
@@ -2033,6 +2033,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
             };
             let ghost before = self.expr_cache.abstr_cache_levels@;
+            proof {
+                crate::util_model::ptr_u16_u16_map_keys(*self, self.expr_cache.abstr_cache_levels@, (e, start_pos, num_open_binders));
+            }
             self.expr_cache.abstr_cache_levels.insert((e, start_pos, num_open_binders), calcd);
             proof {
                 assert(self.expr_cache.abstr_cache_levels@ =~= before.insert(
@@ -2118,7 +2121,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost ids = crate::expr_arena_bridge::local_ids(locals@);
         proof {
             crate::util_model::build_hasher_default_valid_fx();
-            crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::ptr_u16_map_keys(*self, self.expr_cache.abstr_cache@, (e, offset));
         }
         if !self.has_fvars(e) {
             proof {
@@ -2423,6 +2426,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
             };
             let ghost before = self.expr_cache.abstr_cache@;
+            proof {
+                crate::util_model::ptr_u16_map_keys(*self, self.expr_cache.abstr_cache@, (e, offset));
+            }
             self.expr_cache.abstr_cache.insert((e, offset), calcd);
             proof {
                 assert(self.expr_cache.abstr_cache@ =~= before.insert((e, offset), calcd));
@@ -2507,7 +2513,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost sm = crate::expr_arena_bridge::ptr_models(substs@);
         proof {
             crate::util_model::build_hasher_default_valid_fx();
-            crate::util_model::ptr_u16_obeys_key_model::<&'t crate::expr::Expr<'t>>();
+            crate::util_model::ptr_u16_map_keys(*self, self.expr_cache.inst_cache@, (e, offset));
         }
         if self.num_loose_bvars(e) <= offset {
             proof {
@@ -2744,6 +2750,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
             };
             let ghost before = self.expr_cache.inst_cache@;
+            proof {
+                crate::util_model::ptr_u16_map_keys(*self, self.expr_cache.inst_cache@, (e, offset));
+            }
             self.expr_cache.inst_cache.insert((e, offset), calcd);
             proof {
                 assert(self.expr_cache.inst_cache@ =~= before.insert((e, offset), calcd));
@@ -2822,11 +2831,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         proof {
             crate::util_model::build_hasher_default_valid_fx();
-            crate::util_model::ptr_triple_obeys_key_model::<
-                &'t crate::expr::Expr<'t>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-            >();
+            crate::util_model::ptr_triple_map_keys(*self, self.expr_cache.dsubst_cache@, (e, ks, vs));
         }
         if let Some(cached) = self.expr_cache.dsubst_cache.get(&(e, ks, vs)).copied() {
             proof {
@@ -2851,6 +2856,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         assert_eq!(self.read_levels(ks).len(), self.read_levels(vs).len());
         let out = self.subst_aux(e, ks, vs);
         let ghost before = self.expr_cache.dsubst_cache@;
+        proof {
+            crate::util_model::ptr_triple_map_keys(*self, self.expr_cache.dsubst_cache@, (e, ks, vs));
+        }
         self.expr_cache.dsubst_cache.insert((e, ks, vs), out);
         proof {
             assert(self.expr_cache.dsubst_cache@ =~= before.insert((e, ks, vs), out));
@@ -2903,11 +2911,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let ghost vals = crate::level_arena_bridge::to_model_of_levels(vs);
         proof {
             crate::util_model::build_hasher_default_valid_fx();
-            crate::util_model::ptr_triple_obeys_key_model::<
-                &'t crate::expr::Expr<'t>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-                &'t std::sync::Arc<[crate::util::LevelPtr<'t>]>,
-            >();
+            crate::util_model::ptr_triple_map_keys(*self, self.expr_cache.subst_cache@, (e, ks, vs));
         }
         if let Some(cached) = self.expr_cache.subst_cache.get(&(e, ks, vs)) {
             proof {
@@ -3189,6 +3193,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
             };
             let ghost before = self.expr_cache.subst_cache@;
+            proof {
+                crate::util_model::ptr_triple_map_keys(*self, self.expr_cache.subst_cache@, (e, ks, vs));
+            }
             self.expr_cache.subst_cache.insert((e, ks, vs), r);
             proof {
                 // ...and the one place it is RE-ESTABLISHED.
