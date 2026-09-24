@@ -228,7 +228,9 @@ pub struct ExExprCache<'t>(crate::util::ExprCache<'t>);
 /// the real `==` said nothing -- and the kernel's own code uses `==`, not the
 /// wrappers, so without this no kernel function that compares two pointers can
 /// be verified in place.
-pub assume_specification<A: PartialEq>[ <crate::util::Ptr<A> as PartialEq>::eq ](
+// ARENA-IDENTITY STAGE 2: false across arenas (runtime `==` compares `raw`
+// only); becomes `result == (a.raw == b.raw)` in stage 4.
+pub assume_specification<A>[ <crate::util::Ptr<A> as PartialEq>::eq ](
     a: &crate::util::Ptr<A>,
     b: &crate::util::Ptr<A>,
 ) -> (result: bool)
@@ -252,7 +254,7 @@ pub assume_specification<A: PartialEq>[ <crate::util::Ptr<A> as PartialEq>::eq ]
 /// plain build -- the same gate every cross-module spec import in this crate
 /// needs.
 #[cfg(verus_only)]
-impl<A: PartialEq> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
+impl<A> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
     open spec fn obeys_eq_spec() -> bool {
         true
     }

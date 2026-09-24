@@ -40,7 +40,13 @@ pub(crate) type UniqueHashMap<K, V> = HashMap<K, V, BuildHasherDefault<UniqueHas
 ///
 /// Bit 31 encodes the DagMarker (0 = ExportFile, 1 = TcCtx).
 /// Bits 0-30 hold the index into the appropriate dag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `arena` is ghost (zero-sized, erased): the identity of the arena the
+/// pointer indexes into. Two type-checking contexts, or two export files,
+/// reuse the same indices for different nodes; the tag is what keeps their
+/// pointers different values to the verifier. See `docs/ARENA_IDENTITY.md`.
+/// Runtime `==` and `Hash` see only `raw`.
+#[derive(Clone, Copy)]
 pub struct Ptr<A> {
     /// `pub` so that `ExPtr` can be a TRANSPARENT `external_type_specification`
     /// (Verus rejects private fields on those), which is what lets
@@ -48,6 +54,21 @@ pub struct Ptr<A> {
     /// relationship to it. Nothing outside this crate reads it.
     pub raw: u32,
     pub ph: PhantomData<A>,
+    pub arena: vstd::prelude::Ghost<vstd::prelude::nat>,
+}
+
+impl<A> PartialEq for Ptr<A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl<A> Eq for Ptr<A> {}
+
+impl<A> std::fmt::Debug for Ptr<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ptr").field("raw", &self.raw).finish()
+    }
 }
 
 impl<A> Ptr<A> {
@@ -125,7 +146,7 @@ impl<A> Ptr<A> {
             DagMarker::ExportFile => 0,
             DagMarker::TcCtx => TC_BIT,
         };
-        Self { raw: tag | idx_u32, ph: PhantomData }
+        Self { raw: tag | idx_u32, ph: PhantomData, arena: vstd::prelude::Ghost::assume_new() }
     }
 }
 

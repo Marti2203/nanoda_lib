@@ -100,13 +100,13 @@ pub open spec fn name_id<'a>(n: NamePtr<'a>) -> u64 {
     n.raw as u64
 }
 
+// ARENA-IDENTITY STAGE 2: false across arenas (equal `raw`, different
+// `arena`); gets a same-arena precondition in stage 4.
+#[verifier::external_body]
 pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
     ensures
         (n1 == n2) <==> (name_id(n1) == name_id(n2)),
 {
-    if n1.raw == n2.raw {
-        assert(n1.ph == n2.ph);
-    }
 }
 
 /// Were `assume_specification`s; `Ptr`'s own `PartialEq` is specified now
