@@ -3143,7 +3143,7 @@ pub open spec fn types_to(
         // type it INFERRED, which is only convertible to the one a
         // derivation assigns.
         ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && types_to(
+            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -3164,7 +3164,7 @@ pub open spec fn types_to(
             instd_ty: ExprSpec,
             cod_level: LevelSpec,
         | #[trigger]
-            pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
+            pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -3410,7 +3410,7 @@ pub proof fn types_to_mono(
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
         if exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && types_to(
+            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -3422,7 +3422,7 @@ pub proof fn types_to_mono(
                 Box::new(abstr_full(bt2, seq![lid], 0)),
             ) {
             let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-                bind_marker(lid, infd, bt2) && types_to(
+                bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
                     dty,
                     denv,
                     lctx, io,
@@ -3453,7 +3453,7 @@ pub proof fn types_to_mono(
                 instd_ty: ExprSpec,
                 cod_level: LevelSpec,
             | #[trigger]
-                pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && types_to(
+                pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
                     dty,
                     denv,
                     lctx, io,
@@ -4018,6 +4018,9 @@ pub proof fn types_to_lambda(
 )
     requires
         fuel > 0,
+        lctx.contains_key(lid),
+        lctx[lid] == binder_type,
+        fv_absent(body, lid),
         types_to(
             dty,
             denv,
@@ -4059,6 +4062,9 @@ pub proof fn types_to_pi(
 )
     requires
         fuel > 0,
+        lctx.contains_key(lid),
+        lctx[lid] == binder_type,
+        fv_absent(body, lid),
         types_to(dty, denv, lctx, io, binder_type, bt_ty, (fuel - 1) as nat),
         pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)),
         types_to(

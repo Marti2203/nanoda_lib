@@ -1924,6 +1924,19 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             return None;
         }
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        // The binder rules need the opened local ABSENT from the body; local
+        // nodes are reused per level, so a body the shadow is handed may
+        // already mention this one. Decline then -- the kernel still decides.
+        match verified_fv_absent(ctx, body, local, 100000) {
+            Some(true) => {},
+            _ => {
+                ctx.replace_dbj_level(local);
+                return None;
+            },
+        }
+        proof {
+            arena_lctx_local(local);
+        }
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
@@ -2040,6 +2053,19 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             return None;
         }
         let local = ctx.mk_dbj_level(binder_name, binder_style, binder_type);
+        // The binder rules need the opened local ABSENT from the body; local
+        // nodes are reused per level, so a body the shadow is handed may
+        // already mention this one. Decline then -- the kernel still decides.
+        match verified_fv_absent(ctx, body, local, 100000) {
+            Some(true) => {},
+            _ => {
+                ctx.replace_dbj_level(local);
+                return None;
+            },
+        }
+        proof {
+            arena_lctx_local(local);
+        }
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
             Some(v) => v,
