@@ -630,6 +630,7 @@ pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
         ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==> to_model(
             ctx.expr_cache.abstr_cache_levels@[k],
         ) == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
+            && crate::expr_model::levels_fit(to_model(k.0), k.2)
 }
 
 /// The abstraction cache. Keyed `(expr, offset)` like the instantiation one and

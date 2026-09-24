@@ -1706,10 +1706,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::expr_arena_bridge::to_model(e),
                 old(self).dbj_level_counter,
             ),
-            old(self).dbj_level_counter as nat + crate::expr_model::depth(
-                crate::expr_arena_bridge::to_model(e),
-            ) < 0xFFFF,
         ensures
+            crate::expr_model::levels_fit(crate::expr_arena_bridge::to_model(e), old(self).dbj_level_counter),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
                 crate::expr_arena_bridge::to_model(e),
                 start_pos,
@@ -1755,14 +1753,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::expr_arena_bridge::to_model(e),
                 num_open_binders,
             ),
-            // Paired with depth, for the same reason `abstr_aux`'s offset is:
-            // `num_open_binders` grows by one per binder descended, and no
-            // interval is closed under that on its own. Depth falls by at least
-            // one at each `Bind`, so the SUM is what stays under.
-            num_open_binders as nat + crate::expr_model::depth(
-                crate::expr_arena_bridge::to_model(e),
-            ) < 0xFFFF,
         ensures
+            crate::expr_model::levels_fit(crate::expr_arena_bridge::to_model(e), num_open_binders),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
                 crate::expr_arena_bridge::to_model(e),
                 start_pos,
@@ -1844,6 +1836,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
+                    // in release builds once the open levels reached `u16::MAX`.
+                    crate::util::kernel_check(
+                        num_open_binders < u16::MAX,
+                        "abstr_levels: too many open de Bruijn levels",
+                    );
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),
@@ -1869,6 +1867,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
+                    // in release builds once the open levels reached `u16::MAX`.
+                    crate::util::kernel_check(
+                        num_open_binders < u16::MAX,
+                        "abstr_levels: too many open de Bruijn levels",
+                    );
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),
@@ -1894,6 +1898,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     res
                 },
                 Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    // VERUS-REWRITE(level-ceiling): the `+ 1` overflowed silently
+                    // in release builds once the open levels reached `u16::MAX`.
+                    crate::util::kernel_check(
+                        num_open_binders < u16::MAX,
+                        "abstr_levels: too many open de Bruijn levels",
+                    );
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),

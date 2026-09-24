@@ -2421,13 +2421,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(self.live@ == old(self).live@ + ks);
             lam_top(env0, Xs, As, Bs, lf, Tn, Sx, L, old(self).live@, start_pos);
         }
-        // VERUS-REWRITE(level-ceiling): the abstractions below need the open
-        // levels plus the term's depth to fit in a `u16`; terms are below
-        // depth 60000, so this is what is left for the levels.
-        crate::util::kernel_check(
-            self.ctx.dbj_level_counter < 5536,
-            "infer_lambda: too many open de Bruijn levels",
-        );
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
         proof {
             broadcast use vstd::iset::lemma_iset_new;
@@ -2466,7 +2459,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 locals@ == lf.take(locals@.len() as int),
                 ks == ids_of(lf),
                 lam_frame(lf, As, Sx, L, old(self).live@, start_pos),
-                start_pos as nat + n < 5536,
                 to_model_expr(abstrd) == crate::expr_model::abstr_full(
                     lam_close(As, ks, Tn, locals@.len() as nat),
                     ks.take(locals@.len() as int),
@@ -6883,7 +6875,7 @@ pub proof fn lam_top_abstr<'t>(
     requires
         lam_frame(lf, As, S, L, live0, c1),
         crate::expr_model::dbj_deep_in(Tn, S, (c1 + lf.len()) as u16),
-        c1 as nat + lf.len() + crate::expr_model::depth(Tn) < 0xFFFF,
+        crate::expr_model::levels_fit(Tn, (c1 + lf.len()) as u16),
     ensures
         crate::expr_model::abstr_levels_full(Tn, c1, (c1 + lf.len()) as u16) == crate::expr_model::abstr_full(
             lam_close(As, ids_of(lf), Tn, lf.len()),
@@ -6913,7 +6905,7 @@ pub proof fn lam_pop_step<'t>(
         lam_frame(lf, As, S, L, live0, c1),
         i < lf.len(),
         bt == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[i as int])),
-        c1 as nat + i + crate::expr_model::depth(bt) < 0xFFFF,
+        crate::expr_model::levels_fit(bt, (c1 + i) as u16),
     ensures
         ExprSpec::Bind(
             Box::new(crate::expr_model::abstr_levels_full(bt, c1, (c1 + i) as u16)),
@@ -6990,7 +6982,7 @@ pub proof fn lam_abstr_levels<'t>(
         S == walk_set(L, live0 + ids_of(lf), c1),
         m <= lf.len(),
         crate::expr_model::dbj_deep_in(e, S, (c1 + m) as u16),
-        c1 as nat + m + crate::expr_model::depth(e) < 0xFFFF,
+        crate::expr_model::levels_fit(e, (c1 + m) as u16),
     ensures
         crate::expr_model::abstr_levels_full(e, c1, (c1 + m) as u16) == crate::expr_model::abstr_full(
             e,

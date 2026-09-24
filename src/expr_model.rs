@@ -967,11 +967,15 @@ pub proof fn abstr_levels_nlbv(e: ExprSpec, start: u16, nob: u16)
     requires
         dbj_serials_below(e, nob),
         start <= nob,
-        nob as nat + depth(e) < 0x1_0000,
+        levels_fit(e, nob),
     ensures
         nlbv(abstr_levels_full(e, start, nob)) <= (if nlbv(e) >= (nob - start) as nat { nlbv(e) } else { (nob - start) as nat }),
     decreases e,
 {
+    if !has_fv(e) {
+        abstr_levels_full_noop(e, start, nob);
+        return;
+    }
     match e {
         ExprSpec::App(f, a) => {
             abstr_levels_nlbv(*f, start, nob);
@@ -1213,6 +1217,25 @@ pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders
             Box::new(abstr_levels_full(*st, start_pos, num_open_binders)),
         ),
         _ => e,
+    }
+}
+
+/// The kernel's level abstraction never overflowed its `u16` level count:
+/// wherever it descends under a binder (every binder with a local somewhere
+/// in it), the count is below `u16::MAX`. `abstr_aux_levels` checks exactly
+/// this, so a returned result carries it.
+pub open spec fn levels_fit(e: ExprSpec, nob: u16) -> bool
+    decreases e,
+{
+    !has_fv(e) || match e {
+        ExprSpec::App(f, a) => levels_fit(*f, nob) && levels_fit(*a, nob),
+        ExprSpec::Bind(t, b) => nob < 0xFFFF && levels_fit(*t, nob) && levels_fit(*b, (nob + 1) as u16),
+        ExprSpec::Let(t, v, b) => nob < 0xFFFF && levels_fit(*t, nob) && levels_fit(*v, nob) && levels_fit(
+            *b,
+            (nob + 1) as u16,
+        ),
+        ExprSpec::Proj(_, st) => levels_fit(*st, nob),
+        _ => true,
     }
 }
 
@@ -1659,11 +1682,17 @@ pub proof fn abstr_levels_eq_abstr_full_in(
                 (start_pos + k) as u16,
             ) ==> id == ids[k],
         dbj_deep_in(e, S, nob),
-        nob as nat + offset + depth(e) < 65536,
+        nob as nat + offset < 65536,
+        levels_fit(e, (nob as nat + offset) as u16),
     ensures
         abstr_levels_full(e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
     decreases e,
 {
+    if !has_fv(e) {
+        abstr_levels_full_noop(e, start_pos, (nob as nat + offset) as u16);
+        abstr_full_noop(e, ids, offset);
+        return;
+    }
     match e {
         ExprSpec::Free(id) => {
             match crate::expr_arena_bridge::dbj_serial(id) {
