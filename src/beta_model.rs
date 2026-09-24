@@ -261,7 +261,9 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
 /// model(len)`, the SAME call with the SAME argument, so they're equal by
 /// pure reflexivity -- no case analysis needed at all, simpler even than
 /// `NatLit`'s own (which needed one `if n.0@ == 0` split).
-pub uninterp spec fn string_lit_expand_model(chars: Seq<nat>) -> ExprSpec;
+/// Per export file: the expansion is built from that export's `String`/`Char`
+/// constructors.
+pub uninterp spec fn string_lit_expand_model(export: nat, chars: Seq<nat>) -> ExprSpec;
 
 /// The one thing about the opaque expansion that well-scopedness needs: it
 /// mentions no free variable. True by construction -- the kernel builds it
@@ -270,9 +272,9 @@ pub uninterp spec fn string_lit_expand_model(chars: Seq<nat>) -> ExprSpec;
 /// uninterpreted (see above), so it has to be said. Stated about the MODEL
 /// function once, rather than added to each exec claim that produces it.
 #[verifier::external_body]
-pub proof fn string_lit_expand_no_fv(chars: Seq<nat>)
+pub proof fn string_lit_expand_no_fv(export: nat, chars: Seq<nat>)
     ensures
-        !crate::expr_model::has_fv(string_lit_expand_model(chars)),
+        !crate::expr_model::has_fv(string_lit_expand_model(export, chars)),
 {
 }
 
@@ -378,7 +380,7 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
         // `string_lit_expand_model`'s own doc comment), pinned down via
         // `==` the same way `NatLit`'s rule is, just with no case split at
         // all since the target's shape is never exposed structurally here.
-        ExprSpec::StringLit(len) => e2 == string_lit_expand_model(len.0@),
+        ExprSpec::StringLit(len) => e2 == string_lit_expand_model(env.export, len.0@),
         _ => false,
     }
 }
@@ -993,7 +995,7 @@ pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
             &&& !has_fv(body)
             &&& size(body) <= 500
             &&& depth(body) <= 500
-            &&& forall|cap: nat| #[trigger] string_lits_ok(body, cap)
+            &&& forall|cap: nat| #[trigger] string_lits_ok(env.export, body, cap)
             &&& body is Bind
             &&& spine_head(rec_result(env, s)) == body
             &&& env.ctor_num_params(cid) is Some
@@ -1029,9 +1031,9 @@ pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
     subst_expr_levels_rel_depth(rhs, rd.uparams, lv, body);
     crate::expr_model::subst_expr_levels_has_fv(rhs, rd.uparams, lv);
     depth_le_size(rhs);
-    assert forall|cap: nat| #[trigger] string_lits_ok(body, cap) by {
-        string_free_lits_ok(rhs, cap);
-        subst_expr_levels_string_lits_ok(rhs, rd.uparams, lv, cap);
+    assert forall|cap: nat| #[trigger] string_lits_ok(env.export, body, cap) by {
+        string_free_lits_ok(env.export, rhs, cap);
+        subst_expr_levels_string_lits_ok(env.export, rhs, rd.uparams, lv, cap);
     }
     let pre = args.subrange(0, rec_prefix(rd) as int);
     let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
@@ -1076,7 +1078,7 @@ pub proof fn rec_result_bounds(env: EnvSpec, s: ExprSpec, bound: nat, cap: nat, 
         depth(rec_result(env, s)) <= depth(s) + 700,
         max_var_below(s, bound) ==> max_var_below(rec_result(env, s), bound + 500),
         size(rec_result(env, s)) <= size(s) + 500,
-        string_lits_ok(s, cap) ==> string_lits_ok(rec_result(env, s), cap),
+        string_lits_ok(env.export, s, cap) ==> string_lits_ok(env.export, rec_result(env, s), cap),
         !has_escaping_ref(s, k) ==> !has_escaping_ref(rec_result(env, s), k),
         nlbv(rec_result(env, s)) <= nlbv(s),
 {
@@ -1183,28 +1185,28 @@ pub proof fn rec_result_bounds(env: EnvSpec, s: ExprSpec, bound: nat, cap: nat, 
     assert(size(s) == 1 + args_size_sum(args));
     assert(size(r) <= size(s) + 500);
     // strings
-    if string_lits_ok(s, cap) {
-        spine_app_strings_decompose(head, args, cap);
-        spine_app_strings_decompose(chead, cargs, cap);
-        assert(string_lits_ok(body, cap));
-        assert forall|i: int| 0 <= i < pre.len() implies string_lits_ok(#[trigger] pre[i], cap) by {
+    if string_lits_ok(env.export, s, cap) {
+        spine_app_strings_decompose(env.export, head, args, cap);
+        spine_app_strings_decompose(env.export, chead, cargs, cap);
+        assert(string_lits_ok(env.export, body, cap));
+        assert forall|i: int| 0 <= i < pre.len() implies string_lits_ok(env.export, #[trigger] pre[i], cap) by {
             assert(pre[i] == args[i]);
         }
-        assert forall|i: int| 0 <= i < flds.len() implies string_lits_ok(
+        assert forall|i: int| 0 <= i < flds.len() implies string_lits_ok(env.export, 
             #[trigger] flds[i],
             cap,
         ) by {
             assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
         }
-        assert forall|i: int| 0 <= i < trail.len() implies string_lits_ok(
+        assert forall|i: int| 0 <= i < trail.len() implies string_lits_ok(env.export, 
             #[trigger] trail[i],
             cap,
         ) by {
             assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
         }
-        string_lits_ok_spine_app(body, pre, cap);
-        string_lits_ok_spine_app(s1, flds, cap);
-        string_lits_ok_spine_app(s2, trail, cap);
+        string_lits_ok_spine_app(env.export, body, pre, cap);
+        string_lits_ok_spine_app(env.export, s1, flds, cap);
+        string_lits_ok_spine_app(env.export, s2, trail, cap);
     }
     // escaping refs
 
@@ -1429,7 +1431,7 @@ pub proof fn nat_fold_result_bounds(export: nat, s: ExprSpec, bound: nat, cap: n
         nlbv(nat_fold_result(export, s)) == 0,
         !has_fv(nat_fold_result(export, s)),
         max_var_below(nat_fold_result(export, s), bound),
-        string_lits_ok(nat_fold_result(export, s), cap),
+        string_lits_ok(export, nat_fold_result(export, s), cap),
         !has_escaping_ref(nat_fold_result(export, s), k),
         string_free(nat_fold_result(export, s)),
 {
@@ -1608,18 +1610,18 @@ pub proof fn pstep_star_iota(
 /// proof that actually reaches a `StringLit` leaf needs a `cap` genuinely
 /// large enough for it (same "caller supplies a sufficient ceiling"
 /// pattern as `d_lit`/`max_str_len` elsewhere in this arc).
-pub open spec fn string_lits_ok(e: ExprSpec, cap: nat) -> bool
+pub open spec fn string_lits_ok(export: nat, e: ExprSpec, cap: nat) -> bool
     decreases e,
 {
     match e {
-        ExprSpec::StringLit(len) => depth(string_lit_expand_model(len.0@)) <= 1 + cap * 3 && size(
-            string_lit_expand_model(len.0@),
+        ExprSpec::StringLit(len) => depth(string_lit_expand_model(export, len.0@)) <= 1 + cap * 3 && size(
+            string_lit_expand_model(export, len.0@),
         ) <= size_growth(cap + 1),
-        ExprSpec::App(f, a) => string_lits_ok(*f, cap) && string_lits_ok(*a, cap),
-        ExprSpec::Bind(t, b) => string_lits_ok(*t, cap) && string_lits_ok(*b, cap),
-        ExprSpec::Let(t, v, b) => string_lits_ok(*t, cap) && string_lits_ok(*v, cap)
-            && string_lits_ok(*b, cap),
-        ExprSpec::Proj(pidx, s) => string_lits_ok(*s, cap),
+        ExprSpec::App(f, a) => string_lits_ok(export, *f, cap) && string_lits_ok(export, *a, cap),
+        ExprSpec::Bind(t, b) => string_lits_ok(export, *t, cap) && string_lits_ok(export, *b, cap),
+        ExprSpec::Let(t, v, b) => string_lits_ok(export, *t, cap) && string_lits_ok(export, *v, cap)
+            && string_lits_ok(export, *b, cap),
+        ExprSpec::Proj(pidx, s) => string_lits_ok(export, *s, cap),
         _ => true,
     }
 }
@@ -1646,29 +1648,29 @@ pub open spec fn string_free(e: ExprSpec) -> bool
 
 /// A `StringLit`-free term satisfies `string_lits_ok` at any cap.
 #[verifier::spinoff_prover]
-pub proof fn string_free_lits_ok(e: ExprSpec, cap: nat)
+pub proof fn string_free_lits_ok(export: nat, e: ExprSpec, cap: nat)
     requires
         string_free(e),
     ensures
-        string_lits_ok(e, cap),
+        string_lits_ok(export, e, cap),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            string_free_lits_ok(*f, cap);
-            string_free_lits_ok(*a, cap);
+            string_free_lits_ok(export, *f, cap);
+            string_free_lits_ok(export, *a, cap);
         },
         ExprSpec::Bind(t, b) => {
-            string_free_lits_ok(*t, cap);
-            string_free_lits_ok(*b, cap);
+            string_free_lits_ok(export, *t, cap);
+            string_free_lits_ok(export, *b, cap);
         },
         ExprSpec::Let(t, v, b) => {
-            string_free_lits_ok(*t, cap);
-            string_free_lits_ok(*v, cap);
-            string_free_lits_ok(*b, cap);
+            string_free_lits_ok(export, *t, cap);
+            string_free_lits_ok(export, *v, cap);
+            string_free_lits_ok(export, *b, cap);
         },
         ExprSpec::Proj(pidx, s) => {
-            string_free_lits_ok(*s, cap);
+            string_free_lits_ok(export, *s, cap);
         },
         _ => {},
     }
@@ -1677,13 +1679,14 @@ pub proof fn string_free_lits_ok(e: ExprSpec, cap: nat)
 /// Level substitution preserves `string_lits_ok` exactly: it rewrites
 /// `Sort`/`Const` level payloads only, and `StringLit` nodes are untouched.
 pub proof fn subst_expr_levels_string_lits_ok(
+    export: nat,
     e: ExprSpec,
     ks: Seq<u64>,
     vs: Seq<LevelSpec>,
     cap: nat,
 )
     ensures
-        string_lits_ok(crate::expr_model::subst_expr_levels(e, ks, vs), cap) == string_lits_ok(
+        string_lits_ok(export, crate::expr_model::subst_expr_levels(e, ks, vs), cap) == string_lits_ok(export, 
             e,
             cap,
         ),
@@ -1691,20 +1694,20 @@ pub proof fn subst_expr_levels_string_lits_ok(
 {
     match e {
         ExprSpec::App(f, a) => {
-            subst_expr_levels_string_lits_ok(*f, ks, vs, cap);
-            subst_expr_levels_string_lits_ok(*a, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *f, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *a, ks, vs, cap);
         },
         ExprSpec::Bind(t, b) => {
-            subst_expr_levels_string_lits_ok(*t, ks, vs, cap);
-            subst_expr_levels_string_lits_ok(*b, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *t, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *b, ks, vs, cap);
         },
         ExprSpec::Let(t, v, b) => {
-            subst_expr_levels_string_lits_ok(*t, ks, vs, cap);
-            subst_expr_levels_string_lits_ok(*v, ks, vs, cap);
-            subst_expr_levels_string_lits_ok(*b, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *t, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *v, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *b, ks, vs, cap);
         },
         ExprSpec::Proj(pidx, st) => {
-            subst_expr_levels_string_lits_ok(*st, ks, vs, cap);
+            subst_expr_levels_string_lits_ok(export, *st, ks, vs, cap);
         },
         _ => {},
     }
@@ -5025,29 +5028,29 @@ pub proof fn spine_app_max_var_below(head: ExprSpec, args: Seq<ExprSpec>, bound:
 }
 
 /// `string_lits_ok` over an applied spine, from its parts.
-pub proof fn string_lits_ok_spine_app(head: ExprSpec, args: Seq<ExprSpec>, cap: nat)
+pub proof fn string_lits_ok_spine_app(export: nat, head: ExprSpec, args: Seq<ExprSpec>, cap: nat)
     requires
-        string_lits_ok(head, cap),
-        forall|i: int| 0 <= i < args.len() ==> string_lits_ok(#[trigger] args[i], cap),
+        string_lits_ok(export, head, cap),
+        forall|i: int| 0 <= i < args.len() ==> string_lits_ok(export, #[trigger] args[i], cap),
     ensures
-        string_lits_ok(spine_app(head, args), cap),
+        string_lits_ok(export, spine_app(head, args), cap),
     decreases args.len(),
 {
     if args.len() == 0 {
     } else {
         let args_init = args.subrange(0, args.len() - 1);
-        assert forall|i: int| 0 <= i < args_init.len() implies string_lits_ok(
+        assert forall|i: int| 0 <= i < args_init.len() implies string_lits_ok(export, 
             #[trigger] args_init[i],
             cap,
         ) by {
             assert(args_init[i] == args[i]);
         }
-        string_lits_ok_spine_app(head, args_init, cap);
+        string_lits_ok_spine_app(export, head, args_init, cap);
         assert(spine_app(head, args) == ExprSpec::App(
             Box::new(spine_app(head, args_init)),
             Box::new(args[args.len() - 1]),
         ));
-        assert(string_lits_ok(args[args.len() - 1], cap));
+        assert(string_lits_ok(export, args[args.len() - 1], cap));
     }
 }
 
@@ -5145,12 +5148,12 @@ pub proof fn spine_app_mvb_decompose(base: ExprSpec, args: Seq<ExprSpec>, bound:
 }
 
 /// `string_lits_ok` element-decompose.
-pub proof fn spine_app_strings_decompose(base: ExprSpec, args: Seq<ExprSpec>, cap: nat)
+pub proof fn spine_app_strings_decompose(export: nat, base: ExprSpec, args: Seq<ExprSpec>, cap: nat)
     requires
-        string_lits_ok(spine_app(base, args), cap),
+        string_lits_ok(export, spine_app(base, args), cap),
     ensures
-        string_lits_ok(base, cap),
-        forall|i: int| 0 <= i < args.len() ==> string_lits_ok(#[trigger] args[i], cap),
+        string_lits_ok(export, base, cap),
+        forall|i: int| 0 <= i < args.len() ==> string_lits_ok(export, #[trigger] args[i], cap),
     decreases args.len(),
 {
     if args.len() == 0 {
@@ -5160,8 +5163,8 @@ pub proof fn spine_app_strings_decompose(base: ExprSpec, args: Seq<ExprSpec>, ca
             Box::new(spine_app(base, args_init)),
             Box::new(args[args.len() - 1]),
         ));
-        spine_app_strings_decompose(base, args_init, cap);
-        assert forall|i: int| 0 <= i < args.len() implies string_lits_ok(
+        spine_app_strings_decompose(export, base, args_init, cap);
+        assert forall|i: int| 0 <= i < args.len() implies string_lits_ok(export, 
             #[trigger] args[i],
             cap,
         ) by {

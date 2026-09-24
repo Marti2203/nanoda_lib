@@ -1863,7 +1863,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
                 &&& nlbv(to_model(r)) <= 0
                 &&& max_var_below(to_model(r), 0)
                 &&& depth(to_model(r)) <= string_len(s) + 3
-                &&& to_model(r) == string_lit_expand_model(string_chars(s))
+                &&& to_model(r) == string_lit_expand_model(crate::util_model::export_id(*final(ctx)), string_chars(s))
             },
             None => true,
         },

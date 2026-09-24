@@ -664,36 +664,6 @@ pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
     crate::util::raw_of(p)
 }
 
-// ---------------------------------------------------------------------
-// `indexmap::IndexSet`, modelled by its DOCUMENTED observable contract: an
-// insertion-ordered sequence of distinct elements. `get_index` retrieves by
-// position, `get_index_of` finds an equal element if one exists, and
-// `insert_full` appends when absent and is a no-op when present.
-//
-// This is not a verification of indexmap -- it is the boundary at which the
-// arena's storage behaviour is assumed, and it is a much better boundary
-// than the per-accessor denotation axioms it is meant to replace: a
-// wrong-index or stale-entry bug contradicts these, whereas a free-floating
-// `to_model` cannot notice one.
-// ---------------------------------------------------------------------
-#[verifier::external_type_specification]
-#[verifier::external_body]
-#[verifier::reject_recursive_types(T)]
-#[verifier::reject_recursive_types(S)]
-pub struct ExIndexSet<T, S>(indexmap::IndexSet<T, S>);
-
-/// The set's elements, in insertion order.
-pub uninterp spec fn index_set_seq<T, S>(s: indexmap::IndexSet<T, S>) -> Seq<T>;
-
-/// Elements are distinct -- the property that makes `get_index_of` a
-/// function rather than a choice.
-pub open spec fn index_set_distinct<T, S>(s: indexmap::IndexSet<T, S>) -> bool {
-    forall|i: int, j: int|
-        0 <= i < index_set_seq(s).len() && 0 <= j < index_set_seq(s).len()
-            && #[trigger] index_set_seq(s)[i] == #[trigger] index_set_seq(s)[j] ==> i == j
-}
-
-
 // `get_index_of` is deliberately NOT specified. indexmap's signature is
 // generic over any `Q: Equivalent<T>`, Verus requires an
 // `assume_specification` to match that signature exactly, and at that
