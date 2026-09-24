@@ -8730,7 +8730,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn failure_cache_contains(&self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool) {
         proof {
             crate::util_model::sorted_pair_obeys_key_model();
-            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+            crate::util_model::build_hasher_default_valid_fx();
         }
         self.tc_cache.congr_fail_cache.contains(&SortedPair::new(x, y))
     }
@@ -8746,7 +8746,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::sorted_pair_obeys_key_model();
-            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+            crate::util_model::build_hasher_default_valid_fx();
         }
         self.tc_cache.congr_fail_cache.insert(SortedPair::new(x, y));
     }
@@ -8926,7 +8926,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         self.tc_cache.infer_cache_no_check.insert(e, r);
     }
@@ -8944,7 +8944,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         self.tc_cache.infer_cache_check.insert(e, r);
     }
@@ -8963,7 +8963,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         self.tc_cache.whnf_cache.insert(e, r);
     }
@@ -8990,7 +8990,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         self.tc_cache.whnf_no_unfolding_cache.insert(e, r);
     }
@@ -9021,7 +9021,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             def_eq_claim_symm(*(*old(self)).env, to_model_expr(x), to_model_expr(y));
             crate::util_model::sorted_pair_obeys_key_model();
-            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+            crate::util_model::build_hasher_default_valid_fx();
         }
         self.tc_cache.eq_cache.insert(p);
     }
@@ -9052,7 +9052,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         match self.tc_cache.infer_cache_check.get(&e) {
             Some(r) => Some(*r),
@@ -9077,7 +9077,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         match self.tc_cache.infer_cache_no_check.get(&e) {
             Some(r) => Some(*r),
@@ -9100,7 +9100,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         match self.tc_cache.whnf_cache.get(&e) {
             Some(r) => Some(*r),
@@ -9123,7 +9123,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             crate::util_model::ptr_obeys_key_model::<&'t crate::expr::Expr<'t>>();
-            crate::util_model::build_hasher_default_valid::<crate::unique_hasher::UniqueHasher>();
+            crate::util_model::build_hasher_default_valid_unique();
         }
         match self.tc_cache.whnf_no_unfolding_cache.get(&e) {
             Some(r) => Some(*r),
@@ -9147,7 +9147,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let p = crate::util::SortedPair::new(x, y);
         proof {
             crate::util_model::sorted_pair_obeys_key_model();
-            crate::util_model::build_hasher_default_valid::<rustc_hash::FxHasher>();
+            crate::util_model::build_hasher_default_valid_fx();
         }
         let hit = self.tc_cache.eq_cache.contains(&p);
         proof {

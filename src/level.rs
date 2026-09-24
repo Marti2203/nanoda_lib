@@ -235,14 +235,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 #![trigger interp(to_model(r), rho)]
                 interp(to_model(l), rho) <= interp(to_model(r), rho),
     {
-        proof {
-            crate::level_arena_bridge::leq_measure_bounded(l, r);
-        }
         let l_prime = self.simplify(l);
         let r_prime = self.simplify(r);
-        proof {
-            crate::level_arena_bridge::leq_measure_bounded(l_prime, r_prime);
-        }
         let res = self.leq_core(l_prime, r_prime, 0);
         proof {
             // `simplify` preserves the denotation on both sides, so `leq_core`'s
@@ -281,10 +275,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             imax_normal(to_model(lhs)),
             imax_normal(to_model(rhs)),
-            diff as int + crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int
-                <= 1_000_000_000,
-            diff as int - crate::level_model::leq_measure(to_model(lhs), to_model(rhs)) as int
-                >= -1_000_000_000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -484,10 +474,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             imax_normal(to_model(l_in)),
             imax_normal(to_model(r_in)),
-            diff as int + crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int
-                <= 1_000_000_000,
-            diff as int - crate::level_model::leq_measure(to_model(l_in), to_model(r_in)) as int
-                >= -1_000_000_000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -526,6 +512,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     assert(to_model(l_in) == LevelSpec::Succ(Box::new(to_model(s))));
                     crate::level_model::leq_measure_succ_left(to_model(s), to_model(r_in));
                 }
+                // VERUS-REWRITE(level-ceiling): `diff - 1` panics on overflow
+                // (the crate builds with overflow checks); the same panic,
+                // made explicit.
+                crate::util::kernel_check(diff > isize::MIN, "leq: level offset overflow");
                 let res = self.leq_core(s, r_in, diff - 1);
                 proof {
                     assert(forall|rho: Map<nat, nat>| #[trigger]
@@ -538,6 +528,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     assert(to_model(r_in) == LevelSpec::Succ(Box::new(to_model(s))));
                     crate::level_model::leq_measure_succ_right(to_model(l_in), to_model(s));
                 }
+                // VERUS-REWRITE(level-ceiling): as above, for `diff + 1`.
+                crate::util::kernel_check(diff < isize::MAX, "leq: level offset overflow");
                 let res = self.leq_core(l_in, s, diff + 1);
                 proof {
                     assert(forall|rho: Map<nat, nat>| #[trigger]

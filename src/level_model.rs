@@ -524,18 +524,6 @@ pub proof fn leq_measure_imax_max(a: LevelSpec, x: LevelSpec, y: LevelSpec, r: L
     level_depth_imax_max_le(a, x, y);
 }
 
-/// The arena-wide bound on `leq_measure`. `leq_core`'s callers cannot thread a
-/// measure bound upward -- `leq`, `is_zero` and `simplify` are mutually
-/// recursive -- so it has to be an invariant of the arena, in the same style as
-/// `local_type_cap()`.
-///
-/// What it assumes: universe levels appearing in a real export file have
-/// bounded measure -- stated about ARENA levels (`level_arena_bridge::
-/// leq_measure_bounded`), never about every `LevelSpec`, which would be
-/// refutable by a deep enough spec term. That is a far weaker claim than the `leq` axiom it is meant
-/// to replace ("the universe-ordering decision procedure is sound"), and it is
-/// the same shape this crate already trusts elsewhere.
-pub uninterp spec fn leq_measure_cap() -> nat;
 
 
 /// `by_cases` fires exactly when an `IMax`'s second argument is a bare `Param`,

@@ -83,16 +83,20 @@ use vstd::std_specs::hash::{obeys_key_model, builds_valid_hashers};
 /// `BuildHasherDefault<H>` builds every hasher from `H::default()`, so the
 /// builder itself contributes no variation -- which is what
 /// `builds_valid_hashers` asserts. vstd can prove this only for `RandomState`.
-///
-/// Stated for ALL `H` rather than per hasher, which covers both `FxHasher` and
-/// `UniqueHasher` with one claim instead of two. What it assumes is that `H` is
-/// deterministic: same `Default`, same writes, same `finish`. True of both of
-/// this crate's hashers, and of any sane `Hasher`, but it IS an assumption
-/// about `H` and not a theorem about `BuildHasherDefault`.
+/// Stated for exactly the two hashers this crate uses, both deterministic
+/// (same `Default`, same writes, same `finish`); it is an assumption about
+/// each of them, not a theorem about `BuildHasherDefault`.
 #[verifier::external_body]
-pub proof fn build_hasher_default_valid<H>()
+pub proof fn build_hasher_default_valid_fx()
     ensures
-        builds_valid_hashers::<core::hash::BuildHasherDefault<H>>(),
+        builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>(),
+{
+}
+
+#[verifier::external_body]
+pub proof fn build_hasher_default_valid_unique()
+    ensures
+        builds_valid_hashers::<core::hash::BuildHasherDefault<crate::unique_hasher::UniqueHasher>>(),
 {
 }
 

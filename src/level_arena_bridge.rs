@@ -90,16 +90,6 @@ pub struct ExName<'a>(Name<'a>);
 /// arena satisfies.
 pub uninterp spec fn to_model<'a>(ptr: LevelPtr<'a>) -> LevelSpec;
 
-/// The arena-wide bound on `leq_measure` (see `level_model::leq_measure_cap`):
-/// levels in a real export file have bounded measure. About arena levels only
-/// -- the same statement over every `LevelSpec` is false.
-#[verifier::external_body]
-pub proof fn leq_measure_bounded<'a>(l: LevelPtr<'a>, r: LevelPtr<'a>)
-    ensures
-        crate::level_model::leq_measure(to_model(l), to_model(r)) <= crate::level_model::leq_measure_cap(),
-        crate::level_model::leq_measure_cap() <= 500_000_000,
-{
-}
 
 /// Ditto for what a `NamePtr` denotes as a raw id, standing in for Lean
 /// name identity (which plays no role in the level algebra beyond
