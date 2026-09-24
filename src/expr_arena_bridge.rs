@@ -536,13 +536,18 @@ pub proof fn expr_model_at_append<'a>(es: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
 
 /// A `Local` pointer's free-variable identity, standing in for genuine
 /// `ExprPtr` identity (see the module doc comment).
-pub uninterp spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32;
+pub open spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32 {
+    ptr.raw
+}
 
-#[verifier::external_body]
 pub proof fn expr_id_injective<'a>(a: ExprPtr<'a>, b: ExprPtr<'a>)
     ensures
         (a == b) <==> (expr_id(a) == expr_id(b)),
 {
+    if a.raw == b.raw {
+        assert(a.ph == b.ph);
+        assert(a == b);
+    }
 }
 
 /// Was an `assume_specification`; `Ptr`'s own `PartialEq` is specified now

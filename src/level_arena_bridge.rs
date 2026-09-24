@@ -106,13 +106,17 @@ pub proof fn leq_measure_bounded<'a>(l: LevelPtr<'a>, r: LevelPtr<'a>)
 /// equality). Two `NamePtr`s denote the same id exactly when they're equal
 /// — matching hash-consing's guarantee that pointer equality means
 /// structural equality.
-pub uninterp spec fn name_id<'a>(n: NamePtr<'a>) -> u64;
+pub open spec fn name_id<'a>(n: NamePtr<'a>) -> u64 {
+    n.raw as u64
+}
 
-#[verifier::external_body]
 pub proof fn name_id_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
     ensures
         (n1 == n2) <==> (name_id(n1) == name_id(n2)),
 {
+    if n1.raw == n2.raw {
+        assert(n1.ph == n2.ph);
+    }
 }
 
 /// Were `assume_specification`s; `Ptr`'s own `PartialEq` is specified now
