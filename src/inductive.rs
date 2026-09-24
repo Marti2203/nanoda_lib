@@ -2158,6 +2158,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut ty = self.ctx.foldl_apps(ind_const, st.local_params.iter().copied());
             ty = self.ctx.foldl_apps(ty, st.local_indices[idx].iter().copied());
             let t = self.ctx.str1("t");
+            // VERUS-REWRITE(tested-closed): a major premise's type is the
+            // inductive applied to locals, so it is closed; `mk_unique`
+            // requires it (every local's type is). Never fails on a
+            // well-formed declaration.
+            crate::util::kernel_check(
+                self.ctx.num_loose_bvars(ty) == 0,
+                "mk_majors: a major premise's type has loose bound variables",
+            );
             st.majors.push(self.ctx.mk_unique(t, BinderStyle::Default, ty));
             idx = idx + 1;
         }

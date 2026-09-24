@@ -953,7 +953,7 @@ pub fn verified_conv_bind_fresh<'t, 'p: 't, 'x>(
     }
     // The counter is a `u16`; at 65535 open binders the shadow declines to
     // certify rather than wrap. The kernel still decides.
-    if get_dbj_level_counter(ctx) == u16::MAX {
+    if get_dbj_level_counter(ctx) == u16::MAX || ctx.num_loose_bvars(t1) != 0 {
         return None;
     }
     let local = ctx.mk_dbj_level(name, style, t1);
@@ -1068,7 +1068,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
     }
     // The counter is a `u16`; at 65535 open binders the shadow declines to
     // certify rather than wrap. The kernel still decides.
-    if get_dbj_level_counter(ctx) == u16::MAX {
+    if get_dbj_level_counter(ctx) == u16::MAX || ctx.num_loose_bvars(t1) != 0 {
         return None;
     }
     let local = ctx.mk_dbj_level(name, style, t1);
@@ -1499,7 +1499,7 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(
     }
     // The counter is a `u16`; at 65535 open binders the shadow declines to
     // certify rather than wrap. The kernel still decides.
-    if get_dbj_level_counter(ctx) == u16::MAX {
+    if get_dbj_level_counter(ctx) == u16::MAX || ctx.num_loose_bvars(t1) != 0 {
         return false;
     }
     let local = ctx.mk_dbj_level(name, style, t1);

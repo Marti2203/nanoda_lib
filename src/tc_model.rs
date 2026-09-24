@@ -7664,7 +7664,7 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
     // `mk_dbj_level` needs headroom in the `u16` counter; no locals are open
     // yet, so declining here needs no cleanup.
 
-    if get_dbj_level_counter(ctx) == u16::MAX {
+    if get_dbj_level_counter(ctx) == u16::MAX || ctx.num_loose_bvars(t1i) != 0 {
         return None;
     }
     let local = ctx.mk_dbj_level(name, style, t1i);
@@ -7743,7 +7743,7 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
             close_dbj_locals(ctx, &locals);
             return Some(false);
         }
-        if get_dbj_level_counter(ctx) == u16::MAX {
+        if get_dbj_level_counter(ctx) == u16::MAX || ctx.num_loose_bvars(nt1i) != 0 {
             close_dbj_locals(ctx, &locals);
             return None;
         }

@@ -1104,6 +1104,9 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
 ) -> (result: ExprPtr<'t>) where 'p: 't
     requires
         old(ctx).dbj_level_counter < u16::MAX,
+        // a local's type is closed: `local_type_wf` states it of EVERY local,
+        // so creating one has to establish it
+        nlbv(to_model(binder_type)) == 0,
     ensures
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,

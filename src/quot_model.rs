@@ -69,6 +69,8 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
     binder_style: BinderStyle,
     binder_type: ExprPtr<'t>,
 ) -> (result: ExprPtr<'t>) where 'p: 't
+    requires
+        crate::expr_model::nlbv(to_model(binder_type)) == 0,
     ensures
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_binder_type_of(result) == binder_type,
@@ -244,6 +246,13 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
     assert(to_model(aa1) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(prop))));
     let a_a_prop = ctx.mk_pi(anon, arrow_style, a, aa1);
     assert(to_model(a_a_prop) == ExprSpec::Bind(Box::new(to_model(a)), Box::new(to_model(aa1))));
+    proof {
+        assert(to_model(a) == ExprSpec::Free(expr_id(a)));
+        assert(crate::expr_model::nlbv(to_model(a)) == 0);
+        assert(crate::expr_model::nlbv(to_model(prop)) == 0);
+        assert(crate::expr_model::nlbv(to_model(aa1)) == 0);
+        assert(crate::expr_model::nlbv(to_model(a_a_prop)) == 0);
+    }
     let r = ctx.mk_unique(r_name, r_style, a_a_prop);
 
     proof {
