@@ -3899,7 +3899,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     scope_pres_in_scope(*self, new_ctor_app, new_type);
                 }
-                if self.def_eq(major_ty, new_type) {
+                // VERUS-REWRITE(tested-env): K-like reduction swaps the major
+                // premise for a constructor, which is sound because both are
+                // PROOFS of the same proposition. The kernel relies on K-like
+                // recursors existing only for `Prop` inductives; this tests
+                // that the major's type is a proposition, which never fails on
+                // a well-formed environment.
+                if self.def_eq(major_ty, new_type) && self.is_prop(major_ty).0 {
+                    proof {
+                        if crate::expr_model::nlbv(to_model_expr(major)) <= 0 {
+                            irrel_claim(
+                                *old(self).env,
+                                to_model_expr(major),
+                                to_model_expr(new_ctor_app),
+                                to_model_expr(major_ty),
+                                to_model_expr(new_type),
+                            );
+                        }
+                    }
                     Some(new_ctor_app)
                 } else {
                     None
@@ -4851,6 +4868,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result.1)),
+            result.0 ==> kprop_claim(*old(self).env, to_model_expr(e)),
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -4889,13 +4907,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result.1)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result.1)),
+            result.0 ==> kprop_claim(*old(self).env, to_model_expr(result.1)),
     {
         let infd = self.infer(e, InferOnly);
         (self.is_prop(infd).0, infd)
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool
+    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
             tc_wf(*old(self)),
             in_scope(*old(self), x),
@@ -4905,12 +4925,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
+            result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         match self.is_proof(x) {
             (false, _) => false,
             (true, l_type) => match self.is_proof(y) {
                 (false, _) => false,
-                (true, r_type) => self.def_eq(l_type, r_type),
+                (true, r_type) => {
+                    let b = self.def_eq(l_type, r_type);
+                    proof {
+                        if b && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
+                            irrel_claim(
+                                *old(self).env,
+                                to_model_expr(x),
+                                to_model_expr(y),
+                                to_model_expr(l_type),
+                                to_model_expr(r_type),
+                            );
+                        }
+                    }
+                    b
+                },
             },
         }
     }
@@ -7283,6 +7318,68 @@ pub proof fn eta_expand_claim<'x, 't>(
     assert(eta_projs(x, nf) =~= Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))));
     assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, true, x, r, H));
     crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, true, x, r, H);
+}
+
+/// `A` is a proposition: it has a `Prop`-level sort, up to conversion.
+pub open spec fn kprop_claim<'x, 't>(env: Env<'x, 't>, a: ExprSpec) -> bool {
+    exists|l: crate::level_model::LevelSpec| #[trigger] kinfer_claim(env, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>|
+        #[trigger] crate::level_model::interp(l, rho) <= 0)
+}
+
+/// PROOF IRRELEVANCE from the kernel's facts: `x : A`, `y : B`, both
+/// propositions, `A ~ B`.
+#[verifier::spinoff_prover]
+pub proof fn irrel_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: ExprSpec, B: ExprSpec)
+    requires
+        kinfer_claim(env, x, A),
+        kinfer_claim(env, y, B),
+        kprop_claim(env, A),
+        def_eq_claim(env, A, B),
+        crate::expr_model::nlbv(A) <= 0,
+        crate::expr_model::nlbv(B) <= 0,
+    ensures
+        kconv(env, x, y),
+{
+    let dty = crate::env_model::to_model_of_declar_ty(env);
+    let denv = crate::env_model::to_model_of_env(env);
+    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let (Tx, fx) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
+    let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, B);
+    let la = choose|l: crate::level_model::LevelSpec| #[trigger] kinfer_claim(env, A, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>|
+        #[trigger] crate::level_model::interp(l, rho) <= 0);
+    let (TA, fa) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, A, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, ExprSpec::Sort(la));
+    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Tx, A, h);
+    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ty, B, h);
+    let h3 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TA, ExprSpec::Sort(la), h);
+    assert(kconv(env, A, B));
+    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, A, B, h);
+    let m1: nat = if fx >= fy { fx } else { fy };
+    let m2: nat = fa;
+    let m3: nat = if h1 >= h2 { h1 } else { h2 };
+    let m4: nat = h3;
+    let m5: nat = if m1 >= m2 { m1 } else { m2 };
+    let m6: nat = if m3 >= m4 { m3 } else { m4 };
+    let m7: nat = if m5 >= m6 { m5 } else { m6 };
+    let H: nat = (if m7 >= h5 { m7 } else { h5 }) + 1;
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Tx, A, h1, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ty, B, h2, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TA, ExprSpec::Sort(la), h3, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, true, A, B, h5, H);
+    // Tx ~ A ~ B ~ Ty, and both types convert to the proposition A
+    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, A, B, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, true, Ty, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, B, Ty, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, true, A, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Ty, B, A, H);
+    assert(crate::tc_model::proof_type_marker(A, TA, fa, la));
+    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, true, Tx, H));
+    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, true, Ty, H));
+    assert(crate::tc_model::irrel_marker(Tx, Ty, fx, fy));
+    assert(crate::tc_model::proof_irrel_pair(dty, denv, lctx, true, x, y, H));
+    crate::tc_model::deq_p_any_of_irrel(dty, denv, lctx, true, x, y, H);
 }
 
 /// ONE RECURSOR STEP, `reduce_rec`'s: the major premise is replaced by a

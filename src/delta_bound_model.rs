@@ -174,7 +174,7 @@ use crate::tc_model::{
     deq_p_any_refl, deq_p_any_spine_update, deq_p_any_symm, deq_p_any_trans, eta_struct_expand, eta_struct_marker,
     eta_struct_pair, infer_shadow_claim, infer_types_to, irrel_marker, is_proof_type_m, nat_found_claim,
     proj_field_type, proj_field_type_field_step, proj_field_type_final, proj_field_type_param_step, proof_irrel_pair,
-    proof_type_marker, deq_p_mono, deq_p_of_deq, deq, struct_type_of, struct_type_of_u, unit_like_type_u, struct_type_of_lift, unit_like_type_of_u, struct_type_of_mono, deq_p_of_pstep_star, types_to, types_to_app, types_to_app_lift, types_to_const, types_to_free, types_to_lambda,
+    proof_type_marker, deq_p_mono, deq_p_refl, deq_p_of_deq, deq, struct_type_of, struct_type_of_u, unit_like_type_u, struct_type_of_lift, unit_like_type_of_u, struct_type_of_mono, deq_p_of_pstep_star, types_to, types_to_app, types_to_app_lift, types_to_const, types_to_free, types_to_lambda,
     types_to_let, types_to_mono, types_to_nat_lit, types_to_pi, types_to_proj, types_to_sort, types_to_string_lit,
     unit_like_head, unit_like_type, unit_like_type_m, unit_marker, unit_pair,
 };
@@ -4313,10 +4313,12 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
     let m3: nat = if m1 >= m2 { m1 } else { m2 };
     let h: nat = (if hi >= m3 { hi } else { m3 }) + 1;
     deq_p_mono(dty, denv, lctx, false, to_model(xt), to_model(yt), hi, h);
-    assert(proof_type_marker(to_model(xtt), fxt, level_to_model(xl)));
+    deq_p_refl(dty, denv, lctx, false, to_model(xt), h);
+    assert(proof_type_marker(to_model(xt), to_model(xtt), fxt, level_to_model(xl)));
     deq_p_of_pstep_star(dty, denv, lctx, false, to_model(xtt), ExprSpec::Sort(level_to_model(xl)), h);
     assert(is_proof_type_m(dty, denv, lctx, false, to_model(xt), h));
-    assert(proof_type_marker(to_model(ytt), fyt, level_to_model(yl)));
+    deq_p_refl(dty, denv, lctx, false, to_model(yt), h);
+    assert(proof_type_marker(to_model(yt), to_model(ytt), fyt, level_to_model(yl)));
     deq_p_of_pstep_star(dty, denv, lctx, false, to_model(ytt), ExprSpec::Sort(level_to_model(yl)), h);
     assert(is_proof_type_m(dty, denv, lctx, false, to_model(yt), h));
     assert(irrel_marker(to_model(xt), to_model(yt), fx, fy));

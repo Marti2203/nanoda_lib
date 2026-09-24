@@ -4098,12 +4098,15 @@ pub open spec fn irrel_marker(tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat) -> 
 }
 
 /// Marker trigger for `is_proof_type_m`'s witnesses.
-pub open spec fn proof_type_marker(tt: ExprSpec, f: nat, l: LevelSpec) -> bool {
+pub open spec fn proof_type_marker(a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSpec) -> bool {
     true
 }
 
-/// "`ty` is the type of a PROOF": its own type reduces to a `Prop`-level
-/// sort (the model-side twin of `delta_bound_model::is_proof_type_claim`).
+/// "`ty` is the type of a PROOF": it is convertible to some `a` whose own
+/// type is a `Prop`-level sort (the model-side twin of
+/// `delta_bound_model::is_proof_type_claim`). Up to conversion, as the unit
+/// and structure conditions already are: the kernel knows its INFERRED type
+/// is a proposition, and a derivation's type is only convertible to that.
 pub open spec fn is_proof_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: Map<u64, (Seq<u64>, ExprSpec)>,
@@ -4114,8 +4117,8 @@ pub open spec fn is_proof_type_m(
 ) -> bool
     decreases h, 3int, 0nat,
 {
-    exists|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(tt, f, l) && f < h && types_to(dty, denv, lctx, io, ty, tt, f) && deq_p(
+    exists|a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
+        proof_type_marker(a, tt, f, l) && deq_p(dty, denv, lctx, io, ty, a, h) && f < h && types_to(dty, denv, lctx, io, a, tt, f) && deq_p(
             dty,
             denv,
             lctx,
@@ -6011,8 +6014,8 @@ pub proof fn is_proof_type_m_mono(
         is_proof_type_m(dty, env, lctx, io, ty, h2),
     decreases h1, 2int,
 {
-    let (tt, f, l) = choose|tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(tt, f, l) && f < h1 && types_to(dty, env, lctx, io, ty, tt, f) && deq_p(
+    let (a, tt, f, l) = choose|a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
+        proof_type_marker(a, tt, f, l) && deq_p(dty, env, lctx, io, ty, a, h1) && f < h1 && types_to(dty, env, lctx, io, a, tt, f) && deq_p(
             dty,
             env,
             lctx,
@@ -6022,7 +6025,8 @@ pub proof fn is_proof_type_m_mono(
             h1,
         ) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0);
     deq_p_mono(dty, env, lctx, io, tt, ExprSpec::Sort(l), h1, h2);
-    assert(proof_type_marker(tt, f, l));
+    deq_p_mono(dty, env, lctx, io, ty, a, h1, h2);
+    assert(proof_type_marker(a, tt, f, l));
 }
 
 pub proof fn unit_like_type_m_mono(
