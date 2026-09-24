@@ -156,10 +156,6 @@ pub proof fn sorted_pair_obeys_key_model<'t>()
 #[verifier::external_type_specification]
 pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
 
-/// TRANSPARENT, for the same reason -- this is the struct being read.
-#[allow(dead_code)]
-#[verifier::external_type_specification]
-pub struct ExNameCache<'p>(crate::util::NameCache<'p>);
 
 /// OPAQUE -- but not for the reason an earlier note here gave. It claimed
 /// `Config` "has to stay that way" because it holds a `PathBuf` and a

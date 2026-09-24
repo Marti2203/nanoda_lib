@@ -150,8 +150,8 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     let levels_u = ctx.alloc_levels_slice(&[u_level]);
     let levels_v = ctx.alloc_levels_slice(&[v_level]);
     let levels_uv = ctx.alloc_levels_slice(&[u_level, v_level]);
-    let quot_name = ctx.export_file.name_cache.quot.unwrap();
-    let quot_mk_name = ctx.export_file.name_cache.quot_mk.unwrap();
+    let quot_name = ctx.export_file.name_cache.quot().unwrap();
+    let quot_mk_name = ctx.export_file.name_cache.quot_mk().unwrap();
 
     let A_name = ctx.str1("A");
     let B_name = ctx.str1("B");

@@ -1011,7 +1011,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         if let (StringLit { ptr, .. }, App { fun, .. }) = self.ctx.read_expr_pair(x, y) {
             if let Some((name, _levels)) = self.ctx.try_const_info(fun) {
-                if name == self.ctx.export_file.name_cache.string_of_list? {
+                if name == self.ctx.export_file.name_cache.string_of_list()? {
                     // levels should be empty
                     let lhs = self.str_lit_to_ctor_reducing(ptr)?;
                     let r = self.def_eq(lhs, y);
@@ -1292,7 +1292,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let (f, args) = self.ctx.unfold_apps(e);
         let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
             spine_scope(*self, e, f, args@);
         }
         // VERUS-REWRITE(slice-pattern): the original matches on
@@ -1313,7 +1312,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // on ill-formed input only.
                 if self.ctx.read_levels(levels).len() != 0 {
                     None
-                } else if args.len() == 1 && Some(name) == self.ctx.export_file.name_cache.nat_succ {
+                } else if args.len() == 1 && Some(name) == self.ctx.export_file.name_cache.nat_succ() {
                     let arg = args[0];
                     let v_expr = self.whnf(arg);
                     let r = self.ctx.get_bignum_succ_from_expr(v_expr);
@@ -1350,33 +1349,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 } else if args.len() == 2 {
                     let arg1 = args[0];
                     let arg2 = args[1];
-                    let op = if Some(name) == self.ctx.export_file.name_cache.nat_add {
+                    let op = if Some(name) == self.ctx.export_file.name_cache.nat_add() {
                         NatBinOp::Add
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_sub {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_sub() {
                         NatBinOp::Sub
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mul {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mul() {
                         NatBinOp::Mul
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_pow {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_pow() {
                         NatBinOp::Pow
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mod {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_mod() {
                         NatBinOp::Mod
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_div {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_div() {
                         NatBinOp::Div
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_beq {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_beq() {
                         NatBinOp::Beq
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_ble {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_ble() {
                         NatBinOp::Ble
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_land {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_land() {
                         NatBinOp::LAnd
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_lor {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_lor() {
                         NatBinOp::LOr
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_xor {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_xor() {
                         NatBinOp::XOr
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_gcd() {
                         NatBinOp::Gcd
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shl {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shl() {
                         NatBinOp::Shl
-                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shr {
+                    } else if Some(name) == self.ctx.export_file.name_cache.nat_shr() {
                         NatBinOp::Shr
                     } else {
                         return None
@@ -4396,17 +4395,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Choosing the index first and then doing the one `get` and one `whnf`
         // is the same checks in the same order with the same `?` declines; it
         // lets the proof name WHICH argument was the major premise.
-        let qi: usize = if c_name == self.ctx.export_file.name_cache.quot_lift? {
+        let qi: usize = if c_name == self.ctx.export_file.name_cache.quot_lift()? {
             proof {
-                crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
                 assert(crate::expr_arena_bridge::quot_kind_of(
                     crate::level_arena_bridge::name_id(c_name),
                 ) == Some(0u8));
             }
             5
-        } else if c_name == self.ctx.export_file.name_cache.quot_ind? {
+        } else if c_name == self.ctx.export_file.name_cache.quot_ind()? {
             proof {
-                crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
                 assert(crate::expr_arena_bridge::quot_kind_of(
                     crate::level_arena_bridge::name_id(c_name),
                 ) == Some(1u8));
@@ -4420,10 +4417,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let rest_idx = qi + 1;
         let (qmk_const, qmk_args) = self.ctx.unfold_apps(qmk);
         let mk_name = match self.ctx.read_expr(qmk_const) {
-            Const { name, .. } if name == self.ctx.export_file.name_cache.quot_mk? && qmk_args.len() == 3 => {
+            Const { name, .. } if name == self.ctx.export_file.name_cache.quot_mk()? && qmk_args.len() == 3 => {
                 proof {
                     // read the name cache HERE, before anything below can touch it
-                    crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
                     assert(crate::expr_arena_bridge::quot_kind_of(
                         crate::level_arena_bridge::name_id(name),
                     ) == Some(2u8));
@@ -4456,7 +4452,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mk_head = to_model_expr(qmk_const);
             let mk_args = crate::expr_arena_bridge::ptr_models(qmk_args@);
             let args2 = am.update(q, qm);
-            crate::expr_arena_bridge::name_cache_ids_ok(self.ctx.export_file.name_cache);
             assert(am[q] == to_model_expr(qmk0));
             assert(am[3] == to_model_expr(f));
             // the head and the major's head

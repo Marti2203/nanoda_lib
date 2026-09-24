@@ -1208,7 +1208,7 @@ pub assume_specification<'t, 'p>[ abstr_levels_with_locals ](
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
 /// `bool_false_id` are uninterpreted NAME ids (same "just an identity,
 /// not the name's content" convention `const_id`/`name_id` already use)
-/// standing in for `export_file.name_cache.bool_true`/`bool_false`'s
+/// standing in for `export_file.name_cache.bool_true()`/`bool_false`'s
 /// real, per-export-file `NamePtr`s. A model-level simplification (this
 /// doesn't distinguish between different `ctx`/`export_file` instances
 /// possibly caching different pointers for "the" `Bool.true`/`Bool.false`
@@ -1225,52 +1225,11 @@ pub uninterp spec fn bool_false_id() -> u64;
 /// `c_bool_true`/`c_bool_false` construct the SAME `Bool.true`/`Bool.
 /// false` constant `bool_to_expr` does, just without needing a `bool` to
 /// select which one.
-/// THE NAME-CACHE INVARIANT.
-///
-/// `ExportFile::name_cache` holds the handful of names the kernel needs by
-/// identity -- `Nat`, `Nat.zero`, `Bool.true`, the quotient primitives, the
-/// nat binary operations. That a populated slot really holds the name it is
-/// named after is a property of how the export file was READ, not something
-/// derivable from anything here, so it is assumed.
-///
-/// It is assumed ONCE, here, for the same reason `node_cache_ok` is: seven
-/// kernel functions used to each carry their own `assume_specification`
-/// precisely because this fact was not available to them. With it they are
-/// theorems -- `c_bool_true`, `c_nat_zero`, `c_nat_succ`, `nat_type`,
-/// `string_type`, `quot_kind_code` and `nat_bin_op_code`.
-#[verifier::external_body]
-pub proof fn name_cache_ids_ok<'p>(nc: crate::util::NameCache<'p>)
-    ensures
-        nc.bool_true matches Some(n) ==> name_id(n) == bool_true_id(),
-        nc.bool_false matches Some(n) ==> name_id(n) == bool_false_id(),
-        nc.nat_zero matches Some(n) ==> name_id(n) == nat_zero_id(),
-        nc.nat_succ matches Some(n) ==> name_id(n) == nat_succ_id(),
-        nc.nat matches Some(n) ==> name_id(n) == nat_type_id(),
-        nc.string matches Some(n) ==> name_id(n) == string_type_id(),
-        nc.quot_lift matches Some(n) ==> quot_kind_of(name_id(n)) == Some(0u8),
-        nc.quot_ind matches Some(n) ==> quot_kind_of(name_id(n)) == Some(1u8),
-        nc.quot_mk matches Some(n) ==> quot_kind_of(name_id(n)) == Some(2u8),
-        nc.nat_add matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(0u8),
-        nc.nat_sub matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(1u8),
-        nc.nat_mul matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(2u8),
-        nc.nat_div matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(3u8),
-        nc.nat_mod matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(4u8),
-        nc.nat_pow matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(5u8),
-        nc.nat_gcd matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(6u8),
-        nc.nat_beq matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(7u8),
-        nc.nat_ble matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(8u8),
-        nc.nat_land matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(9u8),
-        nc.nat_lor matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(10u8),
-        nc.nat_xor matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(11u8),
-        nc.nat_shl matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(12u8),
-        nc.nat_shr matches Some(n) ==> nat_bin_op_of(name_id(n)) == Some(13u8),
-{
-}
 
 /// `expr.rs::is_nat_zero`/`pred_of_nat_succ`'s identity facts, same
 /// "uninterpreted name id" convention as `bool_true_id`/`bool_false_id`
 /// above -- `nat_zero_id`/`nat_succ_id` stand in for `export_file.
-/// name_cache.nat_zero`/`nat_succ`'s real per-export-file `NamePtr`s.
+/// name_cache.nat_zero()`/`nat_succ`'s real per-export-file `NamePtr`s.
 /// `is_nat_zero` accepts EITHER representation of zero (a real `NatLit`
 /// with value 0, or the `Const Nat.zero []` node); `pred_of_nat_succ`
 /// mirrors this for the predecessor: either peel `Nat.succ`off an `App`,
@@ -1740,7 +1699,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
 /// `expr.rs::nat_type`/`string_type`'s result identity: `Const(nat_type_id,
 /// [])`/`Const(string_type_id, [])` -- same "uninterpreted name id"
 /// convention as `bool_true_id`/`nat_zero_id` above, standing in for
-/// `export_file.name_cache.nat`/`string`'s real per-export-file `NamePtr`s.
+/// `export_file.name_cache.nat()`/`string`'s real per-export-file `NamePtr`s.
 /// `None` covers the real function's only failure mode (the name isn't
 /// present in this export file's cache). Deliberately does NOT model the
 /// real callers' `assert!(config.nat_extension)`/`assert!(config.string_

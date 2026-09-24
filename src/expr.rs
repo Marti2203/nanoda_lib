@@ -20,14 +20,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             },
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
         let nc = &self.export_file.name_cache;
-        if Some(name) == nc.quot_lift {
+        if Some(name) == nc.quot_lift() {
             Some(0)
-        } else if Some(name) == nc.quot_ind {
+        } else if Some(name) == nc.quot_ind() {
             Some(1)
-        } else if Some(name) == nc.quot_mk {
+        } else if Some(name) == nc.quot_mk() {
             Some(2)
         } else {
             None
@@ -44,39 +43,38 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             },
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
         let nc = &self.export_file.name_cache;
         if !self.export_file.config.nat_extension_on() {
             return None
         }
-        if Some(name) == nc.nat_add {
+        if Some(name) == nc.nat_add() {
             Some(0)
-        } else if Some(name) == nc.nat_sub {
+        } else if Some(name) == nc.nat_sub() {
             Some(1)
-        } else if Some(name) == nc.nat_mul {
+        } else if Some(name) == nc.nat_mul() {
             Some(2)
-        } else if Some(name) == nc.nat_div {
+        } else if Some(name) == nc.nat_div() {
             Some(3)
-        } else if Some(name) == nc.nat_mod {
+        } else if Some(name) == nc.nat_mod() {
             Some(4)
-        } else if Some(name) == nc.nat_pow {
+        } else if Some(name) == nc.nat_pow() {
             Some(5)
-        } else if Some(name) == nc.nat_gcd {
+        } else if Some(name) == nc.nat_gcd() {
             Some(6)
-        } else if Some(name) == nc.nat_beq {
+        } else if Some(name) == nc.nat_beq() {
             Some(7)
-        } else if Some(name) == nc.nat_ble {
+        } else if Some(name) == nc.nat_ble() {
             Some(8)
-        } else if Some(name) == nc.nat_land {
+        } else if Some(name) == nc.nat_land() {
             Some(9)
-        } else if Some(name) == nc.nat_lor {
+        } else if Some(name) == nc.nat_lor() {
             Some(10)
-        } else if Some(name) == nc.nat_xor {
+        } else if Some(name) == nc.nat_xor() {
             Some(11)
-        } else if Some(name) == nc.nat_shl {
+        } else if Some(name) == nc.nat_shl() {
             Some(12)
-        } else if Some(name) == nc.nat_shr {
+        } else if Some(name) == nc.nat_shr() {
             Some(13)
         } else {
             None
@@ -131,7 +129,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             reveal_with_fuel(crate::beta_model::spine_args, 3);
                         }
                     }
-                    return self.export_file.name_cache.eager_reduce == Some(name)
+                    return self.export_file.name_cache.eager_reduce() == Some(name)
                 }
             }
         }
@@ -154,9 +152,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.bool_false?;
+        let n = self.export_file.name_cache.bool_false()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -176,9 +173,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.bool_true?;
+        let n = self.export_file.name_cache.bool_true()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -198,9 +194,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.nat_zero?;
+        let n = self.export_file.name_cache.nat_zero()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -220,9 +215,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.nat_succ?;
+        let n = self.export_file.name_cache.nat_succ()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -241,9 +235,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.nat?;
+        let n = self.export_file.name_cache.nat()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -262,9 +255,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
-            crate::expr_arena_bridge::name_cache_ids_ok(self.export_file.name_cache);
         }
-        let n = self.export_file.name_cache.string?;
+        let n = self.export_file.name_cache.string()?;
         let levels = self.alloc_levels_slice(&[]);
         Some(self.mk_const(n, levels))
     }
@@ -477,17 +469,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let empty_levels = self.alloc_levels_slice(&[]);
         let tyzero_levels = self.alloc_levels_slice(&[zero]);
         // Const(Char, [])
-        let c_char = self.mk_const(self.export_file.name_cache.char?, empty_levels);
+        let c_char = self.mk_const(self.export_file.name_cache.char()?, empty_levels);
         // Const(Char.ofNat, [])
-        let c_char_of_nat = self.mk_const(self.export_file.name_cache.char_of_nat?, empty_levels);
+        let c_char_of_nat = self.mk_const(self.export_file.name_cache.char_of_nat()?, empty_levels);
         // @List.nil.{0} Char
         let c_list_nil_char = {
-            let f = self.mk_const(self.export_file.name_cache.list_nil?, tyzero_levels);
+            let f = self.mk_const(self.export_file.name_cache.list_nil()?, tyzero_levels);
             self.mk_app(f, c_char)
         };
         // @List.cons.{0} Char
         let c_list_cons_char = {
-            let f = self.mk_const(self.export_file.name_cache.list_cons?, tyzero_levels);
+            let f = self.mk_const(self.export_file.name_cache.list_cons()?, tyzero_levels);
             self.mk_app(f, c_char)
         };
         let mut out = c_list_nil_char;
@@ -501,7 +493,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // (List.cons (Char.ofNat u32)) xs
             out = self.mk_app(y, out);
         }
-        let string_of_list_const = self.mk_const(self.export_file.name_cache.string_of_list?, empty_levels);
+        let string_of_list_const = self.mk_const(self.export_file.name_cache.string_of_list()?, empty_levels);
         Some(self.mk_app(string_of_list_const, out))
     }
 

@@ -835,43 +835,349 @@ impl<'a> LeanDag<'a> {
     }
 }
 
+::vstd::prelude::verus! {
+
 /// This just caches common names; the values are `Some(x)` if the name
 /// is present in the export file, otherwise they're `None`.
+///
+/// The fields are private and read through the accessors below, because the
+/// struct carries a TYPE INVARIANT: each populated slot holds the name it is
+/// named after, identified by the model's ids (`Nat.zero` is
+/// `nat_zero_id()`, `Quot.mk` has quotient kind 2, ...). Facts come only from a
+/// real value (`use_type_invariant`), never from one fabricated in a proof,
+/// which is what keeps the statement consistent. The one value the kernel
+/// uses is built by `LeanDag::mk_name_cache` while reading the export file,
+/// unverified -- that is where "the export file was read correctly" is
+/// assumed.
 #[derive(Debug, Clone, Copy)]
 pub struct NameCache<'p> {
-    pub eager_reduce: Option<NamePtr<'p>>,
-    pub quot: Option<NamePtr<'p>>,
-    pub quot_mk: Option<NamePtr<'p>>,
-    pub quot_lift: Option<NamePtr<'p>>,
-    pub quot_ind: Option<NamePtr<'p>>,
-    pub nat: Option<NamePtr<'p>>,
-    pub nat_zero: Option<NamePtr<'p>>,
-    pub nat_succ: Option<NamePtr<'p>>,
-    pub nat_add: Option<NamePtr<'p>>,
-    pub nat_sub: Option<NamePtr<'p>>,
-    pub nat_mul: Option<NamePtr<'p>>,
-    pub nat_pow: Option<NamePtr<'p>>,
-    pub nat_mod: Option<NamePtr<'p>>,
-    pub nat_div: Option<NamePtr<'p>>,
-    pub nat_beq: Option<NamePtr<'p>>,
-    pub nat_ble: Option<NamePtr<'p>>,
-    pub nat_gcd: Option<NamePtr<'p>>,
-    pub nat_xor: Option<NamePtr<'p>>,
-    pub nat_land: Option<NamePtr<'p>>,
-    pub nat_lor: Option<NamePtr<'p>>,
-    pub nat_shr: Option<NamePtr<'p>>,
-    pub nat_shl: Option<NamePtr<'p>>,
-    pub string: Option<NamePtr<'p>>,
-    pub string_of_list: Option<NamePtr<'p>>,
-    pub bool_false: Option<NamePtr<'p>>,
-    pub bool_true: Option<NamePtr<'p>>,
-    pub char: Option<NamePtr<'p>>,
-    pub char_of_nat: Option<NamePtr<'p>>,
+    eager_reduce: Option<NamePtr<'p>>,
+    quot: Option<NamePtr<'p>>,
+    quot_mk: Option<NamePtr<'p>>,
+    quot_lift: Option<NamePtr<'p>>,
+    quot_ind: Option<NamePtr<'p>>,
+    nat: Option<NamePtr<'p>>,
+    nat_zero: Option<NamePtr<'p>>,
+    nat_succ: Option<NamePtr<'p>>,
+    nat_add: Option<NamePtr<'p>>,
+    nat_sub: Option<NamePtr<'p>>,
+    nat_mul: Option<NamePtr<'p>>,
+    nat_pow: Option<NamePtr<'p>>,
+    nat_mod: Option<NamePtr<'p>>,
+    nat_div: Option<NamePtr<'p>>,
+    nat_beq: Option<NamePtr<'p>>,
+    nat_ble: Option<NamePtr<'p>>,
+    nat_gcd: Option<NamePtr<'p>>,
+    nat_xor: Option<NamePtr<'p>>,
+    nat_land: Option<NamePtr<'p>>,
+    nat_lor: Option<NamePtr<'p>>,
+    nat_shr: Option<NamePtr<'p>>,
+    nat_shl: Option<NamePtr<'p>>,
+    string: Option<NamePtr<'p>>,
+    string_of_list: Option<NamePtr<'p>>,
+    bool_false: Option<NamePtr<'p>>,
+    bool_true: Option<NamePtr<'p>>,
+    char: Option<NamePtr<'p>>,
+    char_of_nat: Option<NamePtr<'p>>,
     #[allow(dead_code)]
-    pub list: Option<NamePtr<'p>>,
-    pub list_nil: Option<NamePtr<'p>>,
-    pub list_cons: Option<NamePtr<'p>>,
+    list: Option<NamePtr<'p>>,
+    list_nil: Option<NamePtr<'p>>,
+    list_cons: Option<NamePtr<'p>>,
 }
+
+impl<'p> NameCache<'p> {
+    #[verifier::type_invariant]
+    spec fn inv(&self) -> bool {
+        &&& (self.quot_mk matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(2u8))
+        &&& (self.quot_lift matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(0u8))
+        &&& (self.quot_ind matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(1u8))
+        &&& (self.nat matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_type_id())
+        &&& (self.nat_zero matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_zero_id())
+        &&& (self.nat_succ matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_succ_id())
+        &&& (self.nat_add matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(0u8))
+        &&& (self.nat_sub matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(1u8))
+        &&& (self.nat_mul matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(2u8))
+        &&& (self.nat_pow matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(5u8))
+        &&& (self.nat_mod matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(4u8))
+        &&& (self.nat_div matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(3u8))
+        &&& (self.nat_beq matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(7u8))
+        &&& (self.nat_ble matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(8u8))
+        &&& (self.nat_gcd matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(6u8))
+        &&& (self.nat_xor matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(11u8))
+        &&& (self.nat_land matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(9u8))
+        &&& (self.nat_lor matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(10u8))
+        &&& (self.nat_shr matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(13u8))
+        &&& (self.nat_shl matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(12u8))
+        &&& (self.string matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::string_type_id())
+        &&& (self.bool_false matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_false_id())
+        &&& (self.bool_true matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_true_id())
+    }
+
+    pub fn eager_reduce(&self) -> Option<NamePtr<'p>> {
+        self.eager_reduce
+    }
+
+    pub fn quot(&self) -> Option<NamePtr<'p>> {
+        self.quot
+    }
+
+    pub fn quot_mk(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(2u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.quot_mk
+    }
+
+    pub fn quot_lift(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(0u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.quot_lift
+    }
+
+    pub fn quot_ind(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::quot_kind_of(crate::level_arena_bridge::name_id(n)) == Some(1u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.quot_ind
+    }
+
+    pub fn nat(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_type_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat
+    }
+
+    pub fn nat_zero(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_zero_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_zero
+    }
+
+    pub fn nat_succ(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::nat_succ_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_succ
+    }
+
+    pub fn nat_add(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(0u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_add
+    }
+
+    pub fn nat_sub(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(1u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_sub
+    }
+
+    pub fn nat_mul(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(2u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_mul
+    }
+
+    pub fn nat_pow(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(5u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_pow
+    }
+
+    pub fn nat_mod(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(4u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_mod
+    }
+
+    pub fn nat_div(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(3u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_div
+    }
+
+    pub fn nat_beq(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(7u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_beq
+    }
+
+    pub fn nat_ble(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(8u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_ble
+    }
+
+    pub fn nat_gcd(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(6u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_gcd
+    }
+
+    pub fn nat_xor(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(11u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_xor
+    }
+
+    pub fn nat_land(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(9u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_land
+    }
+
+    pub fn nat_lor(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(10u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_lor
+    }
+
+    pub fn nat_shr(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(13u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_shr
+    }
+
+    pub fn nat_shl(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::expr_arena_bridge::nat_bin_op_of(crate::level_arena_bridge::name_id(n)) == Some(12u8),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.nat_shl
+    }
+
+    pub fn string(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::string_type_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.string
+    }
+
+    pub fn string_of_list(&self) -> Option<NamePtr<'p>> {
+        self.string_of_list
+    }
+
+    pub fn bool_false(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_false_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.bool_false
+    }
+
+    pub fn bool_true(&self) -> (result: Option<NamePtr<'p>>)
+        ensures
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_true_id(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.bool_true
+    }
+
+    pub fn char(&self) -> Option<NamePtr<'p>> {
+        self.char
+    }
+
+    pub fn char_of_nat(&self) -> Option<NamePtr<'p>> {
+        self.char_of_nat
+    }
+
+    pub fn list(&self) -> Option<NamePtr<'p>> {
+        self.list
+    }
+
+    pub fn list_nil(&self) -> Option<NamePtr<'p>> {
+        self.list_nil
+    }
+
+    pub fn list_cons(&self) -> Option<NamePtr<'p>> {
+        self.list_cons
+    }
+
+}
+
+} // verus!
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SortedPair<'t>(pub ExprPtr<'t>, pub ExprPtr<'t>);
