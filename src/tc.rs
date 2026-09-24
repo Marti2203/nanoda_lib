@@ -1505,7 +1505,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(structure), to_model_expr(result)),
+            kinfer_claim(*old(self).env, ExprSpec::Proj(idx, Box::new(to_model_expr(structure))), to_model_expr(result)),
     {
+        let ghost env0 = *self.env;
+        let ghost dty = crate::env_model::to_model_of_declar_ty(env0);
+        let ghost denv = crate::env_model::to_model_of_env(env0);
+        let ghost lctx = crate::expr_arena_bridge::arena_lctx();
+        let ghost s_m = to_model_expr(structure);
         // Scope: everything below lives in what `structure` uses.
         let ghost c0 = self.ctx.dbj_level_counter;
         let ghost L = crate::expr_model::occ(to_model_expr(structure), c0);
@@ -1529,7 +1535,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 "infer_proj: the structure's type is not an applied constant",
             ),
         };
+        let ghost am = crate::expr_arena_bridge::ptr_models(struct_ty_args@);
+        let ghost ind_id = crate::level_arena_bridge::name_id(struct_ty_name);
+        let ghost ls = crate::level_arena_bridge::to_model_of_levels(struct_ty_levels);
+        let ghost (Ts, fs) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env0, s_m, T, f)
+            && kconv(env0, T, to_model_expr(structure_ty));
+        let ghost hs = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ts, to_model_expr(structure_ty), h);
         proof {
+            crate::expr_arena_bridge::is_const_shape_model(sf);
+            crate::expr_arena_bridge::const_levels_vec_model(sf);
+            assert(to_model_expr(structure_ty) == crate::beta_model::spine_app(ExprSpec::Const(ind_id, ls), am));
             spine_scope_in(structure_ty, sf, struct_ty_args@, L, c0);
             // the structure's type is closed, so are its arguments
             let am = crate::expr_arena_bridge::ptr_models(struct_ty_args@);
@@ -1560,6 +1575,31 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(_) => {},
             None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
         };
+        // VERUS-REWRITE(tested-env): two consistency checks on the environment,
+        // which never fail on a well-formed one. `get_structure` states nothing,
+        // so the structure's constructor and its parameter count are tested
+        // against the environment model's records -- the first constructor is
+        // the one recorded, and the constructor's own parameter count is the
+        // inductive's (`Lean`'s invariant for a structure).
+        let first_ctor = crate::env_model::get_structure_first_ctor(self.env, &struct_ty_name, true);
+        crate::util::kernel_check(
+            opt_name_is(first_ctor, all_ctor_names[0]),
+            "infer_proj: the structure's constructor disagrees with the environment",
+        );
+        let ctor_np = crate::env_model::get_constructor_num_params(self.env, &all_ctor_names[0]);
+        crate::util::kernel_check(
+            match ctor_np {
+                Some(k) => k == *num_params,
+                None => false,
+            },
+            "infer_proj: the constructor's parameter count disagrees with the inductive's",
+        );
+        let ghost ctor_id = crate::level_arena_bridge::name_id(all_ctor_names[0]);
+        let ghost np = *num_params;
+        proof {
+            crate::env_model::struct_ctor_of_agrees(env0, ind_id);
+            crate::env_model::ctor_num_params_of_agrees(env0, ctor_id);
+        }
         // VERUS-REWRITE(accessor-swap): the same `DeclarInfo`, reached through
         // the accessor that carries the environment's claim about it -- every
         // uparam is a `Param`, and the stored type is closed in both the loose
@@ -1584,7 +1624,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             );
         }
         let mut ctor_ty = self.ctx.subst_expr_levels(ctor_ty0, ctor_uparams, struct_ty_levels);
+        let ghost ctm = to_model_expr(ctor_ty);
         proof {
+            crate::expr_model::subst_expr_levels_fn_rel(
+                to_model_expr(ctor_ty0),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ctor_uparams)),
+                crate::level_arena_bridge::to_model_of_levels(struct_ty_levels),
+            );
+            assert(ktypes(env0, ExprSpec::Const(ctor_id, ls), ctm, 0));
             subst_levels_nlbv(
                 to_model_expr(ctor_ty0),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ctor_uparams)),
@@ -1605,6 +1652,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*num_params as usize) <= struct_ty_args.len(),
             "infer_proj: the structure's type has fewer arguments than the inductive has parameters",
         );
+        let ghost mut H: nat = 0;
+        // a ghost copy of the loop index: a `for` loop's own index cannot sit
+        // inside a quantified invariant's trigger
+        let ghost mut pi: int = 0;
+        proof {
+            assert(am.skip(0) =~= am);
+        }
         for i in 0..(*num_params)
             invariant
                 tc_wf(*self),
@@ -1625,6 +1679,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|j: int| 0 <= j < struct_ty_args@.len() ==> crate::expr_model::nlbv(
                     to_model_expr(#[trigger] struct_ty_args@[j]),
                 ) <= 0,
+                // typing: a field type of the current constructor type is one
+                // of the original's, at every height from H up
+                env0 == *old(self).env,
+                dty == crate::env_model::to_model_of_declar_ty(env0),
+                denv == crate::env_model::to_model_of_env(env0),
+                lctx == crate::expr_arena_bridge::arena_lctx(),
+                s_m == to_model_expr(structure),
+                am == crate::expr_arena_bridge::ptr_models(struct_ty_args@),
+                np == *num_params,
+                pi == i as int,
+                forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
+                    dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
+                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
         {
             proof {
                 in_scope_of_deep_in(*self, ctor_ty, L);
@@ -1635,10 +1702,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_model::dbj_deep_in(to_model_expr(ct0), L, c0));
             }
             match self.ctx.read_expr(ctor_ty) {
-                Pi { body, .. } => {
+                Pi { binder_type, body, .. } => {
                     let ghost a = struct_ty_args@[i as int];
+                    let ghost bm = to_model_expr(body);
+                    let ghost btm = to_model_expr(binder_type);
                     ctor_ty = self.ctx.inst(body, &[struct_ty_args[i as usize]]);
                     proof {
+                        // one parameter step, at any height above both floors
+                        let cur = to_model_expr(ct0);
+                        let wb = ExprSpec::Bind(Box::new(btm), Box::new(bm));
+                        let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                        let H2: nat = if H >= hw { H } else { hw };
+                        assert(am.skip(i as int)[0] == am[i as int]);
+                        assert(am[i as int] == to_model_expr(a));
+                        assert(am.skip(i as int).drop_first() =~= am.skip(i as int + 1));
+                        assert([a]@ =~= seq![a]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![a]) =~= seq![to_model_expr(a)]);
+                        assert(to_model_expr(ctor_ty) == crate::expr_model::subst_full(bm, seq![am.skip(i as int)[0]], 0));
+                        assert((np - (i + 1)) as nat == ((np - i) as nat - 1) as nat);
+                        assert forall|tt: ExprSpec, h: nat| h >= H2 && #[trigger] crate::tc_model::proj_field_type(
+                            dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi + 1), (np - (pi + 1)) as nat, 0, idx as nat, s_m, tt,
+                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                            crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, h);
+                            crate::tc_model::proj_field_type_param_step_p(
+                                dty, denv, lctx, true, h, cur, btm, bm, am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
+                            );
+                        }
+                        H = H2;
+                        pi = pi + 1;
                         assert(crate::expr_model::dbj_deep_in(to_model_expr(a), L, c0));
                         inst_deep_in(body, seq![a], L, c0);
                         assert([a]@ =~= seq![a]);
@@ -1648,6 +1739,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                 },
                 _ => crate::util::kernel_fail("Ran out of param telescope"),
+            }
+        }
+        let ghost mut fi: int = 0;
+        proof {
+            // loop 1 ended with every parameter instantiated; restate its fact
+            // in loop 2's terms (quantifier matching does no arithmetic)
+            assert(pi == np as int);
+            assert forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
+                dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
+            ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                assert(am.skip(pi) == am.skip(np as int));
+                assert((np - pi) as nat == 0);
+                assert(fi as usize == 0usize && (idx - fi) as nat == idx as nat);
+                assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt));
             }
         }
         for i in 0..idx
@@ -1663,6 +1768,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_model::dbj_deep_in(to_model_expr(structure), L, c0),
                 crate::expr_model::nlbv(to_model_expr(ctor_ty)) <= 0,
                 crate::expr_model::nlbv(to_model_expr(structure)) <= 0,
+                env0 == *old(self).env,
+                dty == crate::env_model::to_model_of_declar_ty(env0),
+                denv == crate::env_model::to_model_of_env(env0),
+                lctx == crate::expr_arena_bridge::arena_lctx(),
+                s_m == to_model_expr(structure),
+                fi == i as int,
+                forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
+                    dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
+                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
         {
             proof {
                 in_scope_of_deep_in(*self, ctor_ty, L);
@@ -1672,8 +1786,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 assert(crate::expr_model::dbj_deep_in(to_model_expr(ct0), L, c0));
             }
+            let ghost H0 = H;
             match self.ctx.read_expr(ctor_ty) {
                 Pi { binder_type, body, .. } => {
+                    let ghost cur = to_model_expr(ct0);
+                    let ghost wb = ExprSpec::Bind(Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body)));
+                    let ghost hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                    let ghost pj = ExprSpec::Proj(i, Box::new(s_m));
                     if self.ctx.num_loose_bvars(body) != 0 {
                         proof {
                             in_scope_of_deep_in(*self, binder_type, L);
@@ -1688,9 +1807,30 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             assert([arg]@ =~= seq![arg]);
                             assert(crate::expr_model::nlbv(to_model_expr(body)) <= 1);
                             inst_closed(body, seq![arg]);
+                            assert(to_model_expr(arg) == pj);
+                            assert(crate::expr_arena_bridge::ptr_models(seq![arg]) =~= seq![pj]);
                         }
                     } else {
                         ctor_ty = body;
+                        proof {
+                            crate::expr_model::subst_full_noop(to_model_expr(body), seq![pj], 0);
+                        }
+                    }
+                    proof {
+                        // one field step
+                        let H2: nat = if H0 >= hw { H0 } else { hw };
+                        assert(to_model_expr(ctor_ty) == crate::expr_model::subst_full(to_model_expr(body), seq![pj], 0));
+                        assert forall|tt: ExprSpec, h: nat| h >= H2 && #[trigger] crate::tc_model::proj_field_type(
+                            dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, (fi + 1) as usize, (idx - (fi + 1)) as nat, s_m, tt,
+                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                            crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, h);
+                            crate::tc_model::proj_field_type_field_step_p(
+                                dty, denv, lctx, true, h, cur, to_model_expr(binder_type), to_model_expr(body),
+                                am.skip(np as int), fi as usize, (idx - fi) as nat, s_m, tt,
+                            );
+                        }
+                        H = H2;
+                        fi = fi + 1;
                     }
                 },
                 _ => crate::util::kernel_fail("Ran out of constructor telescope"),
@@ -1714,6 +1854,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     assert(crate::expr_model::nlbv(to_model_expr(binder_type)) <= 0);
                     scope_pres_of_occ(to_model_expr(structure), to_model_expr(binder_type), c0);
+                    // the field type: the last binder, then the projection rule
+                    let cur = to_model_expr(ctor_ty);
+                    let btm = to_model_expr(binder_type);
+                    let wb = to_model_expr(reduced);
+                    let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                    let (bt_r, body_r) = (btm, match wb { ExprSpec::Bind(_, b) => *b, _ => wb });
+                    assert(wb == ExprSpec::Bind(Box::new(bt_r), Box::new(body_r)));
+                    let m1: nat = if H >= hw { H } else { hw };
+                    let m2: nat = if fs >= hs { fs } else { hs };
+                    let f2: nat = if m1 >= m2 { m1 } else { m2 };
+                    crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, f2);
+                    crate::tc_model::proj_field_type_final_p(dty, denv, lctx, true, f2, cur, bt_r, body_r, am.skip(np as int), idx, s_m);
+                    assert(idx - idx == 0);
+                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, f2, ctm, am, np as nat, 0, idx as nat, s_m, btm));
+                    crate::tc_model::types_to_mono(dty, denv, lctx, true, s_m, Ts, fs, f2);
+                    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ts, to_model_expr(structure_ty), hs, f2);
+                    crate::tc_model::types_to_mono(dty, denv, lctx, true, ExprSpec::Const(ctor_id, ls), ctm, 0, f2);
+                    assert(crate::tc_model::proj_marker(f2, Ts, ind_id, ls, am, ctor_id, np, ctm));
+                    assert(ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1));
+                    kinfer_of_ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1);
                 }
                 binder_type
             },

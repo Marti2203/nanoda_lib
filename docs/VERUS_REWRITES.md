@@ -182,6 +182,7 @@ still a rejection — but each is an improvement.
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so) |
 | `def_eq_binder_aux` | `src/tc.rs` | `u16::try_from(locals.len()).unwrap()` twice — more than 65535 open binders panics |
 | `infer` | `src/tc.rs` | `nat_type()`/`string_type()` `.unwrap()` — the guard above them tests the CONFIG FLAG, not whether the name is cached, so these could genuinely fire |
+| `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's |
 | `reduce_rec` | `src/tc.rs` | a recursor rule's right-hand side with loose de Bruijn indices was used as is; it is now TESTED closed (`num_loose_bvars == 0`, beside the existing `has_fvars` test) and declined otherwise — a well-formed rule is closed |
 | `reduce_rec` | `src/tc.rs` | `checked_sub(..).unwrap()` — underflows when a constructor supplies fewer arguments than its telescope claims |
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |

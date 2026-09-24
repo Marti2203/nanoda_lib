@@ -3701,6 +3701,208 @@ pub proof fn types_to_proj(
     assert(proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0));
 }
 
+/// `proj_field_type` is monotone in its height: every step is a `deq_p` at it.
+pub proof fn proj_field_type_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h1: nat,
+    h2: nat,
+    cur: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+)
+    requires
+        proj_field_type(dty, denv, lctx, io, h1, cur, args, np, fld, remaining, s, t),
+        h1 <= h2,
+    ensures
+        proj_field_type(dty, denv, lctx, io, h2, cur, args, np, fld, remaining, s, t),
+    decreases np + remaining,
+{
+    let (bt, body) = choose|bt: ExprSpec, body: ExprSpec| #[trigger]
+        proj_step_marker(bt, body) && deq_p(
+            dty,
+            denv,
+            lctx,
+            io,
+            cur,
+            ExprSpec::Bind(Box::new(bt), Box::new(body)),
+            h1,
+        ) && (if np > 0 {
+            args.len() > 0 && proj_field_type(
+                dty,
+                denv,
+                lctx,
+                io,
+                h1,
+                subst_full(body, seq![args[0]], 0),
+                args.drop_first(),
+                (np - 1) as nat,
+                fld,
+                remaining,
+                s,
+                t,
+            )
+        } else if remaining > 0 {
+            proj_field_type(
+                dty,
+                denv,
+                lctx,
+                io,
+                h1,
+                subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
+                args,
+                0,
+                (fld + 1) as usize,
+                (remaining - 1) as nat,
+                s,
+                t,
+            )
+        } else {
+            t == bt
+        });
+    deq_p_mono(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h1, h2);
+    if np > 0 {
+        proj_field_type_mono(
+            dty,
+            denv,
+            lctx,
+            io,
+            h1,
+            h2,
+            subst_full(body, seq![args[0]], 0),
+            args.drop_first(),
+            (np - 1) as nat,
+            fld,
+            remaining,
+            s,
+            t,
+        );
+    } else if remaining > 0 {
+        proj_field_type_mono(
+            dty,
+            denv,
+            lctx,
+            io,
+            h1,
+            h2,
+            subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
+            args,
+            0,
+            (fld + 1) as usize,
+            (remaining - 1) as nat,
+            s,
+            t,
+        );
+    }
+    assert(proj_step_marker(bt, body));
+}
+
+/// The three steps of `proj_field_type` from a typed conversion to the binder.
+pub proof fn proj_field_type_param_step_p(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+)
+    requires
+        np > 0,
+        args.len() > 0,
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+        proj_field_type(
+            dty,
+            denv,
+            lctx,
+            io,
+            h,
+            subst_full(body, seq![args[0]], 0),
+            args.drop_first(),
+            (np - 1) as nat,
+            fld,
+            remaining,
+            s,
+            t,
+        ),
+    ensures
+        proj_field_type(dty, denv, lctx, io, h, cur, args, np, fld, remaining, s, t),
+{
+    assert(proj_step_marker(bt, body));
+}
+
+pub proof fn proj_field_type_field_step_p(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    t: ExprSpec,
+)
+    requires
+        remaining > 0,
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+        proj_field_type(
+            dty,
+            denv,
+            lctx,
+            io,
+            h,
+            subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0),
+            args,
+            0,
+            (fld + 1) as usize,
+            (remaining - 1) as nat,
+            s,
+            t,
+        ),
+    ensures
+        proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, remaining, s, t),
+{
+    assert(proj_step_marker(bt, body));
+}
+
+pub proof fn proj_field_type_final_p(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h: nat,
+    cur: ExprSpec,
+    bt: ExprSpec,
+    body: ExprSpec,
+    args: Seq<ExprSpec>,
+    fld: usize,
+    s: ExprSpec,
+)
+    requires
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+    ensures
+        proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, 0, s, bt),
+{
+    assert(proj_step_marker(bt, body));
+}
+
 /// One parameter step of `proj_field_type`.
 pub proof fn proj_field_type_param_step(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
