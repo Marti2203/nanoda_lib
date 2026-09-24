@@ -539,12 +539,12 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
                         NatLitPayload(Ghost(bignum_ptr_value(nptr))),
                     ));
                     assert forall|j: u64| #[trigger]
-                        crate::expr_arena_bridge::EnvSpec::empty().contains_key(
+                        crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)).contains_key(
                             j,
-                        ) implies cm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty()[j]
+                        ) implies cm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx))[j]
                         == cm[j] by {}
                     pstep_env_weaken(
-                        crate::expr_arena_bridge::EnvSpec::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                         cm,
                         to_model(majw0),
                         to_model(c),
@@ -872,7 +872,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
         nlbv(to_model(result)) <= 0,
 {
     let ghost cm = env_model_nofv(*env);
-    let ghost mt = crate::expr_arena_bridge::EnvSpec::empty();
+    let ghost mt = crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx));
     proof {
         pstep_star_refl(cm, to_model(e));
     }
@@ -893,7 +893,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
             memo.wf(),
             memo.spec_env() == *env,
             cm == env_model_nofv(*env),
-            mt == crate::expr_arena_bridge::EnvSpec::empty(),
+            mt == crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
             nlbv(to_model(cur)) <= 0,
             pstep_star(cm, to_model(e), to_model(cur)),
     {
@@ -1201,7 +1201,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
         spine_destruct_app(fm, args2);
         assert(spine_head(sp) == fm);
         assert(spine_args(sp) =~= args2);
-        assert(nat_fold_ready(sp));
+        assert(nat_fold_ready(crate::util_model::export_id(*ctx), sp));
         // the folded literal is r
         if op == 7 || op == 8 {
             is_const_shape_model(r);
@@ -1211,7 +1211,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
         } else {
             is_nat_lit_shape_model(r);
         }
-        assert(nat_fold_result(sp) == to_model(r));
+        assert(nat_fold_result(crate::util_model::export_id(*ctx), sp) == to_model(r));
         // one parallel fold step
         assert(pstep(cm, inner, inner));
         assert(pstep(cm, to_model(vy), to_model(vy)));
@@ -1225,7 +1225,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
         );
         pstep_star_one(cm, sp, to_model(r));
         pstep_star_trans(cm, to_model(e), sp, to_model(r));
-        nat_fold_result_bounds(sp, 0, 0, 0);
+        nat_fold_result_bounds(crate::util_model::export_id(*ctx), sp, 0, 0, 0);
     }
     Some(r)
 }
@@ -1253,7 +1253,7 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
         match result {
             Some((r, b)) => pstep_star(env_model_nofv(*env), to_model(v), to_model(r)) && nlbv(
                 to_model(r),
-            ) <= 0 && nat_value(to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
+            ) <= 0 && nat_value(crate::util_model::export_id(*final(ctx)), to_model(r)) == Some(crate::nat_lit_model::to_nat(b)),
             None => true,
         },
 {
@@ -1284,7 +1284,7 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
         Some(p) => {
             let ghost fun = choose|fun: ExprPtr<'t>|
                 to_model(w) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-                    && is_const_shape(fun) && const_id(fun) == nat_succ_id();
+                    && is_const_shape(fun) && const_id(fun) == nat_succ_id(crate::util_model::export_id(*ctx));
             proof {
                 assert(nlbv(to_model(p)) <= nlbv(to_model(w)));
             }
@@ -1304,13 +1304,13 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
                         is_const_shape_model(fun);
                         const_levels_vec_model(fun);
                         assert(to_model(fun) == ExprSpec::Const(
-                            nat_succ_id(),
+                            nat_succ_id(crate::util_model::export_id(*ctx)),
                             const_levels_vec(fun),
                         ));
                         assert(const_levels_vec(fun).len() == 0);
                         pstep_star_app_arg_congr(cm, to_model(f_exec), to_model(p), to_model(rp));
                         pstep_star_trans(cm, to_model(v), to_model(w), to_model(r));
-                        assert(nat_value(to_model(r)) == Some(
+                        assert(nat_value(crate::util_model::export_id(*ctx), to_model(r)) == Some(
                             crate::nat_lit_model::to_nat(bp) + 1,
                         ));
                     }
@@ -2354,21 +2354,23 @@ pub open spec fn deq_any(env: EnvSpec, x: ExprSpec, y: ExprSpec) -> bool {
 /// `Nat` predecessors whose sub-verdict carries `deq_full_claim`, with
 /// the whole-term `deq_any` lift available whenever that sub-claim's
 /// `deq` disjunct holds. `open`, purely notational.
-pub open spec fn nat_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
-    (nat_repr_is_zero(x) && nat_repr_is_zero(y) && (forall|env: EnvSpec|
+pub open spec fn nat_found_claim<'t>(export: nat, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
+    // over every environment of this export file: which names are `Nat.zero`
+    // and `Nat.succ` depends on it
+    (nat_repr_is_zero(export, x) && nat_repr_is_zero(export, y) && (forall|env: EnvSpec|
      #[trigger]
-        full_def_eq(env, x, y)) && (forall|env: EnvSpec| #[trigger]
-        deq_any(env, to_model(x), to_model(y)))) || (is_nat_lit_shape(x) && is_nat_lit_shape(y)
+        full_def_eq(env, x, y) || env.export != export) && (forall|env: EnvSpec| #[trigger]
+        deq_any(env, to_model(x), to_model(y)) || env.export != export)) || (is_nat_lit_shape(x) && is_nat_lit_shape(y)
         && to_model(x) == to_model(y) && (forall|env: EnvSpec| #[trigger]
         deq_any(env, to_model(x), to_model(y)))) || (exists|xp: ExprPtr<'t>, yp: ExprPtr<'t>|
-        nat_repr_pred(x, xp) && nat_repr_pred(y, yp) && def_eq_witness(xp, yp) && deq_full_claim(
+        nat_repr_pred(export, x, xp) && nat_repr_pred(export, y, yp) && def_eq_witness(xp, yp) && deq_full_claim(
             xp,
             yp,
         ) && ((forall|env: EnvSpec| #[trigger]
-            deq_any(env, to_model(xp), to_model(yp))) ==> (forall|
+            deq_any(env, to_model(xp), to_model(yp)) || env.export != export) ==> (forall|
             env: EnvSpec,
         | #[trigger]
-            deq_any(env, to_model(x), to_model(y)))))
+            deq_any(env, to_model(x), to_model(y)) || env.export != export)))
 }
 
 /// The claim `verified_try_eq_const_app`'s `Some(true)` makes, NAMED for
@@ -2409,29 +2411,29 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(
     p: ExprPtr<'t>,
 )
     requires
-        nat_repr_pred(e, p),
+        nat_repr_pred(env.export, e, p),
     ensures
         deq_any(
             env,
             to_model(e),
-            ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id())), Box::new(to_model(p))),
+            ExprSpec::App(Box::new(const_expr_no_levels(nat_succ_id(env.export))), Box::new(to_model(p))),
         ),
 {
     let target = ExprSpec::App(
-        Box::new(const_expr_no_levels(nat_succ_id())),
+        Box::new(const_expr_no_levels(nat_succ_id(env.export))),
         Box::new(to_model(p)),
     );
     if exists|fun: ExprPtr<'t>|
         to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-            && is_const_shape(fun) && const_id(fun) == nat_succ_id() && const_levels_vec(fun).len() == 0 {
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id(env.export) && const_levels_vec(fun).len() == 0 {
         let fun = choose|fun: ExprPtr<'t>|
             to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-                && is_const_shape(fun) && const_id(fun) == nat_succ_id() && const_levels_vec(fun).len() == 0;
+                && is_const_shape(fun) && const_id(fun) == nat_succ_id(env.export) && const_levels_vec(fun).len() == 0;
         const_levels_vec_model(fun);
         is_const_shape_model(fun);
         assert(const_levels_vec(fun).len() == 0);
         assert(to_model(fun) == ExprSpec::Const(const_id(fun), const_levels_vec(fun)));
-        const_expr_no_levels_canonical(to_model(fun), nat_succ_id());
+        const_expr_no_levels_canonical(to_model(fun), nat_succ_id(env.export));
         assert(to_model(e) == target);
         deq_any_refl(env, to_model(e));
     } else {
@@ -3253,11 +3255,11 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
-        ExprSpec::Const(cid, _) => cid == nat_type_id(),
+        ExprSpec::Const(cid, _) => cid == nat_type_id(denv.export),
         _ => false,
     })
     ||| (matches!(e, ExprSpec::StringLit(_)) && match t {
-        ExprSpec::Const(cid, _) => cid == string_type_id(),
+        ExprSpec::Const(cid, _) => cid == string_type_id(denv.export),
         _ => false,
     })
     ||| (fuel > 0 && match e {
@@ -3371,7 +3373,7 @@ pub proof fn types_to_nat_lit(
         matches!(e, ExprSpec::NatLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
         (match t {
-            ExprSpec::Const(cid, _) => cid == nat_type_id(),
+            ExprSpec::Const(cid, _) => cid == nat_type_id(denv.export),
             _ => false,
         }),
     ensures
@@ -3392,7 +3394,7 @@ pub proof fn types_to_string_lit(
         matches!(e, ExprSpec::StringLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
         (match t {
-            ExprSpec::Const(cid, _) => cid == string_type_id(),
+            ExprSpec::Const(cid, _) => cid == string_type_id(denv.export),
             _ => false,
         }),
     ensures
@@ -4728,9 +4730,9 @@ pub open spec fn fresh_marker(k: u32) -> bool {
 /// `deq_eta` does, not as a reduction rule (`pstep` has no case for it and
 /// the confluence family is untouched). Disclosed trust of the same
 /// character as the constructor/recursor data bridges.
-pub open spec fn quot_mk_spine(e: ExprSpec) -> bool {
+pub open spec fn quot_mk_spine(export: nat, e: ExprSpec) -> bool {
     match spine_head(e) {
-        ExprSpec::Const(id, _) => quot_kind_of(id) == Some(2u8) && spine_args(e).len() == 3,
+        ExprSpec::Const(id, _) => quot_kind_of(export, id) == Some(2u8) && spine_args(e).len() == 3,
         _ => false,
     }
 }
@@ -4738,9 +4740,9 @@ pub open spec fn quot_mk_spine(e: ExprSpec) -> bool {
 /// Index of the major premise (the `Quot.mk` argument) and of the first
 /// trailing argument: `Quot.lift` takes `{A} {r} {B} f h q`, `Quot.ind`
 /// takes `{A} {r} {B} p q`; both take the function at index 3.
-pub open spec fn quot_major_idx(s: ExprSpec) -> Option<nat> {
+pub open spec fn quot_major_idx(export: nat, s: ExprSpec) -> Option<nat> {
     match spine_head(s) {
-        ExprSpec::Const(id, _) => match quot_kind_of(id) {
+        ExprSpec::Const(id, _) => match quot_kind_of(export, id) {
             Some(0u8) => Some(5nat),
             Some(1u8) => Some(4nat),
             _ => None,
@@ -4749,26 +4751,26 @@ pub open spec fn quot_major_idx(s: ExprSpec) -> Option<nat> {
     }
 }
 
-pub open spec fn quot_ready(s: ExprSpec) -> bool {
-    match quot_major_idx(s) {
+pub open spec fn quot_ready(export: nat, s: ExprSpec) -> bool {
+    match quot_major_idx(export, s) {
         Some(qi) => {
             let args = spine_args(s);
-            args.len() > qi && quot_mk_spine(args[qi as int])
+            args.len() > qi && quot_mk_spine(export, args[qi as int])
         },
         None => false,
     }
 }
 
-pub open spec fn quot_result(s: ExprSpec) -> ExprSpec {
+pub open spec fn quot_result(export: nat, s: ExprSpec) -> ExprSpec {
     let args = spine_args(s);
-    let qi = quot_major_idx(s)->Some_0;
+    let qi = quot_major_idx(export, s)->Some_0;
     let a = spine_args(args[qi as int])[2];
     spine_app(ExprSpec::App(Box::new(args[3int]), Box::new(a)), args.skip(qi as int + 1))
 }
 
 /// The symmetric leaf, shaped like `deq_eta`.
-pub open spec fn deq_quot(x: ExprSpec, y: ExprSpec) -> bool {
-    (quot_ready(x) && y == quot_result(x)) || (quot_ready(y) && x == quot_result(y))
+pub open spec fn deq_quot(export: nat, x: ExprSpec, y: ExprSpec) -> bool {
+    (quot_ready(export, x) && y == quot_result(export, x)) || (quot_ready(export, y) && x == quot_result(export, y))
 }
 
 /// The recursor leaf, uncapped: a recursor applied to a constructor spine in
@@ -4784,6 +4786,7 @@ pub open spec fn deq_rec(denv: EnvSpec, x: ExprSpec, y: ExprSpec) -> bool {
 /// whose single query exceeded the resource limit with this inline.
 #[verifier::spinoff_prover]
 pub proof fn deq_quot_intro(
+    export: nat,
     head_m: ExprSpec,
     args2: Seq<ExprSpec>,
     qi: nat,
@@ -4793,11 +4796,11 @@ pub proof fn deq_quot_intro(
 )
     requires
         matches!(head_m, ExprSpec::Const(_, _)),
-        quot_major_idx(spine_app(head_m, args2)) == Some(qi),
+        quot_major_idx(export, spine_app(head_m, args2)) == Some(qi),
         args2.len() > qi,
         qi >= 4,
         matches!(mk_head, ExprSpec::Const(_, _)),
-        quot_kind_of(mk_head->Const_0) == Some(2u8),
+        quot_kind_of(export, mk_head->Const_0) == Some(2u8),
         args2[qi as int] == spine_app(mk_head, mk_args),
         mk_args.len() == 3,
         r == spine_app(
@@ -4805,7 +4808,7 @@ pub proof fn deq_quot_intro(
             args2.skip(qi as int + 1),
         ),
     ensures
-        deq_quot(spine_app(head_m, args2), r),
+        deq_quot(export, spine_app(head_m, args2), r),
 {
     let sp = spine_app(head_m, args2);
     spine_destruct_app(head_m, args2);
@@ -4814,10 +4817,10 @@ pub proof fn deq_quot_intro(
     spine_destruct_app(mk_head, mk_args);
     assert(spine_head(args2[qi as int]) == mk_head);
     assert(spine_args(args2[qi as int]) =~= mk_args);
-    assert(quot_mk_spine(args2[qi as int]));
-    assert(quot_ready(sp));
+    assert(quot_mk_spine(export, args2[qi as int]));
+    assert(quot_ready(export, sp));
     assert(spine_args(args2[qi as int])[2] == mk_args[2int]);
-    assert(quot_result(sp) == r);
+    assert(quot_result(export, sp) == r);
 }
 
 pub open spec fn deq_c(
@@ -4831,7 +4834,7 @@ pub open spec fn deq_c(
     ||| defeq(env, x, y)
     ||| deq_leaf(x, y)
     ||| deq_eta(x, y)
-    ||| deq_quot(x, y)
+    ||| deq_quot(env.export, x, y)
     ||| deq_rec(env, x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_c(env, *f1, *f2, (h - 1) as nat)
@@ -4909,7 +4912,7 @@ pub proof fn deq_c_mono(
         deq_c(env, x, y, h2),
     decreases h1, 0int,
 {
-    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) || deq_rec(env, x, y) {
+    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(env.export, x, y) || deq_rec(env, x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -5013,8 +5016,8 @@ pub proof fn deq_c_symm(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
         assert(deq_leaf(y, x));
     } else if deq_eta(x, y) {
         assert(deq_eta(y, x));
-    } else if deq_quot(x, y) {
-        assert(deq_quot(y, x));
+    } else if deq_quot(env.export, x, y) {
+        assert(deq_quot(env.export, y, x));
     } else if deq_rec(env, x, y) {
         assert(deq_rec(env, y, x));
     } else {
@@ -5140,7 +5143,7 @@ pub proof fn deq_of_leaf(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
 /// Constructor lemma: an eta pair is `deq` at any height.
 pub proof fn deq_of_quot(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
-        deq_quot(x, y),
+        deq_quot(env.export, x, y),
     ensures
         deq(env, x, y, h),
 {
@@ -5159,7 +5162,7 @@ pub proof fn deq_of_rec(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
 
 pub proof fn deq_any_of_quot(env: EnvSpec, x: ExprSpec, y: ExprSpec)
     requires
-        deq_quot(x, y),
+        deq_quot(env.export, x, y),
     ensures
         deq_any(env, x, y),
 {
@@ -7469,23 +7472,23 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(
     e: ExprPtr<'t>,
 )
     requires
-        nat_repr_is_zero(e),
+        nat_repr_is_zero(env.export, e),
     ensures
-        pstep_star(env, to_model(e), const_expr_no_levels(nat_zero_id())),
+        pstep_star(env, to_model(e), const_expr_no_levels(nat_zero_id(env.export))),
 {
     if is_nat_lit_shape(e) && nat_lit_value(e) == 0 {
         is_nat_lit_shape_model(e);
         assert(to_model(e) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(e)))));
-        assert(pstep(env, to_model(e), const_expr_no_levels(nat_zero_id())));
-        pstep_star_one(env, to_model(e), const_expr_no_levels(nat_zero_id()));
+        assert(pstep(env, to_model(e), const_expr_no_levels(nat_zero_id(env.export))));
+        pstep_star_one(env, to_model(e), const_expr_no_levels(nat_zero_id(env.export)));
     } else {
         assert(is_const_shape(e));
-        assert(const_id(e) == nat_zero_id());
+        assert(const_id(e) == nat_zero_id(env.export));
         is_const_shape_model(e);
         const_levels_vec_model(e);
         assert(const_levels_vec(e).len() == 0);
         assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-        const_expr_no_levels_canonical(to_model(e), nat_zero_id());
+        const_expr_no_levels_canonical(to_model(e), nat_zero_id(env.export));
         pstep_star_refl(env, to_model(e));
     }
 }
@@ -7513,7 +7516,7 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
-            Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
+            Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(crate::util_model::export_id(*final(ctx)), x, y),
             _ => true,
         },
 {
@@ -7978,25 +7981,30 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
-            Some(true) => nat_found_claim(x, y),
+            Some(true) => nat_found_claim(crate::util_model::export_id(*final(ctx)), x, y),
             _ => true,
         },
     decreases fuel,
 {
     if ctx.is_nat_zero(x) && ctx.is_nat_zero(y) {
         proof {
+            let ghost ex = crate::util_model::export_id(*ctx);
             assert forall|env: EnvSpec| #[trigger]
-                full_def_eq(env, x, y) by {
-                nat_repr_is_zero_reaches_canonical(env, x);
-                nat_repr_is_zero_reaches_canonical(env, y);
-                assert(defeq(env, to_model(x), to_model(y)));
+                full_def_eq(env, x, y) || env.export != ex by {
+                if env.export == ex {
+                    nat_repr_is_zero_reaches_canonical(env, x);
+                    nat_repr_is_zero_reaches_canonical(env, y);
+                    assert(defeq(env, to_model(x), to_model(y)));
+                }
             }
             assert forall|env: EnvSpec| #[trigger]
-                deq_any(env, to_model(x), to_model(y)) by {
-                nat_repr_is_zero_reaches_canonical(env, x);
-                nat_repr_is_zero_reaches_canonical(env, y);
-                assert(defeq(env, to_model(x), to_model(y)));
-                deq_any_of_defeq(env, to_model(x), to_model(y));
+                deq_any(env, to_model(x), to_model(y)) || env.export != ex by {
+                if env.export == ex {
+                    nat_repr_is_zero_reaches_canonical(env, x);
+                    nat_repr_is_zero_reaches_canonical(env, y);
+                    assert(defeq(env, to_model(x), to_model(y)));
+                    deq_any_of_defeq(env, to_model(x), to_model(y));
+                }
             }
         }
         return Some(true);
@@ -8035,13 +8043,15 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
             let r = verified_def_eq(ctx, xp, yp, fuel - 1);
             proof {
                 if r == Some(true) {
+                    let ex = crate::util_model::export_id(*ctx);
                     if forall|env: EnvSpec| #[trigger]
-                        deq_any(env, to_model(xp), to_model(yp)) {
+                        deq_any(env, to_model(xp), to_model(yp)) || env.export != ex {
                         // Lift through the canonical successor application:
                         // x ~ App(succ, xp) ~ App(succ, yp) ~ y.
                         assert forall|env: EnvSpec| #[trigger]
-                            deq_any(env, to_model(x), to_model(y)) by {
-                            let sc = const_expr_no_levels(nat_succ_id());
+                            deq_any(env, to_model(x), to_model(y)) || env.export != ex by {
+                          if env.export == ex {
+                            let sc = const_expr_no_levels(nat_succ_id(ex));
                             let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
                             let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
                             nat_repr_pred_reaches_succ_app(env, x, xp);
@@ -8052,6 +8062,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
                             deq_any_trans(env, to_model(x), ax, ay);
                             deq_any_symm(env, to_model(y), ay);
                             deq_any_trans(env, to_model(x), ay, to_model(y));
+                          }
                         }
                     }
                 }
@@ -8302,7 +8313,7 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => {
-                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e), to_model(r))
+                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))), to_model(e), to_model(r))
                 &&& r != e
                 &&& nlbv(to_model(r)) <= 0
                 &&& max_var_below(to_model(r), bound + d * d * d + d * d)

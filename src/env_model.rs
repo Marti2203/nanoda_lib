@@ -297,6 +297,7 @@ pub uninterp spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq
 /// reads it below.
 pub open spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
     EnvSpec {
+        export: env_arena_ids(env).1,
         defs: to_model_of_defs(env),
         recs: to_model_of_recursors(env),
         ctor_np: to_model_of_ctor_num_params(env),
@@ -424,11 +425,19 @@ pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
 /// inference needed and the fuel-free one does not. `!has_fv` is the real
 /// condition: a definition whose value mentions a free variable cannot be
 /// substituted into an arbitrary context.
+/// Only the definitions are restricted, and only that part is opaque: the
+/// tables and the export are the environment's own, visible everywhere.
 #[verifier::opaque]
+pub open spec fn nofv_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    let m = to_model_of_env(env);
+    m.defs.restrict(m.defs.dom().filter(|id: u64| !has_fv(m.defs[id].1)))
+}
+
 pub open spec fn env_model_nofv<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
     let m = to_model_of_env(env);
     EnvSpec {
-        defs: m.defs.restrict(m.defs.dom().filter(|id: u64| !has_fv(m.defs[id].1))),
+        export: m.export,
+        defs: nofv_defs(env),
         recs: m.recs,
         ctor_np: m.ctor_np,
         struct_ctor: m.struct_ctor,
@@ -445,7 +454,7 @@ pub proof fn env_model_nofv_has<'x, 'a>(env: Env<'x, 'a>, id: u64)
         env_model_nofv(env).contains_key(id),
         env_model_nofv(env)[id] == to_model_of_env(env)[id],
 {
-    reveal(env_model_nofv);
+    reveal(nofv_defs);
 }
 
 /// The uncapped model is a sub-map of the full model (for `pstep_star_env_weaken`).
@@ -459,8 +468,9 @@ pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
         env_model_nofv(env).ctor_np == to_model_of_env(env).ctor_np,
         env_model_nofv(env).struct_ctor == to_model_of_env(env).struct_ctor,
         env_model_nofv(env).ctor_nf == to_model_of_env(env).ctor_nf,
+        env_model_nofv(env).export == to_model_of_env(env).export,
 {
-    reveal(env_model_nofv);
+    reveal(nofv_defs);
 }
 
 #[verifier::external_body]

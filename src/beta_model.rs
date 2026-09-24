@@ -310,8 +310,8 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
             // `fold_reduct` is the marker trigger.
             ||| (exists|f2: ExprSpec, a2: ExprSpec|
                 (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
-                    && nat_fold_ready(ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
-                    == nat_fold_result(ExprSpec::App(Box::new(f2), Box::new(a2))))
+                    && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
+                    == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))))
         },
         ExprSpec::Bind(t, b) => {
             exists|t2: ExprSpec, b2: ExprSpec|
@@ -364,10 +364,10 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
         // rather than a relation -- needed so `pstep_diamond` can conclude
         // two independent steps out of the same `NatLit` are equal.
         ExprSpec::NatLit(n) => if n.0@ == 0 {
-            e2 == const_expr_no_levels(nat_zero_id())
+            e2 == const_expr_no_levels(nat_zero_id(env.export))
         } else {
             e2 == ExprSpec::App(
-                Box::new(const_expr_no_levels(nat_succ_id())),
+                Box::new(const_expr_no_levels(nat_succ_id(env.export))),
                 Box::new(ExprSpec::NatLit(NatLitPayload(Ghost((n.0@ - 1) as nat)))),
             )
         },
@@ -520,19 +520,19 @@ pub open spec fn rec_prefix(rd: RecDataSpec) -> nat {
 /// `None` for everything else. Constant levels are required empty (both
 /// constructors are universe-monomorphic; `pstep`'s own `NatLit`
 /// expansion emits exactly `const_expr_no_levels`).
-pub open spec fn nat_value(e: ExprSpec) -> Option<nat>
+pub open spec fn nat_value(export: nat, e: ExprSpec) -> Option<nat>
     decreases e,
 {
     match e {
         ExprSpec::NatLit(n) => Some(n.0@),
-        ExprSpec::Const(id, ls) => if id == nat_zero_id() && ls.len() == 0 {
+        ExprSpec::Const(id, ls) => if id == nat_zero_id(export) && ls.len() == 0 {
             Some(0)
         } else {
             None
         },
         ExprSpec::App(f, a) => match *f {
-            ExprSpec::Const(id, ls) => if id == nat_succ_id() && ls.len() == 0 {
-                match nat_value(*a) {
+            ExprSpec::Const(id, ls) => if id == nat_succ_id(export) && ls.len() == 0 {
+                match nat_value(export, *a) {
                     Some(v) => Some(v + 1),
                     None => None,
                 }
@@ -662,12 +662,12 @@ pub open spec fn nat_bin_op_eval(op: u8, a: nat, b: nat) -> nat {
 /// constant (empty levels) applied to EXACTLY two arguments whose numeral
 /// values are both defined. Mirrors `try_reduce_nat`'s `(Const, [arg1,
 /// arg2])` match after `do_nat_bin` has whnf'd both operands.
-pub open spec fn nat_fold_ready(s: ExprSpec) -> bool {
+pub open spec fn nat_fold_ready(export: nat, s: ExprSpec) -> bool {
     match spine_head(s) {
-        ExprSpec::Const(oid, lv) => match nat_bin_op_of(oid) {
+        ExprSpec::Const(oid, lv) => match nat_bin_op_of(export, oid) {
             Some(op) => {
                 let args = spine_args(s);
-                lv.len() == 0 && args.len() == 2 && nat_value(args[0]) is Some && nat_value(
+                lv.len() == 0 && args.len() == 2 && nat_value(export, args[0]) is Some && nat_value(export, 
                     args[1],
                 ) is Some
             },
@@ -680,12 +680,12 @@ pub open spec fn nat_fold_ready(s: ExprSpec) -> bool {
 /// The folded literal when `nat_fold_ready` (garbage otherwise): a
 /// `NatLit` of the op's value, or `Bool.true`/`Bool.false` (canonical
 /// empty-levels constants) for `beq`/`ble`.
-pub open spec fn nat_fold_result(s: ExprSpec) -> ExprSpec {
+pub open spec fn nat_fold_result(export: nat, s: ExprSpec) -> ExprSpec {
     let args = spine_args(s);
-    let a = nat_value(args[0])->Some_0;
-    let b = nat_value(args[1])->Some_0;
+    let a = nat_value(export, args[0])->Some_0;
+    let b = nat_value(export, args[1])->Some_0;
     let op = match spine_head(s) {
-        ExprSpec::Const(oid, lv) => match nat_bin_op_of(oid) {
+        ExprSpec::Const(oid, lv) => match nat_bin_op_of(export, oid) {
             Some(op) => op,
             None => 255u8,
         },
@@ -693,15 +693,15 @@ pub open spec fn nat_fold_result(s: ExprSpec) -> ExprSpec {
     };
     if op == 7 {
         if a == b {
-            const_expr_no_levels(bool_true_id())
+            const_expr_no_levels(bool_true_id(export))
         } else {
-            const_expr_no_levels(bool_false_id())
+            const_expr_no_levels(bool_false_id(export))
         }
     } else if op == 8 {
         if a <= b {
-            const_expr_no_levels(bool_true_id())
+            const_expr_no_levels(bool_true_id(export))
         } else {
-            const_expr_no_levels(bool_false_id())
+            const_expr_no_levels(bool_false_id(export))
         }
     } else {
         ExprSpec::NatLit(NatLitPayload(Ghost(nat_bin_op_eval(op, a, b))))
@@ -1367,7 +1367,7 @@ pub open spec fn pstep_fold(
 ) -> bool {
     exists|f2: ExprSpec, a2: ExprSpec|
         (#[trigger] fold_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
-            && nat_fold_ready(ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(
+            && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
         )
 }
@@ -1383,14 +1383,14 @@ pub proof fn pstep_fold_destruct(
     ensures
         ({
             let (f2, a2) = r;
-            pstep(env, f, f2) && pstep(env, a, a2) && nat_fold_ready(
+            pstep(env, f, f2) && pstep(env, a, a2) && nat_fold_ready(env.export, 
                 ExprSpec::App(Box::new(f2), Box::new(a2)),
-            ) && e2 == nat_fold_result(ExprSpec::App(Box::new(f2), Box::new(a2)))
+            ) && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
         }),
 {
     let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
         (#[trigger] fold_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
-            && nat_fold_ready(ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(
+            && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
         );
     (f2, a2)
@@ -1407,47 +1407,47 @@ pub proof fn pstep_fold_intro(
     requires
         pstep(env, *f, f2),
         pstep(env, *a, a2),
-        nat_fold_ready(ExprSpec::App(Box::new(f2), Box::new(a2))),
-        e2 == nat_fold_result(ExprSpec::App(Box::new(f2), Box::new(a2))),
+        nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
+        e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
     ensures
         pstep(env, ExprSpec::App(f, a), e2),
 {
     assert(fold_reduct(f2, a2));
-    assert(fold_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && nat_fold_ready(
+    assert(fold_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && nat_fold_ready(env.export, 
         ExprSpec::App(Box::new(f2), Box::new(a2)),
-    ) && e2 == nat_fold_result(ExprSpec::App(Box::new(f2), Box::new(a2))));
+    ) && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))));
 }
 
 /// Leaf facts about the folded literal, in every predicate the cascade
 /// lemmas need (depth 0, size 1, closed, no strings, no escaping refs).
-pub proof fn nat_fold_result_bounds(s: ExprSpec, bound: nat, cap: nat, k: nat)
+pub proof fn nat_fold_result_bounds(export: nat, s: ExprSpec, bound: nat, cap: nat, k: nat)
     ensures
-        depth(nat_fold_result(s)) == 0,
-        size(nat_fold_result(s)) == 1,
-        nlbv(nat_fold_result(s)) == 0,
-        !has_fv(nat_fold_result(s)),
-        max_var_below(nat_fold_result(s), bound),
-        string_lits_ok(nat_fold_result(s), cap),
-        !has_escaping_ref(nat_fold_result(s), k),
-        string_free(nat_fold_result(s)),
+        depth(nat_fold_result(export, s)) == 0,
+        size(nat_fold_result(export, s)) == 1,
+        nlbv(nat_fold_result(export, s)) == 0,
+        !has_fv(nat_fold_result(export, s)),
+        max_var_below(nat_fold_result(export, s), bound),
+        string_lits_ok(nat_fold_result(export, s), cap),
+        !has_escaping_ref(nat_fold_result(export, s), k),
+        string_free(nat_fold_result(export, s)),
 {
-    nat_fold_result_leaf(s);
+    nat_fold_result_leaf(export, s);
 }
 
 /// A folded literal is a closed leaf: `NatLit` or an empty-levels `Bool`
 /// constant. Everything downstream (shift/subst/abstr invariance, bounds,
 /// string/escaping preservation) follows from this one shape fact.
-pub proof fn nat_fold_result_leaf(s: ExprSpec)
+pub proof fn nat_fold_result_leaf(export: nat, s: ExprSpec)
     ensures
-        match nat_fold_result(s) {
+        match nat_fold_result(export, s) {
             ExprSpec::NatLit(_) => true,
-            ExprSpec::Const(id, lv) => lv.len() == 0 && (id == bool_true_id() || id
-                == bool_false_id()),
+            ExprSpec::Const(id, lv) => lv.len() == 0 && (id == bool_true_id(export) || id
+                == bool_false_id(export)),
             _ => false,
         },
 {
-    const_expr_no_levels_shape(bool_true_id());
-    const_expr_no_levels_shape(bool_false_id());
+    const_expr_no_levels_shape(bool_true_id(export));
+    const_expr_no_levels_shape(bool_false_id(export));
 }
 
 /// One argument of a spine steps (many steps) under the spine.

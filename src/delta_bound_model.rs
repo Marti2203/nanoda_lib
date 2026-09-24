@@ -633,7 +633,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
             Some(true) => exists|xi: ExprPtr<'t>, yi: ExprPtr<'t>|
                 pstep_star(to_model_of_env(*env), to_model(x), #[trigger] to_model(xi))
                     && pstep_star(to_model_of_env(*env), to_model(y), #[trigger] to_model(yi)) && (
-                nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat)
+                nat_found_claim(crate::util_model::export_id(*final(ctx)), xi, yi) || const_app_found_claim(xi, yi, fuel as nat)
                     || deq_core_claim(xi, yi, fuel as nat)),
             _ => true,
         },
@@ -670,7 +670,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
                         cm,
                         to_model(y),
                         to_model(y),
-                    ) && (nat_found_claim(x, y) || const_app_found_claim(x, y, fuel as nat)
+                    ) && (nat_found_claim(crate::util_model::export_id(*ctx), x, y) || const_app_found_claim(x, y, fuel as nat)
                         || deq_core_claim(x, y, fuel as nat)));
                 }
                 proof {
@@ -679,7 +679,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
                             cm,
                             to_model(y),
                             #[trigger] to_model(yi),
-                        ) && (nat_found_claim(xi, yi) || const_app_found_claim(xi, yi, fuel as nat)
+                        ) && (nat_found_claim(crate::util_model::export_id(*ctx), xi, yi) || const_app_found_claim(xi, yi, fuel as nat)
                             || deq_core_claim(xi, yi, fuel as nat));
                     pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(x), to_model(xi));
                     pstep_star_env_weaken(cm, to_model_of_env(*env), to_model(y), to_model(yi));
@@ -708,7 +708,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
                                 cm,
                                 to_model(y),
                                 #[trigger] to_model(yi),
-                            ) && (nat_found_claim(xi, yi) || const_app_found_claim(
+                            ) && (nat_found_claim(crate::util_model::export_id(*ctx), xi, yi) || const_app_found_claim(
                                 xi,
                                 yi,
                                 fuel as nat,
@@ -743,7 +743,7 @@ pub fn verified_lazy_delta_capped<'t, 'p: 't, 'x>(
                                 cm,
                                 to_model(y),
                                 #[trigger] to_model(yi),
-                            ) && (nat_found_claim(xi, yi) || const_app_found_claim(
+                            ) && (nat_found_claim(crate::util_model::export_id(*ctx), xi, yi) || const_app_found_claim(
                                 xi,
                                 yi,
                                 fuel as nat,
@@ -4775,13 +4775,13 @@ pub proof fn nat_succ_pair_deq<'t>(
     yp: ExprPtr<'t>,
 )
     requires
-        nat_repr_pred(x, xp),
-        nat_repr_pred(y, yp),
+        nat_repr_pred(em.export, x, xp),
+        nat_repr_pred(em.export, y, yp),
         deq_any(em, to_model(xp), to_model(yp)),
     ensures
         deq_any(em, to_model(x), to_model(y)),
 {
-    let sc = const_expr_no_levels(nat_succ_id());
+    let sc = const_expr_no_levels(nat_succ_id(em.export));
     let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
     let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
     nat_repr_pred_reaches_succ_app(em, x, xp);
@@ -6709,7 +6709,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(
         let sp = spine_app(to_model(head), args2_model);
         assert(args2_model[qi as int] == to_model(mw));
         assert(to_model(mw) == spine_app(to_model(mkhead), mkargs_model));
-        assert(quot_major_idx(sp) == Some(qi as nat)) by {
+        assert(quot_major_idx(crate::util_model::export_id(*ctx), sp) == Some(qi as nat)) by {
             spine_destruct_app(to_model(head), args2_model);
         }
         assert(args2_model[3int] == to_model(f));
@@ -6718,7 +6718,7 @@ pub fn verified_quot_step<'t, 'p: 't, 'x>(
             ExprSpec::App(Box::new(args2_model[3int]), Box::new(mkargs_model[2int])),
             args2_model.skip(qi as int + 1),
         ));
-        deq_quot_intro(
+        deq_quot_intro(crate::util_model::export_id(*ctx), 
             to_model(head),
             args2_model,
             qi as nat,
@@ -7111,7 +7111,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
     if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
         if let Some(true) = verified_conv_p(ctx, env, memo, xp, yp, fuel, budget - 1) {
             proof {
-                let sc = const_expr_no_levels(nat_succ_id());
+                let sc = const_expr_no_levels(nat_succ_id(crate::util_model::export_id(*ctx)));
                 let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
                 let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
                 nat_repr_pred_reaches_succ_app(em, x, xp);
@@ -7306,7 +7306,7 @@ pub fn verified_delta_free<'t, 'p: 't, 'x>(
     match verified_unfold_def_step_free(ctx, env, e, fuel) {
         Some(unfolded) => {
             let ghost cm = env_model_nofv(*env);
-            let ghost mt = crate::expr_arena_bridge::EnvSpec::empty();
+            let ghost mt = crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx));
             let sz = match verified_size(ctx, unfolded, 100000) {
                 Some(v) => v,
                 None => return Some(unfolded),
@@ -7360,7 +7360,7 @@ pub fn verified_try_unfold_proj_app_measured<'t, 'p: 't>(
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => {
-                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e), to_model(r))
+                &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))), to_model(e), to_model(r))
                 &&& r != e
                 &&& nlbv(to_model(r)) <= 0
             },
@@ -7415,7 +7415,7 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 &&& nlbv(to_model(y2)) <= 0
             },
             Some(DeltaRoundResult::Exhausted(x2, y2)) => x2 == x && y2 == y,
-            Some(DeltaRoundResult::Found(b)) => b ==> nat_found_claim(x, y)
+            Some(DeltaRoundResult::Found(b)) => b ==> nat_found_claim(crate::util_model::export_id(*final(ctx)), x, y)
                 || const_app_found_claim(x, y, fuel as nat),
             _ => true,
         },
@@ -7468,14 +7468,14 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(yprime) => {
                     proof {
                         assert forall|k: u64| #[trigger]
-                            crate::expr_arena_bridge::EnvSpec::empty().contains_key(
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)).contains_key(
                                 k,
                             ) implies env_model_nofv(*env).contains_key(k) && Map::<
                             u64,
                             (Seq<u64>, ExprSpec),
                         >::empty()[k] == env_model_nofv(*env)[k] by {}
                         pstep_star_env_weaken(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             env_model_nofv(*env),
                             to_model(y),
                             to_model(yprime),
@@ -7497,14 +7497,14 @@ pub fn verified_lazy_delta_round_capped<'t, 'p: 't, 'x>(
                 Some(xprime) => {
                     proof {
                         assert forall|k: u64| #[trigger]
-                            crate::expr_arena_bridge::EnvSpec::empty().contains_key(
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)).contains_key(
                                 k,
                             ) implies env_model_nofv(*env).contains_key(k) && Map::<
                             u64,
                             (Seq<u64>, ExprSpec),
                         >::empty()[k] == env_model_nofv(*env)[k] by {}
                         pstep_star_env_weaken(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             env_model_nofv(*env),
                             to_model(x),
                             to_model(xprime),

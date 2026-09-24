@@ -94,3 +94,18 @@ equal key obeys vstd's relativized `keys_obey_model`. The `*_owned_keys` and
 operation in verified code calls one against the table's state at that
 point. The congruence-failure cache carries no claim and no longer asks for
 a key model at all.
+
+## What stage 6 changed
+
+The name-cache ids -- `nat_zero_id`, `nat_succ_id`, `bool_true_id`,
+`bool_false_id`, `nat_type_id`, `string_type_id`, `quot_kind_of`,
+`nat_bin_op_of` -- take the export file's arena id. The name cache's
+invariant ties each cached name to the ids of its OWN arena, so two exports
+no longer force one global value to two indices.
+
+The model reads the export from `EnvSpec.export` (`to_model_of_env` sets it
+from `env_arena_ids`), and the nat-literal and quotient helpers take it as a
+parameter. Delta-free chains are stated under `EnvSpec::empty_at(export)`;
+weakening requires equal exports. `nat_found_claim` quantifies over the
+environments of its export only. `env_model_nofv` is open, with only its
+definitions (`nofv_defs`) opaque, so its export and tables are visible.

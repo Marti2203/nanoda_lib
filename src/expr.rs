@@ -15,7 +15,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*self, name),
         ensures
             match result {
-                Some(kind) => crate::expr_arena_bridge::quot_kind_of(
+                Some(kind) => crate::expr_arena_bridge::quot_kind_of(crate::util_model::export_id(*self), 
                     crate::level_arena_bridge::name_id(name),
                 ) == Some(kind),
                 None => true,
@@ -40,7 +40,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*self, name),
         ensures
             match result {
-                Some(op) => crate::expr_arena_bridge::nat_bin_op_of(
+                Some(op) => crate::expr_arena_bridge::nat_bin_op_of(crate::util_model::export_id(*self), 
                     crate::level_arena_bridge::name_id(name),
                 ) == Some(op),
                 None => true,
@@ -152,7 +152,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::bool_false_id()
+                    == crate::expr_arena_bridge::bool_false_id(crate::util_model::export_id(*final(self)))
                     && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
@@ -175,7 +175,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::bool_true_id()
+                    == crate::expr_arena_bridge::bool_true_id(crate::util_model::export_id(*final(self)))
                     && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
@@ -198,7 +198,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::nat_zero_id()
+                    == crate::expr_arena_bridge::nat_zero_id(crate::util_model::export_id(*final(self)))
                     && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
@@ -221,7 +221,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::nat_succ_id()
+                    == crate::expr_arena_bridge::nat_succ_id(crate::util_model::export_id(*final(self)))
                     && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
@@ -244,7 +244,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::nat_type_id(),
+                    == crate::expr_arena_bridge::nat_type_id(crate::util_model::export_id(*final(self))),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -266,7 +266,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::string_type_id(),
+                    == crate::expr_arena_bridge::string_type_id(crate::util_model::export_id(*final(self))),
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -646,7 +646,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
-                Some(b) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e))
+                Some(b) => crate::beta_model::nat_value(crate::util_model::export_id(*final(self)), crate::expr_arena_bridge::to_model(e))
                     == Some(crate::nat_lit_model::to_nat(b)),
                 None => true,
             },
@@ -680,9 +680,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == if b {
-                    crate::expr_arena_bridge::bool_true_id()
+                    crate::expr_arena_bridge::bool_true_id(crate::util_model::export_id(*final(self)))
                 } else {
-                    crate::expr_arena_bridge::bool_false_id()
+                    crate::expr_arena_bridge::bool_false_id(crate::util_model::export_id(*final(self)))
                 } && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
@@ -704,11 +704,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
-                Some(r) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) is Some
+                Some(r) => crate::beta_model::nat_value(crate::util_model::export_id(*final(self)), crate::expr_arena_bridge::to_model(e)) is Some
                     && crate::expr_arena_bridge::to_model(r) == crate::expr_model::ExprSpec::NatLit(
                     crate::expr_model::NatLitPayload(
                         Ghost(
-                            crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e))->Some_0
+                            crate::beta_model::nat_value(crate::util_model::export_id(*final(self)), crate::expr_arena_bridge::to_model(e))->Some_0
                                 + 1,
                         ),
                     ),
@@ -758,8 +758,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            result ==> crate::expr_arena_bridge::nat_repr_is_zero(e)
-                && crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) == Some(0nat),
+            result ==> crate::expr_arena_bridge::nat_repr_is_zero(crate::util_model::export_id(*final(self)), e)
+                && crate::beta_model::nat_value(crate::util_model::export_id(*final(self)), crate::expr_arena_bridge::to_model(e)) == Some(0nat),
     {
         match self.read_expr(e) {
             Const { .. } => {
@@ -803,10 +803,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
-                Some(r) => crate::expr_arena_bridge::nat_repr_pred(e, r) && (
+                Some(r) => crate::expr_arena_bridge::nat_repr_pred(crate::util_model::export_id(*final(self)), e, r) && (
                 crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::App(
                     Box::new(crate::expr_model::ExprSpec::Const(
-                        crate::expr_arena_bridge::nat_succ_id(),
+                        crate::expr_arena_bridge::nat_succ_id(crate::util_model::export_id(*final(self))),
                         Seq::empty(),
                     )),
                     Box::new(crate::expr_arena_bridge::to_model(r)),
@@ -863,7 +863,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Some(r) => !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(r))
                     && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(r)) <= 0
                     && crate::beta_model::pstep(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(self))),
                     crate::expr_model::ExprSpec::NatLit(
                         crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                     ),
@@ -896,10 +896,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     assert(crate::expr_arena_bridge::bignum_ptr_value(n) == 0);
                     crate::beta_model::const_expr_no_levels_canonical(
                         crate::expr_arena_bridge::to_model(z),
-                        crate::expr_arena_bridge::nat_zero_id(),
+                        crate::expr_arena_bridge::nat_zero_id(crate::util_model::export_id(*self)),
                     );
                     assert(crate::beta_model::pstep(
-                        crate::expr_arena_bridge::EnvSpec::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*self)),
                         crate::expr_model::ExprSpec::NatLit(
                             crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                         ),
@@ -930,7 +930,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     == (crate::expr_arena_bridge::bignum_ptr_value(n) - 1) as nat);
                 crate::beta_model::const_expr_no_levels_canonical(
                     crate::expr_arena_bridge::to_model(succ_c),
-                    crate::expr_arena_bridge::nat_succ_id(),
+                    crate::expr_arena_bridge::nat_succ_id(crate::util_model::export_id(*self)),
                 );
             }
             let r = self.mk_app(succ_c, pred);
@@ -942,7 +942,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(succ_c)) == 0);
                 assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(pred)) == 0);
                 assert(crate::beta_model::pstep(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*self)),
                     crate::expr_model::ExprSpec::NatLit(
                         crate::expr_model::NatLitPayload(Ghost(crate::expr_arena_bridge::bignum_ptr_value(n))),
                     ),

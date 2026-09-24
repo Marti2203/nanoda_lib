@@ -411,6 +411,11 @@ pub open spec fn arena_ids<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> (nat, nat) 
     (dag_arena(*c.dag), c.export_file.name_cache.arena_id())
 }
 
+/// The context's export file's arena (the second of `arena_ids`).
+pub open spec fn export_id<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> nat {
+    arena_ids(c).1
+}
+
 /// The pointer indexes the context's own dag (bit 31 set), rather than the
 /// export file's.
 pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {

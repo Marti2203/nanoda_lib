@@ -1216,8 +1216,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ym = to_model_expr(y);
             let xwm = to_model_expr(xw);
             let ywm = to_model_expr(yw);
-            assert(crate::beta_model::nat_value(xwm) == Some(a));
-            assert(crate::beta_model::nat_value(ywm) == Some(b));
+            assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(*self.env).export, xwm) == Some(a));
+            assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(*self.env).export, ywm) == Some(b));
             if let Some(rr) = r {
                 // the literal the kernel built IS the model's folded value
                 if code == 7 || code == 8 {
@@ -1231,7 +1231,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 let rm = to_model_expr(rr);
                 assert forall|oid: u64, lv: Seq<crate::level_model::LevelSpec>|
-                    crate::expr_arena_bridge::nat_bin_op_of(oid) == Some(code) && lv.len() == 0
+                    crate::expr_arena_bridge::nat_bin_op_of(crate::env_model::to_model_of_env(*self.env).export, oid) == Some(code) && lv.len() == 0
                     implies #[trigger] whnf_claim(env, ExprSpec::App(Box::new(ExprSpec::App(Box::new(ExprSpec::Const(oid, lv)), Box::new(xm))), Box::new(ym)), rm) by {
                     let h = ExprSpec::Const(oid, lv);
                     let args0 = Seq::<ExprSpec>::empty().push(xm).push(ym);
@@ -1271,8 +1271,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::beta_model::spine_destruct_app(h, args2);
                         assert(crate::beta_model::spine_head(sp) == h);
                         assert(crate::beta_model::spine_args(sp) =~= args2);
-                        assert(crate::beta_model::nat_fold_ready(sp));
-                        assert(crate::beta_model::nat_fold_result(sp) == rm);
+                        assert(crate::beta_model::nat_fold_ready(crate::env_model::to_model_of_env(*self.env).export, sp));
+                        assert(crate::beta_model::nat_fold_result(crate::env_model::to_model_of_env(*self.env).export, sp) == rm);
                         assert(crate::beta_model::pstep(fm, inner, inner));
                         assert(crate::beta_model::pstep(fm, ywm, ywm));
                         crate::beta_model::pstep_fold_intro(
@@ -1289,10 +1289,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         kconv_of_deq(env, sp, rm);
                         kconv_trans(env, s0, sp, rm);
                         crate::beta_model::const_expr_no_levels_shape(
-                            crate::expr_arena_bridge::bool_true_id(),
+                            crate::expr_arena_bridge::bool_true_id(crate::env_model::to_model_of_env(*self.env).export),
                         );
                         crate::beta_model::const_expr_no_levels_shape(
-                            crate::expr_arena_bridge::bool_false_id(),
+                            crate::expr_arena_bridge::bool_false_id(crate::env_model::to_model_of_env(*self.env).export),
                         );
                     }
                 }
@@ -1378,7 +1378,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 // ... whose numeral value is one more than the
                                 // whnf'd argument's, and the result is exactly
                                 // that numeral
-                                assert(crate::beta_model::nat_value(w) is Some);
+                                assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(*self.env).export, w) is Some);
                                 kconv_nat_value(env, w);
                                 kconv_trans(env, em, w, to_model_expr(rr));
                             }
@@ -1420,7 +1420,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         return None
                     };
                     proof {
-                        assert(crate::expr_arena_bridge::nat_bin_op_of(
+                        assert(crate::expr_arena_bridge::nat_bin_op_of(crate::env_model::to_model_of_env(*self.env).export, 
                             crate::level_arena_bridge::name_id(name),
                         ) == Some(nat_op_code(op)));
                     }
@@ -3472,7 +3472,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 nat_pred_kconv(env, x, x_pred);
                 nat_pred_kconv(env, y, y_pred);
                 if r && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
-                    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty());
+                    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(crate::env_model::to_model_of_env(*self.env).export), Seq::empty());
                     let (xp, yp) = (to_model_expr(x_pred), to_model_expr(y_pred));
                     let ax = ExprSpec::App(Box::new(s), Box::new(xp));
                     let ay = ExprSpec::App(Box::new(s), Box::new(yp));
@@ -4559,14 +4559,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // lets the proof name WHICH argument was the major premise.
         let qi: usize = if c_name == self.ctx.export_file.name_cache.quot_lift()? {
             proof {
-                assert(crate::expr_arena_bridge::quot_kind_of(
+                assert(crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(*self.env).export, 
                     crate::level_arena_bridge::name_id(c_name),
                 ) == Some(0u8));
             }
             5
         } else if c_name == self.ctx.export_file.name_cache.quot_ind()? {
             proof {
-                assert(crate::expr_arena_bridge::quot_kind_of(
+                assert(crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(*self.env).export, 
                     crate::level_arena_bridge::name_id(c_name),
                 ) == Some(1u8));
             }
@@ -4582,7 +4582,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Const { name, .. } if name == self.ctx.export_file.name_cache.quot_mk()? && qmk_args.len() == 3 => {
                 proof {
                     // read the name cache HERE, before anything below can touch it
-                    assert(crate::expr_arena_bridge::quot_kind_of(
+                    assert(crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(*self.env).export, 
                         crate::level_arena_bridge::name_id(name),
                     ) == Some(2u8));
                 }
@@ -4622,7 +4622,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::level_arena_bridge::name_id(mk_name),
                 mk_head->Const_1,
             ));
-            assert(crate::expr_arena_bridge::quot_kind_of(
+            assert(crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(*self.env).export, 
                 crate::level_arena_bridge::name_id(mk_name),
             ) == Some(2u8));
             // the reduct
@@ -6009,13 +6009,13 @@ pub proof fn kconv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
 /// induction under congruence.
 pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
     requires
-        crate::beta_model::nat_value(v) is Some,
+        crate::beta_model::nat_value(crate::env_model::to_model_of_env(env).export, v) is Some,
     ensures
         kconv(
             env,
             v,
             ExprSpec::NatLit(
-                crate::expr_model::NatLitPayload(Ghost(crate::beta_model::nat_value(v)->Some_0)),
+                crate::expr_model::NatLitPayload(Ghost(crate::beta_model::nat_value(crate::env_model::to_model_of_env(env).export, v)->Some_0)),
             ),
         ),
     decreases v,
@@ -6027,7 +6027,7 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             kconv_refl(env, v);
         },
         ExprSpec::Const(id, ls) => {
-            crate::beta_model::const_expr_no_levels_canonical(v, crate::expr_arena_bridge::nat_zero_id());
+            crate::beta_model::const_expr_no_levels_canonical(v, crate::expr_arena_bridge::nat_zero_id(crate::env_model::to_model_of_env(env).export));
             let z = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(0nat)));
             assert(crate::beta_model::pstep(fm, z, v));
             crate::beta_model::pstep_star_one(fm, z, v);
@@ -6037,7 +6037,7 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             kconv_symm(env, z, v);
         },
         ExprSpec::App(f, a) => {
-            let m = crate::beta_model::nat_value(*a)->Some_0;
+            let m = crate::beta_model::nat_value(crate::env_model::to_model_of_env(env).export, *a)->Some_0;
             kconv_nat_value(env, *a);
             let lm = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(m)));
             // Nat.succ a ~ Nat.succ (NatLit m), as a one-argument spine
@@ -6052,7 +6052,7 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
             let w = ExprSpec::App(Box::new(*f), Box::new(lm));
             assert(crate::beta_model::spine_app(*f, args1) == w);
             // and NatLit(m + 1) unfolds to exactly that
-            crate::beta_model::const_expr_no_levels_canonical(*f, crate::expr_arena_bridge::nat_succ_id());
+            crate::beta_model::const_expr_no_levels_canonical(*f, crate::expr_arena_bridge::nat_succ_id(crate::env_model::to_model_of_env(env).export));
             let big = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((m + 1) as nat)));
             assert(crate::beta_model::pstep(fm, big, w));
             crate::beta_model::pstep_star_one(fm, big, w);
@@ -6072,7 +6072,7 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
 pub proof fn nat_pred_kconv<'x, 't>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr<'t>)
     requires
         to_model_expr(e) == ExprSpec::App(
-            Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty())),
+            Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(crate::env_model::to_model_of_env(env).export), Seq::empty())),
             Box::new(to_model_expr(r)),
         ) || (crate::expr_arena_bridge::is_nat_lit_shape(e)
             && crate::expr_arena_bridge::nat_lit_value(e) > 0
@@ -6083,21 +6083,21 @@ pub proof fn nat_pred_kconv<'x, 't>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
             env,
             to_model_expr(e),
             ExprSpec::App(
-                Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty())),
+                Box::new(ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(crate::env_model::to_model_of_env(env).export), Seq::empty())),
                 Box::new(to_model_expr(r)),
             ),
         ),
         crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(r)) <= 0,
 {
-    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(), Seq::empty());
+    let s = ExprSpec::Const(crate::expr_arena_bridge::nat_succ_id(crate::env_model::to_model_of_env(env).export), Seq::empty());
     let a = ExprSpec::App(Box::new(s), Box::new(to_model_expr(r)));
     if to_model_expr(e) == a {
         kconv_refl(env, a);
     } else {
         crate::expr_arena_bridge::is_nat_lit_shape_model(e);
         crate::expr_arena_bridge::is_nat_lit_shape_model(r);
-        assert(crate::beta_model::nat_value(to_model_expr(r)) == Some(crate::expr_arena_bridge::nat_lit_value(r)));
-        assert(crate::beta_model::nat_value(a) == Some(crate::expr_arena_bridge::nat_lit_value(e)));
+        assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(env).export, to_model_expr(r)) == Some(crate::expr_arena_bridge::nat_lit_value(r)));
+        assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(env).export, a) == Some(crate::expr_arena_bridge::nat_lit_value(e)));
         kconv_nat_value(env, a);
         kconv_symm(env, a, to_model_expr(e));
     }
@@ -7602,14 +7602,14 @@ pub proof fn walk_set_unique<'t>(
 /// A parallel step with no definitions is a kernel conversion.
 pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
-        crate::beta_model::pstep(crate::expr_arena_bridge::EnvSpec::empty(), x, y),
+        crate::beta_model::pstep(crate::expr_arena_bridge::EnvSpec::empty_at(crate::env_model::to_model_of_env(env).export), x, y),
     ensures
         kconv(env, x, y),
 {
     let fm = crate::env_model::to_model_of_env(env);
-    assert forall|j: u64| #[trigger] crate::expr_arena_bridge::EnvSpec::empty().contains_key(j)
-        implies fm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty()[j] == fm[j] by {}
-    crate::beta_model::pstep_env_weaken(crate::expr_arena_bridge::EnvSpec::empty(), fm, x, y);
+    assert forall|j: u64| #[trigger] crate::expr_arena_bridge::EnvSpec::empty_at(crate::env_model::to_model_of_env(env).export).contains_key(j)
+        implies fm.contains_key(j) && crate::expr_arena_bridge::EnvSpec::empty_at(crate::env_model::to_model_of_env(env).export)[j] == fm[j] by {}
+    crate::beta_model::pstep_env_weaken(crate::expr_arena_bridge::EnvSpec::empty_at(crate::env_model::to_model_of_env(env).export), fm, x, y);
     crate::beta_model::pstep_star_one(fm, x, y);
     crate::beta_model::defeq_of_pstep_star(fm, x, y);
     crate::tc_model::deq_any_of_defeq(fm, x, y);
@@ -8091,12 +8091,12 @@ pub proof fn quot_step_lemma<'x, 't>(
 )
     requires
         4 <= q < am.len(),
-        (q == 5 && crate::expr_arena_bridge::quot_kind_of(id) == Some(0u8)) || (q == 4
-            && crate::expr_arena_bridge::quot_kind_of(id) == Some(1u8)),
+        (q == 5 && crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(env).export, id) == Some(0u8)) || (q == 4
+            && crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(env).export, id) == Some(1u8)),
         whnf_claim(env, am[q], qm),
         qm == crate::beta_model::spine_app(mk_head, mk_args),
         mk_head is Const,
-        crate::expr_arena_bridge::quot_kind_of(mk_head->Const_0) == Some(2u8),
+        crate::expr_arena_bridge::quot_kind_of(crate::env_model::to_model_of_env(env).export, mk_head->Const_0) == Some(2u8),
         mk_args.len() == 3,
         appd == ExprSpec::App(Box::new(am[3]), Box::new(mk_args[2])),
         r == crate::beta_model::spine_app(appd, am.skip(q + 1)),
@@ -8119,7 +8119,7 @@ pub proof fn quot_step_lemma<'x, 't>(
             kconv_spine_update(env, head, am, q, qm);
             // and the replaced spine is a quotient redex -- an untyped step
             crate::beta_model::spine_destruct_app(head, args2);
-            crate::tc_model::deq_quot_intro(head, args2, q as nat, mk_head, mk_args, r);
+            crate::tc_model::deq_quot_intro(crate::env_model::to_model_of_env(env).export, head, args2, q as nat, mk_head, mk_args, r);
             crate::tc_model::deq_any_of_quot(fm, crate::beta_model::spine_app(head, args2), r);
             kconv_of_deq(env, crate::beta_model::spine_app(head, args2), r);
             kconv_trans(env, s0, crate::beta_model::spine_app(head, args2), r);
@@ -8195,7 +8195,7 @@ pub open spec fn nat_bin_claim<'x, 't>(
     rm: ExprSpec,
 ) -> bool {
     forall|oid: u64, lv: Seq<crate::level_model::LevelSpec>|
-        crate::expr_arena_bridge::nat_bin_op_of(oid) == Some(code) && lv.len() == 0 ==>
+        crate::expr_arena_bridge::nat_bin_op_of(crate::env_model::to_model_of_env(env).export, oid) == Some(code) && lv.len() == 0 ==>
         #[trigger] whnf_claim(env, ExprSpec::App(Box::new(ExprSpec::App(Box::new(ExprSpec::Const(oid, lv)), Box::new(xm))), Box::new(ym)), rm)
 }
 

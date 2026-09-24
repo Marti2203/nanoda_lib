@@ -1151,9 +1151,9 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
 /// this codebase already treats identity globally rather than per-`ctx`.
 /// `None` covers the real function's only failure mode (the name isn't
 /// present in this export file's cache at all).
-pub uninterp spec fn bool_true_id() -> u64;
+pub uninterp spec fn bool_true_id(export: nat) -> u64;
 
-pub uninterp spec fn bool_false_id() -> u64;
+pub uninterp spec fn bool_false_id(export: nat) -> u64;
 
 /// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
 /// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
@@ -1174,11 +1174,11 @@ pub uninterp spec fn bool_false_id() -> u64;
 /// 1 `Quot.ind`, 2 `Quot.mk`), tied to the real name cache by the
 /// `quot_kind_code` specification below -- same convention as
 /// `nat_bin_op_of`.
-pub uninterp spec fn quot_kind_of(id: u64) -> Option<u8>;
+pub uninterp spec fn quot_kind_of(export: nat, id: u64) -> Option<u8>;
 
-pub uninterp spec fn nat_zero_id() -> u64;
+pub uninterp spec fn nat_zero_id(export: nat) -> u64;
 
-pub uninterp spec fn nat_succ_id() -> u64;
+pub uninterp spec fn nat_succ_id(export: nat) -> u64;
 
 
 
@@ -1189,7 +1189,7 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// id per export" trust as `nat_zero_id` above.
 /// Op codes: 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq,
 /// 8 ble (`land`/`lor`/`xor`/`shl`/`shr` are NOT modeled: `None`).
-pub uninterp spec fn nat_bin_op_of(id: u64) -> Option<u8>;
+pub uninterp spec fn nat_bin_op_of(export: nat, id: u64) -> Option<u8>;
 
 /// RECURSOR DATA: what `pstep`'s recursor-iota rule needs about a
 /// recursor, read from `EnvSpec::recs`. Rules are keyed by constructor id; `nfields` is the
@@ -1218,6 +1218,9 @@ pub ghost struct RecDataSpec {
 /// things in two environments (a nested inductive's temporary environment
 /// re-declares its recursor), so no table is global.
 pub ghost struct EnvSpec {
+    /// The export file's arena: which name ids are `Nat.zero`, `Bool.true`, ...
+    /// (`nat_zero_id(export)` and the rest) depends on it.
+    pub export: nat,
     pub defs: Map<u64, (Seq<u64>, ExprSpec)>,
     pub recs: Map<u64, RecDataSpec>,
     pub ctor_np: Map<u64, u16>,
@@ -1226,9 +1229,11 @@ pub ghost struct EnvSpec {
 }
 
 impl EnvSpec {
-    /// No definitions and no tables: the delta-free, iota-free fragment.
-    pub open spec fn empty() -> EnvSpec {
+    /// No definitions and no tables: the delta-free, iota-free fragment, over
+    /// the export file `export`.
+    pub open spec fn empty_at(export: nat) -> EnvSpec {
         EnvSpec {
+            export,
             defs: Map::empty(),
             recs: Map::empty(),
             ctor_np: Map::empty(),
@@ -1264,6 +1269,7 @@ impl EnvSpec {
     /// `self`'s definitions and tables all appear, unchanged, in `other`:
     /// every reduction under `self` is one under `other`.
     pub open spec fn sub(self, other: EnvSpec) -> bool {
+        &&& self.export == other.export
         &&& forall|k: u64| #[trigger]
             self.defs.contains_key(k) ==> other.defs.contains_key(k) && self.defs[k] == other.defs[k]
         &&& forall|k: u64| #[trigger]
@@ -1277,9 +1283,9 @@ impl EnvSpec {
 /// `e` is SOME representation of `Nat` zero -- reused by `verified_def_
 /// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
 /// itself.
-pub open spec fn nat_repr_is_zero<'a>(e: ExprPtr<'a>) -> bool {
+pub open spec fn nat_repr_is_zero<'a>(export: nat, e: ExprPtr<'a>) -> bool {
     (is_nat_lit_shape(e) && nat_lit_value(e) == 0) || (is_const_shape(e) && const_id(e)
-        == nat_zero_id() && const_levels_vec(e).len() == 0)
+        == nat_zero_id(export) && const_levels_vec(e).len() == 0)
 }
 
 /// Exec size computation over the real arena, mirroring the model
@@ -1623,10 +1629,10 @@ pub fn verified_string_free<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fue
 }
 
 /// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
-pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
+pub open spec fn nat_repr_pred<'a>(export: nat, e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {
     (exists|fun: ExprPtr<'a>|
         to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-            && is_const_shape(fun) && const_id(fun) == nat_succ_id() && const_levels_vec(fun).len()
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id(export) && const_levels_vec(fun).len()
             == 0) || (is_nat_lit_shape(e)
         && nat_lit_value(e) > 0 && is_nat_lit_shape(p) && nat_lit_value(p) == (nat_lit_value(e)
         - 1) as nat)
@@ -1668,7 +1674,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
         match result {
             Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r))
                 <= 1 && pstep(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))),
                 ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
                 to_model(r),
             ),
@@ -1687,9 +1693,9 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
         proof {
             is_const_shape_model(result);
             assert(bignum_ptr_value(n) == 0);
-            const_expr_no_levels_canonical(to_model(result), nat_zero_id());
+            const_expr_no_levels_canonical(to_model(result), nat_zero_id(crate::util_model::export_id(*ctx)));
             assert(pstep(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                 ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
                 to_model(result),
             ));
@@ -1710,7 +1716,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
             is_nat_lit_shape_model(pred);
             assert(bignum_ptr_value(n) > 0);
             assert(nat_lit_value(pred) == (bignum_ptr_value(n) - 1) as nat);
-            const_expr_no_levels_canonical(to_model(succ_c), nat_succ_id());
+            const_expr_no_levels_canonical(to_model(succ_c), nat_succ_id(crate::util_model::export_id(*ctx)));
         }
         let result = ctx.mk_app(succ_c, pred);
         proof {
@@ -1725,7 +1731,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
             assert(max_var_below(to_model(succ_c), 0));
             assert(max_var_below(to_model(pred), 0));
             assert(pstep(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                 ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(n)))),
                 to_model(result),
             ));
@@ -1745,9 +1751,9 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
 /// these set consistently with which literal shapes it actually contains,
 /// same "don't model environment-level config" convention as everywhere
 /// else in this arc.
-pub uninterp spec fn nat_type_id() -> u64;
+pub uninterp spec fn nat_type_id(export: nat) -> u64;
 
-pub uninterp spec fn string_type_id() -> u64;
+pub uninterp spec fn string_type_id(export: nat) -> u64;
 
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
@@ -2779,7 +2785,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
                     spine_reduce(to_model(e_fun), Seq::new(n, |i: int| to_model(args@[i]))),
                     Seq::new((args@.len() - n) as nat, |i: int| to_model(args@[n as int + i])),
                 ) && pstep_star(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))),
                     spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
                     to_model(r),
                 ),
@@ -2858,24 +2864,24 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
                         assert(consumed_model + remaining_model =~= full_model);
 
                         pstep_star_spine_reduce(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             to_model(e_fun),
                             consumed_model,
                         );
                         assert(pstep_star(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             spine_app(to_model(e_fun), consumed_model),
                             spine_reduce(to_model(e_fun), consumed_model),
                         ));
 
                         pstep_spine_app_star(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             spine_app(to_model(e_fun), consumed_model),
                             spine_reduce(to_model(e_fun), consumed_model),
                             remaining_model,
                         );
                         assert(pstep_star(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             spine_app(spine_app(to_model(e_fun), consumed_model), remaining_model),
                             spine_app(
                                 spine_reduce(to_model(e_fun), consumed_model),
@@ -2890,7 +2896,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
                         ));
 
                         assert(pstep_star(
-                            crate::expr_arena_bridge::EnvSpec::empty(),
+                            crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                             spine_app(to_model(e_fun), full_model),
                             to_model(result),
                         ));
@@ -2958,7 +2964,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(
                 subst1(to_model(body), to_model(val)),
                 Seq::new(args@.len(), |i: int| to_model(args@[i])),
             ) && pstep_star(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))),
                 spine_app(to_model(e_fun), Seq::new(args@.len(), |i: int| to_model(args@[i]))),
                 to_model(r),
             ),
@@ -2998,39 +3004,39 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(
                 ));
 
                 assert(pstep(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                     to_model(e_fun),
                     subst1(to_model(body), to_model(val)),
                 )) by {
                     assert(pstep(
-                        crate::expr_arena_bridge::EnvSpec::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                         to_model(body),
                         to_model(body),
                     ));
                     assert(pstep(
-                        crate::expr_arena_bridge::EnvSpec::empty(),
+                        crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                         to_model(val),
                         to_model(val),
                     ));
                 }
                 pstep_star_one(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                     to_model(e_fun),
                     subst1(to_model(body), to_model(val)),
                 );
                 pstep_spine_app_star(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                     to_model(e_fun),
                     subst1(to_model(body), to_model(val)),
                     args_model,
                 );
                 assert(pstep_star(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                     spine_app(to_model(e_fun), args_model),
                     spine_app(subst1(to_model(body), to_model(val)), args_model),
                 ));
                 assert(pstep_star(
-                    crate::expr_arena_bridge::EnvSpec::empty(),
+                    crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)),
                     spine_app(to_model(e_fun), args_model),
                     to_model(result),
                 ));
@@ -3097,7 +3103,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => pstep_star(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))),
                 to_model(e),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), bound + d * d * d + d * d)
@@ -3358,7 +3364,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(
                 };
             }
             proof {
-                pstep_star_refl(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e));
+                pstep_star_refl(crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)), to_model(e));
                 max_var_below_mono(to_model(e), bound, bound + d * d * d + d * d);
             }
             Some(e)
@@ -3387,7 +3393,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => pstep_star(
-                crate::expr_arena_bridge::EnvSpec::empty(),
+                crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*final(ctx))),
                 to_model(e),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0,
@@ -3528,7 +3534,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(
                 };
             }
             proof {
-                pstep_star_refl(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e));
+                pstep_star_refl(crate::expr_arena_bridge::EnvSpec::empty_at(crate::util_model::export_id(*ctx)), to_model(e));
             }
             Some(e)
         }
