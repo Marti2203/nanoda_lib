@@ -373,15 +373,16 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
 /// The `nob + offset` parameterisation is what makes the two sides step
 /// together at a `Bind`: the level walk increments its binder count, the list
 /// walk increments its offset.
-pub open spec fn serial_determines_id(ids: Seq<u32>, start_pos: u16) -> bool {
+pub open spec fn serial_determines_id(aids: (nat, nat), ids: Seq<u32>, start_pos: u16) -> bool {
     forall|id: u32, k: int|
-        #![trigger crate::expr_arena_bridge::dbj_serial(id), ids[k]]
-        0 <= k < ids.len() && crate::expr_arena_bridge::dbj_serial(id) == Some(
+        #![trigger crate::expr_arena_bridge::dbj_serial(aids, id), ids[k]]
+        0 <= k < ids.len() && crate::expr_arena_bridge::dbj_serial(aids, id) == Some(
             (start_pos + k) as u16,
         ) ==> id == ids[k]
 }
 
 pub proof fn abstr_levels_full_eq_abstr_full(
+    aids: (nat, nat),
     e: ExprSpec,
     ids: Seq<u32>,
     start_pos: u16,
@@ -392,25 +393,25 @@ pub proof fn abstr_levels_full_eq_abstr_full(
         start_pos <= nob,
         ids.len() == nob - start_pos,
         forall|k: int|
-            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some(
+            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, ids[k]) == Some(
                 (start_pos + k) as u16,
             ),
-        serial_determines_id(ids, start_pos),
-        dbj_serials_below(e, nob),
+        serial_determines_id(aids, ids, start_pos),
+        dbj_serials_below(aids, e, nob),
         // Paired with depth: `offset` grows by one per binder descended, so
         // the sum is what stays bounded -- the same shape the exec side needs.
         nob as nat + offset + depth(e) < 65536,
     ensures
-        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
+        abstr_levels_full(aids, e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
     decreases e,
 {
     match e {
         ExprSpec::Free(id) => {
-            match crate::expr_arena_bridge::dbj_serial(id) {
+            match crate::expr_arena_bridge::dbj_serial(aids, id) {
                 Some(s) => {
                     if s < start_pos {
                         assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                            assert(crate::expr_arena_bridge::dbj_serial(aids, ids[j]) == Some(
                                 (start_pos + j) as u16,
                             ));
                         }
@@ -424,7 +425,7 @@ pub proof fn abstr_levels_full_eq_abstr_full(
                         assert(ids[(ids.len() - 1 - pos) as int] == id);
                         assert forall|j: int| 0 <= j < pos implies #[trigger] ids[(ids.len() - 1
                             - j) as int] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(
+                            assert(crate::expr_arena_bridge::dbj_serial(aids, 
                                 ids[(ids.len() - 1 - j) as int],
                             ) == Some((start_pos + (ids.len() - 1 - j)) as u16));
                         }
@@ -433,7 +434,7 @@ pub proof fn abstr_levels_full_eq_abstr_full(
                 },
                 None => {
                     assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
-                        assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                        assert(crate::expr_arena_bridge::dbj_serial(aids, ids[j]) == Some(
                             (start_pos + j) as u16,
                         ));
                     }
@@ -442,20 +443,20 @@ pub proof fn abstr_levels_full_eq_abstr_full(
             }
         },
         ExprSpec::App(f, a) => {
-            abstr_levels_full_eq_abstr_full(*f, ids, start_pos, nob, offset);
-            abstr_levels_full_eq_abstr_full(*a, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *f, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *a, ids, start_pos, nob, offset);
         },
         ExprSpec::Bind(t, b) => {
-            abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
-            abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
+            abstr_levels_full_eq_abstr_full(aids, *t, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *b, ids, start_pos, nob, offset + 1);
         },
         ExprSpec::Let(t, v, b) => {
-            abstr_levels_full_eq_abstr_full(*t, ids, start_pos, nob, offset);
-            abstr_levels_full_eq_abstr_full(*v, ids, start_pos, nob, offset);
-            abstr_levels_full_eq_abstr_full(*b, ids, start_pos, nob, offset + 1);
+            abstr_levels_full_eq_abstr_full(aids, *t, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *v, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *b, ids, start_pos, nob, offset + 1);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_full_eq_abstr_full(*st, ids, start_pos, nob, offset);
+            abstr_levels_full_eq_abstr_full(aids, *st, ids, start_pos, nob, offset);
         },
         _ => {},
     }
@@ -468,57 +469,57 @@ pub proof fn abstr_levels_full_eq_abstr_full(
 /// computes `(num_open_binders - serial) - 1` in `u16`, which underflows
 /// otherwise. `Unique` free variables are unconstrained -- the algorithm leaves
 /// them alone.
-pub open spec fn dbj_serials_below(e: ExprSpec, bound: u16) -> bool
+pub open spec fn dbj_serials_below(aids: (nat, nat), e: ExprSpec, bound: u16) -> bool
     decreases e,
 {
     match e {
-        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(aids, id) {
             Some(s) => s < bound,
             None => true,
         },
-        ExprSpec::App(f, a) => dbj_serials_below(*f, bound) && dbj_serials_below(*a, bound),
-        ExprSpec::Bind(t, b) => dbj_serials_below(*t, bound) && dbj_serials_below(*b, bound),
-        ExprSpec::Let(t, v, b) => dbj_serials_below(*t, bound) && dbj_serials_below(*v, bound)
-            && dbj_serials_below(*b, bound),
-        ExprSpec::Proj(_, st) => dbj_serials_below(*st, bound),
+        ExprSpec::App(f, a) => dbj_serials_below(aids, *f, bound) && dbj_serials_below(aids, *a, bound),
+        ExprSpec::Bind(t, b) => dbj_serials_below(aids, *t, bound) && dbj_serials_below(aids, *b, bound),
+        ExprSpec::Let(t, v, b) => dbj_serials_below(aids, *t, bound) && dbj_serials_below(aids, *v, bound)
+            && dbj_serials_below(aids, *b, bound),
+        ExprSpec::Proj(_, st) => dbj_serials_below(aids, *st, bound),
         _ => true,
     }
 }
 
 /// Raising the bound keeps it true -- needed because the recursion descends
 /// under binders with `num_open_binders + 1`.
-pub proof fn dbj_serials_below_mono(e: ExprSpec, b1: u16, b2: u16)
+pub proof fn dbj_serials_below_mono(aids: (nat, nat), e: ExprSpec, b1: u16, b2: u16)
     requires
-        dbj_serials_below(e, b1),
+        dbj_serials_below(aids, e, b1),
         b1 <= b2,
     ensures
-        dbj_serials_below(e, b2),
+        dbj_serials_below(aids, e, b2),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            dbj_serials_below_mono(*f, b1, b2);
-            dbj_serials_below_mono(*a, b1, b2);
+            dbj_serials_below_mono(aids, *f, b1, b2);
+            dbj_serials_below_mono(aids, *a, b1, b2);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_serials_below_mono(*t, b1, b2);
-            dbj_serials_below_mono(*b, b1, b2);
+            dbj_serials_below_mono(aids, *t, b1, b2);
+            dbj_serials_below_mono(aids, *b, b1, b2);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_serials_below_mono(*t, b1, b2);
-            dbj_serials_below_mono(*v, b1, b2);
-            dbj_serials_below_mono(*b, b1, b2);
+            dbj_serials_below_mono(aids, *t, b1, b2);
+            dbj_serials_below_mono(aids, *v, b1, b2);
+            dbj_serials_below_mono(aids, *b, b1, b2);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_serials_below_mono(*st, b1, b2);
+            dbj_serials_below_mono(aids, *st, b1, b2);
         },
         _ => {},
     }
 }
 
 /// A level-local id whose level is below `c`.
-pub open spec fn serial_below(id: u32, c: u16) -> bool {
-    match crate::expr_arena_bridge::dbj_serial(id) {
+pub open spec fn serial_below(aids: (nat, nat), id: u32, c: u16) -> bool {
+    match crate::expr_arena_bridge::dbj_serial(aids, id) {
         Some(s) => s < c,
         None => false,
     }
@@ -544,30 +545,30 @@ pub open spec fn serial_below(id: u32, c: u16) -> bool {
 ///
 /// Unique locals (`dbj_serial` = None) are out of scope: only the inductive
 /// checker makes them, outside the verified cycle.
-pub open spec fn dbj_deep_in(e: ExprSpec, S: ISet<u32>, c: u16) -> bool
+pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16) -> bool
     decreases c, e,
 {
     match e {
-        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && S.contains(id) && nlbv(crate::expr_arena_bridge::arena_lctx()[id]) <= 0
-                && dbj_deep_in(crate::expr_arena_bridge::arena_lctx()[id], S, s),
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(aids, id) {
+            Some(s) => s < c && S.contains(id) && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
+                && dbj_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S, s),
             None => false,
         },
-        ExprSpec::App(f, a) => dbj_deep_in(*f, S, c) && dbj_deep_in(*a, S, c),
-        ExprSpec::Bind(t, b) => dbj_deep_in(*t, S, c) && dbj_deep_in(*b, S, c),
-        ExprSpec::Let(t, v, b) => dbj_deep_in(*t, S, c) && dbj_deep_in(*v, S, c) && dbj_deep_in(
+        ExprSpec::App(f, a) => dbj_deep_in(aids, *f, S, c) && dbj_deep_in(aids, *a, S, c),
+        ExprSpec::Bind(t, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *b, S, c),
+        ExprSpec::Let(t, v, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *v, S, c) && dbj_deep_in(aids, 
             *b,
             S,
             c,
         ),
-        ExprSpec::Proj(_, st) => dbj_deep_in(*st, S, c),
+        ExprSpec::Proj(_, st) => dbj_deep_in(aids, *st, S, c),
         _ => true,
     }
 }
 
 /// A level-local id whose level is at least `c`.
-pub open spec fn serial_at_least(id: u32, c: u16) -> bool {
-    match crate::expr_arena_bridge::dbj_serial(id) {
+pub open spec fn serial_at_least(aids: (nat, nat), id: u32, c: u16) -> bool {
+    match crate::expr_arena_bridge::dbj_serial(aids, id) {
         Some(s) => s >= c,
         None => false,
     }
@@ -579,142 +580,143 @@ pub open spec fn all_ids() -> ISet<u32> {
 }
 
 /// Deep scope with every node allowed: the bound alone.
-pub open spec fn dbj_deep(e: ExprSpec, c: u16) -> bool {
-    dbj_deep_in(e, all_ids(), c)
+pub open spec fn dbj_deep(aids: (nat, nat), e: ExprSpec, c: u16) -> bool {
+    dbj_deep_in(aids, e, all_ids(), c)
 }
 
 /// Deep scope implies shallow scope.
-pub proof fn dbj_deep_in_below(e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn dbj_deep_in_below(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
     requires
-        dbj_deep_in(e, S, c),
+        dbj_deep_in(aids, e, S, c),
     ensures
-        dbj_serials_below(e, c),
+        dbj_serials_below(aids, e, c),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            dbj_deep_in_below(*f, S, c);
-            dbj_deep_in_below(*a, S, c);
+            dbj_deep_in_below(aids, *f, S, c);
+            dbj_deep_in_below(aids, *a, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_deep_in_below(*t, S, c);
-            dbj_deep_in_below(*b, S, c);
+            dbj_deep_in_below(aids, *t, S, c);
+            dbj_deep_in_below(aids, *b, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_deep_in_below(*t, S, c);
-            dbj_deep_in_below(*v, S, c);
-            dbj_deep_in_below(*b, S, c);
+            dbj_deep_in_below(aids, *t, S, c);
+            dbj_deep_in_below(aids, *v, S, c);
+            dbj_deep_in_below(aids, *b, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_deep_in_below(*st, S, c);
+            dbj_deep_in_below(aids, *st, S, c);
         },
         _ => {},
     }
 }
 
-pub proof fn dbj_deep_below(e: ExprSpec, c: u16)
+pub proof fn dbj_deep_below(aids: (nat, nat), e: ExprSpec, c: u16)
     requires
-        dbj_deep(e, c),
+        dbj_deep(aids, e, c),
     ensures
-        dbj_serials_below(e, c),
+        dbj_serials_below(aids, e, c),
 {
-    dbj_deep_in_below(e, all_ids(), c);
+    dbj_deep_in_below(aids, e, all_ids(), c);
 }
 
 /// Weakening: every node allowed before (in `S1`, below `c1`) is allowed
 /// after. A local's own type is judged at the local's level, which does not
 /// move, so the condition restricted to below that level carries down.
-pub proof fn dbj_deep_in_weaken(e: ExprSpec, S1: ISet<u32>, c1: u16, S2: ISet<u32>, c2: u16)
+pub proof fn dbj_deep_in_weaken(aids: (nat, nat), e: ExprSpec, S1: ISet<u32>, c1: u16, S2: ISet<u32>, c2: u16)
     requires
-        dbj_deep_in(e, S1, c1),
-        forall|t: u32| #[trigger] S1.contains(t) && serial_below(t, c1) ==> S2.contains(t) && serial_below(t, c2),
+        dbj_deep_in(aids, e, S1, c1),
+        forall|t: u32| #[trigger] S1.contains(t) && serial_below(aids, t, c1) ==> S2.contains(t) && serial_below(aids, t, c2),
     ensures
-        dbj_deep_in(e, S2, c2),
+        dbj_deep_in(aids, e, S2, c2),
     decreases c1, e,
 {
     match e {
         ExprSpec::Free(id) => {
-            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
-                assert(S1.contains(id) && serial_below(id, c1));
-                assert forall|t: u32| #[trigger] S1.contains(t) && serial_below(t, s) implies S2.contains(t) && serial_below(t, s) by {
-                    assert(serial_below(t, c1));
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
+                assert(S1.contains(id) && serial_below(aids, id, c1));
+                assert forall|t: u32| #[trigger] S1.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
+                    assert(serial_below(aids, t, c1));
                 }
-                dbj_deep_in_weaken(crate::expr_arena_bridge::arena_lctx()[id], S1, s, S2, s);
+                dbj_deep_in_weaken(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S1, s, S2, s);
             }
         },
         ExprSpec::App(f, a) => {
-            dbj_deep_in_weaken(*f, S1, c1, S2, c2);
-            dbj_deep_in_weaken(*a, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *f, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *a, S1, c1, S2, c2);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_deep_in_weaken(*t, S1, c1, S2, c2);
-            dbj_deep_in_weaken(*b, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *t, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *b, S1, c1, S2, c2);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_deep_in_weaken(*t, S1, c1, S2, c2);
-            dbj_deep_in_weaken(*v, S1, c1, S2, c2);
-            dbj_deep_in_weaken(*b, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *t, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *v, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *b, S1, c1, S2, c2);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_deep_in_weaken(*st, S1, c1, S2, c2);
+            dbj_deep_in_weaken(aids, *st, S1, c1, S2, c2);
         },
         _ => {},
     }
 }
 
 /// Raising the bound keeps it true.
-pub proof fn dbj_deep_mono(e: ExprSpec, c1: u16, c2: u16)
+pub proof fn dbj_deep_mono(aids: (nat, nat), e: ExprSpec, c1: u16, c2: u16)
     requires
-        dbj_deep(e, c1),
+        dbj_deep(aids, e, c1),
         c1 <= c2,
     ensures
-        dbj_deep(e, c2),
+        dbj_deep(aids, e, c2),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    dbj_deep_in_weaken(e, all_ids(), c1, all_ids(), c2);
+    dbj_deep_in_weaken(aids, e, all_ids(), c1, all_ids(), c2);
 }
 
 /// No free variables: deep-in-scope everywhere.
-pub proof fn no_fv_dbj_deep_in(e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn no_fv_dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
     requires
         !has_fv(e),
     ensures
-        dbj_deep_in(e, S, c),
+        dbj_deep_in(aids, e, S, c),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            no_fv_dbj_deep_in(*f, S, c);
-            no_fv_dbj_deep_in(*a, S, c);
+            no_fv_dbj_deep_in(aids, *f, S, c);
+            no_fv_dbj_deep_in(aids, *a, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            no_fv_dbj_deep_in(*t, S, c);
-            no_fv_dbj_deep_in(*b, S, c);
+            no_fv_dbj_deep_in(aids, *t, S, c);
+            no_fv_dbj_deep_in(aids, *b, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            no_fv_dbj_deep_in(*t, S, c);
-            no_fv_dbj_deep_in(*v, S, c);
-            no_fv_dbj_deep_in(*b, S, c);
+            no_fv_dbj_deep_in(aids, *t, S, c);
+            no_fv_dbj_deep_in(aids, *v, S, c);
+            no_fv_dbj_deep_in(aids, *b, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            no_fv_dbj_deep_in(*st, S, c);
+            no_fv_dbj_deep_in(aids, *st, S, c);
         },
         _ => {},
     }
 }
 
-pub proof fn no_fv_dbj_deep(e: ExprSpec, c: u16)
+pub proof fn no_fv_dbj_deep(aids: (nat, nat), e: ExprSpec, c: u16)
     requires
         !has_fv(e),
     ensures
-        dbj_deep(e, c),
+        dbj_deep(aids, e, c),
 {
-    no_fv_dbj_deep_in(e, all_ids(), c);
+    no_fv_dbj_deep_in(aids, e, all_ids(), c);
 }
 
 /// Substitution keeps deep scope.
 pub proof fn subst_full_dbj_deep_in(
+    aids: (nat, nat),
     e: ExprSpec,
     substs: Seq<ExprSpec>,
     offset: nat,
@@ -722,189 +724,189 @@ pub proof fn subst_full_dbj_deep_in(
     c: u16,
 )
     requires
-        dbj_deep_in(e, S, c),
-        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep_in(substs[i], S, c),
+        dbj_deep_in(aids, e, S, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep_in(aids, substs[i], S, c),
     ensures
-        dbj_deep_in(subst_full(e, substs, offset), S, c),
+        dbj_deep_in(aids, subst_full(e, substs, offset), S, c),
     decreases e,
 {
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) >= offset && (i as nat - offset) < substs.len() {
                 let j = (substs.len() - 1 - (i as nat - offset)) as int;
-                assert(dbj_deep_in(substs[j], S, c));
+                assert(dbj_deep_in(aids, substs[j], S, c));
             }
         },
         ExprSpec::App(f, a) => {
-            subst_full_dbj_deep_in(*f, substs, offset, S, c);
-            subst_full_dbj_deep_in(*a, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *f, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *a, substs, offset, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            subst_full_dbj_deep_in(*t, substs, offset, S, c);
-            subst_full_dbj_deep_in(*b, substs, offset + 1, S, c);
+            subst_full_dbj_deep_in(aids, *t, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *b, substs, offset + 1, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            subst_full_dbj_deep_in(*t, substs, offset, S, c);
-            subst_full_dbj_deep_in(*v, substs, offset, S, c);
-            subst_full_dbj_deep_in(*b, substs, offset + 1, S, c);
+            subst_full_dbj_deep_in(aids, *t, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *v, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *b, substs, offset + 1, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            subst_full_dbj_deep_in(*st, substs, offset, S, c);
+            subst_full_dbj_deep_in(aids, *st, substs, offset, S, c);
         },
         _ => {},
     }
 }
 
-pub proof fn subst_full_dbj_deep(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+pub proof fn subst_full_dbj_deep(aids: (nat, nat), e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
     requires
-        dbj_deep(e, c),
-        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep(substs[i], c),
+        dbj_deep(aids, e, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_deep(aids, substs[i], c),
     ensures
-        dbj_deep(subst_full(e, substs, offset), c),
+        dbj_deep(aids, subst_full(e, substs, offset), c),
 {
-    assert forall|i: int| 0 <= i < substs.len() implies #[trigger] dbj_deep_in(substs[i], all_ids(), c) by {
-        assert(dbj_deep(substs[i], c));
+    assert forall|i: int| 0 <= i < substs.len() implies #[trigger] dbj_deep_in(aids, substs[i], all_ids(), c) by {
+        assert(dbj_deep(aids, substs[i], c));
     }
-    subst_full_dbj_deep_in(e, substs, offset, all_ids(), c);
+    subst_full_dbj_deep_in(aids, e, substs, offset, all_ids(), c);
 }
 
 /// Node `t` occurs in `e` deeply: as a level-local below `c`, or in the type
 /// of one (judged below that local's level).
-pub open spec fn occurs_deep(e: ExprSpec, c: u16, t: u32) -> bool
+pub open spec fn occurs_deep(aids: (nat, nat), e: ExprSpec, c: u16, t: u32) -> bool
     decreases c, e,
 {
     match e {
-        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
-            Some(s) => s < c && (t == id || occurs_deep(
-                crate::expr_arena_bridge::arena_lctx()[id],
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(aids, id) {
+            Some(s) => s < c && (t == id || occurs_deep(aids, 
+                crate::expr_arena_bridge::arena_lctx(aids)[id],
                 s,
                 t,
             )),
             None => false,
         },
-        ExprSpec::App(f, a) => occurs_deep(*f, c, t) || occurs_deep(*a, c, t),
-        ExprSpec::Bind(ty, b) => occurs_deep(*ty, c, t) || occurs_deep(*b, c, t),
-        ExprSpec::Let(ty, v, b) => occurs_deep(*ty, c, t) || occurs_deep(*v, c, t) || occurs_deep(
+        ExprSpec::App(f, a) => occurs_deep(aids, *f, c, t) || occurs_deep(aids, *a, c, t),
+        ExprSpec::Bind(ty, b) => occurs_deep(aids, *ty, c, t) || occurs_deep(aids, *b, c, t),
+        ExprSpec::Let(ty, v, b) => occurs_deep(aids, *ty, c, t) || occurs_deep(aids, *v, c, t) || occurs_deep(aids, 
             *b,
             c,
             t,
         ),
-        ExprSpec::Proj(_, st) => occurs_deep(*st, c, t),
+        ExprSpec::Proj(_, st) => occurs_deep(aids, *st, c, t),
         _ => false,
     }
 }
 
 /// The nodes a term actually uses.
-pub open spec fn occ(e: ExprSpec, c: u16) -> ISet<u32> {
-    ISet::new(|t: u32| occurs_deep(e, c, t))
+pub open spec fn occ(aids: (nat, nat), e: ExprSpec, c: u16) -> ISet<u32> {
+    ISet::new(|t: u32| occurs_deep(aids, e, c, t))
 }
 
 /// A deep-in-scope term is deep-in-scope in any set holding what it uses.
-pub proof fn dbj_deep_in_occ(e: ExprSpec, S: ISet<u32>, c: u16, O: ISet<u32>)
+pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16, O: ISet<u32>)
     requires
-        dbj_deep_in(e, S, c),
-        forall|t: u32| #[trigger] occurs_deep(e, c, t) ==> O.contains(t),
+        dbj_deep_in(aids, e, S, c),
+        forall|t: u32| #[trigger] occurs_deep(aids, e, c, t) ==> O.contains(t),
     ensures
-        dbj_deep_in(e, O, c),
+        dbj_deep_in(aids, e, O, c),
     decreases c, e,
 {
     match e {
         ExprSpec::Free(id) => {
-            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
-                let ty = crate::expr_arena_bridge::arena_lctx()[id];
-                assert(occurs_deep(e, c, id));
-                assert forall|t: u32| #[trigger] occurs_deep(ty, s, t) implies O.contains(t) by {
-                    assert(occurs_deep(e, c, t));
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
+                let ty = crate::expr_arena_bridge::arena_lctx(aids)[id];
+                assert(occurs_deep(aids, e, c, id));
+                assert forall|t: u32| #[trigger] occurs_deep(aids, ty, s, t) implies O.contains(t) by {
+                    assert(occurs_deep(aids, e, c, t));
                 }
-                dbj_deep_in_occ(ty, S, s, O);
+                dbj_deep_in_occ(aids, ty, S, s, O);
             }
         },
         ExprSpec::App(f, a) => {
-            assert forall|t: u32| #[trigger] occurs_deep(*f, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *f, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(*a, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *a, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            dbj_deep_in_occ(*f, S, c, O);
-            dbj_deep_in_occ(*a, S, c, O);
+            dbj_deep_in_occ(aids, *f, S, c, O);
+            dbj_deep_in_occ(aids, *a, S, c, O);
         },
         ExprSpec::Bind(ty, b) => {
-            assert forall|t: u32| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            dbj_deep_in_occ(*ty, S, c, O);
-            dbj_deep_in_occ(*b, S, c, O);
+            dbj_deep_in_occ(aids, *ty, S, c, O);
+            dbj_deep_in_occ(aids, *b, S, c, O);
         },
         ExprSpec::Let(ty, v, b) => {
-            assert forall|t: u32| #[trigger] occurs_deep(*ty, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(*v, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *v, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(*b, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            dbj_deep_in_occ(*ty, S, c, O);
-            dbj_deep_in_occ(*v, S, c, O);
-            dbj_deep_in_occ(*b, S, c, O);
+            dbj_deep_in_occ(aids, *ty, S, c, O);
+            dbj_deep_in_occ(aids, *v, S, c, O);
+            dbj_deep_in_occ(aids, *b, S, c, O);
         },
         ExprSpec::Proj(_, st) => {
-            assert forall|t: u32| #[trigger] occurs_deep(*st, c, t) implies O.contains(t) by {
-                assert(occurs_deep(e, c, t));
+            assert forall|t: u32| #[trigger] occurs_deep(aids, *st, c, t) implies O.contains(t) by {
+                assert(occurs_deep(aids, e, c, t));
             }
-            dbj_deep_in_occ(*st, S, c, O);
+            dbj_deep_in_occ(aids, *st, S, c, O);
         },
         _ => {},
     }
 }
 
 /// What a term uses is allowed by any scope the term is in.
-pub proof fn occurs_deep_in(e: ExprSpec, S: ISet<u32>, c: u16, c1: u16, t: u32)
+pub proof fn occurs_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16, c1: u16, t: u32)
     requires
-        dbj_deep_in(e, S, c),
-        occurs_deep(e, c1, t),
+        dbj_deep_in(aids, e, S, c),
+        occurs_deep(aids, e, c1, t),
     ensures
-        S.contains(t) && serial_below(t, c),
+        S.contains(t) && serial_below(aids, t, c),
     decreases c1, e,
 {
     match e {
         ExprSpec::Free(id) => {
-            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
                 if t != id {
-                    occurs_deep_in(crate::expr_arena_bridge::arena_lctx()[id], S, s, s, t);
+                    occurs_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S, s, s, t);
                 }
             }
         },
         ExprSpec::App(f, a) => {
-            if occurs_deep(*f, c1, t) {
-                occurs_deep_in(*f, S, c, c1, t);
+            if occurs_deep(aids, *f, c1, t) {
+                occurs_deep_in(aids, *f, S, c, c1, t);
             } else {
-                occurs_deep_in(*a, S, c, c1, t);
+                occurs_deep_in(aids, *a, S, c, c1, t);
             }
         },
         ExprSpec::Bind(ty, b) => {
-            if occurs_deep(*ty, c1, t) {
-                occurs_deep_in(*ty, S, c, c1, t);
+            if occurs_deep(aids, *ty, c1, t) {
+                occurs_deep_in(aids, *ty, S, c, c1, t);
             } else {
-                occurs_deep_in(*b, S, c, c1, t);
+                occurs_deep_in(aids, *b, S, c, c1, t);
             }
         },
         ExprSpec::Let(ty, v, b) => {
-            if occurs_deep(*ty, c1, t) {
-                occurs_deep_in(*ty, S, c, c1, t);
-            } else if occurs_deep(*v, c1, t) {
-                occurs_deep_in(*v, S, c, c1, t);
+            if occurs_deep(aids, *ty, c1, t) {
+                occurs_deep_in(aids, *ty, S, c, c1, t);
+            } else if occurs_deep(aids, *v, c1, t) {
+                occurs_deep_in(aids, *v, S, c, c1, t);
             } else {
-                occurs_deep_in(*b, S, c, c1, t);
+                occurs_deep_in(aids, *b, S, c, c1, t);
             }
         },
         ExprSpec::Proj(_, st) => {
-            occurs_deep_in(*st, S, c, c1, t);
+            occurs_deep_in(aids, *st, S, c, c1, t);
         },
         _ => {},
     }
@@ -913,6 +915,7 @@ pub proof fn occurs_deep_in(e: ExprSpec, S: ISet<u32>, c: u16, c1: u16, t: u32)
 /// Abstracting the levels from `start` up removes exactly those locals: what
 /// is left is scoped by whatever the input allowed below `start`.
 pub proof fn abstr_levels_dbj_deep_in(
+    aids: (nat, nat),
     e: ExprSpec,
     S: ISet<u32>,
     b: u16,
@@ -922,39 +925,39 @@ pub proof fn abstr_levels_dbj_deep_in(
     c2: u16,
 )
     requires
-        dbj_deep_in(e, S, b),
-        forall|t: u32| #[trigger] S.contains(t) && serial_below(t, b) && serial_below(t, start) ==> S2.contains(t) && serial_below(t, c2),
+        dbj_deep_in(aids, e, S, b),
+        forall|t: u32| #[trigger] S.contains(t) && serial_below(aids, t, b) && serial_below(aids, t, start) ==> S2.contains(t) && serial_below(aids, t, c2),
     ensures
-        dbj_deep_in(abstr_levels_full(e, start, n), S2, c2),
+        dbj_deep_in(aids, abstr_levels_full(aids, e, start, n), S2, c2),
     decreases e,
 {
     match e {
         ExprSpec::Free(id) => {
-            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
                 if s < start {
-                    assert(S.contains(id) && serial_below(id, b) && serial_below(id, start));
-                    assert forall|t: u32| #[trigger] S.contains(t) && serial_below(t, s) implies S2.contains(t) && serial_below(t, s) by {
-                        assert(serial_below(t, b) && serial_below(t, start));
+                    assert(S.contains(id) && serial_below(aids, id, b) && serial_below(aids, id, start));
+                    assert forall|t: u32| #[trigger] S.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
+                        assert(serial_below(aids, t, b) && serial_below(aids, t, start));
                     }
-                    dbj_deep_in_weaken(crate::expr_arena_bridge::arena_lctx()[id], S, s, S2, s);
+                    dbj_deep_in_weaken(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S, s, S2, s);
                 }
             }
         },
         ExprSpec::App(f, a) => {
-            abstr_levels_dbj_deep_in(*f, S, b, start, n, S2, c2);
-            abstr_levels_dbj_deep_in(*a, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *f, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *a, S, b, start, n, S2, c2);
         },
         ExprSpec::Bind(t, bd) => {
-            abstr_levels_dbj_deep_in(*t, S, b, start, n, S2, c2);
-            abstr_levels_dbj_deep_in(*bd, S, b, start, (n + 1) as u16, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *t, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *bd, S, b, start, (n + 1) as u16, S2, c2);
         },
         ExprSpec::Let(t, v, bd) => {
-            abstr_levels_dbj_deep_in(*t, S, b, start, n, S2, c2);
-            abstr_levels_dbj_deep_in(*v, S, b, start, n, S2, c2);
-            abstr_levels_dbj_deep_in(*bd, S, b, start, (n + 1) as u16, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *t, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *v, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *bd, S, b, start, (n + 1) as u16, S2, c2);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_dbj_deep_in(*st, S, b, start, n, S2, c2);
+            abstr_levels_dbj_deep_in(aids, *st, S, b, start, n, S2, c2);
         },
         _ => {},
     }
@@ -963,64 +966,64 @@ pub proof fn abstr_levels_dbj_deep_in(
 /// Abstracting the levels from `start` up turns each such local into an index
 /// below `nob - start`, so the result has no more loose indices than that and
 /// whatever the input already had.
-pub proof fn abstr_levels_nlbv(e: ExprSpec, start: u16, nob: u16)
+pub proof fn abstr_levels_nlbv(aids: (nat, nat), e: ExprSpec, start: u16, nob: u16)
     requires
-        dbj_serials_below(e, nob),
+        dbj_serials_below(aids, e, nob),
         start <= nob,
         levels_fit(e, nob),
     ensures
-        nlbv(abstr_levels_full(e, start, nob)) <= (if nlbv(e) >= (nob - start) as nat { nlbv(e) } else { (nob - start) as nat }),
+        nlbv(abstr_levels_full(aids, e, start, nob)) <= (if nlbv(e) >= (nob - start) as nat { nlbv(e) } else { (nob - start) as nat }),
     decreases e,
 {
     if !has_fv(e) {
-        abstr_levels_full_noop(e, start, nob);
+        abstr_levels_full_noop(aids, e, start, nob);
         return;
     }
     match e {
         ExprSpec::App(f, a) => {
-            abstr_levels_nlbv(*f, start, nob);
-            abstr_levels_nlbv(*a, start, nob);
+            abstr_levels_nlbv(aids, *f, start, nob);
+            abstr_levels_nlbv(aids, *a, start, nob);
         },
         ExprSpec::Bind(ty, b) => {
-            abstr_levels_nlbv(*ty, start, nob);
-            dbj_serials_below_mono(*b, nob, (nob + 1) as u16);
-            abstr_levels_nlbv(*b, start, (nob + 1) as u16);
+            abstr_levels_nlbv(aids, *ty, start, nob);
+            dbj_serials_below_mono(aids, *b, nob, (nob + 1) as u16);
+            abstr_levels_nlbv(aids, *b, start, (nob + 1) as u16);
         },
         ExprSpec::Let(ty, v, b) => {
-            abstr_levels_nlbv(*ty, start, nob);
-            abstr_levels_nlbv(*v, start, nob);
-            dbj_serials_below_mono(*b, nob, (nob + 1) as u16);
-            abstr_levels_nlbv(*b, start, (nob + 1) as u16);
+            abstr_levels_nlbv(aids, *ty, start, nob);
+            abstr_levels_nlbv(aids, *v, start, nob);
+            dbj_serials_below_mono(aids, *b, nob, (nob + 1) as u16);
+            abstr_levels_nlbv(aids, *b, start, (nob + 1) as u16);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_nlbv(*st, start, nob);
+            abstr_levels_nlbv(aids, *st, start, nob);
         },
         _ => {},
     }
 }
 
 /// A term in scope is in scope in exactly what it uses.
-pub proof fn occ_self(e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn occ_self(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
     requires
-        dbj_deep_in(e, S, c),
+        dbj_deep_in(aids, e, S, c),
     ensures
-        dbj_deep_in(e, occ(e, c), c),
+        dbj_deep_in(aids, e, occ(aids, e, c), c),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    dbj_deep_in_occ(e, S, c, occ(e, c));
+    dbj_deep_in_occ(aids, e, S, c, occ(aids, e, c));
 }
 
 /// Freshness from deep scope.
-pub proof fn dbj_deep_fv_absent(e: ExprSpec, k: u32, c: u16)
+pub proof fn dbj_deep_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
     requires
-        crate::expr_arena_bridge::dbj_serial(k) == Some(c),
-        dbj_deep(e, c),
+        crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
+        dbj_deep(aids, e, c),
     ensures
         fv_absent(e, k),
 {
-    dbj_deep_below(e, c);
-    dbj_serials_below_fv_absent(e, k, c);
+    dbj_deep_below(aids, e, c);
+    dbj_serials_below_fv_absent(aids, e, k, c);
 }
 
 /// Substituting a prefix `l` under one binder, then `s` at the binder itself,
@@ -1074,30 +1077,30 @@ pub proof fn subst_full_push(e: ExprSpec, l: Seq<ExprSpec>, s: ExprSpec, offset:
 /// term whose level-locals are all below `c`. The arena is hash-consed, so a
 /// newly made local can be the very node an old term mentions -- freshness has
 /// to come from the level, and this is where it does.
-pub proof fn dbj_serials_below_fv_absent(e: ExprSpec, k: u32, c: u16)
+pub proof fn dbj_serials_below_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
     requires
-        crate::expr_arena_bridge::dbj_serial(k) == Some(c),
-        dbj_serials_below(e, c),
+        crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
+        dbj_serials_below(aids, e, c),
     ensures
         fv_absent(e, k),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            dbj_serials_below_fv_absent(*f, k, c);
-            dbj_serials_below_fv_absent(*a, k, c);
+            dbj_serials_below_fv_absent(aids, *f, k, c);
+            dbj_serials_below_fv_absent(aids, *a, k, c);
         },
         ExprSpec::Bind(t, b) => {
-            dbj_serials_below_fv_absent(*t, k, c);
-            dbj_serials_below_fv_absent(*b, k, c);
+            dbj_serials_below_fv_absent(aids, *t, k, c);
+            dbj_serials_below_fv_absent(aids, *b, k, c);
         },
         ExprSpec::Let(t, v, b) => {
-            dbj_serials_below_fv_absent(*t, k, c);
-            dbj_serials_below_fv_absent(*v, k, c);
-            dbj_serials_below_fv_absent(*b, k, c);
+            dbj_serials_below_fv_absent(aids, *t, k, c);
+            dbj_serials_below_fv_absent(aids, *v, k, c);
+            dbj_serials_below_fv_absent(aids, *b, k, c);
         },
         ExprSpec::Proj(_, st) => {
-            dbj_serials_below_fv_absent(*st, k, c);
+            dbj_serials_below_fv_absent(aids, *st, k, c);
         },
         _ => {},
     }
@@ -1105,29 +1108,29 @@ pub proof fn dbj_serials_below_fv_absent(e: ExprSpec, k: u32, c: u16)
 
 /// A term with no free variables at all is in scope at every depth --
 /// declaration types and values from the environment, in particular.
-pub proof fn no_fv_dbj_serials_below(e: ExprSpec, c: u16)
+pub proof fn no_fv_dbj_serials_below(aids: (nat, nat), e: ExprSpec, c: u16)
     requires
         !has_fv(e),
     ensures
-        dbj_serials_below(e, c),
+        dbj_serials_below(aids, e, c),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            no_fv_dbj_serials_below(*f, c);
-            no_fv_dbj_serials_below(*a, c);
+            no_fv_dbj_serials_below(aids, *f, c);
+            no_fv_dbj_serials_below(aids, *a, c);
         },
         ExprSpec::Bind(t, b) => {
-            no_fv_dbj_serials_below(*t, c);
-            no_fv_dbj_serials_below(*b, c);
+            no_fv_dbj_serials_below(aids, *t, c);
+            no_fv_dbj_serials_below(aids, *b, c);
         },
         ExprSpec::Let(t, v, b) => {
-            no_fv_dbj_serials_below(*t, c);
-            no_fv_dbj_serials_below(*v, c);
-            no_fv_dbj_serials_below(*b, c);
+            no_fv_dbj_serials_below(aids, *t, c);
+            no_fv_dbj_serials_below(aids, *v, c);
+            no_fv_dbj_serials_below(aids, *b, c);
         },
         ExprSpec::Proj(_, st) => {
-            no_fv_dbj_serials_below(*st, c);
+            no_fv_dbj_serials_below(aids, *st, c);
         },
         _ => {},
     }
@@ -1135,36 +1138,36 @@ pub proof fn no_fv_dbj_serials_below(e: ExprSpec, c: u16)
 
 /// Substitution introduces no local that neither the term nor the substituted
 /// values mentioned.
-pub proof fn subst_full_dbj_serials_below(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
+pub proof fn subst_full_dbj_serials_below(aids: (nat, nat), e: ExprSpec, substs: Seq<ExprSpec>, offset: nat, c: u16)
     requires
-        dbj_serials_below(e, c),
-        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_serials_below(substs[i], c),
+        dbj_serials_below(aids, e, c),
+        forall|i: int| 0 <= i < substs.len() ==> #[trigger] dbj_serials_below(aids, substs[i], c),
     ensures
-        dbj_serials_below(subst_full(e, substs, offset), c),
+        dbj_serials_below(aids, subst_full(e, substs, offset), c),
     decreases e,
 {
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) >= offset && (i as nat - offset) < substs.len() {
                 let j = (substs.len() - 1 - (i as nat - offset)) as int;
-                assert(dbj_serials_below(substs[j], c));
+                assert(dbj_serials_below(aids, substs[j], c));
             }
         },
         ExprSpec::App(f, a) => {
-            subst_full_dbj_serials_below(*f, substs, offset, c);
-            subst_full_dbj_serials_below(*a, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *f, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *a, substs, offset, c);
         },
         ExprSpec::Bind(t, b) => {
-            subst_full_dbj_serials_below(*t, substs, offset, c);
-            subst_full_dbj_serials_below(*b, substs, offset + 1, c);
+            subst_full_dbj_serials_below(aids, *t, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *b, substs, offset + 1, c);
         },
         ExprSpec::Let(t, v, b) => {
-            subst_full_dbj_serials_below(*t, substs, offset, c);
-            subst_full_dbj_serials_below(*v, substs, offset, c);
-            subst_full_dbj_serials_below(*b, substs, offset + 1, c);
+            subst_full_dbj_serials_below(aids, *t, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *v, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *b, substs, offset + 1, c);
         },
         ExprSpec::Proj(_, st) => {
-            subst_full_dbj_serials_below(*st, substs, offset, c);
+            subst_full_dbj_serials_below(aids, *st, substs, offset, c);
         },
         _ => {},
     }
@@ -1185,11 +1188,11 @@ pub proof fn subst_full_dbj_serials_below(e: ExprSpec, substs: Seq<ExprSpec>, of
 /// does not by itself stop that underflowing, so the model says what a
 /// well-formed call produces and `abstr_aux_levels`' eventual contract will have
 /// to carry `serial < num_open_binders` as a precondition.
-pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders: u16) -> ExprSpec
+pub open spec fn abstr_levels_full(aids: (nat, nat), e: ExprSpec, start_pos: u16, num_open_binders: u16) -> ExprSpec
     decreases e,
 {
     match e {
-        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(id) {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(aids, id) {
             Some(s) => if s < start_pos {
                 e
             } else if (s as int) < (num_open_binders as int) {
@@ -1200,21 +1203,21 @@ pub open spec fn abstr_levels_full(e: ExprSpec, start_pos: u16, num_open_binders
             None => e,
         },
         ExprSpec::App(f, a) => ExprSpec::App(
-            Box::new(abstr_levels_full(*f, start_pos, num_open_binders)),
-            Box::new(abstr_levels_full(*a, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *f, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *a, start_pos, num_open_binders)),
         ),
         ExprSpec::Bind(t, b) => ExprSpec::Bind(
-            Box::new(abstr_levels_full(*t, start_pos, num_open_binders)),
-            Box::new(abstr_levels_full(*b, start_pos, (num_open_binders + 1) as u16)),
+            Box::new(abstr_levels_full(aids, *t, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *b, start_pos, (num_open_binders + 1) as u16)),
         ),
         ExprSpec::Let(t, v, b) => ExprSpec::Let(
-            Box::new(abstr_levels_full(*t, start_pos, num_open_binders)),
-            Box::new(abstr_levels_full(*v, start_pos, num_open_binders)),
-            Box::new(abstr_levels_full(*b, start_pos, (num_open_binders + 1) as u16)),
+            Box::new(abstr_levels_full(aids, *t, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *v, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *b, start_pos, (num_open_binders + 1) as u16)),
         ),
         ExprSpec::Proj(pidx, st) => ExprSpec::Proj(
             pidx,
-            Box::new(abstr_levels_full(*st, start_pos, num_open_binders)),
+            Box::new(abstr_levels_full(aids, *st, start_pos, num_open_binders)),
         ),
         _ => e,
     }
@@ -1240,27 +1243,27 @@ pub open spec fn levels_fit(e: ExprSpec, nob: u16) -> bool
 }
 
 /// Like `abstr_full`, it rewrites leaves into leaves, so depth is untouched.
-pub proof fn abstr_levels_full_depth(e: ExprSpec, start_pos: u16, num_open_binders: u16)
+pub proof fn abstr_levels_full_depth(aids: (nat, nat), e: ExprSpec, start_pos: u16, num_open_binders: u16)
     ensures
-        depth(abstr_levels_full(e, start_pos, num_open_binders)) == depth(e),
+        depth(abstr_levels_full(aids, e, start_pos, num_open_binders)) == depth(e),
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            abstr_levels_full_depth(*f, start_pos, num_open_binders);
-            abstr_levels_full_depth(*a, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *f, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *a, start_pos, num_open_binders);
         },
         ExprSpec::Bind(t, b) => {
-            abstr_levels_full_depth(*t, start_pos, num_open_binders);
-            abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
+            abstr_levels_full_depth(aids, *t, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
         ExprSpec::Let(t, v, b) => {
-            abstr_levels_full_depth(*t, start_pos, num_open_binders);
-            abstr_levels_full_depth(*v, start_pos, num_open_binders);
-            abstr_levels_full_depth(*b, start_pos, (num_open_binders + 1) as u16);
+            abstr_levels_full_depth(aids, *t, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *v, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_full_depth(*st, start_pos, num_open_binders);
+            abstr_levels_full_depth(aids, *st, start_pos, num_open_binders);
         },
         _ => {},
     }
@@ -1269,29 +1272,29 @@ pub proof fn abstr_levels_full_depth(e: ExprSpec, start_pos: u16, num_open_binde
 /// A term with no free variables is untouched -- the counterpart of
 /// `abstr_full_noop`, and what discharges `abstr_aux_levels`' `!has_fvars`
 /// short-circuit.
-pub proof fn abstr_levels_full_noop(e: ExprSpec, start_pos: u16, num_open_binders: u16)
+pub proof fn abstr_levels_full_noop(aids: (nat, nat), e: ExprSpec, start_pos: u16, num_open_binders: u16)
     requires
         !has_fv(e),
     ensures
-        abstr_levels_full(e, start_pos, num_open_binders) == e,
+        abstr_levels_full(aids, e, start_pos, num_open_binders) == e,
     decreases e,
 {
     match e {
         ExprSpec::App(f, a) => {
-            abstr_levels_full_noop(*f, start_pos, num_open_binders);
-            abstr_levels_full_noop(*a, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *f, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *a, start_pos, num_open_binders);
         },
         ExprSpec::Bind(t, b) => {
-            abstr_levels_full_noop(*t, start_pos, num_open_binders);
-            abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
+            abstr_levels_full_noop(aids, *t, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
         ExprSpec::Let(t, v, b) => {
-            abstr_levels_full_noop(*t, start_pos, num_open_binders);
-            abstr_levels_full_noop(*v, start_pos, num_open_binders);
-            abstr_levels_full_noop(*b, start_pos, (num_open_binders + 1) as u16);
+            abstr_levels_full_noop(aids, *t, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *v, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_full_noop(*st, start_pos, num_open_binders);
+            abstr_levels_full_noop(aids, *st, start_pos, num_open_binders);
         },
         _ => {},
     }
@@ -1662,6 +1665,7 @@ pub proof fn abstr_full_nlbv1(e: ExprSpec, x: u32, off: nat)
 /// nodes of their levels AMONG THOSE THE TERM MAY MENTION (`S`), not
 /// globally: in-scope terms mention only live locals, one per level.
 pub proof fn abstr_levels_eq_abstr_full_in(
+    aids: (nat, nat),
     e: ExprSpec,
     ids: Seq<u32>,
     S: ISet<u32>,
@@ -1673,33 +1677,33 @@ pub proof fn abstr_levels_eq_abstr_full_in(
         start_pos <= nob,
         ids.len() == nob - start_pos,
         forall|k: int|
-            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some(
+            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, ids[k]) == Some(
                 (start_pos + k) as u16,
             ),
         forall|id: u32, k: int|
             #![trigger S.contains(id), ids[k]]
-            0 <= k < ids.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(id) == Some(
+            0 <= k < ids.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(aids, id) == Some(
                 (start_pos + k) as u16,
             ) ==> id == ids[k],
-        dbj_deep_in(e, S, nob),
+        dbj_deep_in(aids, e, S, nob),
         nob as nat + offset < 65536,
         levels_fit(e, (nob as nat + offset) as u16),
     ensures
-        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
+        abstr_levels_full(aids, e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
     decreases e,
 {
     if !has_fv(e) {
-        abstr_levels_full_noop(e, start_pos, (nob as nat + offset) as u16);
+        abstr_levels_full_noop(aids, e, start_pos, (nob as nat + offset) as u16);
         abstr_full_noop(e, ids, offset);
         return;
     }
     match e {
         ExprSpec::Free(id) => {
-            match crate::expr_arena_bridge::dbj_serial(id) {
+            match crate::expr_arena_bridge::dbj_serial(aids, id) {
                 Some(s) => {
                     if s < start_pos {
                         assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                            assert(crate::expr_arena_bridge::dbj_serial(aids, ids[j]) == Some(
                                 (start_pos + j) as u16,
                             ));
                         }
@@ -1714,7 +1718,7 @@ pub proof fn abstr_levels_eq_abstr_full_in(
                         assert(ids[(ids.len() - 1 - pos) as int] == id);
                         assert forall|j: int| 0 <= j < pos implies #[trigger] ids[(ids.len() - 1
                             - j) as int] != id by {
-                            assert(crate::expr_arena_bridge::dbj_serial(
+                            assert(crate::expr_arena_bridge::dbj_serial(aids, 
                                 ids[(ids.len() - 1 - j) as int],
                             ) == Some((start_pos + (ids.len() - 1 - j)) as u16));
                         }
@@ -1725,20 +1729,20 @@ pub proof fn abstr_levels_eq_abstr_full_in(
             }
         },
         ExprSpec::App(f, a) => {
-            abstr_levels_eq_abstr_full_in(*f, ids, S, start_pos, nob, offset);
-            abstr_levels_eq_abstr_full_in(*a, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *f, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *a, ids, S, start_pos, nob, offset);
         },
         ExprSpec::Bind(ty, b) => {
-            abstr_levels_eq_abstr_full_in(*ty, ids, S, start_pos, nob, offset);
-            abstr_levels_eq_abstr_full_in(*b, ids, S, start_pos, nob, offset + 1);
+            abstr_levels_eq_abstr_full_in(aids, *ty, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *b, ids, S, start_pos, nob, offset + 1);
         },
         ExprSpec::Let(ty, v, b) => {
-            abstr_levels_eq_abstr_full_in(*ty, ids, S, start_pos, nob, offset);
-            abstr_levels_eq_abstr_full_in(*v, ids, S, start_pos, nob, offset);
-            abstr_levels_eq_abstr_full_in(*b, ids, S, start_pos, nob, offset + 1);
+            abstr_levels_eq_abstr_full_in(aids, *ty, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *v, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *b, ids, S, start_pos, nob, offset + 1);
         },
         ExprSpec::Proj(_, st) => {
-            abstr_levels_eq_abstr_full_in(*st, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(aids, *st, ids, S, start_pos, nob, offset);
         },
         _ => {},
     }

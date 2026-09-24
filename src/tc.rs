@@ -787,7 +787,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         if let Pi { .. } = self.ctx.read_expr(e) {
@@ -1005,8 +1005,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // scope: the expansion has no locals, and whnf adds none
                     crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_chars(x));
-                    assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(sl, SS, k) implies crate::expr_model::dbj_deep_in(to_model_expr(r), SS, k) by {
-                        crate::expr_model::no_fv_dbj_deep_in(to_model_expr(c), SS, k);
+                    assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), sl, SS, k) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), SS, k) by {
+                        crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(c), SS, k);
                     }
                 }
                 Some(r)
@@ -1569,11 +1569,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
             }
             // scope: the field is an argument of the whnf'd structure
-            assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(ExprSpec::Proj(idx, Box::new(s0)), SS, k)
-                implies crate::expr_model::dbj_deep_in(to_model_expr(a), SS, k) by {
-                assert(crate::expr_model::dbj_deep_in(s0, SS, k));
-                assert(crate::expr_model::dbj_deep_in(sm, SS, k));
-                spine_app_dbj_deep_in(ExprSpec::Const(id, lv), am2, SS, k);
+            assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), ExprSpec::Proj(idx, Box::new(s0)), SS, k)
+                implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(a), SS, k) by {
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), s0, SS, k));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), sm, SS, k));
+                spine_app_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), ExprSpec::Const(id, lv), am2, SS, k);
             }
         }
         Some(a)
@@ -1592,7 +1592,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let ty = self.infer(e, flag);
@@ -1624,25 +1624,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(structure), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(structure), to_model_expr(result)),
             kinfer_claim(*old(self).env, ExprSpec::Proj(idx, Box::new(to_model_expr(structure))), to_model_expr(result)),
     {
         let ghost env0 = *self.env;
         let ghost dty = crate::env_model::to_model_of_declar_ty(env0);
         let ghost denv = crate::env_model::to_model_of_env(env0);
-        let ghost lctx = crate::expr_arena_bridge::arena_lctx();
+        let ghost lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*self.env));
         let ghost s_m = to_model_expr(structure);
         // Scope: everything below lives in what `structure` uses.
         let ghost c0 = self.ctx.dbj_level_counter;
-        let ghost L = crate::expr_model::occ(to_model_expr(structure), c0);
+        let ghost L = crate::expr_model::occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), c0);
         proof {
-            crate::expr_model::occ_self(to_model_expr(structure), live_set(*self), c0);
+            crate::expr_model::occ_self(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), live_set(*self), c0);
             occ_live(*self, structure, c0);
         }
         let structure_ty = self.infer_then_whnf(structure, flag);
         proof {
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(structure), L, c0));
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(structure_ty), L, c0));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), L, c0));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure_ty), L, c0));
             in_scope_of_deep_in(*self, structure_ty, L);
         }
         let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
@@ -1657,7 +1657,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::expr_arena_bridge::is_const_shape_model(sf);
             crate::expr_arena_bridge::const_levels_vec_model(sf);
             assert(to_model_expr(structure_ty) == crate::beta_model::spine_app(ExprSpec::Const(ind_id, ls), am));
-            spine_scope_in(structure_ty, sf, struct_ty_args@, L, c0);
+            spine_scope_in(crate::env_model::env_arena_ids(*self.env), structure_ty, sf, struct_ty_args@, L, c0);
             // the structure's type is closed, so are its arguments
             let am = crate::expr_arena_bridge::ptr_models(struct_ty_args@);
             crate::beta_model::spine_app_nlbv_decompose(to_model_expr(sf), am);
@@ -1728,7 +1728,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ctor_uparams)),
                 crate::level_arena_bridge::to_model_of_levels(struct_ty_levels),
             );
-            crate::expr_model::no_fv_dbj_deep_in(to_model_expr(ctor_ty), L, c0);
+            crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ctor_ty), L, c0);
         }
         // VERUS-REWRITE(unchecked-index): `struct_ty_args[i]` below walks to
         // `num_params`, which nothing relates to the number of arguments the
@@ -1756,9 +1756,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (*num_params as usize) <= struct_ty_args.len(),
                 c0 == old(self).ctx.dbj_level_counter,
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
-                    && crate::expr_model::serial_below(t, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(ctor_ty), L, c0),
-                forall|j: int| 0 <= j < struct_ty_args@.len() ==> crate::expr_model::dbj_deep_in(
+                    && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ctor_ty), L, c0),
+                forall|j: int| 0 <= j < struct_ty_args@.len() ==> crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), 
                     to_model_expr(#[trigger] struct_ty_args@[j]),
                     L,
                     c0,
@@ -1772,7 +1772,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 env0 == *old(self).env,
                 dty == crate::env_model::to_model_of_declar_ty(env0),
                 denv == crate::env_model::to_model_of_env(env0),
-                lctx == crate::expr_arena_bridge::arena_lctx(),
+                lctx == crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*self.env)),
                 s_m == to_model_expr(structure),
                 am == crate::expr_arena_bridge::ptr_models(struct_ty_args@),
                 np == *num_params,
@@ -1787,7 +1787,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost ct0 = ctor_ty;
             ctor_ty = self.whnf(ctor_ty);
             proof {
-                assert(crate::expr_model::dbj_deep_in(to_model_expr(ct0), L, c0));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ct0), L, c0));
             }
             match self.ctx.read_expr(ctor_ty) {
                 Pi { binder_type, body, .. } => {
@@ -1818,8 +1818,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         }
                         H = H2;
                         pi = pi + 1;
-                        assert(crate::expr_model::dbj_deep_in(to_model_expr(a), L, c0));
-                        inst_deep_in(body, seq![a], L, c0);
+                        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(a), L, c0));
+                        inst_deep_in(crate::env_model::env_arena_ids(*self.env), body, seq![a], L, c0);
                         assert([a]@ =~= seq![a]);
                         assert(crate::expr_model::nlbv(to_model_expr(a)) <= 0);
                         assert(crate::expr_model::nlbv(to_model_expr(body)) <= 1);
@@ -1856,15 +1856,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (*self).env == old(self).env,
                 c0 == old(self).ctx.dbj_level_counter,
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
-                    && crate::expr_model::serial_below(t, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(ctor_ty), L, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(structure), L, c0),
+                    && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ctor_ty), L, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), L, c0),
                 crate::expr_model::nlbv(to_model_expr(ctor_ty)) <= 0,
                 crate::expr_model::nlbv(to_model_expr(structure)) <= 0,
                 env0 == *old(self).env,
                 dty == crate::env_model::to_model_of_declar_ty(env0),
                 denv == crate::env_model::to_model_of_env(env0),
-                lctx == crate::expr_arena_bridge::arena_lctx(),
+                lctx == crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*self.env)),
                 s_m == to_model_expr(structure),
                 fi == i as int,
                 forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
@@ -1877,7 +1877,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost ct0 = ctor_ty;
             ctor_ty = self.whnf(ctor_ty);
             proof {
-                assert(crate::expr_model::dbj_deep_in(to_model_expr(ct0), L, c0));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ct0), L, c0));
             }
             let ghost H0 = H;
             match self.ctx.read_expr(ctor_ty) {
@@ -1896,7 +1896,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
                         ctor_ty = self.ctx.inst(body, &[arg]);
                         proof {
-                            inst_deep_in(body, seq![arg], L, c0);
+                            inst_deep_in(crate::env_model::env_arena_ids(*self.env), body, seq![arg], L, c0);
                             assert([arg]@ =~= seq![arg]);
                             assert(crate::expr_model::nlbv(to_model_expr(body)) <= 1);
                             inst_closed(body, seq![arg]);
@@ -1934,7 +1934,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let reduced = self.whnf(ctor_ty);
         proof {
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(ctor_ty), L, c0));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ctor_ty), L, c0));
         }
         match self.ctx.read_expr(reduced) {
             Pi { binder_type, .. } => {
@@ -1946,7 +1946,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 proof {
                     assert(crate::expr_model::nlbv(to_model_expr(binder_type)) <= 0);
-                    scope_pres_of_occ(to_model_expr(structure), to_model_expr(binder_type), c0);
+                    scope_pres_of_occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), to_model_expr(binder_type), c0);
                     // the field type: the last binder, then the projection rule
                     let cur = to_model_expr(ctor_ty);
                     let btm = to_model_expr(binder_type);
@@ -1990,7 +1990,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             // THE TYPING CLAIM: the result is a type of `e` in the kernel's
             // judgement.
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -2011,7 +2011,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     local_type_scope(*self, e);
                     // a local's type is what the arena records for it
-                    crate::expr_arena_bridge::arena_lctx_local(e);
+                    crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(*self.env), e);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0));
                     kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0);
                 }
@@ -2038,9 +2038,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         Box::new(to_model_expr(body)),
                     ));
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-                        crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
-                        crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                        assert(crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c));
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c) implies
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(binder_type), S, c));
                     }
                 }
                 r
@@ -2059,9 +2059,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         0,
                     );
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-                        crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
-                        crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                        crate::expr_model::no_fv_dbj_deep_in(to_model_expr(r), S, c);
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c) implies
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                        crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c);
                     }
                 }
                 r
@@ -2070,9 +2070,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let r = self.infer_proj(ty_name, idx, structure, flag);
                 proof {
                     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-                        crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
-                        crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                        assert(crate::expr_model::dbj_deep_in(to_model_expr(structure), S, c));
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c) implies
+                        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), S, c));
                     }
                 }
                 r
@@ -2126,21 +2126,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let (mut fun, mut args) = self.ctx.unfold_apps_stack(e);
         // Scope: everything below lives in what `e` uses.
         let ghost c0 = self.ctx.dbj_level_counter;
-        let ghost L = crate::expr_model::occ(to_model_expr(e), c0);
+        let ghost L = crate::expr_model::occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), c0);
         proof {
             let em = to_model_expr(e);
-            crate::expr_model::occ_self(em, live_set(*self), c0);
+            crate::expr_model::occ_self(crate::env_model::env_arena_ids(*self.env), em, live_set(*self), c0);
             occ_live(*self, e, c0);
             crate::beta_model::spine_recompose(em);
-            spine_app_dbj_deep_in(crate::beta_model::spine_head(em), crate::beta_model::spine_args(em), L, c0);
+            spine_app_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), crate::beta_model::spine_head(em), crate::beta_model::spine_args(em), L, c0);
             let sa = crate::beta_model::spine_args(em);
-            assert forall|j: int| 0 <= j < args@.len() implies crate::expr_model::dbj_deep_in(
+            assert forall|j: int| 0 <= j < args@.len() implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), 
                 to_model_expr(#[trigger] args@[j]),
                 L,
                 c0,
@@ -2149,7 +2149,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::ptr_models(args@).len() == sa.reverse().len());
                 assert(sa.len() != 0);
                 assert(sa.reverse()[j] == sa[sa.len() - 1 - j]);
-                assert(crate::expr_model::dbj_deep_in(sa[sa.len() - 1 - j], L, c0));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), sa[sa.len() - 1 - j], L, c0));
             }
             // e is closed, so are its head and arguments
             crate::beta_model::spine_app_nlbv_decompose(crate::beta_model::spine_head(em), sa);
@@ -2189,7 +2189,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut T = T0;
         let ghost mut fT: nat = f0;
         proof {
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(fun0), L, c0));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(fun0), L, c0));
             assert(SA.take(0) =~= Seq::<ExprSpec>::empty());
             assert(crate::expr_arena_bridge::ptr_models(ctx@) =~= Seq::<ExprSpec>::empty());
             crate::beta_model::subst_full_empty(to_model_expr(fun), 0);
@@ -2207,10 +2207,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live == old(self).live,
                 c0 == old(self).ctx.dbj_level_counter,
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
-                    && crate::expr_model::serial_below(t, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(fun), L, c0),
-                forall|j: int| 0 <= j < args@.len() ==> crate::expr_model::dbj_deep_in(to_model_expr(#[trigger] args@[j]), L, c0),
-                forall|j: int| 0 <= j < ctx@.len() ==> crate::expr_model::dbj_deep_in(to_model_expr(#[trigger] ctx@[j]), L, c0),
+                    && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(fun), L, c0),
+                forall|j: int| 0 <= j < args@.len() ==> crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(#[trigger] args@[j]), L, c0),
+                forall|j: int| 0 <= j < ctx@.len() ==> crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(#[trigger] ctx@[j]), L, c0),
                 // closedness: the arguments are closed, and `fun` has a loose
                 // index for each argument not yet instantiated into it
                 crate::expr_model::nlbv(to_model_expr(e)) <= 0,
@@ -2234,7 +2234,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Pi { binder_type, body, .. } => {
                     let arg = args.pop().unwrap();
                     proof {
-                        assert(crate::expr_model::dbj_deep_in(to_model_expr(arg), L, c0));
+                        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(arg), L, c0));
                         assert(crate::expr_model::nlbv(to_model_expr(arg)) <= 0);
                     }
                     if flag == Check {
@@ -2245,9 +2245,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         let ghost bt0 = binder_type;
                         let binder_type = self.ctx.inst(binder_type, ctx.as_slice());
                         proof {
-                            assert(crate::expr_model::dbj_deep_in(to_model_expr(arg_type), L, c0));
+                            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(arg_type), L, c0));
                             in_scope_of_deep_in(*self, arg_type, L);
-                            inst_deep_in(bt0, ctx@, L, c0);
+                            inst_deep_in(crate::env_model::env_arena_ids(*self.env), bt0, ctx@, L, c0);
                             assert(crate::expr_model::nlbv(to_model_expr(bt0)) <= ctx@.len());
                             inst_closed(bt0, ctx@);
                             in_scope_of_deep_in(*self, binder_type, L);
@@ -2318,14 +2318,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 _ => {
                     let as_pi = self.ctx.inst(fun, ctx.as_slice());
                     proof {
-                        inst_deep_in(fun, ctx@, L, c0);
+                        inst_deep_in(crate::env_model::env_arena_ids(*self.env), fun, ctx@, L, c0);
                         inst_closed(fun, ctx@);
                         in_scope_of_deep_in(*self, as_pi, L);
                     }
                     let ghost as_pi0 = as_pi;
                     let as_pi = self.ensure_pi(as_pi);
                     proof {
-                        assert(crate::expr_model::dbj_deep_in(to_model_expr(as_pi0), L, c0));
+                        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(as_pi0), L, c0));
                         kconv_trans(env0, T, to_model_expr(as_pi0), to_model_expr(as_pi));
                     }
                     match self.ctx.read_expr(as_pi) {
@@ -2345,9 +2345,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let r = self.ctx.inst(fun, ctx.as_slice());
         proof {
-            inst_deep_in(fun, ctx@, L, c0);
+            inst_deep_in(crate::env_model::env_arena_ids(*self.env), fun, ctx@, L, c0);
             inst_closed(fun, ctx@);
-            scope_pres_of_occ(to_model_expr(e), to_model_expr(r), c0);
+            scope_pres_of_occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), to_model_expr(r), c0);
             // every argument consumed, and the last step consumed one
             assert(SA.take(n as int) =~= SA);
             assert(ktypes(env0, em, T, fT));
@@ -2370,7 +2370,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let mut locals = Vec::new();
@@ -2379,7 +2379,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // from `start_pos` up (the locals it opens), and the abstraction at
         // the end takes those levels back out.
         let ghost e0 = e;
-        let ghost L = crate::expr_model::occ(to_model_expr(e0), start_pos);
+        let ghost L = crate::expr_model::occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), start_pos);
         // Typing: the telescope walked so far (`lam_walk`); each binder type
         // is the type of the local opened for it.
         let ghost env0 = *self.env;
@@ -2392,14 +2392,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::beta_model::subst_full_empty(to_model_expr(e), 0);
             broadcast use vstd::iset::lemma_iset_new;
 
-            crate::expr_model::occ_self(to_model_expr(e0), live_set(*self), start_pos);
+            crate::expr_model::occ_self(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), live_set(*self), start_pos);
             occ_live(*self, e0, start_pos);
             assert forall|t: u32| #[trigger] L.contains(t) implies self.live@.contains(t)
-                && crate::expr_model::serial_below(t, start_pos) by {
-                crate::expr_model::occurs_deep_in(to_model_expr(e0), live_set(*self), start_pos, start_pos, t);
+                && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, start_pos) by {
+                crate::expr_model::occurs_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), live_set(*self), start_pos, start_pos, t);
             }
-            assert(ids_of(locals@) =~= Seq::<u32>::empty());
-            assert(self.live@ + ids_of(locals@) =~= self.live@);
+            assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= Seq::<u32>::empty());
+            assert(self.live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= self.live@);
         }
         while let Lambda { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(
             e,
@@ -2411,17 +2411,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == start_pos + locals@.len(),
-                self.live@ == old(self).live@ + ids_of(locals@),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
                 start_pos == old(self).ctx.dbj_level_counter,
-                L == crate::expr_model::occ(to_model_expr(e0), start_pos),
+                L == crate::expr_model::occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), start_pos),
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
-                    && crate::expr_model::serial_below(t, start_pos),
-                crate::expr_model::dbj_deep_in(to_model_expr(e), L, start_pos),
+                    && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, start_pos),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, start_pos),
                 crate::expr_model::nlbv(to_model_expr(e)) <= locals@.len(),
                 crate::expr_model::nlbv(to_model_expr(e0)) <= 0,
-                opened_locals(locals@, start_pos, walk_set(L, self.live@, start_pos)),
+                opened_locals(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, start_pos)),
                 env0 == *old(self).env,
-                lam_walk(Xs, As, Bs, locals@),
+                lam_walk(crate::env_model::env_arena_ids(*self.env), Xs, As, Bs, locals@),
                 Xs.len() == locals@.len() + 1,
                 Xs[locals@.len() as int] == crate::expr_model::subst_full(
                     to_model_expr(e),
@@ -2437,22 +2437,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             proof {
                 let B = self.ctx.dbj_level_counter;
-                let Sk = walk_set(L, self.live@, start_pos);
-                walk_set_facts(L, old(self).live@, locals@, start_pos);
-                crate::expr_model::dbj_deep_in_weaken(to_model_expr(bt0), L, start_pos, Sk, B);
-                opened_locals_deep(locals@, start_pos, Sk, B);
-                inst_deep_in(bt0, locals@, Sk, B);
+                let Sk = walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, start_pos);
+                walk_set_facts(crate::env_model::env_arena_ids(*self.env), L, old(self).live@, locals@, start_pos);
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(bt0), L, start_pos, Sk, B);
+                opened_locals_deep(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, Sk, B);
+                inst_deep_in(crate::env_model::env_arena_ids(*self.env), bt0, locals@, Sk, B);
                 assert(crate::expr_model::nlbv(to_model_expr(bt0)) <= locals@.len());
                 inst_locals_closed(to_model_expr(bt0), locals@);
                 in_scope_of_deep_in(*self, binder_type, Sk);
                 // the body is deep below the level the next local takes, so
                 // that local is absent from it
-                crate::expr_model::dbj_deep_in_weaken(to_model_expr(e), L, start_pos, Sk, B);
-                inst_deep_in(e, locals@, Sk, B);
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, start_pos, Sk, B);
+                inst_deep_in(crate::env_model::env_arena_ids(*self.env), e, locals@, Sk, B);
                 let bm1 = crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(locals@), 1);
                 assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
-                assert(crate::expr_model::dbj_deep_in(bm1, Sk, B));
-                crate::expr_model::dbj_deep_in_weaken(bm1, Sk, B, crate::expr_model::all_ids(), B);
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), bm1, Sk, B));
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), bm1, Sk, B, crate::expr_model::all_ids(), B);
             }
             let ghost B0 = self.ctx.dbj_level_counter;
             if let Check = flag {
@@ -2464,15 +2464,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
             self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(local)));
             proof {
-                opened_locals_push(locals@, start_pos, walk_set(L, live_k, start_pos), local);
-                walk_set_grows(L, live_k, crate::expr_arena_bridge::expr_id(local), start_pos);
-                opened_locals_weaken(
+                opened_locals_push(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, start_pos), local);
+                walk_set_grows(crate::env_model::env_arena_ids(*self.env), L, live_k, crate::expr_arena_bridge::expr_id(local), start_pos);
+                opened_locals_weaken(crate::env_model::env_arena_ids(*self.env), 
                     locals@.push(local),
                     start_pos,
-                    walk_set(L, live_k, start_pos),
-                    walk_set(L, self.live@, start_pos),
+                    walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, start_pos),
+                    walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, start_pos),
                 );
-                assert(ids_of(locals@.push(local)) =~= ids_of(locals@).push(crate::expr_arena_bridge::expr_id(local)));
+                assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@.push(local)) =~= ids_of(crate::env_model::env_arena_ids(*self.env), locals@).push(crate::expr_arena_bridge::expr_id(local)));
             }
             proof {
                 crate::util_model::owns_all_push(*self.ctx, locals@, local);
@@ -2481,12 +2481,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 assert(locals@ =~= pre.push(local));
                 assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
-                crate::expr_model::dbj_deep_fv_absent(
+                crate::expr_model::dbj_deep_fv_absent(crate::env_model::env_arena_ids(*self.env), 
                     crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(pre), 1),
                     crate::expr_arena_bridge::expr_id(local),
                     B0,
                 );
-                lam_walk_push(Xs, As, Bs, pre, to_model_expr(bt0), to_model_expr(body), local);
+                lam_walk_push(crate::env_model::env_arena_ids(*self.env), Xs, As, Bs, pre, to_model_expr(bt0), to_model_expr(body), local);
                 Xs = Xs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(locals@), 0));
                 As = As.push(crate::expr_model::subst_full(to_model_expr(bt0), crate::expr_arena_bridge::ptr_models(pre), 0));
                 Bs = Bs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(pre), 1));
@@ -2504,25 +2504,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let instd = self.ctx.inst(e, locals.as_slice());
         let ghost live_n = self.live@;
-        let ghost Sx = walk_set(L, live_n, start_pos);
+        let ghost Sx = walk_set(crate::env_model::env_arena_ids(*self.env), L, live_n, start_pos);
         proof {
             let B = self.ctx.dbj_level_counter;
-            walk_set_facts(L, old(self).live@, locals@, start_pos);
-            crate::expr_model::dbj_deep_in_weaken(to_model_expr(e), L, start_pos, Sx, B);
-            opened_locals_deep(locals@, start_pos, Sx, B);
-            inst_deep_in(e, locals@, Sx, B);
+            walk_set_facts(crate::env_model::env_arena_ids(*self.env), L, old(self).live@, locals@, start_pos);
+            crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, start_pos, Sx, B);
+            opened_locals_deep(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, Sx, B);
+            inst_deep_in(crate::env_model::env_arena_ids(*self.env), e, locals@, Sx, B);
             inst_locals_closed(to_model_expr(e), locals@);
             in_scope_of_deep_in(*self, instd, Sx);
         }
         let infd = self.infer(instd, flag);
         proof {
             let B = self.ctx.dbj_level_counter;
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(instd), Sx, B));
-            crate::expr_model::dbj_deep_in_below(to_model_expr(infd), Sx, B);
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(instd), Sx, B));
+            crate::expr_model::dbj_deep_in_below(crate::env_model::env_arena_ids(*self.env), to_model_expr(infd), Sx, B);
         }
         let ghost n = locals@.len();
         let ghost lf = locals@;
-        let ghost ks = ids_of(lf);
+        let ghost ks = ids_of(crate::env_model::env_arena_ids(*self.env), lf);
         let ghost Tn = to_model_expr(infd);
         proof {
             assert(to_model_expr(instd) == Xs[n as int]);
@@ -2533,9 +2533,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             broadcast use vstd::iset::lemma_iset_new;
 
-            lam_top_abstr(lf, As, Sx, L, old(self).live@, start_pos, Tn);
+            lam_top_abstr(crate::env_model::env_arena_ids(*self.env), lf, As, Sx, L, old(self).live@, start_pos, Tn);
 
-            crate::expr_model::abstr_levels_dbj_deep_in(
+            crate::expr_model::abstr_levels_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), 
                 to_model_expr(infd),
                 Sx,
                 self.ctx.dbj_level_counter,
@@ -2545,7 +2545,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 start_pos,
             );
             // the opened levels become the loose indices of the telescope
-            crate::expr_model::abstr_levels_nlbv(to_model_expr(infd), start_pos, self.ctx.dbj_level_counter);
+            crate::expr_model::abstr_levels_nlbv(crate::env_model::env_arena_ids(*self.env), to_model_expr(infd), start_pos, self.ctx.dbj_level_counter);
         }
         while let Some(local) = locals.pop()
             invariant
@@ -2559,17 +2559,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // what discharges `replace_dbj_level`'s `> 0`.
                 self.ctx.dbj_level_counter == start_pos
                     + locals@.len(),
-                self.live@ == old(self).live@ + ids_of(locals@),
-                L == crate::expr_model::occ(to_model_expr(e0), start_pos),
-                Sx == walk_set(L, live_n, start_pos),
-                opened_locals(locals@, start_pos, Sx),
-                crate::expr_model::dbj_deep_in(to_model_expr(abstrd), L, start_pos),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
+                L == crate::expr_model::occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), start_pos),
+                Sx == walk_set(crate::env_model::env_arena_ids(*self.env), L, live_n, start_pos),
+                opened_locals(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, Sx),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(abstrd), L, start_pos),
                 crate::expr_model::nlbv(to_model_expr(abstrd)) <= locals@.len(),
                 locals@.len() <= n,
                 n == lf.len(),
                 locals@ == lf.take(locals@.len() as int),
-                ks == ids_of(lf),
-                lam_frame(lf, As, Sx, L, old(self).live@, start_pos),
+                ks == ids_of(crate::env_model::env_arena_ids(*self.env), lf),
+                lam_frame(crate::env_model::env_arena_ids(*self.env), lf, As, Sx, L, old(self).live@, start_pos),
                 to_model_expr(abstrd) == crate::expr_model::abstr_full(
                     lam_close(As, ks, Tn, locals@.len() as nat),
                     ks.take(locals@.len() as int),
@@ -2585,7 +2585,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == start_pos,
                 self.live == old(self).live,
-                crate::expr_model::dbj_deep_in(to_model_expr(abstrd), L, start_pos),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(abstrd), L, start_pos),
                 crate::expr_model::nlbv(to_model_expr(abstrd)) <= 0,
                 to_model_expr(abstrd) == crate::expr_model::abstr_full(
                     lam_close(As, ks, Tn, locals@.len() as nat),
@@ -2597,18 +2597,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // the popped local is the old last one
                 let n = locals@.len();
                 assert(locals@.push(local)[n as int] == local);
-                assert(opened_locals(locals@.push(local), start_pos, Sx));
+                assert(opened_locals(crate::env_model::env_arena_ids(*self.env), locals@.push(local), start_pos, Sx));
                 assert(locals@.push(local).drop_last() =~= locals@);
-                opened_locals_drop_last(locals@.push(local), start_pos, Sx);
+                opened_locals_drop_last(crate::env_model::env_arena_ids(*self.env), locals@.push(local), start_pos, Sx);
             }
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
                     self.ctx.replace_dbj_level(local);
                     self.live = Ghost(self.live@.drop_last());
                     proof {
-                        assert(ids_of(locals@.push(local)) =~= ids_of(locals@).push(crate::expr_arena_bridge::expr_id(local)));
-                        assert(self.live@ =~= old(self).live@ + ids_of(locals@));
-                        crate::expr_model::dbj_deep_in_below(
+                        assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@.push(local)) =~= ids_of(crate::env_model::env_arena_ids(*self.env), locals@).push(crate::expr_arena_bridge::expr_id(local)));
+                        assert(self.live@ =~= old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@));
+                        crate::expr_model::dbj_deep_in_below(crate::env_model::env_arena_ids(*self.env), 
                             to_model_expr(binder_type),
                             Sx,
                             self.ctx.dbj_level_counter,
@@ -2618,7 +2618,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     proof {
                         broadcast use vstd::iset::lemma_iset_new;
 
-                        crate::expr_model::abstr_levels_dbj_deep_in(
+                        crate::expr_model::abstr_levels_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), 
                             to_model_expr(binder_type),
                             Sx,
                             self.ctx.dbj_level_counter,
@@ -2627,13 +2627,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             L,
                             start_pos,
                         );
-                        crate::expr_model::abstr_levels_nlbv(to_model_expr(binder_type), start_pos, self.ctx.dbj_level_counter);
+                        crate::expr_model::abstr_levels_nlbv(crate::env_model::env_arena_ids(*self.env), to_model_expr(binder_type), start_pos, self.ctx.dbj_level_counter);
                     }
                     let ghost i = locals@.len();
                     proof {
                         assert(lf.take(i as int + 1) =~= locals@.push(local));
                         assert(local == lf[i as int]);
-                        lam_pop_step(lf, As, Sx, L, old(self).live@, start_pos, Tn, i, to_model_expr(binder_type));
+                        lam_pop_step(crate::env_model::env_arena_ids(*self.env), lf, As, Sx, L, old(self).live@, start_pos, Tn, i, to_model_expr(binder_type));
                     }
                     abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
                 },
@@ -2641,7 +2641,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         proof {
-            scope_pres_of_occ(to_model_expr(e0), to_model_expr(abstrd), start_pos);
+            scope_pres_of_occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(e0), to_model_expr(abstrd), start_pos);
             crate::expr_model::abstr_full_empty(lam_close(As, ks, Tn, 0), 0);
             assert(ks.take(0) =~= Seq::<u32>::empty());
         }
@@ -2661,7 +2661,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let mut universes = Vec::new();
@@ -2678,8 +2678,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut Bs = Seq::<ExprSpec>::empty();
         proof {
             live_below(*self, c0);
-            assert(ids_of(locals@) =~= Seq::<u32>::empty());
-            assert(self.live@ + ids_of(locals@) =~= self.live@);
+            assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= Seq::<u32>::empty());
+            assert(self.live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= self.live@);
             assert(crate::expr_arena_bridge::ptr_models(locals@) =~= Seq::<ExprSpec>::empty());
             assert(level_models(universes@) =~= Seq::<crate::level_model::LevelSpec>::empty());
             crate::beta_model::subst_full_empty(to_model_expr(e), 0);
@@ -2693,15 +2693,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
-                self.live@ == old(self).live@ + ids_of(locals@),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
                 universes@.len() == locals@.len(),
                 c0 == old(self).ctx.dbj_level_counter,
                 L == live_set(*old(self)),
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
-                    && crate::expr_model::serial_below(t, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(e), L, c0),
+                    && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*self.env), t, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, c0),
                 crate::expr_model::nlbv(to_model_expr(e)) <= locals@.len(),
-                opened_locals(locals@, c0, walk_set(L, self.live@, c0)),
+                opened_locals(crate::env_model::env_arena_ids(*self.env), locals@, c0, walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, c0)),
                 env0 == *old(self).env,
                 pi_walk(env0, Xs, As, Bs, locals@, level_models(universes@)),
                 Xs[locals@.len() as int] == crate::expr_model::subst_full(
@@ -2715,22 +2715,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
             proof {
                 let B = self.ctx.dbj_level_counter;
-                let Sk = walk_set(L, self.live@, c0);
-                walk_set_facts(L, old(self).live@, locals@, c0);
-                crate::expr_model::dbj_deep_in_weaken(to_model_expr(bt0), L, c0, Sk, B);
-                opened_locals_deep(locals@, c0, Sk, B);
-                inst_deep_in(bt0, locals@, Sk, B);
+                let Sk = walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, c0);
+                walk_set_facts(crate::env_model::env_arena_ids(*self.env), L, old(self).live@, locals@, c0);
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(bt0), L, c0, Sk, B);
+                opened_locals_deep(crate::env_model::env_arena_ids(*self.env), locals@, c0, Sk, B);
+                inst_deep_in(crate::env_model::env_arena_ids(*self.env), bt0, locals@, Sk, B);
                 assert(crate::expr_model::nlbv(to_model_expr(bt0)) <= locals@.len());
                 inst_locals_closed(to_model_expr(bt0), locals@);
                 in_scope_of_deep_in(*self, binder_type, Sk);
                 // the body is deep below the level the next local takes, so
                 // that local is absent from it
-                crate::expr_model::dbj_deep_in_weaken(to_model_expr(e), L, c0, Sk, B);
-                inst_deep_in(e, locals@, Sk, B);
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, c0, Sk, B);
+                inst_deep_in(crate::env_model::env_arena_ids(*self.env), e, locals@, Sk, B);
                 let bm1 = crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(locals@), 1);
                 assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
-                assert(crate::expr_model::dbj_deep_in(bm1, Sk, B));
-                crate::expr_model::dbj_deep_in_weaken(bm1, Sk, B, crate::expr_model::all_ids(), B);
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), bm1, Sk, B));
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), bm1, Sk, B, crate::expr_model::all_ids(), B);
             }
             let ghost B0 = self.ctx.dbj_level_counter;
             let dom_univ = self.infer_sort_of(binder_type, flag);
@@ -2746,17 +2746,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(locals@[pre.len() as int])));
             proof {
                 let loc = locals@[pre.len() as int];
-                opened_locals_push(pre, c0, walk_set(L, live_k, c0), loc);
+                opened_locals_push(crate::env_model::env_arena_ids(*self.env), pre, c0, walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, c0), loc);
                 assert(locals@ =~= pre.push(loc));
                 crate::util_model::owns_all_push(*self.ctx, pre, loc);
-                walk_set_grows(L, live_k, crate::expr_arena_bridge::expr_id(loc), c0);
-                opened_locals_weaken(locals@, c0, walk_set(L, live_k, c0), walk_set(L, self.live@, c0));
-                assert(ids_of(locals@) =~= ids_of(pre).push(crate::expr_arena_bridge::expr_id(loc)));
+                walk_set_grows(crate::env_model::env_arena_ids(*self.env), L, live_k, crate::expr_arena_bridge::expr_id(loc), c0);
+                opened_locals_weaken(crate::env_model::env_arena_ids(*self.env), locals@, c0, walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, c0), walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, c0));
+                assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= ids_of(crate::env_model::env_arena_ids(*self.env), pre).push(crate::expr_arena_bridge::expr_id(loc)));
                 // typing: one more binder of the telescope
                 assert(level_models(universes@) =~= level_models(pre_u).push(to_model_level(dom_univ)));
                 assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
                 assert forall|j: int| 0 <= j < pre.len() implies crate::expr_arena_bridge::is_local_shape(#[trigger] pre[j]) by {}
-                crate::expr_model::dbj_deep_fv_absent(
+                crate::expr_model::dbj_deep_fv_absent(crate::env_model::env_arena_ids(*self.env), 
                     crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(pre), 1),
                     crate::expr_arena_bridge::expr_id(loc),
                     B0,
@@ -2787,11 +2787,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let instd = self.ctx.inst(e, locals.as_slice());
         proof {
             let B = self.ctx.dbj_level_counter;
-            let Sn = walk_set(L, self.live@, c0);
-            walk_set_facts(L, old(self).live@, locals@, c0);
-            crate::expr_model::dbj_deep_in_weaken(to_model_expr(e), L, c0, Sn, B);
-            opened_locals_deep(locals@, c0, Sn, B);
-            inst_deep_in(e, locals@, Sn, B);
+            let Sn = walk_set(crate::env_model::env_arena_ids(*self.env), L, self.live@, c0);
+            walk_set_facts(crate::env_model::env_arena_ids(*self.env), L, old(self).live@, locals@, c0);
+            crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), L, c0, Sn, B);
+            opened_locals_deep(crate::env_model::env_arena_ids(*self.env), locals@, c0, Sn, B);
+            inst_deep_in(crate::env_model::env_arena_ids(*self.env), e, locals@, Sn, B);
             inst_locals_closed(to_model_expr(e), locals@);
             in_scope_of_deep_in(*self, instd, Sn);
         }
@@ -2812,7 +2812,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
-                self.live@ == old(self).live@ + ids_of(locals@),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
                 universes@.len() == locals@.len(),
                 universes@.len() <= n,
                 n == usn.len(),
@@ -2831,8 +2831,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             self.ctx.replace_dbj_level(local);
             self.live = Ghost(self.live@.drop_last());
             proof {
-                assert(ids_of(locals@.push(local)) =~= ids_of(locals@).push(crate::expr_arena_bridge::expr_id(local)));
-                assert(self.live@ =~= old(self).live@ + ids_of(locals@));
+                assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@.push(local)) =~= ids_of(crate::env_model::env_arena_ids(*self.env), locals@).push(crate::expr_arena_bridge::expr_id(local)));
+                assert(self.live@ =~= old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@));
             }
         }
         assert!(c0 == self.ctx.dbj_level_counter, "infer_pi: de Bruijn level counter was left unbalanced");
@@ -2861,7 +2861,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), val),
             // the body sits under the let's binder: one loose index
             crate::expr_model::nlbv(to_model_expr(body)) <= 1,
-            crate::expr_model::dbj_deep_in(to_model_expr(body), live_set(*old(self)), old(self).ctx.dbj_level_counter),
+            crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(body), live_set(*old(self)), old(self).ctx.dbj_level_counter),
         ensures
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
@@ -2880,10 +2880,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 to_model_expr(result),
             ),
             forall|S: vstd::iset::ISet<u32>, c: u16|
-                crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c)
-                && crate::expr_model::dbj_deep_in(to_model_expr(val), S, c)
-                && crate::expr_model::dbj_deep_in(to_model_expr(body), S, c)
-                ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(result), S, c),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(binder_type), S, c)
+                && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(val), S, c)
+                && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(body), S, c)
+                ==> #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(result), S, c),
     {
         if flag == Check {
             // The binder type has to be a type
@@ -2899,14 +2899,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let b0 = to_model_expr(body0);
             assert(crate::expr_arena_bridge::ptr_models([val]@) =~= seq![vm]);
             assert forall|S: vstd::iset::ISet<u32>, c: u16|
-                crate::expr_model::dbj_deep_in(vm, S, c) && crate::expr_model::dbj_deep_in(b0, S, c)
-                implies #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(body), S, c) by {
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), vm, S, c) && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), b0, S, c)
+                implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(body), S, c) by {
                 assert(seq![vm][0] == vm);
-                crate::expr_model::subst_full_dbj_deep_in(b0, seq![vm], 0, S, c);
+                crate::expr_model::subst_full_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), b0, seq![vm], 0, S, c);
             }
             crate::beta_model::subst_full_nlbv_bound(b0, vm, 0);
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(val), live_set(*self), self.ctx.dbj_level_counter));
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(body0), live_set(*self), self.ctx.dbj_level_counter));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(val), live_set(*self), self.ctx.dbj_level_counter));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(body0), live_set(*self), self.ctx.dbj_level_counter));
         }
         let r = self.infer(body, flag);
         proof {
@@ -2923,11 +2923,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(ktypes(*old(self).env, lt, T, f + 1));
             assert(ktc_marker(T, f + 1));
             assert forall|S: vstd::iset::ISet<u32>, c: u16|
-                crate::expr_model::dbj_deep_in(to_model_expr(binder_type), S, c)
-                && crate::expr_model::dbj_deep_in(to_model_expr(val), S, c)
-                && crate::expr_model::dbj_deep_in(to_model_expr(body0), S, c)
-                implies #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                assert(crate::expr_model::dbj_deep_in(to_model_expr(body), S, c));
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(binder_type), S, c)
+                && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(val), S, c)
+                && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(body0), S, c)
+                implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(body), S, c));
             }
         }
         r
@@ -3107,7 +3107,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         kconv_spine_congr(*old(self).env, pm, to_model_expr(pr), am);
                         crate::beta_model::spine_app_nlbv(to_model_expr(pr), am);
                     }
-                    spine_scope_pres(pm, to_model_expr(pr), am);
+                    spine_scope_pres(crate::env_model::env_arena_ids(*self.env), pm, to_model_expr(pr), am);
                     assert(whnf_claim(*old(self).env, em0, to_model_expr(e1)));
                 }
                 let r = self.whnf_no_unfolding_aux(e1, cheap_proj);
@@ -3468,17 +3468,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             binder_walk_init(*old(self).env, to_model_expr(x), to_model_expr(y), c0);
             assert(locals@ =~= Seq::<ExprPtr<'t>>::empty());
             live_below(*self, c0);
-            assert(ids_of(locals@) =~= Seq::<u32>::empty());
-            assert(self.live@ + ids_of(locals@) =~= self.live@);
+            assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= Seq::<u32>::empty());
+            assert(self.live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@) =~= self.live@);
         }
         loop
             invariant
                 crate::util_model::owns(*self.ctx, x),
                 crate::util_model::owns(*self.ctx, y),
                 crate::util_model::owns_all(*self.ctx, locals@),
-                live_walk(self.live@, old(self).live@, L, locals@, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(x), L, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(y), L, c0),
+                live_walk(crate::env_model::env_arena_ids(*self.env), self.live@, old(self).live@, L, locals@, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(x), L, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(y), L, c0),
                 crate::expr_model::nlbv(to_model_expr(x)) <= locals@.len(),
                 crate::expr_model::nlbv(to_model_expr(y)) <= locals@.len(),
                 binder_walk(*old(self).env, b1s, b2s, t1s, t2s, locals@, c0),
@@ -3497,7 +3497,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter
                     + locals@.len(),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
-                self.live@ == old(self).live@ + ids_of(locals@),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
         // A bare `loop` carries no exit reason: without these the `break`
         // arrives with nothing known, and the two `inst` calls below it
         // have no bound to discharge.
@@ -3506,13 +3506,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 c0 == old(self).ctx.dbj_level_counter,
-                live_walk(self.live@, old(self).live@, L, locals@, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(x), L, c0),
-                crate::expr_model::dbj_deep_in(to_model_expr(y), L, c0),
+                live_walk(crate::env_model::env_arena_ids(*self.env), self.live@, old(self).live@, L, locals@, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(x), L, c0),
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(y), L, c0),
                 crate::expr_model::nlbv(to_model_expr(x)) <= locals@.len(),
                 crate::expr_model::nlbv(to_model_expr(y)) <= locals@.len(),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter + locals@.len(),
-                self.live@ == old(self).live@ + ids_of(locals@),
+                self.live@ == old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@),
                 binder_walk(*old(self).env, b1s, b2s, t1s, t2s, locals@, c0),
                 b1s[locals@.len() as int] == to_model_expr(x),
                 b2s[locals@.len() as int] == to_model_expr(y),
@@ -3537,8 +3537,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let t1 = self.ctx.inst(t1, locals.as_slice());
             let t2 = self.ctx.inst(t2, locals.as_slice());
             proof {
-                assert(crate::expr_model::dbj_deep_in(to_model_expr(t10), L, c0));
-                assert(crate::expr_model::dbj_deep_in(to_model_expr(t20), L, c0));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(t10), L, c0));
+                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(t20), L, c0));
                 assert(crate::expr_model::nlbv(to_model_expr(t10)) <= locals@.len());
                 assert(crate::expr_model::nlbv(to_model_expr(t20)) <= locals@.len());
                 live_walk_inst(*self, old(self).live@, L, locals@, c0, t10, t1);
@@ -3555,7 +3555,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(locals@[pre.len() as int])));
                 proof {
                     let loc = locals@[pre.len() as int];
-                    live_walk_push(live_k, old(self).live@, L, pre, c0, loc);
+                    live_walk_push(crate::env_model::env_arena_ids(*self.env), live_k, old(self).live@, L, pre, c0, loc);
                     assert(locals@ =~= pre.push(loc));
                     crate::util_model::owns_all_push(*self.ctx, pre, loc);
                     binder_walk_step(
@@ -4010,7 +4010,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
-                Some(r) => scope_pres(to_model_expr(major), to_model_expr(r)) && (
+                Some(r) => scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(major), to_model_expr(r)) && (
                 crate::expr_model::nlbv(to_model_expr(major)) <= 0 ==> kconv(
                     *old(self).env,
                     to_model_expr(major),
@@ -4031,7 +4031,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (Const { name, .. }, Some(n)) if name == n => {
                 let new_ctor_app = self.mk_nullary_ctor(major_ty, rec.num_params as usize)?;
                 proof {
-                    scope_pres_trans(to_model_expr(major), to_model_expr(major_ty), to_model_expr(new_ctor_app));
+                    scope_pres_trans(crate::env_model::env_arena_ids(*self.env), to_model_expr(major), to_model_expr(major_ty), to_model_expr(new_ctor_app));
                     scope_pres_in_scope(*self, major, new_ctor_app);
                 }
                 // This sometimes has free variables.
@@ -4080,7 +4080,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result)),
             crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> kconv(
                 *old(self).env,
                 to_model_expr(e),
@@ -4109,9 +4109,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         proof {
                             assert(crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(e_type)) <= 0);
                             assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-                                crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
-                                crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                                assert(crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c));
+                                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c) implies
+                                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                                assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e_type), S, c));
                             }
                         }
                         r
@@ -4182,14 +4182,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             assert(m0 == am[major_idx as int]);
             kconv_refl(env0, m0);
-            scope_pres_refl(m0);
+            scope_pres_refl(crate::env_model::env_arena_ids(*self.env), m0);
         }
         let k = self.to_ctor_when_k(major, rec);
         let major1 = k.unwrap_or(major);
         proof {
             match k {
                 Some(m) => {
-                    scope_pres_trans(m0, m0, to_model_expr(m));
+                    scope_pres_trans(crate::env_model::env_arena_ids(*self.env), m0, m0, to_model_expr(m));
                 },
                 None => {},
             }
@@ -4197,7 +4197,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let major2 = self.whnf(major1);
         proof {
-            scope_pres_trans(m0, to_model_expr(major1), to_model_expr(major2));
+            scope_pres_trans(crate::env_model::env_arena_ids(*self.env), m0, to_model_expr(major1), to_model_expr(major2));
             if crate::expr_model::nlbv(m0) <= 0 {
                 kconv_trans(env0, m0, to_model_expr(major1), to_model_expr(major2));
             }
@@ -4211,11 +4211,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     match c {
                         Some(cc) => {
                             kconv_of_empty_pstep(env0, to_model_expr(major2), to_model_expr(cc));
-                            scope_pres_of_closed(to_model_expr(major2), to_model_expr(cc));
+                            scope_pres_of_closed(crate::env_model::env_arena_ids(*self.env), to_model_expr(major2), to_model_expr(cc));
                         },
                         None => {
                             kconv_refl(env0, to_model_expr(major2));
-                            scope_pres_refl(to_model_expr(major2));
+                            scope_pres_refl(crate::env_model::env_arena_ids(*self.env), to_model_expr(major2));
                         },
                     }
                     no_fv_in_scope(*self, r);
@@ -4228,7 +4228,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     if c is None {
                         kconv_refl(env0, to_model_expr(major2));
-                        scope_pres_refl(to_model_expr(major2));
+                        scope_pres_refl(crate::env_model::env_arena_ids(*self.env), to_model_expr(major2));
                     }
                     scope_pres_in_scope(*self, major2, r);
                 }
@@ -4245,7 +4245,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
         let ghost mm = to_model_expr(major);
         proof {
-            scope_pres_trans(m0, to_model_expr(major2), mm);
+            scope_pres_trans(crate::env_model::env_arena_ids(*self.env), m0, to_model_expr(major2), mm);
             if crate::expr_model::nlbv(m0) <= 0 {
                 kconv_trans(env0, m0, to_model_expr(major2), mm);
             }
@@ -5023,7 +5023,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result.1)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result.1)),
             result.0 ==> kprop_claim(*old(self).env, to_model_expr(e)),
     {
         let ty = self.infer_then_whnf(e, InferOnly);
@@ -5046,7 +5046,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result.1)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result.1)),
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -5068,7 +5068,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            scope_pres(to_model_expr(e), to_model_expr(result.1)),
+            scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result.1)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result.1)),
             result.0 ==> kprop_claim(*old(self).env, to_model_expr(result.1)),
     {
@@ -5178,8 +5178,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         Box::new(to_model_expr(y)),
                         Box::new(to_model_expr(v0)),
                     ));
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(v0), live_set(*self), self.ctx.dbj_level_counter));
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(new_body), live_set(*self), self.ctx.dbj_level_counter));
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(v0), live_set(*self), self.ctx.dbj_level_counter));
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(new_body), live_set(*self), self.ctx.dbj_level_counter));
                     assert(crate::expr_model::nlbv(to_model_expr(v0)) == 1);
                     assert(crate::expr_model::nlbv(to_model_expr(y)) <= 0);
                     assert(crate::expr_model::nlbv(to_model_expr(new_body)) <= 1);
@@ -5681,7 +5681,7 @@ pub open spec fn kconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bo
     crate::tc_model::deq_p_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
         y,
     )
@@ -5693,7 +5693,7 @@ pub open spec fn tconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bo
     crate::tc_model::deq_p_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
         false,
         x,
         y,
@@ -5707,7 +5707,7 @@ pub proof fn kconv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
     crate::tc_model::deq_p_any_refl(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
     );
 }
@@ -5722,7 +5722,7 @@ pub proof fn kconv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: 
     crate::tc_model::deq_p_any_trans(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
         y,
         z,
@@ -5739,7 +5739,7 @@ pub proof fn kconv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_of_deq_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
         y,
     );
@@ -5754,7 +5754,7 @@ pub proof fn kconv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec
     crate::tc_model::deq_p_any_proj_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         idx,
         s1,
         s2,
@@ -5771,7 +5771,7 @@ pub proof fn kconv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpe
     crate::tc_model::deq_p_any_spine_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
         y,
         rest,
@@ -5799,7 +5799,7 @@ pub proof fn kconv_spine_update<'x, 't>(
     crate::tc_model::deq_p_any_spine_update(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         head,
         args,
         i,
@@ -5880,7 +5880,7 @@ pub proof fn kconv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_symm(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
         x,
         y,
     );
@@ -6004,71 +6004,71 @@ pub proof fn def_eq_claim_via<'x, 't>(env: Env<'x, 't>, x: ExprSpec, xn: ExprSpe
 
 
 /// A spine is in scope exactly when its head and every argument are.
-pub proof fn spine_app_dbj_deep_in(h: ExprSpec, args: Seq<ExprSpec>, SS: ISet<u32>, c: u16)
+pub proof fn spine_app_dbj_deep_in(aids: (nat, nat), h: ExprSpec, args: Seq<ExprSpec>, SS: ISet<u32>, c: u16)
     ensures
-        crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h, args), SS, c) <==> (
-        crate::expr_model::dbj_deep_in(h, SS, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c)),
+        crate::expr_model::dbj_deep_in(aids, crate::beta_model::spine_app(h, args), SS, c) <==> (
+        crate::expr_model::dbj_deep_in(aids, h, SS, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(aids, args[i], SS, c)),
     decreases args.len(),
 {
     if args.len() > 0 {
         let init = args.subrange(0, args.len() - 1);
         let last = args[args.len() - 1];
-        spine_app_dbj_deep_in(h, init, SS, c);
+        spine_app_dbj_deep_in(aids, h, init, SS, c);
         assert(crate::beta_model::spine_app(h, args) == ExprSpec::App(
             Box::new(crate::beta_model::spine_app(h, init)),
             Box::new(last),
         ));
-        if crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h, args), SS, c) {
+        if crate::expr_model::dbj_deep_in(aids, crate::beta_model::spine_app(h, args), SS, c) {
             assert forall|i: int| 0 <= i < args.len() implies
-                #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(aids, args[i], SS, c) by {
                 if i < args.len() - 1 {
                     assert(init[i] == args[i]);
                 }
             }
         }
-        if crate::expr_model::dbj_deep_in(h, SS, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(args[i], SS, c) {
+        if crate::expr_model::dbj_deep_in(aids, h, SS, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(aids, args[i], SS, c) {
             assert forall|i: int| 0 <= i < init.len() implies
-                #[trigger] crate::expr_model::dbj_deep_in(init[i], SS, c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(aids, init[i], SS, c) by {
                 assert(init[i] == args[i]);
             }
-            assert(crate::expr_model::dbj_deep_in(last, SS, c));
+            assert(crate::expr_model::dbj_deep_in(aids, last, SS, c));
         }
     }
 }
 
 /// Head scope lifts through a spine of unchanged arguments.
-pub proof fn spine_scope_pres(h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
+pub proof fn spine_scope_pres(aids: (nat, nat), h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
     requires
-        scope_pres(h1, h2),
+        scope_pres(aids, h1, h2),
     ensures
-        scope_pres(crate::beta_model::spine_app(h1, args), crate::beta_model::spine_app(h2, args)),
+        scope_pres(aids, crate::beta_model::spine_app(h1, args), crate::beta_model::spine_app(h2, args)),
 {
     crate::beta_model::spine_app_nlbv_decompose(h1, args);
     if crate::expr_model::nlbv(crate::beta_model::spine_app(h1, args)) <= 0 {
         assert forall|i: int| 0 <= i < args.len() implies crate::expr_model::nlbv(#[trigger] args[i]) <= 0 by {}
         crate::beta_model::spine_app_nlbv(h2, args);
     }
-    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h1, args), SS, c)
-        implies crate::expr_model::dbj_deep_in(crate::beta_model::spine_app(h2, args), SS, c) by {
-        spine_app_dbj_deep_in(h1, args, SS, c);
-        spine_app_dbj_deep_in(h2, args, SS, c);
+    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, crate::beta_model::spine_app(h1, args), SS, c)
+        implies crate::expr_model::dbj_deep_in(aids, crate::beta_model::spine_app(h2, args), SS, c) by {
+        spine_app_dbj_deep_in(aids, h1, args, SS, c);
+        spine_app_dbj_deep_in(aids, h2, args, SS, c);
     }
 }
 
 /// What a head peels to under `n` binders is in scope if the head is.
-pub proof fn spine_bind_dbj_deep_in(lam: ExprSpec, n: nat, bm: ExprSpec, SS: ISet<u32>, c: u16)
+pub proof fn spine_bind_dbj_deep_in(aids: (nat, nat), lam: ExprSpec, n: nat, bm: ExprSpec, SS: ISet<u32>, c: u16)
     requires
         crate::beta_model::spine_bind(lam, n) == Some(bm),
-        crate::expr_model::dbj_deep_in(lam, SS, c),
+        crate::expr_model::dbj_deep_in(aids, lam, SS, c),
     ensures
-        crate::expr_model::dbj_deep_in(bm, SS, c),
+        crate::expr_model::dbj_deep_in(aids, bm, SS, c),
     decreases n,
 {
     if n > 0 {
         if let ExprSpec::Bind(_, b) = lam {
-            spine_bind_dbj_deep_in(*b, (n - 1) as nat, bm, SS, c);
+            spine_bind_dbj_deep_in(aids, *b, (n - 1) as nat, bm, SS, c);
         }
     }
 }
@@ -6093,7 +6093,7 @@ pub proof fn kconv_bind_fresh<'x, 't>(
     crate::tc_model::deq_p_any_bind_fresh(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
         true,
         t1,
         t2,
@@ -6123,11 +6123,11 @@ pub open spec fn telescope_ok<'x, 't>(
     &&& c0 as nat + n < 0x1_0000
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(Box::new(t1s[i]), Box::new(b1s[i + 1]))
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(Box::new(t2s[i]), Box::new(b2s[i + 1]))
-    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(b1s[i], c0) && crate::expr_model::dbj_deep(b2s[i], c0)
+    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0)
     &&& forall|i: int| 0 <= i < n ==> #[trigger] ls[i] == ExprSpec::Free(ks[i])
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ks[i]) == Some((c0 + i) as u16)
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_model::dbj_deep(crate::expr_arena_bridge::arena_lctx()[ks[i]], (c0 + i) as u16)
-    &&& forall|i: int| 0 <= i < n ==> crate::expr_model::nlbv(#[trigger] crate::expr_arena_bridge::arena_lctx()[ks[i]]) <= 0
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[i]) == Some((c0 + i) as u16)
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]], (c0 + i) as u16)
+    &&& forall|i: int| 0 <= i < n ==> crate::expr_model::nlbv(#[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]]) <= 0
     // each binder's types, instantiated with the locals opened so far
     &&& forall|i: int| 0 <= i < n ==> #[trigger] kconv(
         env,
@@ -6151,10 +6151,10 @@ pub proof fn binder_step<'x, 't>(
     cj: u16,
 )
     requires
-        forall|q: int| 0 <= q < lj.len() ==> crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(lj[q], cj),
-        crate::expr_model::dbj_deep(n1, cj),
-        crate::expr_model::dbj_deep(n2, cj),
-        crate::expr_arena_bridge::dbj_serial(k) == Some(cj),
+        forall|q: int| 0 <= q < lj.len() ==> crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), lj[q], cj),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), n1, cj),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), n2, cj),
+        crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), k) == Some(cj),
         kconv(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0)),
         kconv(env, crate::expr_model::subst_full(n1, lj.push(ExprSpec::Free(k)), 0), crate::expr_model::subst_full(n2, lj.push(ExprSpec::Free(k)), 0)),
     ensures
@@ -6166,10 +6166,10 @@ pub proof fn binder_step<'x, 't>(
 {
     let s1 = crate::expr_model::subst_full(n1, lj, 1);
     let s2 = crate::expr_model::subst_full(n2, lj, 1);
-    crate::expr_model::subst_full_dbj_deep(n1, lj, 1, cj);
-    crate::expr_model::subst_full_dbj_deep(n2, lj, 1, cj);
-    crate::expr_model::dbj_deep_fv_absent(s1, k, cj);
-    crate::expr_model::dbj_deep_fv_absent(s2, k, cj);
+    crate::expr_model::subst_full_dbj_deep(crate::env_model::env_arena_ids(env), n1, lj, 1, cj);
+    crate::expr_model::subst_full_dbj_deep(crate::env_model::env_arena_ids(env), n2, lj, 1, cj);
+    crate::expr_model::dbj_deep_fv_absent(crate::env_model::env_arena_ids(env), s1, k, cj);
+    crate::expr_model::dbj_deep_fv_absent(crate::env_model::env_arena_ids(env), s2, k, cj);
     crate::expr_model::subst_full_push(n1, lj, ExprSpec::Free(k), 0);
     crate::expr_model::subst_full_push(n2, lj, ExprSpec::Free(k), 0);
     kconv_bind_fresh(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0), s1, s2, k);
@@ -6195,16 +6195,16 @@ pub proof fn telescope_locals_deep<'x, 't>(
     ensures
         forall|q: int| 0 <= q < ls.subrange(0, j as int).len() ==>
             crate::expr_model::nlbv(#[trigger] ls.subrange(0, j as int)[q]) <= 0
-            && crate::expr_model::dbj_deep(ls.subrange(0, j as int)[q], (c0 + j) as u16),
+            && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), ls.subrange(0, j as int)[q], (c0 + j) as u16),
 {
     let lj = ls.subrange(0, j as int);
     assert forall|q: int| 0 <= q < lj.len() implies
-        crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(lj[q], (c0 + j) as u16) by {
+        crate::expr_model::nlbv(#[trigger] lj[q]) <= 0 && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), lj[q], (c0 + j) as u16) by {
         assert(lj[q] == ls[q]);
         assert(ls[q] == ExprSpec::Free(ks[q]));
-        assert(crate::expr_arena_bridge::dbj_serial(ks[q]) == Some((c0 + q) as u16));
-        assert(crate::expr_model::dbj_deep(crate::expr_arena_bridge::arena_lctx()[ks[q]], (c0 + q) as u16));
-        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::arena_lctx()[ks[q]]) <= 0);
+        assert(crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[q]) == Some((c0 + q) as u16));
+        assert(crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[q]], (c0 + q) as u16));
+        assert(crate::expr_model::nlbv(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[q]]) <= 0);
     }
 }
 
@@ -6250,11 +6250,11 @@ pub proof fn binder_telescope_from<'x, 't>(
         assert(b1s[j as int] == ExprSpec::Bind(Box::new(t1s[j as int]), Box::new(b1s[(j + 1) as int])));
         assert(b2s[j as int] == ExprSpec::Bind(Box::new(t2s[j as int]), Box::new(b2s[(j + 1) as int])));
         assert(ls[j as int] == ExprSpec::Free(k));
-        assert(crate::expr_model::dbj_deep(b1s[(j + 1) as int], c0) && crate::expr_model::dbj_deep(b2s[(j + 1) as int], c0));
+        assert(crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[(j + 1) as int], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[(j + 1) as int], c0));
         assert(kconv(env, crate::expr_model::subst_full(t1s[j as int], lj, 0), crate::expr_model::subst_full(t2s[j as int], lj, 0)));
         telescope_locals_deep(env, b1s, b2s, t1s, t2s, ls, ks, c0, n, j);
-        crate::expr_model::dbj_deep_mono(b1s[(j + 1) as int], c0, cj);
-        crate::expr_model::dbj_deep_mono(b2s[(j + 1) as int], c0, cj);
+        crate::expr_model::dbj_deep_mono(crate::env_model::env_arena_ids(env), b1s[(j + 1) as int], c0, cj);
+        crate::expr_model::dbj_deep_mono(crate::env_model::env_arena_ids(env), b2s[(j + 1) as int], c0, cj);
         binder_step(
             env,
             t1s[j as int],
@@ -6289,8 +6289,8 @@ pub open spec fn binder_walk<'x, 't>(
     &&& c0 as nat + n < 0x1_0000
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(Box::new(t1s[i]), Box::new(b1s[i + 1]))
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(Box::new(t2s[i]), Box::new(b2s[i + 1]))
-    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(b1s[i], c0) && crate::expr_model::dbj_deep(b2s[i], c0)
-    &&& opened_locals(locals, c0, crate::expr_model::all_ids())
+    &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0)
+    &&& opened_locals(crate::env_model::env_arena_ids(env), locals, c0, crate::expr_model::all_ids())
     &&& closed0 ==> forall|i: int| 0 <= i <= n ==> crate::expr_model::nlbv(#[trigger] b1s[i]) <= i && crate::expr_model::nlbv(b2s[i]) <= i
     &&& closed0 ==> forall|i: int| 0 <= i < n ==> #[trigger] kconv(
         env,
@@ -6301,8 +6301,8 @@ pub open spec fn binder_walk<'x, 't>(
 
 pub proof fn binder_walk_init<'x, 't>(env: Env<'x, 't>, x0: ExprSpec, y0: ExprSpec, c0: u16)
     requires
-        crate::expr_model::dbj_deep(x0, c0),
-        crate::expr_model::dbj_deep(y0, c0),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), x0, c0),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), y0, c0),
     ensures
         binder_walk(env, seq![x0], seq![y0], Seq::empty(), Seq::empty(), Seq::empty(), c0),
 {
@@ -6350,8 +6350,8 @@ pub proof fn binder_walk_step<'x, 't>(
             crate::expr_model::subst_full(t2, crate::expr_arena_bridge::ptr_models(locals), 0),
         ),
         crate::expr_arena_bridge::is_local_shape(loc),
-        crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(loc)) == Some((c0 + locals.len()) as u16),
-        crate::expr_model::dbj_deep(
+        crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), crate::expr_arena_bridge::expr_id(loc)) == Some((c0 + locals.len()) as u16),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc)),
             (c0 + locals.len()) as u16,
         ),
@@ -6365,12 +6365,12 @@ pub proof fn binder_walk_step<'x, 't>(
     let l2 = locals.push(loc);
     let ls2 = crate::expr_arena_bridge::ptr_models(l2);
     let (b1s2, b2s2, t1s2, t2s2) = (b1s.push(n1), b2s.push(n2), t1s.push(t1), t2s.push(t2));
-    opened_locals_push(locals, c0, crate::expr_model::all_ids(), loc);
-    assert forall|i: int| 0 <= i <= n + 1 implies #[trigger] crate::expr_model::dbj_deep(b1s2[i], c0)
-        && crate::expr_model::dbj_deep(b2s2[i], c0) by {
+    opened_locals_push(crate::env_model::env_arena_ids(env), locals, c0, crate::expr_model::all_ids(), loc);
+    assert forall|i: int| 0 <= i <= n + 1 implies #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s2[i], c0)
+        && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s2[i], c0) by {
         if i == n + 1 {
-            assert(crate::expr_model::dbj_deep(b1s[n as int], c0));
-            assert(crate::expr_model::dbj_deep(b2s[n as int], c0));
+            assert(crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[n as int], c0));
+            assert(crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[n as int], c0));
         } else {
             assert(b1s2[i] == b1s[i]);
             assert(b2s2[i] == b2s[i]);
@@ -6436,6 +6436,7 @@ pub proof fn binder_walk_close<'x, 't>(
     c0: u16,
 )
     requires
+        crate::util_model::owns_all_in(crate::env_model::env_arena_ids(env), locals),
         binder_walk(env, b1s, b2s, t1s, t2s, locals, c0),
         def_eq_claim(
             env,
@@ -6452,21 +6453,21 @@ pub proof fn binder_walk_close<'x, 't>(
         assert forall|i: int| 0 <= i < n implies #[trigger] ls[i] == ExprSpec::Free(ks[i]) by {
             crate::expr_arena_bridge::is_local_shape_model(locals[i]);
         }
-        assert forall|i: int| 0 <= i < n implies #[trigger] crate::expr_arena_bridge::dbj_serial(ks[i]) == Some((c0 + i) as u16) by {
+        assert forall|i: int| 0 <= i < n implies #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[i]) == Some((c0 + i) as u16) by {
             assert(crate::expr_arena_bridge::is_local_shape(locals[i]));
         }
-        assert forall|i: int| 0 <= i < n implies #[trigger] crate::expr_model::dbj_deep(
-            crate::expr_arena_bridge::arena_lctx()[ks[i]],
+        assert forall|i: int| 0 <= i < n implies #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), 
+            crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]],
             (c0 + i) as u16,
         ) by {
             assert(crate::expr_arena_bridge::is_local_shape(locals[i]));
-            crate::expr_arena_bridge::arena_lctx_local(locals[i]);
+            crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(env), locals[i]);
         }
         assert forall|i: int| 0 <= i < n implies crate::expr_model::nlbv(
-            #[trigger] crate::expr_arena_bridge::arena_lctx()[ks[i]],
+            #[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]],
         ) <= 0 by {
             assert(crate::expr_arena_bridge::is_local_shape(locals[i]));
-            crate::expr_arena_bridge::arena_lctx_local(locals[i]);
+            crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(env), locals[i]);
         }
         assert(crate::expr_model::nlbv(b1s[n as int]) <= n && crate::expr_model::nlbv(b2s[n as int]) <= n);
         inst_locals_closed(b1s[n as int], locals);
@@ -6491,7 +6492,7 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
     &&& crate::expr_model::nlbv(e) <= 0 ==> (kconv(env, e, r) && crate::expr_model::nlbv(r) <= 0)
     // scope needs no closedness: substitution, spines and closed environment
     // values preserve it whether or not the input is closed
-    &&& scope_pres(e, r)
+    &&& scope_pres(crate::env_model::env_arena_ids(env), e, r)
 }
 
 /// The output mentions no local the input did not: at EVERY binder depth, if
@@ -6499,10 +6500,10 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
 /// counter -- so it composes by transitivity and needs no precondition. It is
 /// what lets `def_eq` recurse on a whnf'd term and still know its locals are
 /// in scope, which is where its binder case gets freshness from.
-pub open spec fn scope_pres(e: ExprSpec, r: ExprSpec) -> bool {
+pub open spec fn scope_pres(aids: (nat, nat), e: ExprSpec, r: ExprSpec) -> bool {
     &&& crate::expr_model::nlbv(e) <= 0 ==> crate::expr_model::nlbv(r) <= 0
-    &&& forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(e, SS, c)
-        ==> crate::expr_model::dbj_deep_in(r, SS, c)
+    &&& forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, e, SS, c)
+        ==> crate::expr_model::dbj_deep_in(aids, r, SS, c)
 }
 
 /// Lift an untyped step (`deq_any`) into `whnf_claim`.
@@ -6513,7 +6514,7 @@ pub proof fn whnf_claim_of_deq<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpe
             e,
             r,
         ) && crate::expr_model::nlbv(r) <= 0),
-        scope_pres(e, r),
+        scope_pres(crate::env_model::env_arena_ids(env), e, r),
     ensures
         whnf_claim(env, e, r),
 {
@@ -6580,17 +6581,17 @@ pub proof fn beta_spine_claim<'x, 't>(
         crate::beta_model::spine_app_nlbv(e1m, pb);
     }
     // scope: the reduct is built from the peeled body and the arguments
-    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(em0, SS, c) implies crate::expr_model::dbj_deep_in(e2m, SS, c) by {
-        spine_app_dbj_deep_in(lam, am, SS, c);
-        spine_bind_dbj_deep_in(lam, n, bm, SS, c);
-        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_deep_in(pa[i], SS, c) by {
+    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), em0, SS, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), e2m, SS, c) by {
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), lam, am, SS, c);
+        spine_bind_dbj_deep_in(crate::env_model::env_arena_ids(env), lam, n, bm, SS, c);
+        assert forall|i: int| 0 <= i < pa.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), pa[i], SS, c) by {
             assert(pa[i] == am[i]);
         }
-        crate::expr_model::subst_full_dbj_deep_in(bm, pa, 0, SS, c);
-        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_deep_in(pb[i], SS, c) by {
+        crate::expr_model::subst_full_dbj_deep_in(crate::env_model::env_arena_ids(env), bm, pa, 0, SS, c);
+        assert forall|i: int| 0 <= i < pb.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), pb[i], SS, c) by {
             assert(pb[i] == am[i + n]);
         }
-        spine_app_dbj_deep_in(e1m, pb, SS, c);
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), e1m, pb, SS, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -6637,10 +6638,10 @@ pub proof fn zeta_spine_claim<'x, 't>(
         crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
         crate::beta_model::spine_app_nlbv(e1m, am);
     }
-    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(em0, SS, c) implies crate::expr_model::dbj_deep_in(e2m, SS, c) by {
-        spine_app_dbj_deep_in(lm, am, SS, c);
-        crate::expr_model::subst_full_dbj_deep_in(bm, seq![vm], 0, SS, c);
-        spine_app_dbj_deep_in(e1m, am, SS, c);
+    assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), em0, SS, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), e2m, SS, c) by {
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), lm, am, SS, c);
+        crate::expr_model::subst_full_dbj_deep_in(crate::env_model::env_arena_ids(env), bm, seq![vm], 0, SS, c);
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), e1m, am, SS, c);
     }
     whnf_claim_of_deq(env, em0, e2m);
 }
@@ -6673,7 +6674,7 @@ pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: n
     crate::tc_model::types_to(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
         true,
         e,
         t,
@@ -6750,8 +6751,8 @@ pub proof fn pi_rule_step<'x, 't>(
     requires
         kinfer_claim(env, A, ExprSpec::Sort(u)),
         kinfer_claim(env, crate::expr_model::subst_full(B, seq![ExprSpec::Free(lid)], 0), ExprSpec::Sort(acc)),
-        crate::expr_arena_bridge::arena_lctx().contains_key(lid),
-        crate::expr_arena_bridge::arena_lctx()[lid] == A,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(lid),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[lid] == A,
         crate::expr_model::fv_absent(B, lid),
     ensures
         ktypes(
@@ -6763,7 +6764,7 @@ pub proof fn pi_rule_step<'x, 't>(
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let ob = crate::expr_model::subst_full(B, seq![ExprSpec::Free(lid)], 0);
     let (TA, fA) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, A, T, f)
         && kconv(env, T, ExprSpec::Sort(u));
@@ -6807,9 +6808,9 @@ pub open spec fn pi_walk<'x, 't>(
         #[trigger] Bs[j],
         crate::expr_arena_bridge::expr_id(locals[j]),
     )
-    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::arena_lctx().contains_key(
+    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(
         crate::expr_arena_bridge::expr_id(#[trigger] locals[j]),
-    ) && crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(locals[j])] == As[j]
+    ) && crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[j])] == As[j]
 }
 
 /// One more binder of the walk.
@@ -6826,6 +6827,7 @@ pub proof fn pi_walk_step<'x, 't>(
     loc: crate::util::ExprPtr<'t>,
 )
     requires
+        crate::util_model::owns_in(crate::env_model::env_arena_ids(env), loc),
         pi_walk(env, Xs, As, Bs, locals, us),
         Xs[locals.len() as int] == crate::expr_model::subst_full(
             ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
@@ -6890,7 +6892,7 @@ pub proof fn pi_walk_step<'x, 't>(
             assert(As2[j] == As[j] && us2[j] == us[j]);
         }
     }
-    crate::expr_arena_bridge::arena_lctx_local(loc);
+    crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(env), loc);
     assert forall|j: int| 0 <= j < l2.len() implies crate::expr_model::fv_absent(
         #[trigger] Bs2[j],
         crate::expr_arena_bridge::expr_id(l2[j]),
@@ -6899,9 +6901,9 @@ pub proof fn pi_walk_step<'x, 't>(
             assert(Bs2[j] == Bs[j] && l2[j] == locals[j]);
         }
     }
-    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_arena_bridge::arena_lctx().contains_key(
+    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(
         crate::expr_arena_bridge::expr_id(#[trigger] l2[j]),
-    ) && crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(l2[j])] == As2[j] by {
+    ) && crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(l2[j])] == As2[j] by {
         if j < k {
             assert(As2[j] == As[j] && l2[j] == locals[j]);
         }
@@ -6944,7 +6946,7 @@ pub proof fn pi_telescope<'x, 't>(
         assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[ii]))], 0) == Xs[ii + 1]);
         assert(kinfer_claim(env, As[ii], ExprSpec::Sort(us[ii])));
         assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
-        assert(crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
+        assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
         let f = pi_rule_step(env, As[i as int], Bs[i as int], crate::expr_arena_bridge::expr_id(locals[i as int]), us[i as int], acc);
         kinfer_of_ktypes(
             env,
@@ -6959,6 +6961,7 @@ pub proof fn pi_telescope<'x, 't>(
 /// opening its body with that depth's local gives the next depth.
 #[verifier::opaque]
 pub open spec fn lam_walk<'t>(
+    aids: (nat, nat),
     Xs: Seq<ExprSpec>,
     As: Seq<ExprSpec>,
     Bs: Seq<ExprSpec>,
@@ -6977,13 +6980,14 @@ pub open spec fn lam_walk<'t>(
         #[trigger] Bs[j],
         crate::expr_arena_bridge::expr_id(locals[j]),
     )
-    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::arena_lctx().contains_key(
+    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::arena_lctx(aids).contains_key(
         crate::expr_arena_bridge::expr_id(#[trigger] locals[j]),
-    ) && crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(locals[j])] == As[j]
+    ) && crate::expr_arena_bridge::arena_lctx(aids)[crate::expr_arena_bridge::expr_id(locals[j])] == As[j]
 }
 
 /// One more binder of the walk.
 pub proof fn lam_walk_step<'t>(
+    aids: (nat, nat),
     Xs: Seq<ExprSpec>,
     As: Seq<ExprSpec>,
     Bs: Seq<ExprSpec>,
@@ -6993,7 +6997,8 @@ pub proof fn lam_walk_step<'t>(
     loc: crate::util::ExprPtr<'t>,
 )
     requires
-        lam_walk(Xs, As, Bs, locals),
+        crate::util_model::owns_in(aids, loc),
+        lam_walk(aids, Xs, As, Bs, locals),
         Xs[locals.len() as int] == crate::expr_model::subst_full(
             ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
             crate::expr_arena_bridge::ptr_models(locals),
@@ -7011,7 +7016,7 @@ pub proof fn lam_walk_step<'t>(
             0,
         ),
     ensures
-        lam_walk(
+        lam_walk(aids, 
             Xs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0)),
             As.push(crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0)),
             Bs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals), 1)),
@@ -7046,7 +7051,7 @@ pub proof fn lam_walk_step<'t>(
             assert(Bs2[j] == Bs[j] && l2[j] == locals[j] && Xs2[j + 1] == Xs[j + 1]);
         }
     }
-    crate::expr_arena_bridge::arena_lctx_local(loc);
+    crate::expr_arena_bridge::arena_lctx_local(aids, loc);
     assert forall|j: int| 0 <= j < l2.len() implies crate::expr_model::fv_absent(
         #[trigger] Bs2[j],
         crate::expr_arena_bridge::expr_id(l2[j]),
@@ -7055,9 +7060,9 @@ pub proof fn lam_walk_step<'t>(
             assert(Bs2[j] == Bs[j] && l2[j] == locals[j]);
         }
     }
-    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_arena_bridge::arena_lctx().contains_key(
+    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_arena_bridge::arena_lctx(aids).contains_key(
         crate::expr_arena_bridge::expr_id(#[trigger] l2[j]),
-    ) && crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(l2[j])] == As2[j] by {
+    ) && crate::expr_arena_bridge::arena_lctx(aids)[crate::expr_arena_bridge::expr_id(l2[j])] == As2[j] by {
         if j < k {
             assert(As2[j] == As[j] && l2[j] == locals[j]);
         }
@@ -7066,6 +7071,7 @@ pub proof fn lam_walk_step<'t>(
 
 /// `lam_walk_step`, plus each binder type being its local's type.
 pub proof fn lam_walk_push<'t>(
+    aids: (nat, nat),
     Xs: Seq<ExprSpec>,
     As: Seq<ExprSpec>,
     Bs: Seq<ExprSpec>,
@@ -7075,7 +7081,8 @@ pub proof fn lam_walk_push<'t>(
     loc: crate::util::ExprPtr<'t>,
 )
     requires
-        lam_walk(Xs, As, Bs, locals),
+        crate::util_model::owns_in(aids, loc),
+        lam_walk(aids, Xs, As, Bs, locals),
         Xs[locals.len() as int] == crate::expr_model::subst_full(
             ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
             crate::expr_arena_bridge::ptr_models(locals),
@@ -7096,7 +7103,7 @@ pub proof fn lam_walk_push<'t>(
             0,
         ),
     ensures
-        lam_walk(
+        lam_walk(aids, 
             Xs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0)),
             As.push(crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0)),
             Bs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals), 1)),
@@ -7107,7 +7114,7 @@ pub proof fn lam_walk_push<'t>(
         )[j] == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals.push(loc)[j])),
 {
     reveal(lam_walk);
-    lam_walk_step(Xs, As, Bs, locals, btm, bodym, loc);
+    lam_walk_step(aids, Xs, As, Bs, locals, btm, bodym, loc);
     let a = crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0);
     assert forall|j: int| 0 <= j < locals.len() + 1 implies #[trigger] As.push(a)[j] == to_model_expr(
         crate::expr_arena_bridge::local_binder_type_of(locals.push(loc)[j]),
@@ -7147,7 +7154,7 @@ pub proof fn lam_telescope<'x, 't>(
     i: nat,
 )
     requires
-        lam_walk(Xs, As, Bs, locals),
+        lam_walk(crate::env_model::env_arena_ids(env), Xs, As, Bs, locals),
         kinfer_claim(env, Xs[locals.len() as int], T),
         crate::expr_model::nlbv(T) <= 0,
         forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::nlbv(#[trigger] As[j]) <= 0,
@@ -7157,13 +7164,13 @@ pub proof fn lam_telescope<'x, 't>(
         ),
         i <= locals.len(),
     ensures
-        kinfer_claim(env, Xs[i as int], lam_close(As, ids_of(locals), T, i)),
-        crate::expr_model::nlbv(lam_close(As, ids_of(locals), T, i)) <= 0,
+        kinfer_claim(env, Xs[i as int], lam_close(As, ids_of(crate::env_model::env_arena_ids(env), locals), T, i)),
+        crate::expr_model::nlbv(lam_close(As, ids_of(crate::env_model::env_arena_ids(env), locals), T, i)) <= 0,
     decreases locals.len() - i,
 {
     reveal(lam_walk);
     let n = locals.len() as int;
-    let ks = ids_of(locals);
+    let ks = ids_of(crate::env_model::env_arena_ids(env), locals);
     if i as int == n {
     } else {
         lam_telescope(env, Xs, As, Bs, locals, T, i + 1);
@@ -7172,7 +7179,7 @@ pub proof fn lam_telescope<'x, 't>(
         let C1 = lam_close(As, ks, T, i + 1);
         let dty = crate::env_model::to_model_of_declar_ty(env);
         let denv = crate::env_model::to_model_of_env(env);
-        let lctx = crate::expr_arena_bridge::arena_lctx();
+        let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
         let (T1, f) = choose|T1: ExprSpec, f: nat| #[trigger] ktc_marker(T1, f) && ktypes(env, Xs[ii + 1], T1, f)
             && crate::expr_model::nlbv(T1) <= 0 && kconv(env, T1, C1);
         let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T1, C1, h);
@@ -7182,7 +7189,7 @@ pub proof fn lam_telescope<'x, 't>(
         assert(Xs[ii] == ExprSpec::Bind(Box::new(As[ii]), Box::new(Bs[ii])));
         assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(k)], 0) == Xs[ii + 1]);
         assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
-        assert(crate::expr_arena_bridge::arena_lctx()[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
+        assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
         assert(crate::tc_model::bind_marker(k, T1, C1));
         let R = lam_close(As, ks, T, i);
         assert(R == ExprSpec::Bind(
@@ -7229,6 +7236,7 @@ pub proof fn lam_close_step(As: Seq<ExprSpec>, ks: Seq<u32>, T: ExprSpec, i: nat
 /// types, and the scope they were opened in.
 #[verifier::opaque]
 pub open spec fn lam_frame<'t>(
+    aids: (nat, nat),
     lf: Seq<crate::util::ExprPtr<'t>>,
     As: Seq<ExprSpec>,
     S: vstd::iset::ISet<u32>,
@@ -7237,16 +7245,16 @@ pub open spec fn lam_frame<'t>(
     c1: u16,
 ) -> bool {
     &&& lf.len() == As.len()
-    &&& opened_locals(lf, c1, S)
+    &&& opened_locals(aids, lf, c1, S)
     &&& forall|j: int| 0 <= j < lf.len() ==> #[trigger] As[j] == to_model_expr(
         crate::expr_arena_bridge::local_binder_type_of(lf[j]),
     )
     &&& live0.len() == c1
-    &&& forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1)
-    &&& forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
-        (live0 + ids_of(lf))[s],
+    &&& forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(aids, t, c1)
+    &&& forall|s: int| 0 <= s < (live0 + ids_of(aids, lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, 
+        (live0 + ids_of(aids, lf))[s],
     ) == Some(s as u16)
-    &&& S == walk_set(L, live0 + ids_of(lf), c1)
+    &&& S == walk_set(aids, L, live0 + ids_of(aids, lf), c1)
     &&& c1 as nat + lf.len() < 0x1_0000
 }
 
@@ -7265,25 +7273,25 @@ pub proof fn lam_top<'x, 't>(
     c1: u16,
 )
     requires
-        lam_walk(Xs, As, Bs, lf),
+        lam_walk(crate::env_model::env_arena_ids(env), Xs, As, Bs, lf),
         kinfer_claim(env, Xs[lf.len() as int], Tn),
         crate::expr_model::nlbv(Tn) <= 0,
         forall|j: int| 0 <= j < lf.len() ==> #[trigger] As[j] == to_model_expr(
             crate::expr_arena_bridge::local_binder_type_of(lf[j]),
         ),
-        opened_locals(lf, c1, S),
+        opened_locals(crate::env_model::env_arena_ids(env), lf, c1, S),
         live0.len() == c1,
-        forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(t, c1),
-        forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
-            (live0 + ids_of(lf))[s],
+        forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(crate::env_model::env_arena_ids(env), t, c1),
+        forall|s: int| 0 <= s < (live0 + ids_of(crate::env_model::env_arena_ids(env), lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), 
+            (live0 + ids_of(crate::env_model::env_arena_ids(env), lf))[s],
         ) == Some(s as u16),
-        S == walk_set(L, live0 + ids_of(lf), c1),
+        S == walk_set(crate::env_model::env_arena_ids(env), L, live0 + ids_of(crate::env_model::env_arena_ids(env), lf), c1),
         c1 as nat + lf.len() < 0x1_0000,
     ensures
-        kinfer_claim(env, Xs[0], lam_close(As, ids_of(lf), Tn, 0)),
-        lam_frame(lf, As, S, L, live0, c1),
+        kinfer_claim(env, Xs[0], lam_close(As, ids_of(crate::env_model::env_arena_ids(env), lf), Tn, 0)),
+        lam_frame(crate::env_model::env_arena_ids(env), lf, As, S, L, live0, c1),
 {
-    opened_locals_fresh(lf, c1, S);
+    opened_locals_fresh(crate::env_model::env_arena_ids(env), lf, c1, S);
     assert forall|j: int| 0 <= j < lf.len() implies crate::expr_model::nlbv(#[trigger] As[j]) <= 0
         && crate::expr_model::fv_absent(As[j], crate::expr_arena_bridge::expr_id(lf[j])) by {
         assert(As[j] == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[j])));
@@ -7296,6 +7304,7 @@ pub proof fn lam_top<'x, 't>(
 /// The closing loop's start: the kernel's abstraction of the body's type is
 /// the lambda rule's type with every opened local abstracted.
 pub proof fn lam_top_abstr<'t>(
+    aids: (nat, nat),
     lf: Seq<crate::util::ExprPtr<'t>>,
     As: Seq<ExprSpec>,
     S: vstd::iset::ISet<u32>,
@@ -7305,24 +7314,25 @@ pub proof fn lam_top_abstr<'t>(
     Tn: ExprSpec,
 )
     requires
-        lam_frame(lf, As, S, L, live0, c1),
-        crate::expr_model::dbj_deep_in(Tn, S, (c1 + lf.len()) as u16),
+        lam_frame(aids, lf, As, S, L, live0, c1),
+        crate::expr_model::dbj_deep_in(aids, Tn, S, (c1 + lf.len()) as u16),
         crate::expr_model::levels_fit(Tn, (c1 + lf.len()) as u16),
     ensures
-        crate::expr_model::abstr_levels_full(Tn, c1, (c1 + lf.len()) as u16) == crate::expr_model::abstr_full(
-            lam_close(As, ids_of(lf), Tn, lf.len()),
-            ids_of(lf).take(lf.len() as int),
+        crate::expr_model::abstr_levels_full(aids, Tn, c1, (c1 + lf.len()) as u16) == crate::expr_model::abstr_full(
+            lam_close(As, ids_of(aids, lf), Tn, lf.len()),
+            ids_of(aids, lf).take(lf.len() as int),
             0,
         ),
 {
     reveal(lam_frame);
-    lam_abstr_levels(Tn, lf, S, L, live0, c1, lf.len());
+    lam_abstr_levels(aids, Tn, lf, S, L, live0, c1, lf.len());
 }
 
 /// ONE POP of `infer_lambda`'s closing loop: the kernel wraps its abstracted
 /// rest in the binder's type abstracted at the current level, and that is the
 /// lambda rule's type abstracted one depth further out.
 pub proof fn lam_pop_step<'t>(
+    aids: (nat, nat),
     lf: Seq<crate::util::ExprPtr<'t>>,
     As: Seq<ExprSpec>,
     S: vstd::iset::ISet<u32>,
@@ -7334,33 +7344,33 @@ pub proof fn lam_pop_step<'t>(
     bt: ExprSpec,
 )
     requires
-        lam_frame(lf, As, S, L, live0, c1),
+        lam_frame(aids, lf, As, S, L, live0, c1),
         i < lf.len(),
         bt == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[i as int])),
         crate::expr_model::levels_fit(bt, (c1 + i) as u16),
     ensures
         ExprSpec::Bind(
-            Box::new(crate::expr_model::abstr_levels_full(bt, c1, (c1 + i) as u16)),
+            Box::new(crate::expr_model::abstr_levels_full(aids, bt, c1, (c1 + i) as u16)),
             Box::new(crate::expr_model::abstr_full(
-                lam_close(As, ids_of(lf), Tn, i + 1),
-                ids_of(lf).take(i as int + 1),
+                lam_close(As, ids_of(aids, lf), Tn, i + 1),
+                ids_of(aids, lf).take(i as int + 1),
                 0,
             )),
-        ) == crate::expr_model::abstr_full(lam_close(As, ids_of(lf), Tn, i), ids_of(lf).take(i as int), 0),
+        ) == crate::expr_model::abstr_full(lam_close(As, ids_of(aids, lf), Tn, i), ids_of(aids, lf).take(i as int), 0),
 {
     reveal(lam_frame);
-    let ks = ids_of(lf);
+    let ks = ids_of(aids, lf);
     let ii = i as int;
     assert(As[ii] == bt);
-    assert(opened_locals(lf, c1, S));
+    assert(opened_locals(aids, lf, c1, S));
     assert(crate::expr_arena_bridge::is_local_shape(lf[ii]));
-    lam_abstr_levels(bt, lf, S, L, live0, c1, i);
-    opened_locals_fresh(lf, c1, S);
+    lam_abstr_levels(aids, bt, lf, S, L, live0, c1, i);
+    opened_locals_fresh(aids, lf, c1, S);
     assert(crate::expr_model::fv_absent(As[ii], ks[ii]));
     assert forall|j: int| 0 <= j < i implies #[trigger] ks[j] != ks[ii] by {
         assert(crate::expr_arena_bridge::is_local_shape(lf[j]));
-        assert(crate::expr_arena_bridge::dbj_serial(ks[j]) == Some((c1 + j) as u16));
-        assert(crate::expr_arena_bridge::dbj_serial(ks[ii]) == Some((c1 + i) as u16));
+        assert(crate::expr_arena_bridge::dbj_serial(aids, ks[j]) == Some((c1 + j) as u16));
+        assert(crate::expr_arena_bridge::dbj_serial(aids, ks[ii]) == Some((c1 + i) as u16));
     }
     lam_close_step(As, ks, Tn, i);
 }
@@ -7368,12 +7378,13 @@ pub proof fn lam_pop_step<'t>(
 /// An opened local does not occur in its own type: the type is deep below
 /// the local's level.
 pub proof fn opened_locals_fresh<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S: vstd::iset::ISet<u32>,
 )
     requires
-        opened_locals(locals, c1, S),
+        opened_locals(aids, locals, c1, S),
     ensures
         forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::fv_absent(
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(#[trigger] locals[j])),
@@ -7388,14 +7399,15 @@ pub proof fn opened_locals_fresh<'t>(
     ) by {
         let ty = to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals[j]));
         let c = (c1 + j) as u16;
-        crate::expr_model::dbj_deep_in_weaken(ty, S, c, crate::expr_model::all_ids(), c);
-        crate::expr_model::dbj_deep_fv_absent(ty, crate::expr_arena_bridge::expr_id(locals[j]), c);
+        crate::expr_model::dbj_deep_in_weaken(aids, ty, S, c, crate::expr_model::all_ids(), c);
+        crate::expr_model::dbj_deep_fv_absent(aids, ty, crate::expr_arena_bridge::expr_id(locals[j]), c);
     }
 }
 
 /// `infer_lambda`'s abstraction of the levels from `c1` up, with `m` of the
 /// walk's locals open, is the model's abstraction of those locals' nodes.
 pub proof fn lam_abstr_levels<'t>(
+    aids: (nat, nat),
     e: ExprSpec,
     lf: Seq<crate::util::ExprPtr<'t>>,
     S: vstd::iset::ISet<u32>,
@@ -7405,27 +7417,27 @@ pub proof fn lam_abstr_levels<'t>(
     m: nat,
 )
     requires
-        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1),
+        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(aids, t, c1),
         live0.len() == c1,
         c1 as nat + lf.len() < 0x1_0000,
-        forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
-            (live0 + ids_of(lf))[s],
+        forall|s: int| 0 <= s < (live0 + ids_of(aids, lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, 
+            (live0 + ids_of(aids, lf))[s],
         ) == Some(s as u16),
-        S == walk_set(L, live0 + ids_of(lf), c1),
+        S == walk_set(aids, L, live0 + ids_of(aids, lf), c1),
         m <= lf.len(),
-        crate::expr_model::dbj_deep_in(e, S, (c1 + m) as u16),
+        crate::expr_model::dbj_deep_in(aids, e, S, (c1 + m) as u16),
         crate::expr_model::levels_fit(e, (c1 + m) as u16),
     ensures
-        crate::expr_model::abstr_levels_full(e, c1, (c1 + m) as u16) == crate::expr_model::abstr_full(
+        crate::expr_model::abstr_levels_full(aids, e, c1, (c1 + m) as u16) == crate::expr_model::abstr_full(
             e,
-            ids_of(lf).take(m as int),
+            ids_of(aids, lf).take(m as int),
             0,
         ),
 {
-    let ids = ids_of(lf);
+    let ids = ids_of(aids, lf);
     let P = ids.take(m as int);
-    walk_set_unique(L, live0, lf, c1);
-    assert forall|k: int| 0 <= k < P.len() implies #[trigger] crate::expr_arena_bridge::dbj_serial(P[k]) == Some(
+    walk_set_unique(aids, L, live0, lf, c1);
+    assert forall|k: int| 0 <= k < P.len() implies #[trigger] crate::expr_arena_bridge::dbj_serial(aids, P[k]) == Some(
         (c1 + k) as u16,
     ) by {
         assert(P[k] == ids[k]);
@@ -7433,49 +7445,50 @@ pub proof fn lam_abstr_levels<'t>(
     }
     assert forall|id: u32, k: int|
         #![trigger S.contains(id), P[k]]
-        0 <= k < P.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16)
+        0 <= k < P.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(aids, id) == Some((c1 + k) as u16)
             implies id == P[k] by {
         assert(P[k] == ids[k]);
-        assert(walk_set(L, live0 + ids, c1).contains(id));
+        assert(walk_set(aids, L, live0 + ids, c1).contains(id));
     }
-    crate::expr_model::abstr_levels_eq_abstr_full_in(e, P, S, c1, (c1 + m) as u16, 0);
+    crate::expr_model::abstr_levels_eq_abstr_full_in(aids, e, P, S, c1, (c1 + m) as u16, 0);
 }
 
 /// A walk's scope names each opened level by exactly one node: the local the
 /// walk opened there.
 pub proof fn walk_set_unique<'t>(
+    aids: (nat, nat),
     L: vstd::iset::ISet<u32>,
     live0: Seq<u32>,
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
 )
     requires
-        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1),
+        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(aids, t, c1),
         live0.len() == c1,
         c1 as nat + locals.len() < 0x1_0000,
-        forall|s: int| 0 <= s < (live0 + ids_of(locals)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
-            (live0 + ids_of(locals))[s],
+        forall|s: int| 0 <= s < (live0 + ids_of(aids, locals)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, 
+            (live0 + ids_of(aids, locals))[s],
         ) == Some(s as u16),
     ensures
         forall|id: u32, k: int|
-            #![trigger walk_set(L, live0 + ids_of(locals), c1).contains(id), ids_of(locals)[k]]
-            0 <= k < ids_of(locals).len() && walk_set(L, live0 + ids_of(locals), c1).contains(id)
-                && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16) ==> id == ids_of(locals)[k],
+            #![trigger walk_set(aids, L, live0 + ids_of(aids, locals), c1).contains(id), ids_of(aids, locals)[k]]
+            0 <= k < ids_of(aids, locals).len() && walk_set(aids, L, live0 + ids_of(aids, locals), c1).contains(id)
+                && crate::expr_arena_bridge::dbj_serial(aids, id) == Some((c1 + k) as u16) ==> id == ids_of(aids, locals)[k],
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    let lv = live0 + ids_of(locals);
-    let ids = ids_of(locals);
+    let lv = live0 + ids_of(aids, locals);
+    let ids = ids_of(aids, locals);
     assert forall|id: u32, k: int|
-        #![trigger walk_set(L, lv, c1).contains(id), ids[k]]
-        0 <= k < ids.len() && walk_set(L, lv, c1).contains(id)
-            && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16) implies id == ids[k] by {
+        #![trigger walk_set(aids, L, lv, c1).contains(id), ids[k]]
+        0 <= k < ids.len() && walk_set(aids, L, lv, c1).contains(id)
+            && crate::expr_arena_bridge::dbj_serial(aids, id) == Some((c1 + k) as u16) implies id == ids[k] by {
         if L.contains(id) {
-            assert(crate::expr_model::serial_below(id, c1));
+            assert(crate::expr_model::serial_below(aids, id, c1));
         } else {
             assert(lv.contains(id));
             let s = choose|s: int| 0 <= s < lv.len() && lv[s] == id;
-            assert(crate::expr_arena_bridge::dbj_serial(lv[s]) == Some(s as u16));
+            assert(crate::expr_arena_bridge::dbj_serial(aids, lv[s]) == Some(s as u16));
             assert(s == c1 + k);
             assert(lv[c1 + k] == ids[k]);
         }
@@ -7500,16 +7513,16 @@ pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: Expr
 }
 
 /// Anything without locals or loose indices is in scope wherever anything is.
-pub proof fn scope_pres_of_closed(e: ExprSpec, r: ExprSpec)
+pub proof fn scope_pres_of_closed(aids: (nat, nat), e: ExprSpec, r: ExprSpec)
     requires
         !crate::expr_model::has_fv(r),
         crate::expr_model::nlbv(r) <= 0,
     ensures
-        scope_pres(e, r),
+        scope_pres(aids, e, r),
 {
-    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(e, S, c)
-        implies crate::expr_model::dbj_deep_in(r, S, c) by {
-        crate::expr_model::no_fv_dbj_deep_in(r, S, c);
+    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, e, S, c)
+        implies crate::expr_model::dbj_deep_in(aids, r, S, c) by {
+        crate::expr_model::no_fv_dbj_deep_in(aids, r, S, c);
     }
 }
 
@@ -7548,7 +7561,7 @@ pub proof fn eta_expand_claim<'x, 't>(
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, tm);
     let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T, tm, h);
@@ -7587,7 +7600,7 @@ pub proof fn irrel_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: 
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let (Tx, fx) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
     let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
@@ -7645,7 +7658,7 @@ pub proof fn unit_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: E
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let (Tx, fx) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
     let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
@@ -7713,7 +7726,7 @@ pub proof fn struct_eta_claim<'x, 't>(
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let (Tx, fx) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
     let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
@@ -7805,7 +7818,7 @@ pub proof fn rec_step_claim<'x, 't>(
         ),
         crate::expr_model::nlbv(am[rd.major_idx as int]) <= 0 ==> kconv(env, am[rd.major_idx as int], mm)
             && crate::expr_model::nlbv(mm) <= 0,
-        scope_pres(am[rd.major_idx as int], mm),
+        scope_pres(crate::env_model::env_arena_ids(env), am[rd.major_idx as int], mm),
     ensures
         whnf_claim(env, crate::beta_model::spine_app(ExprSpec::Const(rid, lv), am), r),
 {
@@ -7860,25 +7873,25 @@ pub proof fn rec_step_claim<'x, 't>(
         kconv_trans(env, x, x2, r);
     }
     // scope
-    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(x, S, c)
-        implies crate::expr_model::dbj_deep_in(r, S, c) by {
-        spine_app_dbj_deep_in(H, am, S, c);
-        assert(crate::expr_model::dbj_deep_in(am[mi], S, c));
-        assert(crate::expr_model::dbj_deep_in(mm, S, c));
-        spine_app_dbj_deep_in(ExprSpec::Const(cid, clv), cam, S, c);
-        crate::expr_model::no_fv_dbj_deep_in(body, S, c);
-        assert forall|j: int| 0 <= j < pre.len() implies #[trigger] crate::expr_model::dbj_deep_in(pre[j], S, c) by {
+    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), x, S, c)
+        implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), r, S, c) by {
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), H, am, S, c);
+        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), am[mi], S, c));
+        assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), mm, S, c));
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), ExprSpec::Const(cid, clv), cam, S, c);
+        crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(env), body, S, c);
+        assert forall|j: int| 0 <= j < pre.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), pre[j], S, c) by {
             assert(pre[j] == am[j]);
         }
-        assert forall|j: int| 0 <= j < flds.len() implies #[trigger] crate::expr_model::dbj_deep_in(flds[j], S, c) by {
+        assert forall|j: int| 0 <= j < flds.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), flds[j], S, c) by {
             assert(flds[j] == cam[(cam.len() - nf) + j]);
         }
-        assert forall|j: int| 0 <= j < post.len() implies #[trigger] crate::expr_model::dbj_deep_in(post[j], S, c) by {
+        assert forall|j: int| 0 <= j < post.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), post[j], S, c) by {
             assert(post[j] == am[mi + 1 + j]);
         }
-        spine_app_dbj_deep_in(body, pre, S, c);
-        spine_app_dbj_deep_in(s1, flds, S, c);
-        spine_app_dbj_deep_in(s2, post, S, c);
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), body, pre, S, c);
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), s1, flds, S, c);
+        spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), s2, post, S, c);
     }
 }
 
@@ -7913,7 +7926,7 @@ pub proof fn infer_app_step<'x, 't>(
 {
     let dty = crate::env_model::to_model_of_declar_ty(env);
     let denv = crate::env_model::to_model_of_env(env);
-    let lctx = crate::expr_arena_bridge::arena_lctx();
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let aty = crate::expr_model::subst_full(bt, ctxm, 0);
     let bt2 = crate::expr_model::subst_full(body, ctxm, 1);
     let F = ExprSpec::Bind(Box::new(aty), Box::new(bt2));
@@ -8017,19 +8030,19 @@ pub proof fn quot_step_lemma<'x, 't>(
         }
         // in scope: built from the arguments and the whnf'd major's last
         // argument, and whnf introduced no local
-        assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(s0, SS, c) implies crate::expr_model::dbj_deep_in(r, SS, c) by {
-            spine_app_dbj_deep_in(head, am, SS, c);
-            assert(crate::expr_model::dbj_deep_in(am[q], SS, c));
-            assert(crate::expr_model::dbj_deep_in(qm, SS, c));
-            spine_app_dbj_deep_in(mk_head, mk_args, SS, c);
-            assert(crate::expr_model::dbj_deep_in(am[3], SS, c));
-            assert(crate::expr_model::dbj_deep_in(mk_args[2], SS, c));
-            assert(crate::expr_model::dbj_deep_in(appd, SS, c));
+        assert forall|SS: ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), s0, SS, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), r, SS, c) by {
+            spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), head, am, SS, c);
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), am[q], SS, c));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), qm, SS, c));
+            spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), mk_head, mk_args, SS, c);
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), am[3], SS, c));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), mk_args[2], SS, c));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), appd, SS, c));
             assert forall|i: int| 0 <= i < am.skip(q + 1).len() implies
-                #[trigger] crate::expr_model::dbj_deep_in(am.skip(q + 1)[i], SS, c) by {
+                #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), am.skip(q + 1)[i], SS, c) by {
                 assert(am.skip(q + 1)[i] == am[i + q + 1]);
             }
-            spine_app_dbj_deep_in(appd, am.skip(q + 1), SS, c);
+            spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), appd, am.skip(q + 1), SS, c);
         }
     }
 }
@@ -8089,7 +8102,7 @@ pub open spec fn nat_bin_claim<'x, 't>(
 /// counter.
 pub open spec fn in_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::util::ExprPtr<'t>) -> bool {
     &&& crate::expr_model::nlbv(to_model_expr(e)) <= 0
-    &&& crate::expr_model::dbj_deep_in(to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter)
+    &&& crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter)
 }
 
 /// The number of binder levels open.
@@ -8107,11 +8120,11 @@ pub proof fn in_scope_deep<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::ut
     requires
         in_scope(tc, e),
     ensures
-        crate::expr_model::dbj_deep(to_model_expr(e), level_count(tc)),
+        crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), level_count(tc)),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    crate::expr_model::dbj_deep_in_weaken(
+    crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*tc.env), 
         to_model_expr(e),
         live_set(tc),
         tc.ctx.dbj_level_counter,
@@ -8128,7 +8141,7 @@ pub proof fn no_fv_in_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::u
     ensures
         in_scope(tc, e),
 {
-    crate::expr_model::no_fv_dbj_deep_in(to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter);
+    crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter);
 }
 
 /// What an in-scope term uses is live.
@@ -8137,48 +8150,49 @@ pub proof fn occ_live<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::util::E
         in_scope(tc, e),
         c == tc.ctx.dbj_level_counter,
     ensures
-        forall|t: u32| #[trigger] crate::expr_model::occ(to_model_expr(e), c).contains(t) ==> tc.live@.contains(t)
-            && crate::expr_model::serial_below(t, c),
+        forall|t: u32| #[trigger] crate::expr_model::occ(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), c).contains(t) ==> tc.live@.contains(t)
+            && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*tc.env), t, c),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    assert forall|t: u32| #[trigger] crate::expr_model::occ(to_model_expr(e), c).contains(t) implies tc.live@.contains(t)
-        && crate::expr_model::serial_below(t, c) by {
-        crate::expr_model::occurs_deep_in(to_model_expr(e), live_set(tc), c, c, t);
+    assert forall|t: u32| #[trigger] crate::expr_model::occ(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), c).contains(t) implies tc.live@.contains(t)
+        && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*tc.env), t, c) by {
+        crate::expr_model::occurs_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), live_set(tc), c, c, t);
     }
 }
 
 /// A binder walk's scope: what the input uses (`L`), plus the live nodes at
 /// levels from `c1` up -- the locals the walk opened. Grows with `live`, stays
 /// inside it, and abstracting from `c1` takes the second part back out.
-pub open spec fn walk_set(L: vstd::iset::ISet<u32>, live: Seq<u32>, c1: u16) -> vstd::iset::ISet<u32> {
-    vstd::iset::ISet::new(|t: u32| L.contains(t) || (live.contains(t) && crate::expr_model::serial_at_least(t, c1)))
+pub open spec fn walk_set(aids: (nat, nat), L: vstd::iset::ISet<u32>, live: Seq<u32>, c1: u16) -> vstd::iset::ISet<u32> {
+    vstd::iset::ISet::new(|t: u32| L.contains(t) || (live.contains(t) && crate::expr_model::serial_at_least(aids, t, c1)))
 }
 
 /// The walk's opened locals are in its scope, and the walk's scope is live.
 pub proof fn walk_set_facts<'t>(
+    aids: (nat, nat),
     L: vstd::iset::ISet<u32>,
     live0: Seq<u32>,
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
 )
     requires
-        forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(t, c1),
-        forall|j: int| 0 <= j < locals.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
+        forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(aids, t, c1),
+        forall|j: int| 0 <= j < locals.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, 
             crate::expr_arena_bridge::expr_id(locals[j]),
         ) == Some((c1 + j) as u16),
         c1 as nat + locals.len() < 0x1_0000,
     ensures
-        forall|j: int| 0 <= j < locals.len() ==> walk_set(L, live0 + ids_of(locals), c1).contains(
+        forall|j: int| 0 <= j < locals.len() ==> walk_set(aids, L, live0 + ids_of(aids, locals), c1).contains(
             crate::expr_arena_bridge::expr_id(#[trigger] locals[j]),
         ),
-        forall|t: u32| #[trigger] walk_set(L, live0 + ids_of(locals), c1).contains(t) ==> (live0 + ids_of(locals)).contains(t),
-        forall|t: u32| #[trigger] L.contains(t) ==> walk_set(L, live0 + ids_of(locals), c1).contains(t),
+        forall|t: u32| #[trigger] walk_set(aids, L, live0 + ids_of(aids, locals), c1).contains(t) ==> (live0 + ids_of(aids, locals)).contains(t),
+        forall|t: u32| #[trigger] L.contains(t) ==> walk_set(aids, L, live0 + ids_of(aids, locals), c1).contains(t),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    let lv = live0 + ids_of(locals);
-    assert forall|j: int| 0 <= j < locals.len() implies walk_set(L, lv, c1).contains(
+    let lv = live0 + ids_of(aids, locals);
+    assert forall|j: int| 0 <= j < locals.len() implies walk_set(aids, L, lv, c1).contains(
         crate::expr_arena_bridge::expr_id(#[trigger] locals[j]),
     ) by {
         assert(lv[live0.len() + j] == crate::expr_arena_bridge::expr_id(locals[j]));
@@ -8203,8 +8217,8 @@ pub proof fn live_local_unique<'x, 't, 'p>(
         in_scope(tc, y),
         to_model_expr(x) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
         to_model_expr(y) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(y)),
-        crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(x))
-            == crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(y)),
+        crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), crate::expr_arena_bridge::expr_id(x))
+            == crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), crate::expr_arena_bridge::expr_id(y)),
     ensures
         crate::expr_arena_bridge::expr_id(x) == crate::expr_arena_bridge::expr_id(y),
 {
@@ -8215,8 +8229,8 @@ pub proof fn live_local_unique<'x, 't, 'p>(
     assert(tc.live@.contains(b));
     let i = choose|i: int| 0 <= i < tc.live@.len() && tc.live@[i] == a;
     let j = choose|j: int| 0 <= j < tc.live@.len() && tc.live@[j] == b;
-    assert(crate::expr_arena_bridge::dbj_serial(tc.live@[i]) == Some(i as u16));
-    assert(crate::expr_arena_bridge::dbj_serial(tc.live@[j]) == Some(j as u16));
+    assert(crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[i]) == Some(i as u16));
+    assert(crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[j]) == Some(j as u16));
 }
 
 /// Live nodes are below the counter, at their own level.
@@ -8226,25 +8240,25 @@ pub proof fn live_below<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, c: u16)
         c == tc.ctx.dbj_level_counter,
     ensures
         forall|t: u32| #[trigger] live_set(tc).contains(t) ==> tc.live@.contains(t)
-            && crate::expr_model::serial_below(t, c),
+            && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*tc.env), t, c),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
     assert forall|t: u32| #[trigger] live_set(tc).contains(t) implies tc.live@.contains(t)
-        && crate::expr_model::serial_below(t, c) by {
+        && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*tc.env), t, c) by {
         let k = choose|k: int| 0 <= k < tc.live@.len() && tc.live@[k] == t;
-        assert(crate::expr_arena_bridge::dbj_serial(tc.live@[k]) == Some(k as u16));
+        assert(crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[k]) == Some(k as u16));
     }
 }
 
 /// The walk's scope grows with `live`.
-pub proof fn walk_set_grows(L: vstd::iset::ISet<u32>, live: Seq<u32>, x: u32, c1: u16)
+pub proof fn walk_set_grows(aids: (nat, nat), L: vstd::iset::ISet<u32>, live: Seq<u32>, x: u32, c1: u16)
     ensures
-        forall|t: u32| #[trigger] walk_set(L, live, c1).contains(t) ==> walk_set(L, live.push(x), c1).contains(t),
+        forall|t: u32| #[trigger] walk_set(aids, L, live, c1).contains(t) ==> walk_set(aids, L, live.push(x), c1).contains(t),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    assert forall|t: u32| #[trigger] walk_set(L, live, c1).contains(t) implies walk_set(L, live.push(x), c1).contains(t) by {
+    assert forall|t: u32| #[trigger] walk_set(aids, L, live, c1).contains(t) implies walk_set(aids, L, live.push(x), c1).contains(t) by {
         if live.contains(t) {
             let k = choose|k: int| 0 <= k < live.len() && live[k] == t;
             assert(live.push(x)[k] == t);
@@ -8256,15 +8270,16 @@ pub proof fn walk_set_grows(L: vstd::iset::ISet<u32>, live: Seq<u32>, x: u32, c1
 /// locals, what the walk started from (`L`) was live and below `c0`, and the
 /// opened locals' types are in the walk's scope.
 pub open spec fn live_walk<'t>(
+    aids: (nat, nat),
     live: Seq<u32>,
     live0: Seq<u32>,
     L: vstd::iset::ISet<u32>,
     locals: Seq<crate::util::ExprPtr<'t>>,
     c0: u16,
 ) -> bool {
-    &&& live == live0 + ids_of(locals)
-    &&& forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(t, c0)
-    &&& opened_locals(locals, c0, walk_set(L, live, c0))
+    &&& live == live0 + ids_of(aids, locals)
+    &&& forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(aids, t, c0)
+    &&& opened_locals(aids, locals, c0, walk_set(aids, L, live, c0))
 }
 
 /// Instantiating a term of the walk's start by the opened locals is in scope.
@@ -8278,9 +8293,10 @@ pub proof fn live_walk_inst<'x, 't, 'p>(
     r: crate::util::ExprPtr<'t>,
 )
     requires
-        live_walk(tc.live@, live0, L, locals, c0),
+        crate::util_model::owns_all_in(crate::env_model::env_arena_ids(*tc.env), locals),
+        live_walk(crate::env_model::env_arena_ids(*tc.env), tc.live@, live0, L, locals, c0),
         tc.ctx.dbj_level_counter == c0 + locals.len(),
-        crate::expr_model::dbj_deep_in(to_model_expr(e0), L, c0),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e0), L, c0),
         crate::expr_model::nlbv(to_model_expr(e0)) <= locals.len(),
         to_model_expr(r) == crate::expr_model::subst_full(
             to_model_expr(e0),
@@ -8289,20 +8305,21 @@ pub proof fn live_walk_inst<'x, 't, 'p>(
         ),
     ensures
         in_scope(tc, r),
-        crate::expr_model::dbj_deep_in(to_model_expr(r), walk_set(L, tc.live@, c0), (c0 + locals.len()) as u16),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(r), walk_set(crate::env_model::env_arena_ids(*tc.env), L, tc.live@, c0), (c0 + locals.len()) as u16),
 {
     let B = tc.ctx.dbj_level_counter;
-    let S = walk_set(L, tc.live@, c0);
-    walk_set_facts(L, live0, locals, c0);
-    crate::expr_model::dbj_deep_in_weaken(to_model_expr(e0), L, c0, S, B);
-    opened_locals_deep(locals, c0, S, B);
-    inst_deep_in(e0, locals, S, B);
+    let S = walk_set(crate::env_model::env_arena_ids(*tc.env), L, tc.live@, c0);
+    walk_set_facts(crate::env_model::env_arena_ids(*tc.env), L, live0, locals, c0);
+    crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e0), L, c0, S, B);
+    opened_locals_deep(crate::env_model::env_arena_ids(*tc.env), locals, c0, S, B);
+    inst_deep_in(crate::env_model::env_arena_ids(*tc.env), e0, locals, S, B);
     inst_locals_closed(to_model_expr(e0), locals);
     in_scope_of_deep_in(tc, r, S);
 }
 
 /// Opening one more local keeps the walk's state.
 pub proof fn live_walk_push<'t>(
+    aids: (nat, nat),
     live: Seq<u32>,
     live0: Seq<u32>,
     L: vstd::iset::ISet<u32>,
@@ -8311,28 +8328,29 @@ pub proof fn live_walk_push<'t>(
     loc: crate::util::ExprPtr<'t>,
 )
     requires
-        live_walk(live, live0, L, locals, c0),
+        live_walk(aids, live, live0, L, locals, c0),
         crate::expr_arena_bridge::is_local_shape(loc),
-        crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(loc)) == Some((c0 + locals.len()) as u16),
-        crate::expr_model::dbj_deep_in(
+        crate::expr_arena_bridge::dbj_serial(aids, crate::expr_arena_bridge::expr_id(loc)) == Some((c0 + locals.len()) as u16),
+        crate::expr_model::dbj_deep_in(aids, 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc)),
-            walk_set(L, live, c0),
+            walk_set(aids, L, live, c0),
             (c0 + locals.len()) as u16,
         ),
         crate::expr_model::nlbv(to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc))) <= 0,
     ensures
-        live_walk(live.push(crate::expr_arena_bridge::expr_id(loc)), live0, L, locals.push(loc), c0),
+        live_walk(aids, live.push(crate::expr_arena_bridge::expr_id(loc)), live0, L, locals.push(loc), c0),
 {
     let x = crate::expr_arena_bridge::expr_id(loc);
-    opened_locals_push(locals, c0, walk_set(L, live, c0), loc);
-    walk_set_grows(L, live, x, c0);
-    opened_locals_weaken(locals.push(loc), c0, walk_set(L, live, c0), walk_set(L, live.push(x), c0));
-    assert(ids_of(locals.push(loc)) =~= ids_of(locals).push(x));
+    opened_locals_push(aids, locals, c0, walk_set(aids, L, live, c0), loc);
+    walk_set_grows(aids, L, live, x, c0);
+    opened_locals_weaken(aids, locals.push(loc), c0, walk_set(aids, L, live, c0), walk_set(aids, L, live.push(x), c0));
+    assert(ids_of(aids, locals.push(loc)) =~= ids_of(aids, locals).push(x));
 }
 
 /// The locals a binder walk has opened: local `j` sits at level `c1 + j`, and
 /// its type is in scope `S` below that level.
 pub open spec fn opened_locals<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S: vstd::iset::ISet<u32>,
@@ -8340,9 +8358,9 @@ pub open spec fn opened_locals<'t>(
     forall|j: int|
         0 <= j < locals.len() ==> {
             &&& crate::expr_arena_bridge::is_local_shape(#[trigger] locals[j])
-            &&& crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(locals[j]))
+            &&& crate::expr_arena_bridge::dbj_serial(aids, crate::expr_arena_bridge::expr_id(locals[j]))
                 == Some((c1 + j) as u16)
-            &&& crate::expr_model::dbj_deep_in(
+            &&& crate::expr_model::dbj_deep_in(aids, 
                 to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals[j])),
                 S,
                 (c1 + j) as u16,
@@ -8353,30 +8371,31 @@ pub open spec fn opened_locals<'t>(
 
 /// Opening one more.
 pub proof fn opened_locals_push<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S: vstd::iset::ISet<u32>,
     x: crate::util::ExprPtr<'t>,
 )
     requires
-        opened_locals(locals, c1, S),
+        opened_locals(aids, locals, c1, S),
         crate::expr_arena_bridge::is_local_shape(x),
-        crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(x)) == Some((c1 + locals.len()) as u16),
-        crate::expr_model::dbj_deep_in(
+        crate::expr_arena_bridge::dbj_serial(aids, crate::expr_arena_bridge::expr_id(x)) == Some((c1 + locals.len()) as u16),
+        crate::expr_model::dbj_deep_in(aids, 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(x)),
             S,
             (c1 + locals.len()) as u16,
         ),
         crate::expr_model::nlbv(to_model_expr(crate::expr_arena_bridge::local_binder_type_of(x))) <= 0,
     ensures
-        opened_locals(locals.push(x), c1, S),
+        opened_locals(aids, locals.push(x), c1, S),
 {
     let l2 = locals.push(x);
     assert forall|j: int| 0 <= j < l2.len() implies {
         &&& crate::expr_arena_bridge::is_local_shape(#[trigger] l2[j])
-        &&& crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(l2[j]))
+        &&& crate::expr_arena_bridge::dbj_serial(aids, crate::expr_arena_bridge::expr_id(l2[j]))
             == Some((c1 + j) as u16)
-        &&& crate::expr_model::dbj_deep_in(
+        &&& crate::expr_model::dbj_deep_in(aids, 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(l2[j])),
             S,
             (c1 + j) as u16,
@@ -8390,23 +8409,24 @@ pub proof fn opened_locals_push<'t>(
 
 /// A larger set keeps the opened locals' types in scope.
 pub proof fn opened_locals_weaken<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S1: vstd::iset::ISet<u32>,
     S2: vstd::iset::ISet<u32>,
 )
     requires
-        opened_locals(locals, c1, S1),
+        opened_locals(aids, locals, c1, S1),
         forall|t: u32| #[trigger] S1.contains(t) ==> S2.contains(t),
     ensures
-        opened_locals(locals, c1, S2),
+        opened_locals(aids, locals, c1, S2),
 {
-    assert forall|j: int| 0 <= j < locals.len() implies crate::expr_model::dbj_deep_in(
+    assert forall|j: int| 0 <= j < locals.len() implies crate::expr_model::dbj_deep_in(aids, 
         to_model_expr(crate::expr_arena_bridge::local_binder_type_of(#[trigger] locals[j])),
         S2,
         (c1 + j) as u16,
     ) by {
-        crate::expr_model::dbj_deep_in_weaken(
+        crate::expr_model::dbj_deep_in_weaken(aids, 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals[j])),
             S1,
             (c1 + j) as u16,
@@ -8418,22 +8438,23 @@ pub proof fn opened_locals_weaken<'t>(
 
 /// Closing the last one.
 pub proof fn opened_locals_drop_last<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S: vstd::iset::ISet<u32>,
 )
     requires
-        opened_locals(locals, c1, S),
+        opened_locals(aids, locals, c1, S),
         locals.len() > 0,
     ensures
-        opened_locals(locals.drop_last(), c1, S),
+        opened_locals(aids, locals.drop_last(), c1, S),
 {
     let l2 = locals.drop_last();
     assert forall|j: int| 0 <= j < l2.len() implies {
         &&& crate::expr_arena_bridge::is_local_shape(#[trigger] l2[j])
-        &&& crate::expr_arena_bridge::dbj_serial(crate::expr_arena_bridge::expr_id(l2[j]))
+        &&& crate::expr_arena_bridge::dbj_serial(aids, crate::expr_arena_bridge::expr_id(l2[j]))
             == Some((c1 + j) as u16)
-        &&& crate::expr_model::dbj_deep_in(
+        &&& crate::expr_model::dbj_deep_in(aids, 
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(l2[j])),
             S,
             (c1 + j) as u16,
@@ -8446,30 +8467,32 @@ pub proof fn opened_locals_drop_last<'t>(
 /// The opened locals are deep-in-scope once the bound is above all of them,
 /// provided the set admits their levels.
 pub proof fn opened_locals_deep<'t>(
+    aids: (nat, nat),
     locals: Seq<crate::util::ExprPtr<'t>>,
     c1: u16,
     S: vstd::iset::ISet<u32>,
     B: u16,
 )
     requires
-        opened_locals(locals, c1, S),
+        crate::util_model::owns_all_in(aids, locals),
+        opened_locals(aids, locals, c1, S),
         c1 + locals.len() <= B,
         forall|j: int| 0 <= j < locals.len() ==> S.contains(crate::expr_arena_bridge::expr_id(#[trigger] locals[j])),
     ensures
-        forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::dbj_deep_in(
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::dbj_deep_in(aids, 
             to_model_expr(#[trigger] locals[j]),
             S,
             B,
         ),
 {
-    assert forall|j: int| 0 <= j < locals.len() implies crate::expr_model::dbj_deep_in(
+    assert forall|j: int| 0 <= j < locals.len() implies crate::expr_model::dbj_deep_in(aids, 
         to_model_expr(#[trigger] locals[j]),
         S,
         B,
     ) by {
         let x = locals[j];
         crate::expr_arena_bridge::is_local_shape_model(x);
-        crate::expr_arena_bridge::arena_lctx_local(x);
+        crate::expr_arena_bridge::arena_lctx_local(aids, x);
         assert(S.contains(crate::expr_arena_bridge::expr_id(x)));
     }
 }
@@ -8482,14 +8505,14 @@ pub proof fn in_scope_of_deep_in<'x, 't, 'p>(
 )
     requires
         crate::expr_model::nlbv(to_model_expr(x)) <= 0,
-        crate::expr_model::dbj_deep_in(to_model_expr(x), S, tc.ctx.dbj_level_counter),
-        forall|t: u32| #[trigger] S.contains(t) && crate::expr_model::serial_below(t, tc.ctx.dbj_level_counter) ==> tc.live@.contains(t),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(x), S, tc.ctx.dbj_level_counter),
+        forall|t: u32| #[trigger] S.contains(t) && crate::expr_model::serial_below(crate::env_model::env_arena_ids(*tc.env), t, tc.ctx.dbj_level_counter) ==> tc.live@.contains(t),
     ensures
         in_scope(tc, x),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    crate::expr_model::dbj_deep_in_weaken(
+    crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*tc.env), 
         to_model_expr(x),
         S,
         tc.ctx.dbj_level_counter,
@@ -8501,23 +8524,23 @@ pub proof fn in_scope_of_deep_in<'x, 't, 'p>(
 /// SCOPE FROM WHAT IS USED: a result in scope in exactly what its input uses
 /// is in every scope the input is. This is how a function that opens binders
 /// states its scope claim: work in `occ(e, c0)` throughout, then conclude.
-pub proof fn scope_pres_of_occ(e: ExprSpec, r: ExprSpec, c0: u16)
+pub proof fn scope_pres_of_occ(aids: (nat, nat), e: ExprSpec, r: ExprSpec, c0: u16)
     requires
-        crate::expr_model::dbj_deep_in(r, crate::expr_model::occ(e, c0), c0),
+        crate::expr_model::dbj_deep_in(aids, r, crate::expr_model::occ(aids, e, c0), c0),
         crate::expr_model::nlbv(e) <= 0 ==> crate::expr_model::nlbv(r) <= 0,
     ensures
-        scope_pres(e, r),
+        scope_pres(aids, e, r),
 {
     broadcast use vstd::iset::lemma_iset_new;
 
-    let L = crate::expr_model::occ(e, c0);
+    let L = crate::expr_model::occ(aids, e, c0);
     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-        crate::expr_model::dbj_deep_in(e, S, c) implies crate::expr_model::dbj_deep_in(r, S, c) by {
-        assert forall|t: u32| #[trigger] L.contains(t) && crate::expr_model::serial_below(t, c0) implies S.contains(t)
-            && crate::expr_model::serial_below(t, c) by {
-            crate::expr_model::occurs_deep_in(e, S, c, c0, t);
+        crate::expr_model::dbj_deep_in(aids, e, S, c) implies crate::expr_model::dbj_deep_in(aids, r, S, c) by {
+        assert forall|t: u32| #[trigger] L.contains(t) && crate::expr_model::serial_below(aids, t, c0) implies S.contains(t)
+            && crate::expr_model::serial_below(aids, t, c) by {
+            crate::expr_model::occurs_deep_in(aids, e, S, c, c0, t);
         }
-        crate::expr_model::dbj_deep_in_weaken(r, L, c0, S, c);
+        crate::expr_model::dbj_deep_in_weaken(aids, r, L, c0, S, c);
     }
 }
 
@@ -8551,26 +8574,27 @@ pub proof fn subst_levels_nlbv(e: ExprSpec, ks: Seq<u64>, vs: Seq<crate::level_m
 
 /// Instantiating with in-scope terms stays in scope.
 pub proof fn inst_deep_in<'t>(
+    aids: (nat, nat),
     e: crate::util::ExprPtr<'t>,
     substs: Seq<crate::util::ExprPtr<'t>>,
     S: vstd::iset::ISet<u32>,
     c: u16,
 )
     requires
-        crate::expr_model::dbj_deep_in(to_model_expr(e), S, c),
-        forall|j: int| 0 <= j < substs.len() ==> crate::expr_model::dbj_deep_in(to_model_expr(#[trigger] substs[j]), S, c),
+        crate::expr_model::dbj_deep_in(aids, to_model_expr(e), S, c),
+        forall|j: int| 0 <= j < substs.len() ==> crate::expr_model::dbj_deep_in(aids, to_model_expr(#[trigger] substs[j]), S, c),
     ensures
-        crate::expr_model::dbj_deep_in(
+        crate::expr_model::dbj_deep_in(aids, 
             crate::expr_model::subst_full(to_model_expr(e), crate::expr_arena_bridge::ptr_models(substs), 0),
             S,
             c,
         ),
 {
     let sm = crate::expr_arena_bridge::ptr_models(substs);
-    assert forall|j: int| 0 <= j < sm.len() implies #[trigger] crate::expr_model::dbj_deep_in(sm[j], S, c) by {
+    assert forall|j: int| 0 <= j < sm.len() implies #[trigger] crate::expr_model::dbj_deep_in(aids, sm[j], S, c) by {
         assert(sm[j] == to_model_expr(substs[j]));
     }
-    crate::expr_model::subst_full_dbj_deep_in(to_model_expr(e), sm, 0, S, c);
+    crate::expr_model::subst_full_dbj_deep_in(aids, to_model_expr(e), sm, 0, S, c);
 }
 
 /// A spine whose arguments are all drawn from an in-scope collection is in
@@ -8604,23 +8628,23 @@ pub proof fn spine_scope_sub<'x, 't, 'p>(
 }
 
 /// Scope preservation composes.
-pub proof fn scope_pres_trans(a: ExprSpec, b: ExprSpec, c: ExprSpec)
+pub proof fn scope_pres_trans(aids: (nat, nat), a: ExprSpec, b: ExprSpec, c: ExprSpec)
     requires
-        scope_pres(a, b),
-        scope_pres(b, c),
+        scope_pres(aids, a, b),
+        scope_pres(aids, b, c),
     ensures
-        scope_pres(a, c),
+        scope_pres(aids, a, c),
 {
-    assert forall|S: vstd::iset::ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(a, S, k)
-        implies crate::expr_model::dbj_deep_in(c, S, k) by {
-        assert(crate::expr_model::dbj_deep_in(b, S, k));
+    assert forall|S: vstd::iset::ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, a, S, k)
+        implies crate::expr_model::dbj_deep_in(aids, c, S, k) by {
+        assert(crate::expr_model::dbj_deep_in(aids, b, S, k));
     }
 }
 
 /// Scope carried to the current depth.
-pub proof fn scope_pres_refl(e: ExprSpec)
+pub proof fn scope_pres_refl(aids: (nat, nat), e: ExprSpec)
     ensures
-        scope_pres(e, e),
+        scope_pres(aids, e, e),
 {
 }
 
@@ -8630,16 +8654,17 @@ pub proof fn scope_pres_in_scope<'x, 't, 'p>(
     r: crate::util::ExprPtr<'t>,
 )
     requires
-        scope_pres(to_model_expr(e), to_model_expr(r)),
+        scope_pres(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), to_model_expr(r)),
         in_scope(tc, e),
     ensures
         in_scope(tc, r),
 {
-    assert(crate::expr_model::dbj_deep_in(to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter));
+    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), live_set(tc), tc.ctx.dbj_level_counter));
 }
 
 /// A spine is in scope (any scope) exactly when its head and arguments are.
 pub proof fn spine_scope_in<'t>(
+    aids: (nat, nat),
     x: crate::util::ExprPtr<'t>,
     f: crate::util::ExprPtr<'t>,
     args: Seq<crate::util::ExprPtr<'t>>,
@@ -8652,16 +8677,16 @@ pub proof fn spine_scope_in<'t>(
             crate::expr_arena_bridge::ptr_models(args),
         ),
     ensures
-        crate::expr_model::dbj_deep_in(to_model_expr(x), S, c) <==> (
-        crate::expr_model::dbj_deep_in(to_model_expr(f), S, c) && forall|i: int|
-            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(
+        crate::expr_model::dbj_deep_in(aids, to_model_expr(x), S, c) <==> (
+        crate::expr_model::dbj_deep_in(aids, to_model_expr(f), S, c) && forall|i: int|
+            0 <= i < args.len() ==> #[trigger] crate::expr_model::dbj_deep_in(aids, 
                 to_model_expr(args[i]),
                 S,
                 c,
             )),
 {
     let am = crate::expr_arena_bridge::ptr_models(args);
-    spine_app_dbj_deep_in(to_model_expr(f), am, S, c);
+    spine_app_dbj_deep_in(aids, to_model_expr(f), am, S, c);
     assert forall|i: int| 0 <= i < args.len() implies am[i] == to_model_expr(#[trigger] args[i]) by {}
 }
 
@@ -8682,7 +8707,7 @@ pub proof fn spine_scope<'x, 't, 'p>(
             0 <= i < args.len() ==> in_scope(tc, #[trigger] args[i])),
 {
     let c = tc.ctx.dbj_level_counter;
-    spine_scope_in(x, f, args, live_set(tc), c);
+    spine_scope_in(crate::env_model::env_arena_ids(*tc.env), x, f, args, live_set(tc), c);
     let am = crate::expr_arena_bridge::ptr_models(args);
     crate::beta_model::spine_app_nlbv_decompose(to_model_expr(f), am);
     assert forall|i: int| 0 <= i < args.len() implies am[i] == to_model_expr(#[trigger] args[i]) by {}
@@ -8694,11 +8719,11 @@ pub proof fn spine_scope<'x, 't, 'p>(
     }
     if in_scope(tc, x) {
         assert forall|i: int| 0 <= i < args.len() implies in_scope(tc, #[trigger] args[i]) by {
-            assert(crate::expr_model::dbj_deep_in(to_model_expr(args[i]), live_set(tc), c));
+            assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(args[i]), live_set(tc), c));
         }
     }
     if in_scope(tc, f) && forall|i: int| 0 <= i < args.len() ==> in_scope(tc, #[trigger] args[i]) {
-        assert forall|i: int| 0 <= i < args.len() implies #[trigger] crate::expr_model::dbj_deep_in(
+        assert forall|i: int| 0 <= i < args.len() implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), 
             to_model_expr(args[i]),
             live_set(tc),
             c,
@@ -8714,32 +8739,34 @@ pub proof fn local_type_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, x: crate:
     requires
         crate::expr_arena_bridge::is_local_shape(x),
         in_scope(tc, x),
+        tc_owns(tc, x),
+        crate::env_model::env_matches(*tc.env, *tc.ctx),
     ensures
-        scope_pres(
+        scope_pres(crate::env_model::env_arena_ids(*tc.env), 
             to_model_expr(x),
             to_model_expr(crate::expr_arena_bridge::local_binder_type_of(x)),
         ),
         in_scope(tc, crate::expr_arena_bridge::local_binder_type_of(x)),
 {
-    crate::expr_arena_bridge::arena_lctx_local(x);
+    crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(*tc.env), x);
     crate::expr_arena_bridge::is_local_shape_model(x);
     let t = to_model_expr(crate::expr_arena_bridge::local_binder_type_of(x));
     assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-        crate::expr_model::dbj_deep_in(to_model_expr(x), S, c) implies crate::expr_model::dbj_deep_in(
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(x), S, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), 
         t,
         S,
         c,
     ) by {
         if let ExprSpec::Free(id) = to_model_expr(x) {
-            if let Some(s) = crate::expr_arena_bridge::dbj_serial(id) {
-                crate::expr_model::dbj_deep_in_weaken(t, S, s, S, c);
+            if let Some(s) = crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), id) {
+                crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*tc.env), t, S, s, S, c);
             }
         }
     }
-    assert(crate::expr_model::dbj_deep_in(to_model_expr(x), live_set(tc), tc.ctx.dbj_level_counter));
+    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), to_model_expr(x), live_set(tc), tc.ctx.dbj_level_counter));
     // the local is in scope, so its recorded type is closed
     assert(crate::expr_model::nlbv(t) <= 0);
-    assert(crate::expr_model::dbj_deep_in(t, live_set(tc), tc.ctx.dbj_level_counter));
+    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), t, live_set(tc), tc.ctx.dbj_level_counter));
 }
 
 /// `p` belongs to the checker's context (`util_model::owns`), stated over
@@ -8755,14 +8782,14 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.infer_cache_check@[e]),
-        ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_check@[e]))
+        ) && scope_pres(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_check@[e]))
             && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.infer_cache_check@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_no_check@.contains_key(e) ==> kinfer_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.infer_cache_no_check@[e]),
-        ) && scope_pres(to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_no_check@[e]))
+        ) && scope_pres(crate::env_model::env_arena_ids(*tc.env), to_model_expr(e), to_model_expr(tc.tc_cache.infer_cache_no_check@[e]))
             && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.infer_cache_no_check@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.whnf_cache@.contains_key(e) ==> whnf_claim(
@@ -8798,14 +8825,14 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
 }
 
 /// The node ids of a run of opened locals.
-pub open spec fn ids_of<'t>(locals: Seq<crate::util::ExprPtr<'t>>) -> Seq<u32> {
+pub open spec fn ids_of<'t>(aids: (nat, nat), locals: Seq<crate::util::ExprPtr<'t>>) -> Seq<u32> {
     Seq::new(locals.len(), |i: int| crate::expr_arena_bridge::expr_id(locals[i]))
 }
 
 /// The live locals line up with the open levels: one per level, at its level.
 pub open spec fn live_ok<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& tc.live@.len() == tc.ctx.dbj_level_counter
-    &&& forall|s: int| 0 <= s < tc.live@.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(tc.live@[s]) == Some(s as u16)
+    &&& forall|s: int| 0 <= s < tc.live@.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[s]) == Some(s as u16)
 }
 
 /// The four claim-carrying caches' WRITE side, verified.
@@ -9027,7 +9054,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
-            scope_pres(to_model_expr(e), to_model_expr(r)),
+            scope_pres(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -9048,7 +9075,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
-            scope_pres(to_model_expr(e), to_model_expr(r)),
+            scope_pres(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(e), to_model_expr(r)),
         ensures
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -9168,7 +9195,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             result matches Some(r) ==> tc_owns(*self, r),
             match result {
-                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
+                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(crate::env_model::env_arena_ids(*self.env), 
                     to_model_expr(e),
                     to_model_expr(r),
                 ),
@@ -9195,7 +9222,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             result matches Some(r) ==> tc_owns(*self, r),
             match result {
-                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(
+                Some(r) => kinfer_claim(*self.env, to_model_expr(e), to_model_expr(r)) && scope_pres(crate::env_model::env_arena_ids(*self.env), 
                     to_model_expr(e),
                     to_model_expr(r),
                 ),
@@ -9507,9 +9534,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => forall|S: vstd::iset::ISet<u32>, c: u16|
-                    crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
-                    && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
-                    ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(r), S, c),
+                    crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e_type), S, c)
+                    && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), S, c)
+                    ==> #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(r), S, c),
                 None => true,
             },
             match result {
@@ -9591,9 +9618,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::expr_arena_bridge::ptr_models(args@),
                 ),
                 forall|S: vstd::iset::ISet<u32>, c: u16|
-                    crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
-                    && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
-                    ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c),
+                    crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e_type), S, c)
+                    && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c)
+                    ==> #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out), S, c),
                 (crate::expr_model::nlbv(to_model_expr(e_type)) <= 0 && crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(out)) <= 0),
                 am == crate::expr_arena_bridge::ptr_models(args@),
                 to_model_expr(out) == crate::beta_model::spine_app(outc, am.subrange(0, i as int)),
@@ -9614,12 +9641,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             proof {
                 assert forall|S: vstd::iset::ISet<u32>, c: u16|
-                    crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
-                    && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
-                    implies #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c) by {
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(out0), S, c));
-                    spine_scope_in(e_type, _f, args@, S, c);
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(args@[i as int]), S, c));
+                    crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e_type), S, c)
+                    && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c)
+                    implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out), S, c) by {
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out0), S, c));
+                    spine_scope_in(crate::env_model::env_arena_ids(*self.env), e_type, _f, args@, S, c);
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(args@[i as int]), S, c));
                 }
             }
         }
@@ -9641,9 +9668,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 forall|S: vstd::iset::ISet<u32>, c: u16|
-                    crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
-                    && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
-                    ==> #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c),
+                    crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e_type), S, c)
+                    && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c)
+                    ==> #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out), S, c),
                 (crate::expr_model::nlbv(to_model_expr(e_type)) <= 0 && crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(out)) <= 0),
                 em == to_model_expr(e),
                 to_model_expr(out) == crate::beta_model::spine_app(outc, pre + eta_projs(em, j as nat)),
@@ -9658,12 +9685,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             proof {
                 assert forall|S: vstd::iset::ISet<u32>, c: u16|
-                    crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
-                    && crate::expr_model::dbj_deep_in(to_model_expr(e), S, c)
-                    implies #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(out), S, c) by {
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(out0), S, c));
+                    crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e_type), S, c)
+                    && crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c)
+                    implies #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out), S, c) by {
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(out0), S, c));
                     assert(to_model_expr(proj) == ExprSpec::Proj(j, Box::new(to_model_expr(e))));
-                    assert(crate::expr_model::dbj_deep_in(to_model_expr(proj), S, c));
+                    assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(proj), S, c));
                 }
                 assert(to_model_expr(proj) == ExprSpec::Proj(j, Box::new(to_model_expr(e))));
                 assert(crate::expr_model::nlbv(to_model_expr(proj)) == crate::expr_model::nlbv(to_model_expr(e)));
@@ -9714,7 +9741,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
-                Some(r) => scope_pres(to_model_expr(e), to_model_expr(r)),
+                Some(r) => scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
     {
@@ -9742,17 +9769,17 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             let rem = if av.len() < num_params { av } else { av.take(num_params as int) };
             assert(rem =~= if av.len() < num_params { av } else { av[..num_params as int] });
             assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger]
-                crate::expr_model::dbj_deep_in(to_model_expr(e), S, c) implies
-                crate::expr_model::dbj_deep_in(to_model_expr(r), S, c) by {
-                spine_scope_in(e, _fun, av, S, c);
-                assert forall|i: int| 0 <= i < rem.len() implies crate::expr_model::dbj_deep_in(
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), S, c) implies
+                crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), S, c) by {
+                spine_scope_in(crate::env_model::env_arena_ids(*self.env), e, _fun, av, S, c);
+                assert forall|i: int| 0 <= i < rem.len() implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), 
                     to_model_expr(#[trigger] rem[i]),
                     S,
                     c,
                 ) by {
                     assert(rem[i] == av[i]);
                 }
-                spine_scope_in(r, new_const, rem, S, c);
+                spine_scope_in(crate::env_model::env_arena_ids(*self.env), r, new_const, rem, S, c);
             }
             // closed: the constructor, and some of `e`'s closed arguments
             let am = crate::expr_arena_bridge::ptr_models(av);
@@ -9798,7 +9825,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> crate::expr_model::nlbv(to_model_expr(r)) <= 0)
                     // a declaration's value is closed, so unfolding brings in
                     // no local the input did not already mention
-                    && scope_pres(to_model_expr(e), to_model_expr(r)),
+                    && scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
             tc_wf(*final(self)),
@@ -9880,11 +9907,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ks,
                     crate::level_arena_bridge::to_model_of_levels(levels),
                 );
-                assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(to_model_expr(e), SS, k)
-                    implies crate::expr_model::dbj_deep_in(to_model_expr(r), SS, k) by {
-                    crate::expr_model::no_fv_dbj_deep_in(to_model_expr(def_val), SS, k);
-                    spine_app_dbj_deep_in(to_model_expr(fun), am, SS, k);
-                    spine_app_dbj_deep_in(to_model_expr(def_val), am, SS, k);
+                assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(e), SS, k)
+                    implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(r), SS, k) by {
+                    crate::expr_model::no_fv_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(def_val), SS, k);
+                    spine_app_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(fun), am, SS, k);
+                    spine_app_dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(def_val), am, SS, k);
                 }
             }
             Some(r)

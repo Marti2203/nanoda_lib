@@ -1677,7 +1677,7 @@ impl<'x, 't> WhnfMemo<'x, 't> {
             result ==> deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::env_model::env_arena_ids(*env)), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -1732,7 +1732,7 @@ pub open spec fn infer_types_to<'t, 'x>(
     types_to(
         to_model_of_declar_ty(env),
         to_model_of_env(env),
-        arena_lctx(), false,
+        arena_lctx(crate::env_model::env_arena_ids(env)), false,
         to_model(e),
         to_model(r),
         fuel,
@@ -1836,7 +1836,7 @@ impl<'x, 't> ConvCert<'x, 't> {
         deq_p_any(
             to_model_of_declar_ty(self.env@),
             to_model_of_env(self.env@),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(self.env@)), false,
             to_model(self.x),
             to_model(self.y),
         ) && crate::env_model::env_owns(self.env@, self.x) && crate::env_model::env_owns(self.env@, self.y)
@@ -1888,7 +1888,7 @@ impl<'x, 't> ConvCert<'x, 't> {
             deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::env_model::env_arena_ids(*env)), false,
                 to_model(x),
                 to_model(y),
             ),

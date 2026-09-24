@@ -561,7 +561,9 @@ pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
 
 /// The same, keyed by the id a `Free` node carries in the model. Uninterpreted;
 /// `read_expr` ties it to the node.
-pub uninterp spec fn dbj_serial(id: u32) -> Option<u16>;
+/// Keyed by the context's arena pair too: two contexts reuse the same local
+/// ids for different de Bruijn levels.
+pub uninterp spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16>;
 
 /// The memo caches are sound: every entry maps its key to a pointer denoting
 /// exactly what the key's function computes. `subst_aux`'s `return cached`
@@ -610,7 +612,7 @@ pub open spec fn abstr_levels_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>) -> bool {
     forall|k: (ExprPtr<'t>, u16, u16)| #[trigger]
         ctx.expr_cache.abstr_cache_levels@.contains_key(k) ==> to_model(
             ctx.expr_cache.abstr_cache_levels@[k],
-        ) == crate::expr_model::abstr_levels_full(to_model(k.0), k.1, k.2)
+        ) == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(ctx), to_model(k.0), k.1, k.2)
             && crate::expr_model::levels_fit(to_model(k.0), k.2) && crate::util_model::owns(ctx, k.0)
             && crate::util_model::owns(ctx, ctx.expr_cache.abstr_cache_levels@[k])
 }
@@ -713,7 +715,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
         crate::util_model::owns(*ctx, ptr),
     ensures
         expr_children_owned(*ctx, result),
-        to_model_of_expr(result) == to_model(ptr),
+        // A local's identity is its pointer (`Free(expr_id(ptr))`, below), not
+        // its stored value: two contexts can store the same local value at
+        // different indices.
+        !(result is Local) ==> to_model_of_expr(result) == to_model(ptr),
         node_cache_ok(result),
         // `const_name_of`/`const_levels_of` are uninterpreted, so until now the
         // ONLY way to learn what they are was `expr_as_const`'s own axiom --
@@ -737,7 +742,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
         // The de Bruijn-LEVEL serial, keyed here for the same reason as the
         // payload clauses above: on `read_expr` there is no `(ptr, e)` pair to
         // get wrong.
-        result matches Expr::Local { id, .. } ==> dbj_serial(expr_id(ptr)) == fvar_dbj_serial(id),
+        result matches Expr::Local { id, .. } ==> dbj_serial(crate::util_model::arena_ids(*ctx), expr_id(ptr)) == fvar_dbj_serial(id),
 ;
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
@@ -925,15 +930,18 @@ pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
 /// axiom connecting it to the real `local_binder_type_of` field, so
 /// the model-level typing relation (`types_to`, `delta_bound_model.rs`)
 /// can give `Free` leaves a type without reaching back into ptr-land.
-pub uninterp spec fn arena_lctx() -> Map<u32, ExprSpec>;
+/// One map per arena pair: two contexts give the same local id different
+/// types.
+pub uninterp spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec>;
 
 #[verifier::external_body]
-pub proof fn arena_lctx_local<'a>(ptr: ExprPtr<'a>)
+pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
     requires
+        crate::util_model::owns_in(aids, ptr),
         is_local_shape(ptr),
     ensures
-        arena_lctx().contains_key(expr_id(ptr)),
-        arena_lctx()[expr_id(ptr)] == to_model(local_binder_type_of(ptr)),
+        arena_lctx(aids).contains_key(expr_id(ptr)),
+        arena_lctx(aids)[expr_id(ptr)] == to_model(local_binder_type_of(ptr)),
 {
 }
 
@@ -1069,7 +1077,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
         is_local_shape(result),
         local_binder_type_of(result) == binder_type,
         to_model(result) == ExprSpec::Free(expr_id(result)),
-        dbj_serial(expr_id(result)) == Some(old(ctx).dbj_level_counter),
+        dbj_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result)) == Some(old(ctx).dbj_level_counter),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter + 1,
         final(ctx).expr_cache == old(ctx).expr_cache,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
@@ -2028,7 +2036,8 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
         e matches Expr::Local { binder_type, .. } ==> nlbv(to_model(binder_type)) == 0,
     ensures
         crate::util_model::owns(*final(ctx), result),
-        to_model(result) == to_model_of_expr(e),
+        !(e is Local) ==> to_model(result) == to_model_of_expr(e),
+        e is Local ==> to_model(result) == ExprSpec::Free(expr_id(result)),
         // The same clause `read_expr` carries, on the write side. `const_name_of`
         // and `const_levels_of` are uninterpreted, so `to_model(result)` alone
         // cannot say what they are -- which is why `mk_const` was the one

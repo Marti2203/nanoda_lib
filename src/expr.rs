@@ -1283,8 +1283,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 other => {
                     proof {
-                        assert(crate::expr_arena_bridge::to_model_of_expr(other)
-                            == crate::expr_arena_bridge::to_model(e));
+                        if !(other is Local) {
+                            assert(crate::expr_arena_bridge::to_model_of_expr(other)
+                                == crate::expr_arena_bridge::to_model(e));
+                        }
                         assert(crate::beta_model::spine_args(
                             crate::expr_arena_bridge::to_model(e),
                         ).reverse() =~= Seq::<crate::expr_model::ExprSpec>::empty());
@@ -1676,14 +1678,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn abstr_levels(&mut self, e: ExprPtr<'t>, start_pos: u16) -> (result: ExprPtr<'t>)
         requires
             crate::util_model::owns(*old(self), e),
-            crate::expr_model::dbj_serials_below(
+            crate::expr_model::dbj_serials_below(crate::util_model::arena_ids(*old(self)), 
                 crate::expr_arena_bridge::to_model(e),
                 old(self).dbj_level_counter,
             ),
         ensures
             crate::util_model::owns(*final(self), result),
             crate::expr_model::levels_fit(crate::expr_arena_bridge::to_model(e), old(self).dbj_level_counter),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*final(self)), 
                 crate::expr_arena_bridge::to_model(e),
                 start_pos,
                 old(self).dbj_level_counter,
@@ -1726,14 +1728,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             crate::util_model::owns(*old(self), e),
             crate::expr_arena_bridge::abstr_levels_cache_sound(*old(self)),
-            crate::expr_model::dbj_serials_below(
+            crate::expr_model::dbj_serials_below(crate::util_model::arena_ids(*old(self)), 
                 crate::expr_arena_bridge::to_model(e),
                 num_open_binders,
             ),
         ensures
             crate::util_model::owns(*final(self), result),
             crate::expr_model::levels_fit(crate::expr_arena_bridge::to_model(e), num_open_binders),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*final(self)), 
                 crate::expr_arena_bridge::to_model(e),
                 start_pos,
                 num_open_binders,
@@ -1752,7 +1754,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         if !self.has_fvars(e) {
             proof {
-                crate::expr_model::abstr_levels_full_noop(
+                crate::expr_model::abstr_levels_full_noop(crate::util_model::arena_ids(*self), 
                     crate::expr_arena_bridge::to_model(e),
                     start_pos,
                     num_open_binders,
@@ -1772,7 +1774,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let calcd = match self.read_expr(e) {
                 Local { id: FVarId::DbjLevel(serial), .. } => {
                     proof {
-                        assert(crate::expr_arena_bridge::dbj_serial(
+                        assert(crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::expr_id(e),
                         ) == Some(serial));
                         assert(serial < num_open_binders);
@@ -1783,7 +1785,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         let res = self.fvar_to_bvar(num_open_binders, serial);
                         proof {
                             assert(crate::expr_arena_bridge::to_model(res)
-                                == crate::expr_model::abstr_levels_full(
+                                == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                                 crate::expr_arena_bridge::to_model(e),
                                 start_pos,
                                 num_open_binders,
@@ -1794,7 +1796,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 Local { id: FVarId::Unique(..), .. } => {
                     proof {
-                        assert(crate::expr_arena_bridge::dbj_serial(
+                        assert(crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::expr_id(e),
                         ) is None);
                     }
@@ -1806,7 +1808,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_app(fun2, arg2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(
+                            == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(e),
                             start_pos,
                             num_open_binders,
@@ -1820,7 +1822,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // made explicit so the result can carry `levels_fit`.
                     assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(
+                        crate::expr_model::dbj_serials_below_mono(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(body),
                             num_open_binders,
                             (num_open_binders + 1) as u16,
@@ -1835,7 +1837,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(
+                            == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(e),
                             start_pos,
                             num_open_binders,
@@ -1849,7 +1851,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // made explicit so the result can carry `levels_fit`.
                     assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(
+                        crate::expr_model::dbj_serials_below_mono(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(body),
                             num_open_binders,
                             (num_open_binders + 1) as u16,
@@ -1864,7 +1866,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(
+                            == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(e),
                             start_pos,
                             num_open_binders,
@@ -1878,7 +1880,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // made explicit so the result can carry `levels_fit`.
                     assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
-                        crate::expr_model::dbj_serials_below_mono(
+                        crate::expr_model::dbj_serials_below_mono(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(body),
                             num_open_binders,
                             (num_open_binders + 1) as u16,
@@ -1894,7 +1896,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(
+                            == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(e),
                             start_pos,
                             num_open_binders,
@@ -1913,7 +1915,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let res = self.mk_proj(ty_name, idx, structure2);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(res)
-                            == crate::expr_model::abstr_levels_full(
+                            == crate::expr_model::abstr_levels_full(crate::util_model::arena_ids(*self), 
                             crate::expr_arena_bridge::to_model(e),
                             start_pos,
                             num_open_binders,

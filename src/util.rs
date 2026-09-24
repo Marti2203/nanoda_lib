@@ -1704,8 +1704,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*self, a),
             crate::util_model::owns(*self, x),
         ensures
-            to_model_of_expr(result.0) == to_model_expr(a),
-            to_model_of_expr(result.1) == to_model_expr(x),
+            !(result.0 is Local) ==> to_model_of_expr(result.0) == to_model_expr(a),
+            !(result.1 is Local) ==> to_model_of_expr(result.1) == to_model_expr(x),
+            result.0 is Local ==> to_model_expr(a) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(a)),
+            result.1 is Local ==> to_model_expr(x) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
             crate::expr_arena_bridge::expr_children_owned(*self, result.0),
             crate::expr_arena_bridge::expr_children_owned(*self, result.1),
             result.0 matches Expr::Const { name, levels, .. }
@@ -1722,10 +1724,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 ==> crate::expr_arena_bridge::local_id_of(x) == id
                 && crate::expr_arena_bridge::local_binder_type_of(x) == binder_type
                 && to_model_expr(x) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)),
-            result.0 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(
+            result.0 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), 
                 crate::expr_arena_bridge::expr_id(a),
             ) == crate::expr_arena_bridge::fvar_dbj_serial(id),
-            result.1 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(
+            result.1 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), 
                 crate::expr_arena_bridge::expr_id(x),
             ) == crate::expr_arena_bridge::fvar_dbj_serial(id),
     {

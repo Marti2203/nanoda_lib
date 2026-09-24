@@ -1057,7 +1057,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
         deq_p_any(
             to_model_of_declar_ty(*env),
             to_model_of_env(*env),
-            arena_lctx(), false,
+            arena_lctx(crate::util_model::arena_ids(*old(ctx))), false,
             to_model(t1),
             to_model(t2),
         ),
@@ -1070,7 +1070,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))),
                 ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2))),
             ),
@@ -1088,7 +1088,7 @@ pub fn verified_conv_bind_fresh_p<'t, 'p: 't, 'x>(
         return None;
     }
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     let sb1 = match verified_size(ctx, b1, 100000) {
         Some(v) => v,
         None => return None,
@@ -1866,16 +1866,16 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
         proof {
             local_type_wf(e);
             is_local_shape_model(e);
-            arena_lctx_local(e);
+            arena_lctx_local(crate::util_model::arena_ids(*ctx), e);
             types_to_free(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 expr_id(e),
                 0,
             );
             assert(to_model(e) == ExprSpec::Free(expr_id(e)));
-            assert(arena_lctx()[expr_id(e)] == to_model(ty));
+            assert(arena_lctx(crate::util_model::arena_ids(*ctx))[expr_id(e)] == to_model(ty));
             assert(infer_types_to(*env, e, ty, 0));
         }
         return Some(ty);
@@ -1888,7 +1888,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_sort(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 level_to_model(l),
                 0,
             );
@@ -1920,7 +1920,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_const(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(), false,
+                        arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                         name_id(c_name),
                         const_levels_vec(e),
                         to_model(r),
@@ -1944,7 +1944,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_nat_lit(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(), false,
+                        arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                         to_model(e),
                         to_model(r),
                         0,
@@ -1965,7 +1965,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     types_to_string_lit(
                         to_model_of_declar_ty(*env),
                         to_model_of_env(*env),
-                        arena_lctx(), false,
+                        arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                         to_model(e),
                         to_model(r),
                         0,
@@ -2016,7 +2016,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             },
         }
         proof {
-            arena_lctx_local(local);
+            arena_lctx_local(crate::util_model::arena_ids(*ctx), local);
         }
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
@@ -2071,7 +2071,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             assert(types_to(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(instd),
                 to_model(infd),
                 hb,
@@ -2079,7 +2079,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_lambda(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(binder_type),
                 to_model(body),
                 expr_id(local),
@@ -2142,7 +2142,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             },
         }
         proof {
-            arena_lctx_local(local);
+            arena_lctx_local(crate::util_model::arena_ids(*ctx), local);
         }
         let locals_slice: &[ExprPtr<'t>] = &[local];
         let instd = match verified_inst(ctx, body, locals_slice, 0, 100000) {
@@ -2193,7 +2193,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_mono(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(binder_type),
                 to_model(bt_ty),
                 h1,
@@ -2202,7 +2202,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_mono(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(instd),
                 to_model(instd_ty),
                 h2,
@@ -2218,7 +2218,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_pi(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(binder_type),
                 to_model(body),
                 expr_id(local),
@@ -2282,7 +2282,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             types_to_let(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                 to_model(ty0),
                 to_model(val),
                 to_model(body),
@@ -2338,7 +2338,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(), false,
+                    arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(cur_ty),
                     h,
@@ -2507,7 +2507,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to_mono(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(), false,
+                    arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(cur_ty),
                     h,
@@ -2516,7 +2516,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 types_to_mono(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(), false,
+                    arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                     to_model(a),
                     to_model(a_ty),
                     fa,
@@ -2525,7 +2525,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 let hn = types_to_app_lift(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
-                    arena_lctx(), false,
+                    arena_lctx(crate::util_model::arena_ids(*ctx)), false,
                     spine_app(to_model(hd), args_all.subrange(0, i as int)),
                     to_model(a),
                     to_model(cur_ty),
@@ -2613,7 +2613,7 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     assert(nlbv(to_model(structure)) <= 0);
     let ghost dty = to_model_of_declar_ty(*env);
     let ghost denv = to_model_of_env(*env);
-    let ghost lctx = arena_lctx();
+    let ghost lctx = arena_lctx(crate::util_model::arena_ids(*ctx));
     let ghost s_m = to_model(structure);
     let ghost idxn: nat = idx as nat;
     let sty = match verified_infer_free(ctx, env, memo, structure) {
@@ -3146,7 +3146,7 @@ pub open spec fn proof_irrel_shadow_claim<'t, 'x>(
         ) && is_proof_type_claim(env, yt) && deq_p_any(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(env)), false,
             to_model(xt),
             to_model(yt),
         )
@@ -3278,7 +3278,7 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
         eta_struct_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(env)), false,
             to_model(x),
             to_model(r),
             h,
@@ -3303,7 +3303,7 @@ pub proof fn eta_struct_pair_of_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>, 
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(to_model(x)))),
         );
-    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx());
+    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(crate::env_model::env_arena_ids(env)));
     let hs = struct_type_of_lift(dty, denv, lctx, false, to_model(xt), ind, params);
     let h: nat = (if hs >= f { hs } else { f }) + 1;
     struct_type_of_mono(dty, denv, lctx, false, to_model(xt), ind, params, hs, h);
@@ -3732,7 +3732,7 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
         unit_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(env)), false,
             to_model(x),
             to_model(y),
             h,
@@ -3744,7 +3744,7 @@ pub proof fn unit_pair_of_shadow_claim<'t, 'x>(env: Env<'x, 't>, x: ExprPtr<'t>,
             to_model_of_env(env),
             to_model(xt),
         ) && deq_any(to_model_of_env(env), to_model(xt), to_model(yt));
-    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx());
+    let (dty, denv, lctx) = (to_model_of_declar_ty(env), to_model_of_env(env), arena_lctx(crate::env_model::env_arena_ids(env)));
     let hh = choose|hh: nat| #[trigger] deq(denv, to_model(xt), to_model(yt), hh);
     deq_p_of_deq(dty, denv, lctx, false, to_model(xt), to_model(yt), hh);
     let m1: nat = if fx >= fy { fx } else { fy };
@@ -4468,7 +4468,7 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
         proof_irrel_pair(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(env)), false,
             to_model(x),
             to_model(y),
             hi,
@@ -4476,7 +4476,7 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
 {
     let dty = to_model_of_declar_ty(env);
     let denv = to_model_of_env(env);
-    let lctx = arena_lctx();
+    let lctx = arena_lctx(crate::env_model::env_arena_ids(env));
     let (xt, yt, fx, fy) = choose|xt: ExprPtr<'t>, yt: ExprPtr<'t>, fx: nat, fy: nat|
         #![trigger infer_types_to(env, x, xt, fx), infer_types_to(env, y, yt, fy)]
         infer_types_to(env, x, xt, fx) && infer_types_to(env, y, yt, fy) && is_proof_type_claim(
@@ -4485,7 +4485,7 @@ pub proof fn proof_irrel_pair_of_shadow_claim<'t, 'x>(
         ) && is_proof_type_claim(env, yt) && deq_p_any(
             to_model_of_declar_ty(env),
             to_model_of_env(env),
-            arena_lctx(), false,
+            arena_lctx(crate::env_model::env_arena_ids(env)), false,
             to_model(xt),
             to_model(yt),
         );
@@ -4550,7 +4550,7 @@ pub fn verified_conv_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -4614,7 +4614,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -4624,7 +4624,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if budget == 0 {
         return None;
     }
@@ -4674,7 +4674,7 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
             am2 == Seq::new(args2@.len(), |j: int| to_model(args2@[j])),
             em == to_model_of_env(*env),
             dtym == to_model_of_declar_ty(*env),
-            lcm == arena_lctx(),
+            lcm == arena_lctx(crate::util_model::arena_ids(*ctx)),
             deq_p_any(
                 dtym,
                 em,
@@ -4826,7 +4826,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0,
@@ -4836,7 +4836,7 @@ pub fn verified_k_like_step_p<'t, 'p: 't, 'x>(
 {
     let ghost dtym = to_model_of_declar_ty(*env);
     let ghost em = to_model_of_env(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     let ghost cm = env_model_nofv(*env);
     let (head, args) = ctx.unfold_apps(x);
     let ghost args_model = Seq::new(args@.len(), |i: int| to_model(args@[i]));
@@ -5673,7 +5673,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(r),
             ),
@@ -5682,7 +5682,7 @@ pub fn verified_major_eta_spine<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     let (hd, name, _levels, args) = match ctx.unfold_const_apps(x) {
         Some(p) => p,
         None => return None,
@@ -5778,7 +5778,7 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(r),
             ),
@@ -5787,7 +5787,7 @@ pub fn verified_major_eta_proj<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     let el = ctx.read_expr(x);
     let (ty_name, idx, structure) = match expr_as_proj(&el) {
         Some(p) => p,
@@ -5894,7 +5894,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
             Some(r) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(r),
             ) && nlbv(to_model(r)) <= 0,
@@ -5903,7 +5903,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     let ghost cmk = env_model_nofv(*env);
     let mut cur = x;
     let mut any = false;
@@ -5923,7 +5923,7 @@ pub fn verified_major_eta_fix<'t, 'p: 't, 'x>(
             cmk == env_model_nofv(*env),
             em == to_model_of_env(*env),
             dtym == to_model_of_declar_ty(*env),
-            lcm == arena_lctx(),
+            lcm == arena_lctx(crate::util_model::arena_ids(*ctx)),
             nlbv(to_model(cur)) <= 0,
             deq_p_any(dtym, em, lcm, false, to_model(x), to_model(cur)),
         decreases rounds - i,
@@ -6003,7 +6003,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6013,7 +6013,7 @@ pub fn verified_conv_major_eta_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if budget == 0 {
         return None;
     }
@@ -6202,7 +6202,7 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6212,7 +6212,7 @@ pub fn verified_conv_eta_struct_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if budget == 0 {
         return None;
     }
@@ -6339,7 +6339,7 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6349,7 +6349,7 @@ pub fn verified_conv_whnf_retry_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if budget == 0 {
         return None;
     }
@@ -6418,7 +6418,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6428,7 +6428,7 @@ pub fn verified_conv_leaves_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if budget == 0 {
         return None;
     }
@@ -6775,7 +6775,7 @@ pub fn verified_conv_congr_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6785,7 +6785,7 @@ pub fn verified_conv_congr_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     // --- projection congruence (`def_eq_proj`, which `def_eq` tries with
     // the constant and local leaves, before the congruence group) ---
 
@@ -6951,7 +6951,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
             Some(true) => deq_p_any(
                 to_model_of_declar_ty(*env),
                 to_model_of_env(*env),
-                arena_lctx(), false,
+                arena_lctx(crate::util_model::arena_ids(*final(ctx))), false,
                 to_model(x),
                 to_model(y),
             ),
@@ -6961,7 +6961,7 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
 {
     let ghost em = to_model_of_env(*env);
     let ghost dtym = to_model_of_declar_ty(*env);
-    let ghost lcm = arena_lctx();
+    let ghost lcm = arena_lctx(crate::util_model::arena_ids(*ctx));
     if expr_ptr_eq(x, y) {
         proof {
             deq_p_any_refl(dtym, em, lcm, false, to_model(x));
