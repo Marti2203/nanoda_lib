@@ -1448,7 +1448,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), binder),
             crate::util_model::owns(*old(self), body),
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
-            1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1510,7 +1509,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), binder),
             crate::util_model::owns(*old(self), body),
             matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
-            1 + crate::expr_model::depth(crate::expr_arena_bridge::to_model(body)) <= 60000,
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1586,16 +1584,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let m = crate::expr_arena_bridge::to_model(binders@[i]);
                     matches!(m, crate::expr_model::ExprSpec::Free(_))
                 }),
-            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap())
-                + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
-                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
-                * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1614,46 +1607,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         let m = crate::expr_arena_bridge::to_model(binders@[i]);
                         matches!(m, crate::expr_model::ExprSpec::Free(_))
                     }),
-                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + (
-                binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
-                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(
-                    crate::expr_arena_bridge::to_model(e),
-                ) <= 60000,
             decreases n,
         {
             let ghost e_old = e;
             let b = binders[n - 1];
-            proof {
-                crate::expr_model::mul_ge_one(
-                    n as nat,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-            }
             e = self.abstr_pi(b, e);
-            proof {
-                // `abstr_pi` gives the SHAPE; the depth has to be read off it,
-                // and the domain is the binder's type, hence `local_type_wf`.
-                crate::expr_arena_bridge::local_type_wf(b);
-                crate::expr_model::abstr_full_depth(
-                    crate::expr_arena_bridge::to_model(e_old),
-                    seq![crate::expr_arena_bridge::expr_id(b)],
-                    0,
-                );
-                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 1
-                    + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(
-                    crate::expr_arena_bridge::to_model(e_old),
-                ));
-                crate::expr_model::mul_pred_step(
-                    n as nat,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-                crate::expr_model::mul_add_distrib(
-                    (binders@.len() - n) as nat,
-                    1,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-            }
             n = n - 1;
         }
         e
@@ -1678,16 +1636,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let m = crate::expr_arena_bridge::to_model(binders@[i]);
                     matches!(m, crate::expr_model::ExprSpec::Free(_))
                 }),
-            binders@.len() * (1 + crate::expr_arena_bridge::local_type_cap())
-                + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
-                <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
-                * (1 + crate::expr_arena_bridge::local_type_cap()),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1706,46 +1659,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         let m = crate::expr_arena_bridge::to_model(binders@[i]);
                         matches!(m, crate::expr_model::ExprSpec::Free(_))
                     }),
-                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + (
-                binders@.len() - n) as nat * (1 + crate::expr_arena_bridge::local_type_cap()),
-                n * (1 + crate::expr_arena_bridge::local_type_cap()) + crate::expr_model::depth(
-                    crate::expr_arena_bridge::to_model(e),
-                ) <= 60000,
             decreases n,
         {
             let ghost e_old = e;
             let b = binders[n - 1];
-            proof {
-                crate::expr_model::mul_ge_one(
-                    n as nat,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-            }
             e = self.apply_lambda(b, e);
-            proof {
-                // `abstr_pi` gives the SHAPE; the depth has to be read off it,
-                // and the domain is the binder's type, hence `local_type_wf`.
-                crate::expr_arena_bridge::local_type_wf(b);
-                crate::expr_model::abstr_full_depth(
-                    crate::expr_arena_bridge::to_model(e_old),
-                    seq![crate::expr_arena_bridge::expr_id(b)],
-                    0,
-                );
-                assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 1
-                    + crate::expr_arena_bridge::local_type_cap() + crate::expr_model::depth(
-                    crate::expr_arena_bridge::to_model(e_old),
-                ));
-                crate::expr_model::mul_pred_step(
-                    n as nat,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-                crate::expr_model::mul_add_distrib(
-                    (binders@.len() - n) as nat,
-                    1,
-                    (1 + crate::expr_arena_bridge::local_type_cap()) as nat,
-                );
-            }
             n = n - 1;
         }
         e

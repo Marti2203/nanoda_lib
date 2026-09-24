@@ -528,7 +528,9 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
 /// above trust hash-consing's own uniqueness rather than
 /// deriving it. Scoped as narrowly as possible: only claims injectivity
 /// in `idx` for a FIXED prefix name, nothing about `format!` in general.
-pub uninterp spec fn append_index_after_id<'a>(n: NamePtr<'a>, idx: u64) -> u64;
+/// Keyed by the context's arena pair `ids` as well: two contexts put the
+/// same fresh name at different indices of their own dags.
+pub uninterp spec fn append_index_after_id<'a>(ids: (nat, nat), n: NamePtr<'a>, idx: u64) -> u64;
 
 pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_after ](
     ctx: &mut TcCtx<'t, 'p>,
@@ -539,17 +541,17 @@ pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_afte
         crate::util_model::owns(*old(ctx), n),
     ensures
         crate::util_model::owns(*final(ctx), result),
-        name_id(result) == append_index_after_id(n, idx),
+        name_id(result) == append_index_after_id(crate::util_model::arena_ids(*final(ctx)), n, idx),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 #[verifier::external_body]
-pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2: u64)
+pub proof fn append_index_after_id_injective<'a>(ids: (nat, nat), n: NamePtr<'a>, idx1: u64, idx2: u64)
     requires
         idx1 != idx2,
     ensures
-        append_index_after_id(n, idx1) != append_index_after_id(n, idx2),
+        append_index_after_id(ids, n, idx1) != append_index_after_id(ids, n, idx2),
 {
 }
 
@@ -580,6 +582,7 @@ pub proof fn append_index_after_id_injective<'a>(n: NamePtr<'a>, idx1: u64, idx2
 /// trusted axiom) -- turned out to need neither, just the injectivity
 /// facts already available plus stock `vstd` set lemmas.
 pub proof fn gen_elim_level_collision_bound<'a>(
+    ids: (nat, nat),
     p: NamePtr<'a>,
     uparams_model: Seq<LevelSpec>,
     k: nat,
@@ -588,10 +591,10 @@ pub proof fn gen_elim_level_collision_bound<'a>(
         uparams_model.len() + 1 <= u64::MAX as nat,
         k <= u64::MAX as nat,
         forall|i: int|
-            #![trigger append_index_after_id(p, i as u64)]
+            #![trigger append_index_after_id(ids, p, i as u64)]
             1 <= i <= k ==> exists|j: int|
                 0 <= j < uparams_model.len() && uparams_model[j] == LevelSpec::Param(
-                    append_index_after_id(p, i as u64),
+                    append_index_after_id(ids, p, i as u64),
                 ),
     ensures
         k <= uparams_model.len(),
@@ -602,7 +605,7 @@ pub proof fn gen_elim_level_collision_bound<'a>(
     let l = uparams_model.len() as int;
     let f = |i: int|
         choose|j: int|
-            0 <= j < l && uparams_model[j] == LevelSpec::Param(append_index_after_id(p, i as u64));
+            0 <= j < l && uparams_model[j] == LevelSpec::Param(append_index_after_id(ids, p, i as u64));
     let x = set_int_range(1, k as int + 1);
     let y = set_int_range(0, l);
     lemma_int_range(1, k as int + 1);
@@ -617,12 +620,12 @@ pub proof fn gen_elim_level_collision_bound<'a>(
                 assert((i1 as u64) as int == i1);
                 assert((i2 as u64) as int == i2);
                 assert(i1 as u64 != i2 as u64);
-                append_index_after_id_injective(p, i1 as u64, i2 as u64);
+                append_index_after_id_injective(ids, p, i1 as u64, i2 as u64);
                 assert(uparams_model[f(i1)] == LevelSpec::Param(
-                    append_index_after_id(p, i1 as u64),
+                    append_index_after_id(ids, p, i1 as u64),
                 ));
                 assert(uparams_model[f(i2)] == LevelSpec::Param(
-                    append_index_after_id(p, i2 as u64),
+                    append_index_after_id(ids, p, i2 as u64),
                 ));
                 assert(false);
             }

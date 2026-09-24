@@ -750,12 +750,13 @@ pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 /// maximum declaration size, whether measuring types or values) --
 /// deliberately omits `size` again, for the exact same reason `env_
 /// global_wf` above does (see its doc comment / [[feedback_verus_size_axiom_blowup]]).
+/// Closedness is not claimed: the parser does not check it (see
+/// `get_declar_info_ty`), and users test the node's cached flags.
 #[verifier::external_body]
 pub proof fn env_global_wf_ty<'x, 'a>(env: Env<'x, 'a>)
     ensures
         forall|id: u64| #[trigger]
             to_model_of_declar_ty(env).contains_key(id) ==> {
-                &&& nlbv(to_model_of_declar_ty(env)[id].1) == 0
                 &&& max_var_below(to_model_of_declar_ty(env)[id].1, env_global_cap(env))
                 &&& depth(to_model_of_declar_ty(env)[id].1) <= env_global_cap(env)
             },

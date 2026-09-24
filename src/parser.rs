@@ -674,6 +674,11 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 assigned_idx.unwrap().assert_ie(insert_result);
             }
             ExprBVar(dbj_idx) => {
+                // VERUS-REWRITE(parser-check): `u16::MAX` is rejected here. Such a
+                // `Var`'s loose-bvar count (`dbj_idx + 1`) overflows the moment
+                // anything asks for it, and the arena's stored-node invariant
+                // (`node_cache_ok`) says every stored `Var` is below `u16::MAX`.
+                assert!(dbj_idx < u16::MAX, "de Bruijn index {} is out of range", dbj_idx);
                 let insert_result = {
                     let hash = hash64!(crate::expr::VAR_HASH, dbj_idx);
                     self.dag.exprs.insert_full(Expr::Var { dbj_idx, hash })

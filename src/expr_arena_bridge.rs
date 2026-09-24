@@ -952,45 +952,14 @@ pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
 {
 }
 
-/// `env_global_cap`'s counterpart for LOCALS instead of declarations:
-/// "there's a real maximum depth some Local's stored `binder_type` can
-/// reach, even though this model doesn't compute it" -- same "name the
-/// max, don't claim a number" pattern `env_global_cap` uses (a caller
-/// who needs a CONCRETE bound states `local_type_cap() <= some_value` as
-/// their own hypothesis, same as `env_global_cap(*env) <= d` elsewhere).
-/// `mk_dbj_level`'s own bridge (below) never tracked a bound on `binder_
-/// type` at all -- capturing "how deep can a caller-supplied binder_type
-/// ever be" by touching every existing `mk_dbj_level` call site across
-/// this whole project would be enormously invasive; this sidesteps that
-/// by asserting a single, UNCONDITIONAL global maximum exists instead,
-/// closing the "Local branch genuinely has no derivable bound" gap
-/// `verified_infer`'s dispatcher has carried since `Local` was first
-/// bridged. Deliberately UNPARAMETERIZED by `Env`/`TcCtx` (unlike `env_
-/// global_cap`) -- locals are per-execution-context, not per-`Env`, and
-/// this whole arc's convention is already "one flat numeric constant
-/// bound, established via a hypothesis" (`60000`) rather than tracking
-/// separate caps per context.
-pub uninterp spec fn local_type_cap() -> nat;
-
-/// Deliberately omits `max_var_below`/`size` (unlike `env_global_wf`) --
-/// `depth` is needed for `infer`'s own depth-boundedness, and an
-/// UNCONDITIONAL axiom that includes `size` has been shown to blow up
-/// full-crate check time 50x+ even when unused (see `feedback_verus_
-/// size_axiom_blowup.md`). `nlbv == 0` IS included (unlike `max_var_
-/// below`/`size`) -- a bisection identical in spirit to `env_global_wf`'s
-/// own confirmed `nlbv` alone stays cheap; needed for `verified_infer`'s
-/// `Local` branch to contribute to the dispatcher's own closedness
-/// guarantee (`nlbv(to_model(r)) <= 0`), itself needed so a FUTURE `Proj`
-/// composition can call `verified_infer` on `structure` directly and get
-/// a closed `structure_ty` back, rather than taking it as an external
-/// parameter forever.
+/// Every stored local's type is closed. True by construction: the three
+/// local constructors (`mk_dbj_level`, `remake_dbj_level`, `mk_unique`) test
+/// it at run time before allocating, `alloc_expr` requires it of any other
+/// `Local` verified code stores, and export files contain no locals.
 #[verifier::external_body]
 pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
     ensures
-        is_local_shape(ptr) ==> {
-            &&& depth(to_model(local_binder_type_of(ptr))) <= local_type_cap()
-            &&& nlbv(to_model(local_binder_type_of(ptr))) == 0
-        },
+        is_local_shape(ptr) ==> nlbv(to_model(local_binder_type_of(ptr))) == 0,
 {
 }
 
@@ -2206,19 +2175,10 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
                 let m = to_model(binders@[i]);
                 matches!(m, ExprSpec::Free(_))
             }),
-        // Each step consumes one binder and wraps the result in a `Bind` whose
-        // DOMAIN is that binder's type, so the depth grows by `1 + the type's
-        // depth` per step -- not by one. `local_type_cap` bounds the latter,
-        // and the caller supplies its concrete value, which is the convention
-        // that cap is documented with.
-        binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        // Exported so a CHAIN of telescopes can be bounded by its callers: each
-        // step adds one `Bind` whose domain is a binder's type.
-        depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
         to_model(result) == abstr_pi_telescope_model(
             Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
             Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
@@ -2233,17 +2193,7 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
     let last = binders[binders.len() - 1];
     let rest = &binders[0..binders.len() - 1];
     assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
-    proof {
-        local_type_wf(last);
-        mul_ge_one(binders@.len(), (1 + local_type_cap()) as nat);
-        assert(depth(to_model(e)) + 1 + local_type_cap() <= 60000);
-    }
     let e2 = ctx.abstr_pi(last, e);
-    proof {
-        abstr_full_depth(to_model(e), seq![expr_id(last)], 0);
-        assert(depth(to_model(e2)) <= 1 + local_type_cap() + depth(to_model(e)));
-        mul_pred_step(binders@.len(), (1 + local_type_cap()) as nat);
-    }
     let result = verified_abstr_pi_telescope(ctx, rest, e2);
     proof {
         let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
@@ -2282,19 +2232,10 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
                 let m = to_model(binders@[i]);
                 matches!(m, ExprSpec::Free(_))
             }),
-        // Each step consumes one binder and wraps the result in a `Bind` whose
-        // DOMAIN is that binder's type, so the depth grows by `1 + the type's
-        // depth` per step -- not by one. `local_type_cap` bounds the latter,
-        // and the caller supplies its concrete value, which is the convention
-        // that cap is documented with.
-        binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        // Exported so a CHAIN of telescopes can be bounded by its callers: each
-        // step adds one `Bind` whose domain is a binder's type.
-        depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
         to_model(result) == abstr_pi_telescope_model(
             Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
             Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
@@ -2309,17 +2250,7 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
     let last = binders[binders.len() - 1];
     let rest = &binders[0..binders.len() - 1];
     assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
-    proof {
-        local_type_wf(last);
-        mul_ge_one(binders@.len(), (1 + local_type_cap()) as nat);
-        assert(depth(to_model(e)) + 1 + local_type_cap() <= 60000);
-    }
     let e2 = ctx.apply_lambda(last, e);
-    proof {
-        abstr_full_depth(to_model(e), seq![expr_id(last)], 0);
-        assert(depth(to_model(e2)) <= 1 + local_type_cap() + depth(to_model(e)));
-        mul_pred_step(binders@.len(), (1 + local_type_cap()) as nat);
-    }
     let result = verified_abstr_lambda_telescope(ctx, rest, e2);
     proof {
         let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));

@@ -112,7 +112,7 @@ use crate::expr_arena_bridge::{
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_string_lit_shape_model, string_len, string_lit_ptr_of};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{local_type_cap, local_type_wf};
+use crate::expr_arena_bridge::local_type_wf;
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]

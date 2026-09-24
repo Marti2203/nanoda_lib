@@ -661,6 +661,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.dbj_level_counter += 1;
         let id = FVarId::DbjLevel(level);
         let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
+        // VERUS-REWRITE(local-closed-check): a local's type must be closed; see
+        // `local_type_wf`, which states it of every stored local.
+        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
         self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
     }
 
@@ -676,6 +679,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ) -> ExprPtr<'t> {
         let id = FVarId::DbjLevel(level);
         let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
+        // VERUS-REWRITE(local-closed-check): a local's type must be closed; see
+        // `local_type_wf`, which states it of every stored local.
+        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
         self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
     }
 
@@ -691,6 +697,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.unique_counter += 1;
         let id = FVarId::Unique(unique_id);
         let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
+        // VERUS-REWRITE(local-closed-check): a local's type must be closed; see
+        // `local_type_wf`, which states it of every stored local.
+        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
         self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
     }
 

@@ -49,8 +49,6 @@ use crate::expr::BinderStyle;
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::expr_id;
-#[cfg(verus_only)]
-use crate::expr_arena_bridge::local_type_cap;
 use crate::expr_arena_bridge::verified_inst;
 use crate::expr_arena_bridge::verified_size;
 use crate::expr_arena_bridge::verified_subst_expr_levels;
@@ -920,10 +918,10 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(
         i as nat <= to_model_of_levels(uparams).len() + 1,
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
         forall|i2: int|
-            #![trigger append_index_after_id(p, i2 as u64)]
+            #![trigger append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)]
             1 <= i2 < i ==> exists|j: int|
                 0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j]
-                    == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
+                    == LevelSpec::Param(append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)),
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
@@ -938,14 +936,14 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(
 {
     let candidate = ctx.append_index_after(p, i);
     if ctx.contains_param(uparams, candidate) {
-        assert(name_id(candidate) == append_index_after_id(p, i));
+        assert(name_id(candidate) == append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i));
         assert forall|i2: int|
-            #![trigger append_index_after_id(p, i2 as u64)]
+            #![trigger append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)]
             1 <= i2 <= i as int implies exists|j: int|
             0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j]
-                == LevelSpec::Param(append_index_after_id(p, i2 as u64)) by {}
+                == LevelSpec::Param(append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)) by {}
         proof {
-            gen_elim_level_collision_bound(p, to_model_of_levels(uparams), i as nat);
+            gen_elim_level_collision_bound(crate::util_model::arena_ids(*old(ctx)), p, to_model_of_levels(uparams), i as nat);
         }
         verified_gen_elim_level_search(ctx, p, uparams, i + 1)
     } else {
@@ -1140,17 +1138,6 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
                 let m = to_model(local_params@[i]);
                 matches!(m, ExprSpec::Free(_))
             },
-        // CEILING, same shape as `verified_mk_recursor_ty`'s. Every pointer
-        // here is `Free`-shaped, so all the input depths are 0 and only the
-        // chain's own growth matters.
-        local_type_cap() <= 1000,
-        // `handled_rec_args` is the one list with no shape requirement, so its
-        // depth is not free -- it has to be bounded explicitly.
-        forall|i: int|
-            0 <= i < handled_rec_args@.len() ==> depth(#[trigger] to_model(handled_rec_args@[i]))
-                <= 1000,
-        all_ctor_args@.len() + handled_rec_args@.len() + flat_mapped_minors@.len() + motives@.len()
-            + local_params@.len() <= 50,
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
@@ -1160,26 +1147,9 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
 {
     let rhs0 = verified_foldl_apps(ctx, this_minor, all_ctor_args);
     proof {
-        assert forall|i: int| 0 <= i < all_ctor_args@.len() implies depth(
-            #[trigger] to_model(all_ctor_args@[i]),
-        ) <= 0 by {}
-        crate::beta_model::spine_app_depth_max(
-            to_model(this_minor),
-            Seq::new(all_ctor_args@.len(), |i: int| to_model(all_ctor_args@[i])),
-            0,
-        );
-    }
-    proof {
         spine_app_telescope_size(
             to_model(this_minor),
             Seq::new(all_ctor_args@.len(), |i: int| to_model(all_ctor_args@[i])),
-        );
-    }
-    proof {
-        crate::beta_model::spine_app_depth_max(
-            to_model(rhs0),
-            Seq::new(handled_rec_args@.len(), |i: int| to_model(handled_rec_args@[i])),
-            1000,
         );
     }
     let rhs1 = verified_foldl_apps(ctx, rhs0, handled_rec_args);
@@ -1189,21 +1159,6 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
             Seq::new(handled_rec_args@.len(), |i: int| to_model(handled_rec_args@[i])),
         );
     }
-    proof {
-        crate::expr_model::mul_add_distrib(
-            0 as nat,
-            all_ctor_args@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            (0 + all_ctor_args@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rhs1)) + all_ctor_args@.len() * (1 + local_type_cap()) <= 1050 + 50
-            * 1001);
-    }
     let rhs2 = verified_abstr_lambda_telescope(ctx, all_ctor_args, rhs1);
     proof {
         abstr_telescope_size(
@@ -1211,21 +1166,6 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
             Seq::new(all_ctor_args@.len(), |i: int| local_type(all_ctor_args@[i])),
             to_model(rhs1),
         );
-    }
-    proof {
-        crate::expr_model::mul_add_distrib(
-            all_ctor_args@.len() as nat,
-            flat_mapped_minors@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            (all_ctor_args@.len() + flat_mapped_minors@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rhs2)) + flat_mapped_minors@.len() * (1 + local_type_cap()) <= 1050
-            + 50 * 1001);
     }
     let rhs3 = verified_abstr_lambda_telescope(ctx, flat_mapped_minors, rhs2);
     proof {
@@ -1235,20 +1175,6 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
             to_model(rhs2),
         );
     }
-    proof {
-        crate::expr_model::mul_add_distrib(
-            (all_ctor_args@.len() + flat_mapped_minors@.len()) as nat,
-            motives@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            ((all_ctor_args@.len() + flat_mapped_minors@.len()) + motives@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rhs3)) + motives@.len() * (1 + local_type_cap()) <= 1050 + 50 * 1001);
-    }
     let rhs4 = verified_abstr_lambda_telescope(ctx, motives, rhs3);
     proof {
         abstr_telescope_size(
@@ -1256,22 +1182,6 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
             Seq::new(motives@.len(), |i: int| local_type(motives@[i])),
             to_model(rhs3),
         );
-    }
-    proof {
-        crate::expr_model::mul_add_distrib(
-            (all_ctor_args@.len() + flat_mapped_minors@.len() + motives@.len()) as nat,
-            local_params@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            ((all_ctor_args@.len() + flat_mapped_minors@.len() + motives@.len())
-                + local_params@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rhs4)) + local_params@.len() * (1 + local_type_cap()) <= 1050 + 50
-            * 1001);
     }
     let rhs5 = verified_abstr_lambda_telescope(ctx, local_params, rhs4);
     proof {
@@ -1338,15 +1248,6 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
                 let m = to_model(local_params@[i]);
                 matches!(m, ExprSpec::Free(_))
             },
-        // CEILING. `abstr_aux` tracks binder depth in a `u16`, so the whole
-        // chain built here has to stay under it. Concrete numbers rather than a
-        // symbolic bound: the arithmetic below is nonlinear and Verus does it
-        // far more readily on numerals. Every binder list is `Free`-shaped, so
-        // its own depth is 0 and only `motive` contributes.
-        local_type_cap() <= 1000,
-        depth(to_model(motive)) <= 1000,
-        local_indices@.len() + flat_mapped_minors@.len() + motives@.len() + local_params@.len()
-            <= 50,
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
@@ -1355,49 +1256,13 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
             + flat_mapped_minors@.len() + local_indices@.len() + 1,
 {
     let motive_app_base = verified_foldl_apps(ctx, motive, local_indices);
-    proof {
-        assert forall|i: int| 0 <= i < local_indices@.len() implies depth(
-            #[trigger] to_model(local_indices@[i]),
-        ) <= 1000 by {}
-        crate::beta_model::spine_app_depth_max(
-            to_model(motive),
-            Seq::new(local_indices@.len(), |i: int| to_model(local_indices@[i])),
-            1000,
-        );
-    }
     let motive_app = ctx.mk_app(motive_app_base, major);
-    proof {
-        assert(depth(to_model(major)) == 0);
-        assert(depth(to_model(motive_app)) <= 1000 + local_indices@.len() + 1);
-    }
     let rec_ty0 = ctx.abstr_pi(major, motive_app);
-    proof {
-        crate::expr_arena_bridge::local_type_wf(major);
-        crate::expr_model::abstr_full_depth(to_model(motive_app), seq![expr_id(major)], 0);
-        assert(depth(to_model(rec_ty0)) <= 1 + 1000 + (1000 + local_indices@.len() + 1));
-    }
     assert(pi_telescope_size_spec(to_model(rec_ty0)) == 1 + pi_telescope_size_spec(
         abstr_full(to_model(motive_app), seq![expr_id(major)], 0),
     ));
     proof {
         abstr_full_telescope_size(to_model(motive_app), seq![expr_id(major)], 0);
-    }
-    proof {
-        // Running total: the ceiling has to see the SUM of every telescope so
-        // far, not each one on its own.
-        crate::expr_model::mul_add_distrib(
-            0 as nat,
-            local_indices@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            (0 + local_indices@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rec_ty0)) + local_indices@.len() * (1 + local_type_cap()) <= 2052 + 50
-            * 1001);
     }
     let rec_ty1 = verified_abstr_pi_telescope(ctx, local_indices, rec_ty0);
     proof {
@@ -1407,23 +1272,6 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
             to_model(rec_ty0),
         );
     }
-    proof {
-        // Running total: the ceiling has to see the SUM of every telescope so
-        // far, not each one on its own.
-        crate::expr_model::mul_add_distrib(
-            local_indices@.len() as nat,
-            flat_mapped_minors@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            (local_indices@.len() + flat_mapped_minors@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rec_ty1)) + flat_mapped_minors@.len() * (1 + local_type_cap()) <= 2052
-            + 50 * 1001);
-    }
     let rec_ty2 = verified_abstr_pi_telescope(ctx, flat_mapped_minors, rec_ty1);
     proof {
         abstr_telescope_size(
@@ -1432,23 +1280,6 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
             to_model(rec_ty1),
         );
     }
-    proof {
-        // Running total: the ceiling has to see the SUM of every telescope so
-        // far, not each one on its own.
-        crate::expr_model::mul_add_distrib(
-            (local_indices@.len() + flat_mapped_minors@.len()) as nat,
-            motives@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            ((local_indices@.len() + flat_mapped_minors@.len()) + motives@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rec_ty2)) + motives@.len() * (1 + local_type_cap()) <= 2052 + 50
-            * 1001);
-    }
     let rec_ty3 = verified_abstr_pi_telescope(ctx, motives, rec_ty2);
     proof {
         abstr_telescope_size(
@@ -1456,22 +1287,6 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
             Seq::new(motives@.len(), |i: int| local_type(motives@[i])),
             to_model(rec_ty2),
         );
-    }
-    proof {
-        crate::expr_model::mul_add_distrib(
-            (local_indices@.len() + flat_mapped_minors@.len() + motives@.len()) as nat,
-            local_params@.len(),
-            (1 + local_type_cap()) as nat,
-        );
-        crate::expr_model::mul_mono(
-            ((local_indices@.len() + flat_mapped_minors@.len() + motives@.len())
-                + local_params@.len()) as nat,
-            50,
-            (1 + local_type_cap()) as nat,
-            1001,
-        );
-        assert(depth(to_model(rec_ty3)) + local_params@.len() * (1 + local_type_cap()) <= 2052 + 50
-            * 1001);
     }
     let rec_ty4 = verified_abstr_pi_telescope(ctx, local_params, rec_ty3);
     proof {
