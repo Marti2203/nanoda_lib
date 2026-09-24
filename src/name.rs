@@ -1,6 +1,7 @@
 //! Implementaiton of the `Name` type (hierarchical names)
 use crate::util::{CowStr, NamePtr, StringPtr, TcCtx};
 use Name::*;
+use vstd::prelude::*;
 
 // Inside `verus!` only so the `hash64!` calls in util.rs's constructors are
 // expressible there; values unchanged and no spec reads them.
@@ -150,6 +151,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::name_arena_bridge::to_model_name(outgoing),
                 crate::name_arena_bridge::to_model_name(incoming),
             ),
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
             crate::name_arena_bridge::to_model_name_injective(n, outgoing);
@@ -188,6 +190,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::name_arena_bridge::to_model_name(n1),
                 crate::name_arena_bridge::to_model_name(n2),
             ),
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         match self.read_name(n2) {
             Anon => n1,

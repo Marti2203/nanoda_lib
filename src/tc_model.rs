@@ -300,6 +300,7 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => {
                 &&& pstep_star(env_model_nofv(*env), to_model(e), to_model(r))
@@ -453,6 +454,7 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         match result {
@@ -741,6 +743,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         match result {
@@ -830,6 +833,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
@@ -850,6 +854,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
     loop
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
             memo.spec_env() == *env,
             cm == env_model_nofv(*env),
@@ -932,6 +937,7 @@ pub fn verified_whnf_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
@@ -961,6 +967,7 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         pstep_star(env_model_nofv(*env), to_model(e), to_model(result)),
@@ -978,6 +985,7 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
     loop
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
             memo.spec_env() == *env,
             cm == env_model_nofv(*env),
@@ -1039,6 +1047,7 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
         nlbv(to_model(e)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         match result {
@@ -1188,6 +1197,7 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
         nlbv(to_model(v)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         match result {
@@ -2086,6 +2096,7 @@ pub fn verified_def_eq_sort<'t, 'p: 't>(
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => exists|lx: LevelPtr<'t>, ly: LevelPtr<'t>|
                 to_model(x) == ExprSpec::Sort(level_to_model(lx)) && to_model(y) == ExprSpec::Sort(
@@ -2124,6 +2135,7 @@ pub fn verified_def_eq_const<'t, 'p: 't>(
 ) -> (result: bool)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         result ==> is_const_shape(x) && is_const_shape(y) && const_id(x) == const_id(y)
             && to_model_of_levels(const_levels_of(x)).len() == to_model_of_levels(
             const_levels_of(y),
@@ -2611,6 +2623,7 @@ pub fn verified_def_eq_core<'t, 'p: 't>(
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => ((exists|lx: LevelPtr<'t>, ly: LevelPtr<'t>|
                 to_model(x) == ExprSpec::Sort(level_to_model(lx)) && to_model(y) == ExprSpec::Sort(
@@ -2760,6 +2773,7 @@ pub fn verified_def_eq_app<'t, 'p: 't>(
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => exists|
                 fx: ExprPtr<'t>,
@@ -2793,6 +2807,7 @@ pub fn verified_def_eq_app<'t, 'p: 't>(
     while i < args1.len()
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= args1.len(),
             args1.len() == args2.len(),
             forall|j: int|
@@ -7380,6 +7395,7 @@ pub fn verified_def_eq_checked<'t, 'p: 't>(
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => (def_eq_witness(x, y) && deq_full_claim(x, y)) || nat_found_claim(x, y),
             _ => true,
@@ -7422,6 +7438,7 @@ pub fn verified_def_eq<'t, 'p: 't>(
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => def_eq_witness(x, y) && deq_full_claim(x, y),
             _ => true,
@@ -7576,6 +7593,7 @@ fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t
         final(ctx).dbj_level_counter as int == old(ctx).dbj_level_counter as int
             - locals@.len() as int,
         final(ctx).expr_cache == old(ctx).expr_cache,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 {
     let mut k: usize = locals.len();
     while k > 0
@@ -7585,6 +7603,7 @@ fn close_dbj_locals<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, locals: &Vec<ExprPtr<'t
             ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int - (
             locals@.len() as int - k as int),
             ctx.expr_cache == old(ctx).expr_cache,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
         decreases k,
     {
         ctx.replace_dbj_level(locals[k - 1]);
@@ -7603,6 +7622,7 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => exists|
                 t1: ExprPtr<'t>,
@@ -7697,6 +7717,7 @@ pub fn verified_def_eq_binder_step<'t, 'p: 't>(
         invariant
             ctx.dbj_level_counter as int == old(ctx).dbj_level_counter as int
                 + locals@.len() as int,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
             depth(to_model(cur_x)) <= 60000,
             depth(to_model(cur_y)) <= 60000,
             forall|i: int| 0 <= i < locals@.len() ==> #[trigger] depth(to_model(locals@[i])) == 0,
@@ -7826,6 +7847,7 @@ pub fn verified_def_eq_nat<'t, 'p: 't>(
         depth(to_model(y)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => nat_found_claim(x, y),
             _ => true,
@@ -7983,6 +8005,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
 ) -> (result: Option<bool>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(true) => const_app_found_claim(x, y, fuel as nat),
             _ => true,
@@ -8024,6 +8047,7 @@ pub fn verified_try_eq_const_app<'t, 'p: 't>(
     while i < l_args.len()
         invariant
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+            crate::util_model::same_arenas(*old(ctx), *ctx),
             i <= l_args.len(),
             l_args.len() == r_args.len(),
             forall|j: int|
@@ -8129,6 +8153,7 @@ pub fn verified_try_unfold_proj_app<'t, 'p: 't>(
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => {
                 &&& pstep_star(crate::expr_arena_bridge::EnvSpec::empty(), to_model(e), to_model(r))
@@ -8166,6 +8191,7 @@ pub fn verified_infer_sort<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, l: LevelPtr<'t>)
     ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(level_to_model(l)))),
 {
     let out = ctx.succ(l);
@@ -8193,6 +8219,7 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(
 ) -> (result: Option<ExprPtr<'t>>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => {
                 &&& exists|uparams: LevelsPtr<'t>, ty: ExprPtr<'t>|

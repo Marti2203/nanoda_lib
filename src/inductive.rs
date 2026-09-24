@@ -2065,6 +2065,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).all_inductives_incl_specialized == old(st).all_inductives_incl_specialized,
             final(st).local_params == old(st).local_params,
             final(st).is_zero == old(st).is_zero,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
     {
         let is_k_target = st.is_zero.unwrap() && st.all_inductives_incl_specialized.len() == 1
             && st.all_inductives_incl_specialized[0].ctors.len() == 1 && self.ctx.pi_telescope_size(
@@ -2093,6 +2094,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 0 <= i < to_model_of_levels(st.uparams).len() && #[trigger] to_model_of_levels(
                     st.uparams,
                 )[i] == LevelSpec::Param(crate::level_arena_bridge::name_id(result))),
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
     {
         let p = self.ctx.str1("u");
         let hit_p = self.ctx.contains_param(st.uparams, p);
@@ -2110,7 +2112,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = 1u64;
         loop
             invariant
-                true,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
         {
             let candidate = self.ctx.append_index_after(p, i);
             let hit = self.ctx.contains_param(st.uparams, candidate);

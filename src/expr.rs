@@ -150,6 +150,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -171,6 +172,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -192,6 +194,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -213,6 +216,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -233,6 +237,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -253,6 +258,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
         }
@@ -616,6 +622,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
                 Some(b) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e))
                     == Some(crate::nat_lit_model::to_nat(b)),
@@ -646,6 +653,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e) == if b {
@@ -668,6 +676,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
                 Some(r) => crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) is Some
                     && crate::expr_arena_bridge::to_model(r) == crate::expr_model::ExprSpec::NatLit(
@@ -720,6 +729,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> crate::expr_arena_bridge::nat_repr_is_zero(e)
                 && crate::beta_model::nat_value(crate::expr_arena_bridge::to_model(e)) == Some(0nat),
     {
@@ -760,6 +770,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             match result {
                 Some(r) => crate::expr_arena_bridge::nat_repr_pred(e, r) && (
                 crate::expr_arena_bridge::to_model(e) == crate::expr_model::ExprSpec::App(
@@ -812,6 +823,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn nat_lit_to_constructor(&mut self, n: BigUintPtr<'t>) -> (result: Option<ExprPtr<'t>>)
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             match result {
                 Some(r) => !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(r))
@@ -1015,6 +1027,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 0,
             ),
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let e = self.abstr(e, outgoing);
         self.inst(e, ingoing)
@@ -1028,6 +1041,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Sort(
                 crate::level_model::LevelSpec::Zero,
             ),
@@ -1373,6 +1387,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
                 Box::new(crate::quot_model::local_type(binder)),
                 Box::new(
@@ -1431,6 +1446,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
                 Box::new(crate::quot_model::local_type(binder)),
                 Box::new(
@@ -1504,6 +1520,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
                 <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
                 * (1 + crate::expr_arena_bridge::local_type_cap()),
@@ -1514,6 +1531,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
                 n <= binders@.len(),
                 (forall|i: int|
                     #![trigger binders@[i]]
@@ -1588,6 +1606,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_model::depth(crate::expr_arena_bridge::to_model(result))
                 <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) + binders@.len()
                 * (1 + crate::expr_arena_bridge::local_type_cap()),
@@ -1598,6 +1617,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
                 n <= binders@.len(),
                 (forall|i: int|
                     #![trigger binders@[i]]
@@ -1672,6 +1692,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         if self.expr_cache.abstr_cache_levels.capacity() > 1024 {
             self.expr_cache.abstr_cache_levels = crate::util::new_fx_hash_map();
@@ -1720,6 +1741,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         proof {
             crate::util_model::build_hasher_default_valid_fx();
@@ -1941,6 +1963,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         if self.expr_cache.abstr_cache.capacity() > 1024 {
             self.expr_cache.abstr_cache = crate::util::new_fx_hash_map();
@@ -1986,6 +2009,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let ghost ids = crate::expr_arena_bridge::local_ids(locals@);
         proof {
@@ -2321,6 +2345,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         if self.expr_cache.inst_cache.capacity() > 1024 {
             self.expr_cache.inst_cache = crate::util::new_fx_hash_map();
@@ -2366,6 +2391,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let ghost sm = crate::expr_arena_bridge::ptr_models(substs@);
         proof {
@@ -2634,6 +2660,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(info.ty)),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(info.ty),
                 crate::level_model::level_names(
@@ -2666,6 +2693,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(e),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(ks)),
@@ -2744,6 +2772,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let ghost names = crate::level_model::level_names(
             crate::level_arena_bridge::to_model_of_levels(ks),
@@ -3088,6 +3117,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             args.obeys_prophetic_iter_laws(),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             crate::expr_arena_bridge::to_model(result) == crate::beta_model::spine_app(
                 crate::expr_arena_bridge::to_model(fun0),
@@ -3099,6 +3129,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
                 // The for-loop desugaring havocs the ghost wrapper, so the
                 // link back to the ORIGINAL iterator has to be carried
                 // explicitly; without it the postcondition cannot be stated

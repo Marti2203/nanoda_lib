@@ -207,6 +207,23 @@ pub struct ExNotation<'a>(crate::env::Notation<'a>);
 #[verifier::external_body]
 pub struct ExLeanDag<'t>(crate::util::LeanDag<'t>);
 
+/// The identity of a dag (see `docs/ARENA_IDENTITY.md`). `LeanDag` is
+/// opaque and only unverified code builds one, so nothing can show two dags'
+/// ids equal; the allocation specifications say an id survives allocating
+/// into its dag.
+pub uninterp spec fn dag_arena<'a>(d: crate::util::LeanDag<'a>) -> nat;
+
+/// A context's two arenas: its own dag's id and its export file's dag's id.
+pub open spec fn arena_ids<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> (nat, nat) {
+    (dag_arena(*c.dag), dag_arena(c.export_file.dag))
+}
+
+/// The frame every `&mut` context function keeps: the context still indexes
+/// the same two arenas.
+pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::util::TcCtx<'t, 'p>) -> bool {
+    arena_ids(a) == arena_ids(b)
+}
+
 /// `FxHashMap`'s hasher factory, registered so `ExprCache`'s fields have a
 /// type Verus knows. Opaque -- only `builds_valid_hashers` is ever needed of it.
 #[allow(dead_code)]

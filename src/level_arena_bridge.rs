@@ -206,6 +206,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
             0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 /// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
@@ -241,6 +242,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_level ](
         to_model(result) == to_model_of_level(l),
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::zero ](ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<
@@ -547,6 +549,7 @@ pub fn verified_subst_level<'t, 'p: 't>(
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => (forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(r), rho) == interp(
@@ -591,6 +594,7 @@ pub fn verified_subst_levels<'t, 'p: 't>(
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => to_model_of_levels(r).len() == to_model_of_levels(uparams).len() && (forall|
                 i: int,

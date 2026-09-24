@@ -1055,6 +1055,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
         dbj_serial(expr_id(result)) == Some(old(ctx).dbj_level_counter),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter + 1,
         final(ctx).expr_cache == old(ctx).expr_cache,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 /// Was a claim-free `assume_specification` -- `TcCtx` was `external_body`, so
@@ -1085,6 +1086,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter - 1,
         final(ctx).expr_cache == old(ctx).expr_cache,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 
@@ -1603,6 +1605,7 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
 ) -> (result: Option<ExprPtr<'t>>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => nlbv(to_model(r)) <= 0 && max_var_below(to_model(r), 0) && depth(to_model(r))
                 <= 1 && pstep(
@@ -1814,6 +1817,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
             None => true,
         },
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 pub assume_specification<'t, 'p>[ read_bignum_value ](
@@ -1952,6 +1956,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
         },
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 /// THE storage primitive for expressions: allocation returns a pointer
@@ -1988,6 +1993,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
         // the cache and its soundness invariant cannot survive the body.
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 // HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
@@ -2051,6 +2057,7 @@ pub fn verified_inst<'t, 'p: 't>(
         // it does to this, which is what blocked both halves of the dbj-level
         // arc; `inst` resets a cache and touches no locals, so it says so.
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 {
     let _ = fuel;
     if substs.len() >= 60000 {
@@ -2119,6 +2126,7 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
         depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
@@ -2191,6 +2199,7 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
         binders@.len() * (1 + local_type_cap()) + depth(to_model(e)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // Exported so a CHAIN of telescopes can be bounded by its callers: each
         // step adds one `Bind` whose domain is a binder's type.
         depth(to_model(result)) <= depth(to_model(e)) + binders@.len() * (1 + local_type_cap()),
@@ -2260,6 +2269,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
             0 <= j < to_model_of_levels(ks).len() ==> #[trigger] to_model_of_levels(ks)[j] is Param,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => subst_expr_levels_rel(
                 to_model(e),
@@ -2487,6 +2497,7 @@ pub fn verified_foldl_apps<'t, 'p: 't>(
 ) -> (result: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(result) == spine_app(
             to_model(fun),
             Seq::new(args@.len(), |i: int| to_model(args@[i])),
@@ -2659,6 +2670,7 @@ pub fn verified_whnf_beta_step<'t, 'p: 't>(
         bound + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => exists|n: nat|
                 #![trigger spine_bind(to_model(e_fun), n)]
@@ -2835,6 +2847,7 @@ pub fn verified_whnf_zeta_step<'t, 'p: 't>(
         bound + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => to_model(r) == spine_app(
                 subst1(to_model(body), to_model(val)),
@@ -2974,6 +2987,7 @@ pub fn verified_whnf_no_unfolding_step<'t, 'p: 't>(
         bound + d * d * d + d * d + d + 10 <= 0xFFFF_0000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => pstep_star(
                 crate::expr_arena_bridge::EnvSpec::empty(),
@@ -3261,6 +3275,7 @@ pub fn verified_whnf_no_unfolding_step_plain<'t, 'p: 't>(
         depth(to_model(e)) <= 60000,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         match result {
             Some(r) => pstep_star(
                 crate::expr_arena_bridge::EnvSpec::empty(),

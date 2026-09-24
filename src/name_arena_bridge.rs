@@ -436,6 +436,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
         // dag, never the memo caches.
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
@@ -491,6 +492,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
 ) -> (result: NamePtr<'t>) where 'p: 't
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
@@ -516,6 +518,7 @@ pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_afte
     ensures
         name_id(result) == append_index_after_id(n, idx),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 #[verifier::external_body]

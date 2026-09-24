@@ -75,6 +75,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
         to_model(result) == ExprSpec::Free(expr_id(result)),
         local_binder_type_of(result) == binder_type,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
 // `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
@@ -106,6 +107,7 @@ pub fn verified_check_eq_type_shape<'t, 'p: 't>(
 ) -> (expected: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(expected) == ExprSpec::Bind(
             Box::new(ExprSpec::Sort(level_to_model(u))),
             Box::new(
@@ -217,6 +219,7 @@ pub fn verified_check_quot_type_shape<'t, 'p: 't>(
 ) -> (expected: ExprPtr<'t>)
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         to_model(expected) == ExprSpec::Bind(
             Box::new(ExprSpec::Sort(level_to_model(u))),
             Box::new(

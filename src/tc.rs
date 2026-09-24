@@ -783,6 +783,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -809,6 +810,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             kinfer_claim(*old(self).env, to_model_expr(e), ExprSpec::Sort(to_model_level(result))),
     {
@@ -829,6 +831,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -853,6 +856,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -895,6 +899,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         tc_wf(*self),
                         (*self).env == old(self).env,
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                        crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                         self.live == old(self).live,
                         in_scope(*self, x),
                         forall|j: int| 0 <= j < args@.len() ==> in_scope(*self, #[trigger] args@[j]),
@@ -957,6 +962,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // the string literal unfolds to its constructor chain (the model's
             // own `StringLit` rule), and that is then whnf'd
@@ -1005,6 +1011,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -1038,6 +1045,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -1070,6 +1078,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -1134,6 +1143,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // ONE NAT-FOLDING STEP, for whichever operator constant `op` names --
             // this function is handed the operation, not the head
@@ -1280,6 +1290,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(r)),
@@ -1447,6 +1458,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // ONE PROJECTION-IOTA STEP, after whnf'ing the structure
             match result {
@@ -1559,6 +1571,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -1587,6 +1600,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(structure), to_model_expr(result)),
             kinfer_claim(*old(self).env, ExprSpec::Proj(idx, Box::new(to_model_expr(structure))), to_model_expr(result)),
@@ -1750,6 +1764,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 (*self).env == old(self).env,
                 (*num_params as usize) <= struct_ty_args.len(),
@@ -1846,6 +1861,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 (*self).env == old(self).env,
                 c0 == old(self).ctx.dbj_level_counter,
@@ -1980,6 +1996,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             // THE TYPING CLAIM: the result is a type of `e` in the kernel's
@@ -2129,6 +2146,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -2203,6 +2221,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 c0 == old(self).ctx.dbj_level_counter,
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
@@ -2362,6 +2381,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -2398,6 +2418,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             e,
         )
             invariant
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == start_pos + locals@.len(),
@@ -2539,6 +2560,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Some(local) = locals.pop()
             invariant
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 // The pop happens in the condition, so inside the body this
@@ -2644,6 +2666,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
@@ -2670,6 +2693,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
@@ -2784,6 +2808,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
@@ -2841,6 +2866,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             crate::expr_model::nlbv(to_model_expr(result)) <= 0,
             kinfer_claim(
@@ -2915,6 +2941,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // THE CORE CONTRACT: on a closed input, the weak head normal form
             // is definitionally equal to the input, and closed.
@@ -2938,6 +2965,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 (*self).env == old(self).env,
                 // the core contract as a running chain: everything this loop
@@ -2995,6 +3023,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
     {
@@ -3010,6 +3039,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
     {
@@ -3025,6 +3055,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // The reduction claim `whnf`'s chain needs. Five of this match's
             // arms re-assemble the spine unchanged, so they pay it by
@@ -3117,6 +3148,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     invariant
                         tc_wf(*self),
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                        crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                         self.live == old(self).live,
                         (*self).env == old(self).env,
                         n_args <= args.len(),
@@ -3313,6 +3345,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -3383,6 +3416,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -3404,6 +3438,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // THE TELESCOPE: every binder type agreed with the outer locals
             // substituted, and the innermost bodies with all of them.
@@ -3448,6 +3483,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // the two are tied together here.
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter
                     + locals@.len(),
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live@ == old(self).live@ + ids_of(locals@),
         // A bare `loop` carries no exit reason: without these the `break`
         // arrives with nothing known, and the two `inst` calls below it
@@ -3591,6 +3627,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -3623,6 +3660,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // same level, both in scope: the same live local
             result ==> kconv(*old(self).env, to_model_expr(x), to_model_expr(y)),
@@ -3659,6 +3697,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -3691,6 +3730,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 // checked immediately above; the index walk needs it to reach
                 // `args2[i]` at all.
@@ -3710,6 +3750,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 args1.len() == args2.len(),
                 in_scope(*self, f1),
@@ -3764,6 +3805,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         crate::util::kernel_check(
@@ -3789,6 +3831,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -3953,6 +3996,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => scope_pres(to_model_expr(major), to_model_expr(r)) && (
@@ -4020,6 +4064,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
             crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> kconv(
@@ -4077,6 +4122,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => in_scope(*final(self), r) && whnf_claim(
@@ -4357,6 +4403,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // ONE QUOTIENT STEP, whatever universe levels the head carries --
             // the rule never looks at them, and this function is given the
@@ -4479,6 +4526,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
@@ -4512,6 +4560,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -4577,6 +4626,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result is None || result->Some_0 is FoundEqResult,
             result == Some(DeltaResult::<'t>::FoundEqResult(true)) ==> def_eq_claim(
@@ -4662,6 +4712,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(r)),
@@ -4687,6 +4738,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result is None || result->Some_0 is FoundEqResult,
             result == Some(DeltaResult::<'t>::FoundEqResult(true)) ==> def_eq_claim(
@@ -4739,6 +4791,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> l_args@.len() == r_args@.len() && forall|j: int| 0 <= j < l_args@.len() ==> def_eq_claim(
                 *old(self).env,
@@ -4755,6 +4808,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 i <= l_args.len(),
                 l_args.len() == r_args.len(),
@@ -4791,6 +4845,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 DeltaResult::Exhausted(a, b) => in_scope(*final(self), a) && in_scope(*final(self), b)
@@ -4814,6 +4869,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 in_scope(*self, x),
                 in_scope(*self, y),
@@ -4926,6 +4982,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result.1)),
             result.0 ==> kprop_claim(*old(self).env, to_model_expr(e)),
@@ -4946,6 +5003,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result.1)),
     {
@@ -4965,6 +5023,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result.1)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result.1)),
@@ -4984,6 +5043,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -5020,6 +5080,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -5044,6 +5105,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
@@ -8720,6 +8782,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         proof {
@@ -8785,6 +8848,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         // Same five routes in the same order, short-circuiting the same way;
@@ -8829,6 +8893,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         if !route_stats::shadow_enabled() {
@@ -8874,6 +8939,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         self.shadow_root_entry = entry;
@@ -8900,6 +8966,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         proof {
@@ -8918,6 +8985,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         proof {
@@ -8937,6 +9005,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         proof {
@@ -8964,6 +9033,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         proof {
@@ -8993,6 +9063,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         let p = crate::util::SortedPair::new(x, y);
@@ -9159,6 +9230,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         match self.ctx.read_expr_pair(x, y) {
@@ -9192,6 +9264,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         match self.ctx.read_expr_pair(x, y) {
@@ -9250,6 +9323,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             // a declaration's type, at new universes: no locals, no loose indices
             !crate::expr_model::has_fv(to_model_expr(result)),
@@ -9341,6 +9415,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => forall|S: vstd::iset::ISet<u32>, c: u16|
@@ -9421,6 +9496,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 to_model_expr(e_type) == crate::beta_model::spine_app(
                     to_model_expr(_f),
@@ -9470,6 +9546,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 forall|S: vstd::iset::ISet<u32>, c: u16|
                     crate::expr_model::dbj_deep_in(to_model_expr(e_type), S, c)
@@ -9540,6 +9617,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             match result {
                 Some(r) => scope_pres(to_model_expr(e), to_model_expr(r)),
@@ -9630,6 +9708,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         let (fun, args) = self.ctx.unfold_apps(e);
@@ -9774,6 +9853,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         let head = self.ctx.unfold_apps_fun(e);
@@ -9871,6 +9951,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
         if let (Check, Some(declar_info)) = (flag, self.declar_info) {

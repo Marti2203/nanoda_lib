@@ -423,6 +423,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::expr_arena_bridge::const_levels_of(result) == levels,
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::CONST_HASH, name, levels);
         self.alloc_expr(Expr::Const { name, levels, hash })
@@ -718,6 +719,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             },
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         if !self.export_file.config.nat_extension_on() {
             return None
@@ -739,6 +741,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let num_ptr = self.alloc_bignum(n)?;
         self.mk_nat_lit(num_ptr)
@@ -1551,6 +1554,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::APP_HASH, fun, arg);
         let num_loose_bvars = self.num_loose_bvars(fun).max(self.num_loose_bvars(arg));
@@ -1564,6 +1568,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_expr(result) == ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::PROJ_HASH, ty_name, idx, structure);
         let num_loose_bvars = self.num_loose_bvars(structure);
@@ -1585,6 +1590,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::LAMBDA_HASH, binder_name, binder_style, binder_type, body);
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(
@@ -1652,6 +1658,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::PI_HASH, binder_name, binder_style, binder_type, body);
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(
@@ -1676,6 +1683,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model(result) == LevelSpec::Succ(Box::new(to_model(l))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::level::SUCC_HASH, l);
         self.alloc_level(Level::Succ(l, hash))
@@ -1686,6 +1694,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model(result) == LevelSpec::Max(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::level::MAX_HASH, l, r);
         self.alloc_level(Level::Max(l, r, hash))
@@ -1696,6 +1705,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model(result) == LevelSpec::IMax(Box::new(to_model(l)), Box::new(to_model(r))),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::level::IMAX_HASH, l, r);
         self.alloc_level(Level::IMax(l, r, hash))
@@ -1706,6 +1716,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model(result) == LevelSpec::Param(name_id(n)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::level::PARAM_HASH, n);
         self.alloc_level(Level::Param(n, hash))
@@ -1716,6 +1727,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_name(result) == NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
         self.alloc_name(Name::Str(pfx, sfx, hash))
@@ -1726,6 +1738,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_name(result) == NameSpec::Num(Box::new(to_model_name(pfx)), sfx),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::name::NUM_HASH, pfx, sfx);
         self.alloc_name(Name::Num(pfx, sfx, hash))
@@ -1747,6 +1760,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::LET_HASH, binder_name, binder_type, val, body, nondep);
         let num_loose_bvars = self.num_loose_bvars(binder_type).max(
@@ -1772,6 +1786,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_expr(result) == ExprSpec::Sort(to_model(level)),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::SORT_HASH, level);
         self.alloc_expr(Expr::Sort { level, hash })
@@ -1793,6 +1808,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         self.mk_var((num_open_binders - dbj_level) - 1)
     }
@@ -1804,6 +1820,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let hash = hash64!(crate::expr::VAR_HASH, dbj_idx);
         self.alloc_expr(Expr::Var { dbj_idx, hash })

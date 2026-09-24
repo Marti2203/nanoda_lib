@@ -159,6 +159,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             // it ends with `simplify`, so the result is in simplified form --
             // which is what `leq_core` requires of both its arguments
             imax_normal(to_model(result)),
@@ -225,6 +226,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             // TWO trigger groups, for the same reason the retired axiom had
             // them: `is_zero` holds its level on the left, `is_nonzero` on the
             // right, and a single left-keyed trigger serves only half the
@@ -278,6 +280,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(lhs), rho) as int <= interp(to_model(rhs), rho) as int
                     + diff as int,
@@ -477,6 +480,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(l_in), rho) as int <= interp(to_model(r_in), rho) as int
                     + diff as int,
@@ -778,6 +782,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) == 0,
     {
         let zero = self.zero();
@@ -791,6 +796,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger] interp(to_model(l), rho) == 1,
     {
         match self.read_level(l) {
@@ -815,6 +821,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger] interp(to_model(level), rho) >= 1,
     {
         let zero = self.zero();
@@ -838,6 +845,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(l), rho) == interp(to_model(r), rho),
     {
@@ -858,6 +866,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> to_model_of_levels(xs).len() == to_model_of_levels(ys).len() && forall|
                 i: int,
             |
@@ -880,6 +889,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
                 self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
                 n == xs_v@.len(),
                 xs_v@.len() == ys_v@.len(),
                 xs_v@.len() == to_model_of_levels(xs).len(),
@@ -1199,6 +1209,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(result), rho) == max_nat(
                     interp(to_model(l), rho),
@@ -1292,6 +1303,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
             // The DENOTATION is preserved. This could not be stated while
             // `is_zero`/`is_one` were contract-free: the `IMax` arm's shortcut
             // is sound only when the left side denotes 0 or 1. They now prove
@@ -1489,6 +1501,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         let ghost names = level_names(to_model_of_levels(ks));
         let ghost vals = to_model_of_levels(vs);
@@ -1498,6 +1511,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let mut out: Vec<LevelPtr<'t>> = Vec::new();
         for l in it: ls.iter().copied()
             invariant
+                crate::util_model::same_arenas(*old(self), *self),
                 it.seq() == ls@,
                 ls@.len() == to_model_of_levels(uparams).len(),
                 forall|j: int|
@@ -1561,6 +1575,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
     {
         match self.read_level(level) {
             Zero => self.zero(),

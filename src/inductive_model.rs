@@ -727,6 +727,7 @@ pub fn verified_large_elim_walk<'t, 'p: 't, 'x>(
         nlbv(to_model(cursor)) <= 0,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
     decreases fuel,
@@ -829,6 +830,7 @@ pub fn verified_large_elim_ok<'t, 'p: 't, 'x>(
         },
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
 {
@@ -886,6 +888,7 @@ pub fn verified_gen_elim_level_search<'t, 'p: 't>(
                     == LevelSpec::Param(append_index_after_id(p, i2 as u64)),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // FRESHNESS: what the search exists to guarantee -- the name it
         // returns is not already a universe parameter of the inductive.
         forall|j: int|
@@ -922,6 +925,7 @@ pub fn verified_gen_elim_level<'t, 'p: 't>(
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // FRESHNESS, carried up from the search: the elimination universe
         // this mints collides with none of the inductive's own parameters,
         // which is the entire reason `gen_elim_level` exists.
@@ -968,6 +972,7 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
         to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
         match result {
@@ -1005,6 +1010,7 @@ pub fn verified_mk_elim_level<'t, 'p: 't, 'x>(
             while i < uparams_vec.len()
                 invariant
                     ctx.dbj_level_counter == old(ctx).dbj_level_counter,
+                    crate::util_model::same_arenas(*old(ctx), *ctx),
                     i <= uparams_vec.len(),
                 decreases uparams_vec.len() - i,
             {
@@ -1092,6 +1098,7 @@ pub fn verified_mk_rec_rule_val<'t, 'p: 't>(
             + local_params@.len() <= 50,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         pi_telescope_size_spec(to_model(result)) == local_params@.len() + motives@.len()
             + flat_mapped_minors@.len() + all_ctor_args@.len(),
 {
@@ -1280,6 +1287,7 @@ pub fn verified_mk_recursor_ty<'t, 'p: 't>(
             <= 50,
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         pi_telescope_size_spec(to_model(result)) == local_params@.len() + motives@.len()
             + flat_mapped_minors@.len() + local_indices@.len() + 1,
 {
