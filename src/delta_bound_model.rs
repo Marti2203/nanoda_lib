@@ -93,7 +93,9 @@ use crate::expr_arena_bridge::verified_fv_absent;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::nat_repr_pred;
 use crate::expr_arena_bridge::verified_size;
-use crate::expr_arena_bridge::{abstr_levels_with_locals, expr_as_lambda, expr_as_pi, get_dbj_level_counter};
+use crate::expr_arena_bridge::{expr_as_lambda, expr_as_pi, get_dbj_level_counter};
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::axiom_arena_depth_bounded;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model};
 #[cfg(verus_only)]
@@ -1960,14 +1962,13 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 return None;
             },
         };
-        let abstrd_infd = abstr_levels_with_locals(ctx, infd, start_pos, locals_slice);
+        proof {
+            axiom_arena_depth_bounded(infd);
+            axiom_arena_depth_bounded(binder_type);
+        }
+        let abstrd_infd = ctx.abstr(infd, locals_slice);
         ctx.replace_dbj_level(local);
-        let abstrd_binder_type = abstr_levels_with_locals(
-            ctx,
-            binder_type,
-            start_pos,
-            locals_slice,
-        );
+        let abstrd_binder_type = ctx.abstr(binder_type, locals_slice);
         let result = ctx.mk_pi(binder_name, binder_style, abstrd_binder_type, abstrd_infd);
         let result_nlbv = ctx.num_loose_bvars(result);
         if result_nlbv != 0 {

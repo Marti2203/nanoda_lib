@@ -363,7 +363,7 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
 /// with walking an explicit list of locals, when the list is exactly the
 /// serials `start_pos .. nob` in order.
 ///
-/// This is what `abstr_levels_with_locals`' axiom asserts. Proving it needs one
+/// Proving it needs one
 /// hypothesis that is NOT bookkeeping: `serial_determines_id`. Serials are not
 /// unique over a `TcCtx`'s lifetime -- `replace_dbj_level` DECREMENTS the
 /// counter, so two locals can share a serial when their lifetimes do not

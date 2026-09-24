@@ -83,36 +83,6 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(
     ctx.read_bignum(p).cloned()
 }
 
-/// `expr.rs::TcCtx::abstr_levels`, wrapped with an EXPLICIT `locals_hint`
-/// slice purely for the assume_specification below to reference -- the
-/// real function itself ignores it entirely (ordinary `abstr_levels(ctx,
-/// e, start_pos)` call, ghost-only extra parameter). `abstr_levels`'s
-/// real semantics (`expr.rs:273-276`, `abstr_aux_levels(e, start_pos,
-/// dbj_level_counter)`) abstract every `Local` whose `FVarId::DbjLevel`
-/// serial falls in `[start_pos, dbj_level_counter)` back into bound
-/// variables, matched by SERIAL RANGE rather than by an explicit array --
-/// mathematically the SAME operation `verified_abstr`/`abstr_full`
-/// already model (array-based matching), given the locals array is
-/// EXACTLY those allocated since `start_pos`, in allocation order (the
-/// same convention `inst`'s own `locals.as_slice()` already relies on for
-/// `infer_lambda`/`infer_pi`'s telescoping). Modeling the FULLY GENERAL
-/// `abstr_levels` (tracking `dbj_level_counter`'s real mutable state
-/// across, e.g., a recursive `infer` call in between) would need a new
-/// kind of stateful reasoning this whole project has deliberately avoided
-/// throughout (`ctx: &mut TcCtx` is always treated as an opaque
-/// allocation handle, never as carrying a tracked invariant) -- so this
-/// wrapper instead states a TARGETED trust fact for the exact call
-/// pattern `verified_infer_lambda`/`_pi` actually use: called immediately
-/// after `locals_hint` were the only locals allocated since `start_pos`.
-#[allow(dead_code)]
-pub(crate) fn abstr_levels_with_locals<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-    start_pos: u16,
-    _locals_hint: &[ExprPtr<'t>],
-) -> ExprPtr<'t> {
-    ctx.abstr_levels(e, start_pos)
-}
 
 verus! {
 
@@ -1092,10 +1062,9 @@ pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 // (`tc.rs`), like `abstr_aux`'s offset and `fvar_to_bvar`'s subtraction. Not
 // reachable with real Lean terms; not checked there either.
 //
-// What the axiom now says that it did not before: the SERIAL (`dbj_serial(
-// expr_id(result)) == Some(old counter)`) and the counter's increment. Those
-// are the two facts `abstr_levels_with_locals` was bundling, so retiring it
-// onto `abstr_levels_full_eq_abstr_full` is no longer blocked here.
+// It states the SERIAL (`dbj_serial(expr_id(result)) == Some(old counter)`)
+// and the counter's increment, which is what relates abstraction by level
+// (`abstr_levels`) to abstraction by identity (`abstr_full`).
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
     ctx: &mut TcCtx<'t, 'p>,
     binder_name: NamePtr<'t>,
@@ -1146,66 +1115,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
         final(ctx).expr_cache == old(ctx).expr_cache,
 ;
 
-// ATTEMPTED AND BACKED OUT: retiring this onto
-// `abstr_levels_full_eq_abstr_full`. The algorithmic half is DONE -- that lemma
-// proves the level walk equals the list walk, and `abstr_levels` itself is
-// verified. Writing the contract out makes clear what this axiom has been
-// bundling, which is worth recording even though the retirement did not land:
-//
-//   start_pos <= ctx.dbj_level_counter
-//   locals_hint.len() == ctx.dbj_level_counter - start_pos
-//   each locals_hint[k] has de Bruijn serial start_pos + k
-//   serial_determines_id  -- a serial in range picks out exactly ONE local,
-//                            which is NOT free: `replace_dbj_level` decrements
-//                            the counter, so serials are reused
-//   dbj_serials_below     -- every free variable reached is in scope
-//
-// UPDATE. The counter frame landed, and the first two conditions are now
-// discharged: `mk_dbj_level` states the serial it allocates, and every
-// function between the caller reading `start_pos` and this call preserves
-// `dbj_level_counter`. An earlier note called that "the thing that blocks
-// it" -- it was the blocker that had been IDENTIFIED, not the only one.
-// Writing the contract out makes two more appear, and neither is small:
-//
-//   1. `dbj_serials_below(to_model(infd), counter)` -- the inferred type's
-//      free variables are all in scope. `dbj_serials_below` appears in this
-//      crate ONLY as a precondition; nothing anywhere establishes it as a
-//      postcondition. `verified_infer_free` promises `nlbv(..) <= 0` (no
-//      loose BOUND variables), which is a different property. Getting this
-//      means threading a scope invariant through the whole inference route
-//      -- a property of expressions, not a scalar field, so bigger than the
-//      counter frame was.
-//
-//   2. `serial_determines_id(ids, start_pos)` -- a live serial picks out
-//      exactly one local. Established nowhere at all. It is not derivable
-//      from `mk_dbj_level`'s new serial clause, which says what serial a
-//      local gets, not that no OTHER live local shares it; `replace_dbj_
-//      level` decrements, so serials are genuinely reused over time.
-//
-// Worth recording what this exposes about the axiom as it stands. At the
-// second call site (`delta_bound_model.rs`, on `binder_type`) the axiom is
-// invoked AFTER `replace_dbj_level`, so the counter is back at `start_pos`
-// and `abstr_levels` abstracts an EMPTY serial range -- a no-op -- while the
-// axiom claims the result equals `abstr_full(.., [expr_id(local)], 0)`, which
-// abstracts the local. Those agree only because `binder_type` cannot contain
-// the local that was built from it. True here, unstated by the axiom, and
-// exactly the "axiom with an unchecked pair" shape. A retirement should
-// reorder that call BEFORE the `replace_dbj_level` (behaviour-preserving:
-// the abstraction is a no-op either way) rather than preserve the accident.
-pub assume_specification<'t, 'p>[ abstr_levels_with_locals ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-    start_pos: u16,
-    locals_hint: &[ExprPtr<'t>],
-) -> (result: ExprPtr<'t>) where 'p: 't
-    ensures
-        to_model(result) == abstr_full(
-            to_model(e),
-            Seq::new(locals_hint@.len(), |i: int| expr_id(locals_hint@[i])),
-            0,
-        ),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-;
 
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
