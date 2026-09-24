@@ -163,6 +163,8 @@ needed a different shape.
 | `def_eq` | `src/tc.rs` | both `Some(p) == self.ctx.c_bool_true()` → `opt_expr_is` |
 | `try_string_lit_expansion` | `src/tc.rs` | the `matches!(..) \|\| matches!(..)` bound in two steps so the swapped call's claim can be turned around; same calls, same short-circuit |
 | `def_eq_local` | `src/tc.rs` | `x_id == y_id` → `fvar_id_eq` — `FVarId`'s derived `PartialEq` is an unspecified call |
+| `reduce_rec` | `src/tc.rs` | the recursor's counts, major index and rules read through `env_model::get_recursor_data` (literally those fields, with the environment model's claim) instead of off `rec`; the three argument iterators bound to names so the proof can state what each yields; `args.len()` read once so the proof knows the length fits a `usize` |
+| `get_rec_rule` | `src/tc.rs` | `for r in rec_rules.iter().copied()` → the same front-to-back scan by index, so the invariant can say no earlier rule matched (the contract names the FIRST matching rule, which is the model's `find_rule`) |
 | `get_applied_def` | `src/tc.rs` | the two `get_declar` lookups → `env_model::get_declar_hint`, which is literally that match and carries the name claim |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
@@ -183,6 +185,7 @@ still a rejection — but each is an improvement.
 | `def_eq_binder_aux` | `src/tc.rs` | `u16::try_from(locals.len()).unwrap()` twice — more than 65535 open binders panics |
 | `infer` | `src/tc.rs` | `nat_type()`/`string_type()` `.unwrap()` — the guard above them tests the CONFIG FLAG, not whether the name is cached, so these could genuinely fire |
 | `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's |
+| `reduce_rec` | `src/tc.rs` | the recursor's parameters, motives and minor premises are TESTED to precede its major premise (declines otherwise) — true of every well-formed recursor, and the rule instance's argument prefix assumes it |
 | `reduce_rec` | `src/tc.rs` | a recursor rule's right-hand side with loose de Bruijn indices was used as is; it is now TESTED closed (`num_loose_bvars == 0`, beside the existing `has_fvars` test) and declined otherwise — a well-formed rule is closed |
 | `reduce_rec` | `src/tc.rs` | `checked_sub(..).unwrap()` — underflows when a constructor supplies fewer arguments than its telescope claims |
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |

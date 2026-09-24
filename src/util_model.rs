@@ -458,6 +458,26 @@ pub open spec fn find_index<T>(s: Seq<T>, v: T) -> Option<nat>
     }
 }
 
+/// The first occurrence is what `find_index` finds.
+pub proof fn find_index_first<T>(s: Seq<T>, v: T, c: int)
+    requires
+        0 <= c < s.len(),
+        s[c] == v,
+        forall|j: int| 0 <= j < c ==> #[trigger] s[j] != v,
+    ensures
+        find_index(s, v) == Some(c as nat),
+    decreases s.len(),
+{
+    if c > 0 {
+        assert(s[0] != v);
+        let t = s.subrange(1, s.len() as int);
+        assert forall|j: int| 0 <= j < c - 1 implies #[trigger] t[j] != v by {
+            assert(t[j] == s[j + 1]);
+        }
+        find_index_first(t, v, c - 1);
+    }
+}
+
 pub proof fn find_index_correct<T>(s: Seq<T>, v: T)
     ensures
         match find_index(s, v) {

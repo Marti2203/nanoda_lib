@@ -760,6 +760,33 @@ pub open spec fn rec_ready(s: ExprSpec) -> bool {
     }
 }
 
+/// `rec_ready` without the size caps (at most 64 arguments on either spine,
+/// a right-hand side of size at most 500). The caps exist for the parallel
+/// reduction's confluence proofs; the kernel has none, and the conversion
+/// leaf `deq_rec` uses this form.
+pub open spec fn rec_ready_u(s: ExprSpec) -> bool {
+    match spine_head(s) {
+        ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
+            Some(rd) => {
+                let args = spine_args(s);
+                rec_prefix(rd) <= rd.major_idx && rd.major_idx < args.len()
+                    && rd.uparams.len() == lv.len() && {
+                    let major = args[rd.major_idx as int];
+                    match spine_head(major) {
+                        ExprSpec::Const(cid, clv) => match find_rule(rd.rules, cid) {
+                            Some(ri) => rd.rules[ri].nfields <= spine_args(major).len(),
+                            None => false,
+                        },
+                        _ => false,
+                    }
+                }
+            },
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 /// The rule instance when `rec_ready` (garbage otherwise): the rule
 /// value at the recursor's levels, applied to the params/motives/minors
 /// prefix, then the constructor's FIELDS (the last `nfields` arguments

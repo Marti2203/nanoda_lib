@@ -3153,7 +3153,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 (true, r)
             } else if let Some(reduced) = self.reduce_rec(name, levels, &args) {
-                (true, self.whnf_no_unfolding_aux(reduced, cheap_proj))
+                proof {
+                    assert(to_model_expr(e_fun) == ExprSpec::Const(
+                        crate::level_arena_bridge::name_id(name),
+                        crate::level_arena_bridge::to_model_of_levels(levels),
+                    ));
+                    assert(whnf_claim(*old(self).env, em0, to_model_expr(reduced)));
+                }
+                let r = self.whnf_no_unfolding_aux(reduced, cheap_proj);
+                proof {
+                    whnf_claim_trans(*old(self).env, em0, to_model_expr(reduced), to_model_expr(r));
+                }
+                (true, r)
             } else {
                 let r = self.ctx.foldl_apps(e_fun, args.into_iter());
                 proof {
@@ -3852,7 +3863,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             match result {
-                Some(r) => scope_pres(to_model_expr(major), to_model_expr(r)),
+                Some(r) => scope_pres(to_model_expr(major), to_model_expr(r)) && (
+                crate::expr_model::nlbv(to_model_expr(major)) <= 0 ==> kconv(
+                    *old(self).env,
+                    to_model_expr(major),
+                    to_model_expr(r),
+                )),
                 None => true,
             },
     {
@@ -3904,7 +3920,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> kconv(
+                *old(self).env,
+                to_model_expr(e),
+                to_model_expr(result),
+            ),
     {
+        proof {
+            kconv_refl(*self.env, to_model_expr(e));
+        }
         if (!self.env.can_be_struct(&ind_name)) || self.is_ctor_app(e).is_some() {
             e
         } else {
@@ -3956,24 +3980,97 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             match result {
-                Some(r) => in_scope(*final(self), r),
+                Some(r) => in_scope(*final(self), r) && whnf_claim(
+                    *old(self).env,
+                    crate::beta_model::spine_app(
+                        ExprSpec::Const(
+                            crate::level_arena_bridge::name_id(const_name),
+                            crate::level_arena_bridge::to_model_of_levels(const_levels),
+                        ),
+                        crate::expr_arena_bridge::ptr_models(args@),
+                    ),
+                    to_model_expr(r),
+                ),
                 None => true,
             },
     {
-        let rec @ RecursorData { info, rec_rules, num_params, num_motives, num_minors, .. } =
-            self.env.get_recursor(&const_name)?;
-        let major = args.get(rec.major_idx()).copied()?;
-        let major = self.to_ctor_when_k(major, rec).unwrap_or(major);
-        let major = self.whnf(major);
-        let major = match self.ctx.read_expr(major) {
+        let ghost env0 = *self.env;
+        let rec @ RecursorData { info, .. } = self.env.get_recursor(&const_name)?;
+        // VERUS-REWRITE(accessor-swap): the counts, the major index and the
+        // rules were read off `rec`; `get_recursor_data` is exactly those
+        // fields, and it carries the environment model's claim about them.
+        // (The universe parameters already came from it, below.)
+        let (num_params, num_motives, num_minors, major_idx, rd_uparams, rec_rules) = match crate::env_model::get_recursor_data(
+            self.env,
+            &const_name,
+        ) {
+            Some(p) => p,
+            None => return None,
+        };
+        // VERUS-REWRITE(tested-prefix): a recursor's parameters, motives and
+        // minor premises come before its major premise; nothing states it, so
+        // it is tested. Declines on ill-formed recursors only.
+        if (num_params as usize) + (num_motives as usize) + (num_minors as usize) > major_idx {
+            return None
+        }
+        let major = args.get(major_idx).copied()?;
+        let ghost am = crate::expr_arena_bridge::ptr_models(args@);
+        let ghost m0 = to_model_expr(major);
+        proof {
+            assert(m0 == am[major_idx as int]);
+            kconv_refl(env0, m0);
+            scope_pres_refl(m0);
+        }
+        let k = self.to_ctor_when_k(major, rec);
+        let major1 = k.unwrap_or(major);
+        proof {
+            match k {
+                Some(m) => {
+                    scope_pres_trans(m0, m0, to_model_expr(m));
+                },
+                None => {},
+            }
+            scope_pres_in_scope(*self, major, major1);
+        }
+        let major2 = self.whnf(major1);
+        proof {
+            scope_pres_trans(m0, to_model_expr(major1), to_model_expr(major2));
+            if crate::expr_model::nlbv(m0) <= 0 {
+                kconv_trans(env0, m0, to_model_expr(major1), to_model_expr(major2));
+            }
+            scope_pres_in_scope(*self, major, major2);
+        }
+        let major = match self.ctx.read_expr(major2) {
             NatLit { ptr, .. } => {
-                let r = self.ctx.nat_lit_to_constructor(ptr).unwrap_or(major);
+                let c = self.ctx.nat_lit_to_constructor(ptr);
+                let r = c.unwrap_or(major2);
                 proof {
+                    match c {
+                        Some(cc) => {
+                            kconv_of_empty_pstep(env0, to_model_expr(major2), to_model_expr(cc));
+                            scope_pres_of_closed(to_model_expr(major2), to_model_expr(cc));
+                        },
+                        None => {
+                            kconv_refl(env0, to_model_expr(major2));
+                            scope_pres_refl(to_model_expr(major2));
+                        },
+                    }
                     no_fv_in_scope(*self, r);
                 }
                 r
             },
-            StringLit { ptr, .. } => self.str_lit_to_ctor_reducing(ptr).unwrap_or(major),
+            StringLit { ptr, .. } => {
+                let c = self.str_lit_to_ctor_reducing(ptr);
+                let r = c.unwrap_or(major2);
+                proof {
+                    if c is None {
+                        kconv_refl(env0, to_model_expr(major2));
+                        scope_pres_refl(to_model_expr(major2));
+                    }
+                    scope_pres_in_scope(*self, major2, r);
+                }
+                r
+            },
             _ => {
                 // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. Same panic.
                 let ind_rec_name_prefix = match self.ctx.get_major_induct(rec) {
@@ -3982,9 +4079,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         "reduce_rec: recursor has no major premise inductive",
                     ),
                 };
-                self.iota_try_eta_struct(ind_rec_name_prefix, major)
+                let r = self.iota_try_eta_struct(ind_rec_name_prefix, major2);
+                proof {
+                    scope_pres_in_scope(*self, major2, r);
+                }
+                r
             },
         };
+        let ghost mm = to_model_expr(major);
+        proof {
+            scope_pres_trans(m0, to_model_expr(major2), mm);
+            if crate::expr_model::nlbv(m0) <= 0 {
+                kconv_trans(env0, m0, to_model_expr(major2), mm);
+            }
+        }
         let (major_ctor, major_ctor_args) = self.ctx.unfold_apps(major);
         proof {
             spine_scope(*self, major, major_ctor, major_ctor_args@);
@@ -3995,7 +4103,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(in_scope(*self, major_ctor_args@[i]));
             }
         }
-        let rec_rule = self.get_rec_rule(rec_rules, major_ctor)?;
+        let rec_rule = self.get_rec_rule(&rec_rules, major_ctor)?;
 
         // The number of parameters in the constructor is not necessarily
         // equal to the number of parameters in the recursor when we have
@@ -4009,23 +4117,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let major_ctor_args_wo_params = major_ctor_args.into_iter().skip(
             num_extra_params_to_major,
         ).collect::<Vec<_>>();
-        // `subst_expr_levels` needs three facts about what it substitutes into,
-        // and this function reaches the recursor through `Env::get_recursor`,
-        // which is claim-free. All three are obtained WITHOUT a new axiom:
-        //
-        // (1) every uparam is a `Param`. `get_recursor_data` already claims
-        //     this, but returns a tuple, and `rec` is passed whole to
-        //     `to_ctor_when_k` and `get_major_induct`, so it cannot simply be
-        //     swapped in. Calling it alongside and tying the two by POINTER
-        //     equality transfers the claim to `info.uparams`: `to_model_of_
-        //     levels` is a function of the pointer, so equal pointers have
-        //     equal models. Duplicating the axiom on `Env::get_recursor`
-        //     instead would make two axioms speak about the same data, which
-        //     is how they silently drift apart.
-        let rd_uparams = match crate::env_model::get_recursor_data(self.env, &const_name) {
-            Some((_, _, _, _, u, _)) => u,
-            None => return None,
-        };
+        // `subst_expr_levels` needs three facts about what it substitutes into.
+        // (1) every uparam is a `Param`: `get_recursor_data` claims it for its
+        //     own `uparams`, and tying them to `info.uparams` by POINTER
+        //     equality transfers the claim: `to_model_of_levels` is a function
+        //     of the pointer.
         if rd_uparams != info.uparams {
             return None
         }
@@ -4066,19 +4162,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // VERUS-REWRITE(u16-widen): as above -- three `u16`s summed before
         // the widening, so a wrapped total would `take` the wrong prefix.
         let ghost r0 = r;
-        let r = self.ctx.foldl_apps(
-            r,
-            args.iter().copied().take(
-                (*num_params as usize) + (*num_motives as usize) + (*num_minors as usize),
-            ),
+        // The three argument runs are bound to names only so the proof can
+        // say what each yields; the same iterators go to the same calls.
+        let it_pre = args.iter().copied().take(
+            (num_params as usize) + (num_motives as usize) + (num_minors as usize),
         );
+        let ghost pre_seq = vstd::std_specs::iter::IteratorSpec::remaining(&it_pre);
+        let r = self.ctx.foldl_apps(r, it_pre);
         proof {
             // every argument folded on is one of `args`
             spine_scope_sub(*self, r, r0, args@);
         }
         let ghost r1 = r;
         let ghost wo = major_ctor_args_wo_params@;
-        let r = self.ctx.foldl_apps(r, major_ctor_args_wo_params.into_iter());
+        let it_flds = major_ctor_args_wo_params.into_iter();
+        let ghost flds_seq = vstd::std_specs::iter::IteratorSpec::remaining(&it_flds);
+        let r = self.ctx.foldl_apps(r, it_flds);
         proof {
             assert forall|i: int| 0 <= i < mca.len() implies in_scope(*self, #[trigger] mca[i]) by {
                 assert(in_scope(*old(self), mca[i]));
@@ -4090,9 +4189,61 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // saturating add gives at the boundary too -- so this only removes the
         // wrap, it does not change any reachable result.
         let ghost r2 = r;
-        let r = self.ctx.foldl_apps(r, args.iter().skip(rec.major_idx().saturating_add(1)).copied());
+        // (`n_args` only for the proof: vstd does not state that a slice's
+        // length fits in a `usize`, and the exec length does.)
+        let n_args = args.len();
+        let it_post = args.iter().skip(major_idx.saturating_add(1)).copied();
+        let ghost post_seq = vstd::std_specs::iter::IteratorSpec::remaining(&it_post);
+        let r = self.ctx.foldl_apps(r, it_post);
         proof {
             spine_scope_sub(*self, r, r2, args@);
+            // the model's view of the recursor data
+            let rid = crate::level_arena_bridge::name_id(const_name);
+            let lv = crate::level_arena_bridge::to_model_of_levels(const_levels);
+            let rd = crate::expr_arena_bridge::RecDataSpec {
+                num_params: num_params as nat,
+                num_motives: num_motives as nat,
+                num_minors: num_minors as nat,
+                major_idx: major_idx as nat,
+                uparams: crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(rd_uparams)),
+                rules: crate::env_model::rec_rules_model(rec_rules@),
+            };
+            crate::env_model::rec_data_of_agrees(env0, rid);
+            assert(crate::expr_arena_bridge::rec_data_of(rid) == Some(rd));
+            // the rule
+            let cname = crate::expr_arena_bridge::const_name_of(major_ctor);
+            crate::tc_model::find_rule_of_find_index(rec_rules@, cname);
+            let ri = crate::util_model::find_index(crate::tc_model::rec_rule_ctor_names(rec_rules@), cname)->Some_0 as int;
+            crate::tc_model::find_index_hit(crate::tc_model::rec_rule_ctor_names(rec_rules@), cname);
+            assert(rec_rules@[ri] == rec_rule);
+            crate::expr_arena_bridge::is_const_shape_model(major_ctor);
+            crate::expr_arena_bridge::const_levels_vec_model(major_ctor);
+            let cid = crate::expr_arena_bridge::const_id(major_ctor);
+            let clv = crate::expr_arena_bridge::const_levels_vec(major_ctor);
+            assert(cid == crate::level_arena_bridge::name_id(cname));
+            let cam = crate::expr_arena_bridge::ptr_models(mca);
+            assert(mm == crate::beta_model::spine_app(ExprSpec::Const(cid, clv), cam));
+            assert(rd.rules[ri] == crate::expr_arena_bridge::RecRuleSpec {
+                ctor_id: cid,
+                nfields: rec_rule.ctor_telescope_size_wo_params as nat,
+                rhs: to_model_expr(rec_rule.val),
+            });
+            assert(crate::expr_arena_bridge::ptr_models(wo) =~= cam.subrange(
+                num_extra_params_to_major as int,
+                cam.len() as int,
+            ));
+            let nprefix = crate::beta_model::rec_prefix(rd) as int;
+            assert(crate::expr_arena_bridge::ptr_models(pre_seq) =~= am.subrange(0, nprefix));
+            assert(crate::expr_arena_bridge::ptr_models(flds_seq) =~= cam.subrange(
+                (cam.len() - rd.rules[ri].nfields) as int,
+                cam.len() as int,
+            ));
+            assert(major_idx < am.len());
+            assert(am.len() == n_args);
+            assert(major_idx.saturating_add(1) == major_idx + 1);
+            assert(post_seq =~= args@.skip(major_idx as int + 1));
+            assert(crate::expr_arena_bridge::ptr_models(post_seq) =~= am.subrange(major_idx as int + 1, am.len() as int));
+            rec_step_claim(env0, rid, lv, am, rd, mm, cid, clv, cam, ri, to_model_expr(r));
         }
         Some(r)
     }
@@ -5967,6 +6118,7 @@ pub proof fn inst_locals_closed<'t>(e: ExprSpec, locals: Seq<crate::util::ExprPt
 }
 
 /// One more binder pair: the types agreed (on closed inputs), a new local opened.
+#[verifier::spinoff_prover]
 pub proof fn binder_walk_step<'x, 't>(
     env: Env<'x, 't>,
     b1s: Seq<ExprSpec>,
@@ -7050,6 +7202,156 @@ pub proof fn walk_set_unique<'t>(
     }
 }
 
+/// A parallel step with no definitions is a kernel conversion.
+pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::beta_model::pstep(vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty(), x, y),
+    ensures
+        kconv(env, x, y),
+{
+    let fm = crate::env_model::to_model_of_env(env);
+    assert forall|j: u64| #[trigger] vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty().contains_key(j)
+        implies fm.contains_key(j) && vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty()[j] == fm[j] by {}
+    crate::beta_model::pstep_env_weaken(vstd::map::Map::<u64, (Seq<u64>, ExprSpec)>::empty(), fm, x, y);
+    crate::beta_model::pstep_star_one(fm, x, y);
+    crate::beta_model::defeq_of_pstep_star(fm, x, y);
+    crate::tc_model::deq_any_of_defeq(fm, x, y);
+    kconv_of_deq(env, x, y);
+}
+
+/// Anything without locals or loose indices is in scope wherever anything is.
+pub proof fn scope_pres_of_closed(e: ExprSpec, r: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(r),
+        crate::expr_model::nlbv(r) <= 0,
+    ensures
+        scope_pres(e, r),
+{
+    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(e, S, c)
+        implies crate::expr_model::dbj_deep_in(r, S, c) by {
+        crate::expr_model::no_fv_dbj_deep_in(r, S, c);
+    }
+}
+
+/// ONE RECURSOR STEP, `reduce_rec`'s: the major premise is replaced by a
+/// convertible constructor spine, and the recursor application then steps to
+/// the rule instance (the uncapped leaf `deq_rec`). Scope and closedness ride
+/// along: the rule's right-hand side has no locals and no loose indices, and
+/// everything else in the result is an argument of the input or a field of
+/// the new major.
+#[verifier::spinoff_prover]
+pub proof fn rec_step_claim<'x, 't>(
+    env: Env<'x, 't>,
+    rid: u64,
+    lv: Seq<crate::level_model::LevelSpec>,
+    am: Seq<ExprSpec>,
+    rd: crate::expr_arena_bridge::RecDataSpec,
+    mm: ExprSpec,
+    cid: u64,
+    clv: Seq<crate::level_model::LevelSpec>,
+    cam: Seq<ExprSpec>,
+    ri: int,
+    r: ExprSpec,
+)
+    requires
+        crate::expr_arena_bridge::rec_data_of(rid) == Some(rd),
+        crate::beta_model::rec_prefix(rd) <= rd.major_idx,
+        rd.major_idx < am.len(),
+        rd.uparams.len() == lv.len(),
+        mm == crate::beta_model::spine_app(ExprSpec::Const(cid, clv), cam),
+        crate::beta_model::find_rule(rd.rules, cid) == Some(ri),
+        rd.rules[ri].nfields <= cam.len(),
+        !crate::expr_model::has_fv(rd.rules[ri].rhs),
+        crate::expr_model::nlbv(rd.rules[ri].rhs) <= 0,
+        r == crate::beta_model::spine_app(
+            crate::beta_model::spine_app(
+                crate::beta_model::spine_app(
+                    crate::expr_model::subst_expr_levels(rd.rules[ri].rhs, rd.uparams, lv),
+                    am.subrange(0, crate::beta_model::rec_prefix(rd) as int),
+                ),
+                cam.subrange((cam.len() - rd.rules[ri].nfields) as int, cam.len() as int),
+            ),
+            am.subrange(rd.major_idx as int + 1, am.len() as int),
+        ),
+        crate::expr_model::nlbv(am[rd.major_idx as int]) <= 0 ==> kconv(env, am[rd.major_idx as int], mm)
+            && crate::expr_model::nlbv(mm) <= 0,
+        scope_pres(am[rd.major_idx as int], mm),
+    ensures
+        whnf_claim(env, crate::beta_model::spine_app(ExprSpec::Const(rid, lv), am), r),
+{
+    let H = ExprSpec::Const(rid, lv);
+    let x = crate::beta_model::spine_app(H, am);
+    let mi = rd.major_idx as int;
+    let rule = rd.rules[ri];
+    let nf = rule.nfields;
+    let pre = am.subrange(0, crate::beta_model::rec_prefix(rd) as int);
+    let flds = cam.subrange((cam.len() - nf) as int, cam.len() as int);
+    let post = am.subrange(mi + 1, am.len() as int);
+    let body = crate::expr_model::subst_expr_levels(rule.rhs, rd.uparams, lv);
+    let s1 = crate::beta_model::spine_app(body, pre);
+    let s2 = crate::beta_model::spine_app(s1, flds);
+    crate::expr_model::subst_expr_levels_has_fv(rule.rhs, rd.uparams, lv);
+    subst_levels_nlbv(rule.rhs, rd.uparams, lv);
+    // closedness
+    crate::beta_model::spine_app_nlbv_decompose(H, am);
+    crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(cid, clv), cam);
+    if crate::expr_model::nlbv(x) <= 0 {
+        assert(crate::expr_model::nlbv(am[mi]) <= 0);
+        assert forall|j: int| 0 <= j < pre.len() implies crate::expr_model::nlbv(#[trigger] pre[j]) <= 0 by {
+            assert(pre[j] == am[j]);
+        }
+        assert forall|j: int| 0 <= j < flds.len() implies crate::expr_model::nlbv(#[trigger] flds[j]) <= 0 by {
+            assert(flds[j] == cam[(cam.len() - nf) + j]);
+        }
+        assert forall|j: int| 0 <= j < post.len() implies crate::expr_model::nlbv(#[trigger] post[j]) <= 0 by {
+            assert(post[j] == am[mi + 1 + j]);
+        }
+        crate::beta_model::spine_app_nlbv(body, pre);
+        crate::beta_model::spine_app_nlbv(s1, flds);
+        crate::beta_model::spine_app_nlbv(s2, post);
+        // conversion: replace the major, then one recursor step
+        let am2 = am.update(mi, mm);
+        let x2 = crate::beta_model::spine_app(H, am2);
+        kconv_spine_update(env, H, am, mi, mm);
+        crate::beta_model::spine_destruct_app(H, am2);
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, clv), cam);
+        assert(crate::beta_model::spine_head(x2) == H);
+        assert(crate::beta_model::spine_args(x2) =~= am2);
+        assert(am2[mi] == mm);
+        assert(crate::beta_model::spine_head(mm) == ExprSpec::Const(cid, clv));
+        assert(crate::beta_model::spine_args(mm) =~= cam);
+        assert(crate::beta_model::rec_ready_u(x2));
+        assert(am2.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= pre);
+        assert(am2.subrange(mi + 1, am2.len() as int) =~= post);
+        assert(crate::beta_model::rec_result(x2) == r);
+        assert(crate::tc_model::deq_rec(x2, r));
+        crate::tc_model::deq_of_rec(crate::env_model::to_model_of_env(env), x2, r, 0);
+        kconv_of_deq(env, x2, r);
+        kconv_trans(env, x, x2, r);
+    }
+    // scope
+    assert forall|S: vstd::iset::ISet<u32>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(x, S, c)
+        implies crate::expr_model::dbj_deep_in(r, S, c) by {
+        spine_app_dbj_deep_in(H, am, S, c);
+        assert(crate::expr_model::dbj_deep_in(am[mi], S, c));
+        assert(crate::expr_model::dbj_deep_in(mm, S, c));
+        spine_app_dbj_deep_in(ExprSpec::Const(cid, clv), cam, S, c);
+        crate::expr_model::no_fv_dbj_deep_in(body, S, c);
+        assert forall|j: int| 0 <= j < pre.len() implies #[trigger] crate::expr_model::dbj_deep_in(pre[j], S, c) by {
+            assert(pre[j] == am[j]);
+        }
+        assert forall|j: int| 0 <= j < flds.len() implies #[trigger] crate::expr_model::dbj_deep_in(flds[j], S, c) by {
+            assert(flds[j] == cam[(cam.len() - nf) + j]);
+        }
+        assert forall|j: int| 0 <= j < post.len() implies #[trigger] crate::expr_model::dbj_deep_in(post[j], S, c) by {
+            assert(post[j] == am[mi + 1 + j]);
+        }
+        spine_app_dbj_deep_in(body, pre, S, c);
+        spine_app_dbj_deep_in(s1, flds, S, c);
+        spine_app_dbj_deep_in(s2, post, S, c);
+    }
+}
+
 /// ONE ARGUMENT OF `infer_app`: the spine so far has type `T`, convertible
 /// to the current function type instantiated by the pending arguments, and
 /// that type is a binder. Applying the next argument types the longer spine
@@ -7786,6 +8088,12 @@ pub proof fn scope_pres_trans(a: ExprSpec, b: ExprSpec, c: ExprSpec)
 }
 
 /// Scope carried to the current depth.
+pub proof fn scope_pres_refl(e: ExprSpec)
+    ensures
+        scope_pres(e, e),
+{
+}
+
 pub proof fn scope_pres_in_scope<'x, 't, 'p>(
     tc: TypeChecker<'x, 't, 'p>,
     e: crate::util::ExprPtr<'t>,
@@ -8996,10 +9304,14 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     >)
         ensures
             match result {
-                Some(r) => (exists|i: int|
-                    0 <= i < rec_rules@.len() && #[trigger] rec_rules@[i] == r)
-                    && crate::expr_arena_bridge::is_const_shape(major_const) && r.ctor_name
-                    == crate::expr_arena_bridge::const_name_of(major_const),
+                // the FIRST rule for the constructor -- the model's `find_rule`
+                Some(r) => crate::expr_arena_bridge::is_const_shape(major_const) && match crate::util_model::find_index(
+                    crate::tc_model::rec_rule_ctor_names(rec_rules@),
+                    crate::expr_arena_bridge::const_name_of(major_const),
+                ) {
+                    Some(i) => r == rec_rules@[i as int],
+                    None => false,
+                },
                 None => true,
             },
     {
@@ -9012,14 +9324,29 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::is_const_shape(major_const));
                 assert(crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name);
             }
-            for r in rec_rules.iter().copied()
+            let ghost names = crate::tc_model::rec_rule_ctor_names(rec_rules@);
+            // VERUS-REWRITE(indexed-scan): was `for r in rec_rules.iter().copied()`;
+            // the same front-to-back scan by index, so the invariant can say
+            // no earlier rule matched.
+            let mut i: usize = 0;
+            while i < rec_rules.len()
                 invariant
                     crate::expr_arena_bridge::is_const_shape(major_const),
                     crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name,
+                    names == crate::tc_model::rec_rule_ctor_names(rec_rules@),
+                    i <= rec_rules@.len(),
+                    forall|j: int| 0 <= j < i ==> #[trigger] names[j] != major_ctor_name,
+                decreases rec_rules.len() - i,
             {
+                let r = rec_rules[i];
                 if r.ctor_name == major_ctor_name {
+                    proof {
+                        assert(names[i as int] == major_ctor_name);
+                        crate::util_model::find_index_first(names, major_ctor_name, i as int);
+                    }
                     return Some(r)
                 }
+                i += 1;
             }
         }
         None

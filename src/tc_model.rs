@@ -4547,6 +4547,14 @@ pub open spec fn deq_quot(x: ExprSpec, y: ExprSpec) -> bool {
     (quot_ready(x) && y == quot_result(x)) || (quot_ready(y) && x == quot_result(y))
 }
 
+/// The recursor leaf, uncapped: a recursor applied to a constructor spine in
+/// its major position converts to the rule instance -- `reduce_rec`'s step.
+/// Symmetric like `deq_quot`.
+pub open spec fn deq_rec(x: ExprSpec, y: ExprSpec) -> bool {
+    (crate::beta_model::rec_ready_u(x) && y == crate::beta_model::rec_result(x)) || (
+    crate::beta_model::rec_ready_u(y) && x == crate::beta_model::rec_result(y))
+}
+
 /// Introduction for the quotient leaf: from the spine shapes alone, the
 /// contracted term is `quot_result`. Extracted from the exec producer,
 /// whose single query exceeded the resource limit with this inline.
@@ -4600,6 +4608,7 @@ pub open spec fn deq_c(
     ||| deq_leaf(x, y)
     ||| deq_eta(x, y)
     ||| deq_quot(x, y)
+    ||| deq_rec(x, y)
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_c(env, *f1, *f2, (h - 1) as nat)
             && deq_c(env, *a1, *a2, (h - 1) as nat),
@@ -4676,7 +4685,7 @@ pub proof fn deq_c_mono(
         deq_c(env, x, y, h2),
     decreases h1, 0int,
 {
-    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) {
+    if defeq(env, x, y) || deq_leaf(x, y) || deq_eta(x, y) || deq_quot(x, y) || deq_rec(x, y) {
     } else {
         assert(h1 > 0);
         match (x, y) {
@@ -4782,6 +4791,8 @@ pub proof fn deq_c_symm(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Exp
         assert(deq_eta(y, x));
     } else if deq_quot(x, y) {
         assert(deq_quot(y, x));
+    } else if deq_rec(x, y) {
+        assert(deq_rec(y, x));
     } else {
         assert(h > 0);
         match (x, y) {
@@ -4906,6 +4917,16 @@ pub proof fn deq_of_leaf(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: Ex
 pub proof fn deq_of_quot(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_quot(x, y),
+    ensures
+        deq(env, x, y, h),
+{
+    deq_of_deq_c(env, x, y, h);
+}
+
+/// Constructor lemma: a recursor step is `deq` at any height.
+pub proof fn deq_of_rec(env: Map<u64, (Seq<u64>, ExprSpec)>, x: ExprSpec, y: ExprSpec, h: nat)
+    requires
+        deq_rec(x, y),
     ensures
         deq(env, x, y, h),
 {
