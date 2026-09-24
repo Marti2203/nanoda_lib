@@ -3229,8 +3229,6 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
     requires
         nlbv(e) <= c + 1,
         nlbv(a) <= 0,
-        max_var_below(a, bound),
-        bound <= 0xFFFF_0000nat,
     ensures
         subst_c(e, a, c) == subst_full(e, seq![a], c),
     decreases e,
@@ -3241,9 +3239,9 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
         ExprSpec::Var(i) => {
             assert(nlbv(e) == i as nat + 1);
             if (i as nat) == c {
-                max_var_below_mono(a, bound, 0xFFFF_0000nat);
-                max_var_below_mono(a, 0xFFFF_0000nat, 0xFFFF_FFFEnat);
-                shift_cancel(c, a);
+                // `a` is closed, so no shift touches it
+                nlbv_shift_noop(1, c, a);
+                nlbv_shift_noop(-1, c, a);
                 assert(subst_c(e, a, c) == shift(-1, c, shift(1, c, a)));
                 assert(subst_c(e, a, c) == a);
                 assert(subst_full(e, seq![a], c) == a);
@@ -3292,8 +3290,8 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
                 Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
             ));
 
-            max_var_below_mono(a, bound, 0xFFFF_0000nat);
-            shift_shift_aligned_up(c, 0, a);
+            nlbv_shift_noop(1, c, a);
+            nlbv_shift_noop(1, (c + 1) as nat, a);
             assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
             assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
 
@@ -3328,8 +3326,8 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
                 Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
             ));
 
-            max_var_below_mono(a, bound, 0xFFFF_0000nat);
-            shift_shift_aligned_up(c, 0, a);
+            nlbv_shift_noop(1, c, a);
+            nlbv_shift_noop(1, (c + 1) as nat, a);
             assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
             assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
 
@@ -3382,8 +3380,6 @@ pub proof fn subst_c_spine_reduce_eq(
         spine_bind(t0, k) == Some(body),
         nlbv(body) <= c + k + 1,
         nlbv(a) <= 0,
-        max_var_below(a, bound),
-        bound + 10 <= 0xFFFF_0000,
     ensures
         spine_bind(subst_c(t0, a, c), k) == Some(subst_full(body, seq![a], (c + k) as nat)),
     decreases k,
@@ -3413,9 +3409,9 @@ pub proof fn subst_c_spine_reduce_eq(
                 nlbv_shift_noop(1, 0, a);
                 assert(shift(1, 0, a) == a);
 
-                max_var_below_mono(a, bound, 0xFFFF_0000nat);
-                shift_shift_aligned_up(c, 0, a);
-                assert(shift(1, (c + 1) as nat, shift(1, 0, a)) == shift(1, 0, shift(1, c, a)));
+                // `a` is closed, so no shift touches it
+                nlbv_shift_noop(1, c, a);
+                nlbv_shift_noop(1, (c + 1) as nat, a);
                 assert(shift(1, 0, s) == shift(1, (c + 1) as nat, a));
 
                 assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
@@ -4459,8 +4455,7 @@ pub proof fn spine_reduce_eq_subst_full(
     requires
         spine_bind(head, args.len()) == Some(body),
         nlbv(body) <= args.len(),
-        bound + 10 <= 0xFFFF_0000,
-        forall|i: int| 0 <= i < args.len() ==> nlbv(args[i]) <= 0 && max_var_below(args[i], bound),
+        forall|i: int| 0 <= i < args.len() ==> nlbv(args[i]) <= 0,
     ensures
         spine_reduce(head, args) == subst_full(body, args, 0),
     decreases args.len(),
@@ -4490,8 +4485,7 @@ pub proof fn spine_reduce_eq_subst_full(
                 subst_full_nlbv_bound(body, a0, n);
                 assert(nlbv(body2) <= n);
 
-                assert forall|i: int| 0 <= i < rest.len() implies nlbv(rest[i]) <= 0
-                    && max_var_below(rest[i], bound) by {
+                assert forall|i: int| 0 <= i < rest.len() implies nlbv(rest[i]) <= 0 by {
                     assert(rest[i] == args[i + 1]);
                 }
 

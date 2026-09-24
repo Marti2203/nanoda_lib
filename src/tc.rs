@@ -772,7 +772,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 verus! {
 
-broadcast use crate::expr_arena_bridge::axiom_arena_depth_bounded;
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
@@ -2194,8 +2193,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 self.live == old(self).live,
-                ctx@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(fun))
-                    < 60000,
                 c0 == old(self).ctx.dbj_level_counter,
                 forall|t: u32| #[trigger] L.contains(t) ==> old(self).live@.contains(t)
                     && crate::expr_model::serial_below(t, c0),
@@ -2392,8 +2389,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant
                 tc_wf(*self),
                 (*self).env == old(self).env,
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    < 60000,
                 self.ctx.dbj_level_counter == start_pos + locals@.len(),
                 self.live@ == old(self).live@ + ids_of(locals@),
                 start_pos == old(self).ctx.dbj_level_counter,
@@ -2666,8 +2661,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant
                 tc_wf(*self),
                 (*self).env == old(self).env,
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    < 60000,
                 self.ctx.dbj_level_counter == c0 + locals@.len(),
                 self.live@ == old(self).live@ + ids_of(locals@),
                 universes@.len() == locals@.len(),
@@ -3116,8 +3109,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.live == old(self).live,
                         (*self).env == old(self).env,
                         n_args <= args.len(),
-                        n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                            < 60000,
                         // what has been peeled so far, in the model's terms
                         crate::beta_model::spine_bind(to_model_expr(e_fun), n_args as nat) == Some(to_model_expr(e)),
                 // A bare `loop` carries no exit reason, so without this
@@ -3126,8 +3117,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
                     ensures
                         n_args <= args.len(),
-                        n_args + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                            < 60000,
                         crate::beta_model::spine_bind(to_model_expr(e_fun), n_args as nat) == Some(to_model_expr(e)),
                 {
                     // `[_arg, _rest @ ..]` on `&args[n_args..]` is exactly
@@ -3181,10 +3170,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(crate::expr_arena_bridge::ptr_models(argv.subrange(n as int, argv.len() as int)) =~= pb);
                     assert(to_model_expr(e2) == crate::beta_model::spine_app(to_model_expr(e1), pb));
                     assert(em0 == crate::beta_model::spine_app(lam, am));
-                    assert forall|i: int| 0 <= i < am.len() implies
-                        crate::expr_model::depth(#[trigger] am[i]) < 60000 by {
-                        assert(am[i] == to_model_expr(argv[i]));
-                    }
                     beta_spine_claim(*old(self).env, lam, bm, am, n);
                 }
                 let r = self.whnf_no_unfolding_aux(e2, cheap_proj);
@@ -3446,10 +3431,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 (*self).env == old(self).env,
                 c0 == old(self).ctx.dbj_level_counter,
                 L == live_set(*old(self)),
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x))
-                    < 60000,
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y))
-                    < 60000,
                 // This loop OPENS a binder per iteration and closes none; the
                 // exits below close them all at once by subtracting
                 // `locals.len()`. That subtraction is only the counter frame if
@@ -3470,10 +3451,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_model::dbj_deep_in(to_model_expr(y), L, c0),
                 crate::expr_model::nlbv(to_model_expr(x)) <= locals@.len(),
                 crate::expr_model::nlbv(to_model_expr(y)) <= locals@.len(),
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(x))
-                    < 60000,
-                locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(y))
-                    < 60000,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter + locals@.len(),
                 self.live@ == old(self).live@ + ids_of(locals@),
                 binder_walk(*old(self).env, b1s, b2s, t1s, t2s, locals@, c0),
@@ -3543,10 +3520,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     t2s = t2s.push(to_model_expr(t20));
                 }
                 proof {
-                    assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body1))
-                        < crate::expr_model::depth(crate::expr_arena_bridge::to_model(x)));
-                    assert(crate::expr_model::depth(crate::expr_arena_bridge::to_model(body2))
-                        < crate::expr_model::depth(crate::expr_arena_bridge::to_model(y)));
                     assert(crate::expr_model::nlbv(to_model_expr(body1)) <= locals@.len());
                     assert(crate::expr_model::nlbv(to_model_expr(body2)) <= locals@.len());
                 }
@@ -6445,7 +6418,6 @@ pub proof fn beta_spine_claim<'x, 't>(
     requires
         crate::beta_model::spine_bind(lam, n) == Some(bm),
         n <= am.len(),
-        forall|i: int| 0 <= i < am.len() ==> #[trigger] crate::expr_model::depth(am[i]) < 60000,
     ensures
         whnf_claim(
             env,
@@ -6468,11 +6440,8 @@ pub proof fn beta_spine_claim<'x, 't>(
         crate::beta_model::spine_app_nlbv_decompose(lam, am);
         crate::beta_model::spine_bind_nlbv(lam, n, bm, 0);
         assert forall|i: int| 0 <= i < pa.len() implies
-            crate::expr_model::nlbv(#[trigger] pa[i]) <= 0
-            && crate::beta_model::max_var_below(pa[i], 60000) by {
+            crate::expr_model::nlbv(#[trigger] pa[i]) <= 0 by {
             assert(pa[i] == am[i]);
-            crate::beta_model::nlbv_bound_implies_max_var_below(pa[i], 0);
-            crate::beta_model::max_var_below_mono(pa[i], crate::expr_model::depth(pa[i]), 60000);
         }
         assert forall|i: int| 0 <= i < pb.len() implies
             crate::expr_model::nlbv(#[trigger] pb[i]) <= 0 by {
@@ -6518,8 +6487,6 @@ pub proof fn zeta_spine_claim<'x, 't>(
     bm: ExprSpec,
     am: Seq<ExprSpec>,
 )
-    requires
-        crate::expr_model::depth(vm) < 60000,
     ensures
         whnf_claim(
             env,
@@ -6537,7 +6504,7 @@ pub proof fn zeta_spine_claim<'x, 't>(
         assert(crate::expr_model::nlbv(vm) <= 0);
         assert(crate::expr_model::nlbv(bm) <= 1);
         crate::beta_model::nlbv_bound_implies_max_var_below(vm, 0);
-        crate::beta_model::subst_c_eq_subst_full(bm, vm, 0, crate::expr_model::depth(vm));
+        crate::beta_model::subst_c_eq_subst_full(bm, vm, 0, 0);
         let rm = crate::beta_model::subst1(bm, vm);
         assert(rm == crate::beta_model::subst_c(bm, vm, 0));
         assert(rm == e1m);

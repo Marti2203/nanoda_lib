@@ -1001,8 +1001,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         outgoing: &[ExprPtr<'t>],
     ) -> (result: ExprPtr<'t>)
         requires
-            outgoing@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                <= 60000,
+            outgoing@.len() < 60000,
             ingoing@.len() < 60000,
         ensures
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1017,17 +1016,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
-        // `let e = ..` below SHADOWS the parameter, so the depth lemma has to
-        // be applied to the original term, captured here before the rebind.
-        let ghost e0 = crate::expr_arena_bridge::to_model(e);
         let e = self.abstr(e, outgoing);
-        proof {
-            crate::expr_model::abstr_full_depth(
-                e0,
-                crate::expr_arena_bridge::local_ids(outgoing@),
-                0,
-            );
-        }
         self.inst(e, ingoing)
     }
 
@@ -1941,8 +1930,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn abstr(&mut self, e: ExprPtr<'t>, locals: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
         requires
-            locals@.len() + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                <= 60000,
+            locals@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
                 crate::expr_arena_bridge::to_model(e),
@@ -1986,9 +1974,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ExprPtr<'t>)
         requires
             crate::expr_arena_bridge::abstr_cache_sound(*old(self), locals@),
-            locals@.len() + offset as nat + crate::expr_model::depth(
-                crate::expr_arena_bridge::to_model(e),
-            ) <= 60000,
+            locals@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
                 crate::expr_arena_bridge::to_model(e),
@@ -2072,6 +2058,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                                 pos as nat,
                             );
                         }
+                        // VERUS-REWRITE(level-ceiling): the index sum panics on
+                        // overflow (overflow checks are on); checked here, and
+                        // `u16::MAX` itself is excluded as it is for every
+                        // stored `Var` (its loose-variable count would not fit).
+                        crate::util::kernel_check(
+                            offset < u16::MAX - (pos as u16),
+                            "abstr: de Bruijn index overflow",
+                        );
                         let res = self.mk_var((pos as u16) + offset);
                         proof {
                             assert(crate::expr_arena_bridge::to_model(res)
@@ -2157,6 +2151,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         ));
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
+                    // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
+                    // overflow; the same check, explicit.
+                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
@@ -2193,6 +2190,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         ));
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
+                    // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
+                    // overflow; the same check, explicit.
+                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
@@ -2237,6 +2237,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     }
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     let val2 = self.abstr_aux(val, locals, offset);
+                    // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
+                    // overflow; the same check, explicit.
+                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {
@@ -2308,9 +2311,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// what keeps the invariant from propagating out into the shadow routes.
     #[verifier::exec_allows_no_decreases_clause]
     pub fn inst(&mut self, e: ExprPtr<'t>, substs: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
-        requires
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e)) <= 60000,
-            substs@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
                 crate::expr_arena_bridge::to_model(e),
@@ -2355,9 +2355,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     >)
         requires
             crate::expr_arena_bridge::inst_cache_sound(*old(self), substs@),
-            offset as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                <= 60000,
-            substs@.len() < 60000,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::subst_full(
                 crate::expr_arena_bridge::to_model(e),

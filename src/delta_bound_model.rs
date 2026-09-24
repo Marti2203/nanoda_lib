@@ -95,8 +95,6 @@ use crate::expr_arena_bridge::nat_repr_pred;
 use crate::expr_arena_bridge::verified_size;
 use crate::expr_arena_bridge::{expr_as_lambda, expr_as_pi, get_dbj_level_counter};
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::axiom_arena_depth_bounded;
-#[cfg(verus_only)]
 use crate::expr_arena_bridge::{arena_lctx, arena_lctx_local, is_local_shape_model};
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{
@@ -1963,8 +1961,6 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
             },
         };
         proof {
-            axiom_arena_depth_bounded(infd);
-            axiom_arena_depth_bounded(binder_type);
         }
         let abstrd_infd = ctx.abstr(infd, locals_slice);
         ctx.replace_dbj_level(local);

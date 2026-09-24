@@ -670,32 +670,6 @@ pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
     }
 }
 
-/// The arena never stores a term 60000 constructors deep.
-///
-/// This is the same claim `node_cache_ok` already makes about `dbj_idx`, for
-/// the same reason and with the same standing: a de Bruijn index of 65535
-/// means 65535 enclosing binders, and a depth of 60000 means 60000 nested
-/// constructors. Neither is reachable by a term that survived the importer.
-///
-/// It is stated here, once, rather than threaded as a precondition. The
-/// ceiling is what `inst` and `abstr` need so their `offset + depth`
-/// arithmetic cannot overflow, and *every* expression-shaped function in the
-/// kernel eventually reaches one of them -- so carrying it as a `requires`
-/// means carrying it through the whole 46-function `tc.rs` cycle, where it
-/// cannot be discharged in any case: `whnf` and `inst` build new terms, and
-/// no bound on their inputs bounds their output. A real proof would have to
-/// track term size through the entire checker, a quantity the kernel does not
-/// itself carry.
-///
-/// So this is an assumption about the corpus, not a theorem, and the original
-/// kernel makes it too -- it counts binders in `u16` and would overflow on
-/// such a term before any of this code ran.
-#[verifier::external_body]
-pub broadcast proof fn axiom_arena_depth_bounded<'t>(e: ExprPtr<'t>)
-    ensures
-        #[trigger] depth(to_model(e)) < 60000,
-{
-}
 
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
     ctx: &TcCtx<'t, 'p>,
