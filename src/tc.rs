@@ -799,7 +799,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let whnfd = self.whnf(e);
         match self.ctx.read_expr(whnfd) {
             Pi { .. } => whnfd,
-            _ => crate::util::kernel_fail("ensure_pi could not produce a pi"),
+            _ => panic!("ensure_pi could not produce a pi"),
         }
     }
 
@@ -821,7 +821,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let whnfd = self.infer_then_whnf(e, flag);
         match self.ctx.read_expr(whnfd) {
             Sort { level, .. } => level,
-            _ => crate::util::kernel_fail("infer_sort_of could not infer a sort"),
+            _ => panic!("infer_sort_of could not infer a sort"),
         }
     }
 
@@ -1533,60 +1533,50 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(i) => i,
             None => return None,
         };
-        // VERUS-REWRITE(unchecked-unwrap): was `args.get(i).copied().unwrap()`.
-        // Same panic on the same condition, now with a message. Declining
-        // instead would be a soundness change, not a robustness fix: `None`
-        // here routes to a path that can accept.
-        match args.get(i).copied() {
-            Some(a) => {
-                proof {
-                    let env = *old(self).env;
-                    let fm = crate::env_model::to_model_of_env(env);
-                    let id = crate::level_arena_bridge::name_id(name);
-                    let s0 = to_model_expr(structure);
-                    let sm = to_model_expr(st);
-                    let am2 = crate::expr_arena_bridge::ptr_models(args@);
-                    crate::expr_arena_bridge::is_const_shape_model(f);
-                    let lv = crate::expr_arena_bridge::const_levels_vec(f);
-                    assert(to_model_expr(f) == ExprSpec::Const(id, lv));
-                    assert(sm == crate::beta_model::spine_app(ExprSpec::Const(id, lv), am2));
-                    assert(crate::env_model::to_model_of_env(env).ctor_num_params(id) == Some(num_params));
-                    assert(am2[i as int] == to_model_expr(a));
-                    // `iota_extract`'s trigger, written in its own shape
-                    assert(am2[(num_params as nat + idx as nat) as int] == to_model_expr(a));
-                    assert((num_params as nat + idx as nat) < am2.len());
-                    // the iota step itself, with the structure already a
-                    // constructor application (it steps to itself)
-                    assert(crate::beta_model::iota_extract(crate::env_model::to_model_of_env(env), idx, sm, to_model_expr(a)));
-                    assert(crate::beta_model::pstep(fm, sm, sm));
-                    assert(crate::beta_model::iota_reduct(sm));
-                    let pm = ExprSpec::Proj(idx, Box::new(sm));
-                    assert(crate::beta_model::pstep(fm, pm, to_model_expr(a)));
-                    crate::beta_model::pstep_star_one(fm, pm, to_model_expr(a));
-                    crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
-                    crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
-                    kconv_of_deq(env, pm, to_model_expr(a));
-                    if crate::expr_model::nlbv(s0) <= 0 {
-                        // the structure, whnf'd, is convertible with what it
-                        // was, and projection is a congruence
-                        kconv_proj_congr(env, idx, s0, sm);
-                        kconv_trans(env, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
-                        crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
-                    }
-                    // scope: the field is an argument of the whnf'd structure
-                    assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(ExprSpec::Proj(idx, Box::new(s0)), SS, k)
-                        implies crate::expr_model::dbj_deep_in(to_model_expr(a), SS, k) by {
-                        assert(crate::expr_model::dbj_deep_in(s0, SS, k));
-                        assert(crate::expr_model::dbj_deep_in(sm, SS, k));
-                        spine_app_dbj_deep_in(ExprSpec::Const(id, lv), am2, SS, k);
-                    }
-                }
-                Some(a)
-            },
-            None => crate::util::kernel_fail(
-                "reduce_proj: projection index is past the end of the constructor's arguments",
-            ),
+        let a = args.get(i).copied().unwrap();
+        proof {
+            let env = *old(self).env;
+            let fm = crate::env_model::to_model_of_env(env);
+            let id = crate::level_arena_bridge::name_id(name);
+            let s0 = to_model_expr(structure);
+            let sm = to_model_expr(st);
+            let am2 = crate::expr_arena_bridge::ptr_models(args@);
+            crate::expr_arena_bridge::is_const_shape_model(f);
+            let lv = crate::expr_arena_bridge::const_levels_vec(f);
+            assert(to_model_expr(f) == ExprSpec::Const(id, lv));
+            assert(sm == crate::beta_model::spine_app(ExprSpec::Const(id, lv), am2));
+            assert(crate::env_model::to_model_of_env(env).ctor_num_params(id) == Some(num_params));
+            assert(am2[i as int] == to_model_expr(a));
+            // `iota_extract`'s trigger, written in its own shape
+            assert(am2[(num_params as nat + idx as nat) as int] == to_model_expr(a));
+            assert((num_params as nat + idx as nat) < am2.len());
+            // the iota step itself, with the structure already a
+            // constructor application (it steps to itself)
+            assert(crate::beta_model::iota_extract(crate::env_model::to_model_of_env(env), idx, sm, to_model_expr(a)));
+            assert(crate::beta_model::pstep(fm, sm, sm));
+            assert(crate::beta_model::iota_reduct(sm));
+            let pm = ExprSpec::Proj(idx, Box::new(sm));
+            assert(crate::beta_model::pstep(fm, pm, to_model_expr(a)));
+            crate::beta_model::pstep_star_one(fm, pm, to_model_expr(a));
+            crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
+            crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
+            kconv_of_deq(env, pm, to_model_expr(a));
+            if crate::expr_model::nlbv(s0) <= 0 {
+                // the structure, whnf'd, is convertible with what it
+                // was, and projection is a congruence
+                kconv_proj_congr(env, idx, s0, sm);
+                kconv_trans(env, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
+                crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
+            }
+            // scope: the field is an argument of the whnf'd structure
+            assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(ExprSpec::Proj(idx, Box::new(s0)), SS, k)
+                implies crate::expr_model::dbj_deep_in(to_model_expr(a), SS, k) by {
+                assert(crate::expr_model::dbj_deep_in(s0, SS, k));
+                assert(crate::expr_model::dbj_deep_in(sm, SS, k));
+                spine_app_dbj_deep_in(ExprSpec::Const(id, lv), am2, SS, k);
+            }
         }
+        Some(a)
     }
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -1656,15 +1646,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope_of_deep_in(*self, structure_ty, L);
         }
         let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
-        // VERUS-REWRITE(unchecked-unwrap): the three `.unwrap()` calls below
-        // were written as such. Each keeps its panic, and gains a message.
-        let (sf, struct_ty_name, struct_ty_levels, struct_ty_args) =
-            match self.ctx.unfold_const_apps(structure_ty) {
-            Some(t) => t,
-            None => crate::util::kernel_fail(
-                "infer_proj: the structure's type is not an applied constant",
-            ),
-        };
+        let (sf, struct_ty_name, struct_ty_levels, struct_ty_args) = self.ctx.unfold_const_apps(structure_ty).unwrap();
         let ghost am = crate::expr_arena_bridge::ptr_models(struct_ty_args@);
         let ghost ind_id = crate::level_arena_bridge::name_id(struct_ty_name);
         let ghost ls = crate::level_arena_bridge::to_model_of_levels(struct_ty_levels);
@@ -1687,24 +1669,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
 
         let InductiveData { info: inductive_info, all_ctor_names, num_params, .. } =
-            match self.env.get_structure(&struct_ty_name, true) {
-            Some(d) => d,
-            None => crate::util::kernel_fail("infer_proj: the structure's type is not a structure"),
-        };
+            self.env.get_structure(&struct_ty_name, true).unwrap();
 
         // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded, as
         // in `def_eq_unit`. `infer_proj` returns an `ExprPtr` and has nothing
         // to decline to, so the empty case takes the same rejection the lookup
         // failure below already takes.
-        crate::util::kernel_check(
-            all_ctor_names.len() > 0,
-            "infer_proj: the structure has no constructor",
-        );
+        assert!(all_ctor_names.len() > 0, "infer_proj: the structure has no constructor");
         // Unchanged: a name that is not a CONSTRUCTOR is still rejected here.
-        match self.env.get_constructor(&all_ctor_names[0]) {
-            Some(_) => {},
-            None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
-        };
+        self.env.get_constructor(&all_ctor_names[0]).unwrap();
         // VERUS-REWRITE(tested-env): two consistency checks on the environment,
         // which never fail on a well-formed one. `get_structure` states nothing,
         // so the structure's constructor and its parameter count are tested
@@ -1712,18 +1685,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // the one recorded, and the constructor's own parameter count is the
         // inductive's (`Lean`'s invariant for a structure).
         let first_ctor = crate::env_model::get_structure_first_ctor(self.env, &struct_ty_name, true);
-        crate::util::kernel_check(
-            first_ctor == Some(all_ctor_names[0]),
-            "infer_proj: the structure's constructor disagrees with the environment",
-        );
+        assert!(first_ctor == Some(all_ctor_names[0]), "infer_proj: the structure's constructor disagrees with the environment");
         let ctor_np = crate::env_model::get_constructor_num_params(self.env, &all_ctor_names[0]);
-        crate::util::kernel_check(
-            match ctor_np {
-                Some(k) => k == *num_params,
-                None => false,
-            },
-            "infer_proj: the constructor's parameter count disagrees with the inductive's",
-        );
+        assert!(match ctor_np { Some(k) => k == *num_params, None => false, }, "infer_proj: the constructor's parameter count disagrees with the inductive's");
         let ghost ctor_id = crate::level_arena_bridge::name_id(all_ctor_names[0]);
         let ghost np = *num_params;
         proof {
@@ -1734,27 +1698,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // de Bruijn and the free-variable senses. `Env::get_constructor` is
         // literally `get_declar` filtered to `Declar::Constructor`, so this is
         // the same `info`; the filter stays above so the rejection is unchanged.
-        let (ctor_uparams, ctor_ty0) = match crate::env_model::get_declar_info_ty(
-            self.env,
-            &all_ctor_names[0],
-        ) {
-            Some(t) => t,
-            None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
-        };
+        let (ctor_uparams, ctor_ty0) = crate::env_model::get_declar_info_ty(self.env, &all_ctor_names[0]).unwrap();
         // VERUS-REWRITE(tested-env): as in `infer_const`.
-        crate::util::kernel_check(
-            !self.ctx.has_fvars(ctor_ty0) && self.ctx.num_loose_bvars(ctor_ty0) == 0,
-            "infer_proj: the constructor's type is not closed",
-        );
+        assert!(!self.ctx.has_fvars(ctor_ty0) && self.ctx.num_loose_bvars(ctor_ty0) == 0, "infer_proj: the constructor's type is not closed");
         // VERUS-REWRITE(hoisted-arity-check): the kernel panics on an arity
         // mismatch INSIDE `subst_expr_levels`; hoisting the same check here
         // re-establishes it one frame earlier, exactly as `infer_const` does.
         if self.ctx.read_levels(ctor_uparams).len() != self.ctx.read_levels(
             struct_ty_levels,
         ).len() {
-            return crate::util::kernel_fail(
-                "infer_proj: the constructor's universe arity does not match the structure's",
-            );
+            return panic!("infer_proj: the constructor's universe arity does not match the structure's");
         }
         let mut ctor_ty = self.ctx.subst_expr_levels(ctor_ty0, ctor_uparams, struct_ty_levels);
         let ghost ctm = to_model_expr(ctor_ty);
@@ -1781,10 +1734,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `num_params`, which nothing relates to the number of arguments the
         // structure's type was actually applied to. The original panics on the
         // index; this panics on the guard, with a message.
-        crate::util::kernel_check(
-            (*num_params as usize) <= struct_ty_args.len(),
-            "infer_proj: the structure's type has fewer arguments than the inductive has parameters",
-        );
+        assert!((*num_params as usize) <= struct_ty_args.len(), "infer_proj: the structure's type has fewer arguments than the inductive has parameters");
         let ghost mut H: nat = 0;
         // a ghost copy of the loop index: a `for` loop's own index cannot sit
         // inside a quantified invariant's trigger
@@ -1876,7 +1826,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         inst_closed(body, seq![a]);
                     }
                 },
-                _ => crate::util::kernel_fail("Ran out of param telescope"),
+                _ => panic!("Ran out of param telescope"),
             }
         }
         let ghost mut fi: int = 0;
@@ -1941,7 +1891,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             in_scope_of_deep_in(*self, binder_type, L);
                         }
                         if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-                            crate::util::kernel_fail("infer_proj prop")
+                            panic!("infer_proj prop")
                         }
                         let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
                         ctor_ty = self.ctx.inst(body, &[arg]);
@@ -1976,7 +1926,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         fi = fi + 1;
                     }
                 },
-                _ => crate::util::kernel_fail("Ran out of constructor telescope"),
+                _ => panic!("Ran out of constructor telescope"),
             }
         }
         proof {
@@ -1992,7 +1942,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     in_scope_of_deep_in(*self, binder_type, L);
                 }
                 if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
-                    crate::util::kernel_fail("infer_proj prop")
+                    panic!("infer_proj prop")
                 }
                 proof {
                     assert(crate::expr_model::nlbv(to_model_expr(binder_type)) <= 0);
@@ -2022,7 +1972,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 binder_type
             },
-            _ => crate::util::kernel_fail("Ran out of constructor telescope getting field"),
+            _ => panic!("Ran out of constructor telescope getting field"),
         }
     }
 
@@ -2067,7 +2017,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 binder_type
             },
-            Var { .. } => crate::util::kernel_fail("no loose bvars allowed in infer"),
+            Var { .. } => panic!("no loose bvars allowed in infer"),
             Sort { level, .. } => {
                 let r = self.infer_sort(level, flag);
                 proof {
@@ -2128,44 +2078,28 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 r
             },
             NatLit { .. } => {
-                crate::util::kernel_check(
-                    self.ctx.export_file.config.nat_extension_on(),
-                    "infer: nat literal without the nat extension enabled",
-                );
-                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. The
-                // `kernel_check` above tests the CONFIG FLAG; this tests
-                // whether the name is actually cached, which is a different
-                // condition, so the unwrap could genuinely fire. `infer`
-                // returns an `ExprPtr` with nothing to decline to.
-                match self.ctx.nat_type() {
-                    Some(t) => {
-                        proof {
-                            crate::expr_arena_bridge::is_const_shape_model(t);
-                            assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
-                            kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
-                        }
-                        t
-                    },
-                    None => crate::util::kernel_fail("infer: Nat is not in the environment"),
+                // VERUS-REWRITE(config-accessor): `config.nat_extension` is read
+                // through `nat_extension_on()` (`Config` is opaque).
+                assert!(self.ctx.export_file.config.nat_extension_on());
+                let t = self.ctx.nat_type().unwrap();
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(t);
+                    assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
+                    kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
                 }
+                t
             },
             StringLit { .. } => {
-                crate::util::kernel_check(
-                    self.ctx.export_file.config.string_extension_on(),
-                    "infer: string literal without the string extension enabled",
-                );
-                // VERUS-REWRITE(unchecked-unwrap): as the `NatLit` arm above.
-                match self.ctx.string_type() {
-                    Some(t) => {
-                        proof {
-                            crate::expr_arena_bridge::is_const_shape_model(t);
-                            assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
-                            kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
-                        }
-                        t
-                    },
-                    None => crate::util::kernel_fail("infer: String is not in the environment"),
+                // VERUS-REWRITE(config-accessor): `config.string_extension` is read
+                // through `string_extension_on()` (`Config` is opaque).
+                assert!(self.ctx.export_file.config.string_extension_on());
+                let t = self.ctx.string_type().unwrap();
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(t);
+                    assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
+                    kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
                 }
+                t
             },
         };
         match flag {
@@ -2404,7 +2338,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 crate::beta_model::subst_full_empty(to_model_expr(fun), 0);
                             }
                         },
-                        _ => crate::util::kernel_fail("infer_app: applied a non-function"),
+                        _ => panic!(),
                     }
                 },
             }
@@ -2524,10 +2458,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if let Check = flag {
                 self.infer_sort_of(binder_type, flag);
             }
-            crate::util::kernel_check(
-                self.ctx.dbj_level_counter < u16::MAX,
-                "infer_lambda: too many open de Bruijn levels",
-            );
+            assert!(self.ctx.dbj_level_counter < u16::MAX, "infer_lambda: too many open de Bruijn levels");
             let ghost live_k = self.live@;
             let ghost pre = locals@;
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
@@ -2706,7 +2637,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                     abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
                 },
-                _ => crate::util::kernel_fail("infer_lambda: binder type is not a sort"),
+                _ => panic!(),
             }
         }
         proof {
@@ -2808,10 +2739,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::owns_all_push(*self.ctx, universes@, dom_univ);
             }
             universes.push(dom_univ);
-            crate::util::kernel_check(
-                self.ctx.dbj_level_counter < u16::MAX,
-                "infer_pi: too many open de Bruijn levels",
-            );
+            assert!(self.ctx.dbj_level_counter < u16::MAX, "infer_pi: too many open de Bruijn levels");
             let ghost pre = locals@;
             let ghost live_k = self.live@;
             locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
@@ -2907,10 +2835,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(self.live@ =~= old(self).live@ + ids_of(locals@));
             }
         }
-        crate::util::kernel_check(
-            c0 == self.ctx.dbj_level_counter,
-            "infer_pi: de Bruijn level counter was left unbalanced",
-        );
+        assert!(c0 == self.ctx.dbj_level_counter, "infer_pi: de Bruijn level counter was left unbalanced");
         let r = self.ctx.mk_sort(infd);
         proof {
             assert(usn.subrange(0, n as int) =~= usn);
@@ -3206,10 +3131,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // release path below DROPS those arguments, returning
                 // `Sort u` for `(Sort u) x y`. The assertion is the author's,
                 // and this makes release enforce it rather than proceed.
-                crate::util::kernel_check(
-                    args.is_empty(),
-                    "whnf_no_unfolding_aux: a sort applied to arguments",
-                );
+                assert!(args.is_empty(), "whnf_no_unfolding_aux: a sort applied to arguments");
                 let level0 = level;
                 let level = self.ctx.simplify(level);
                 let r = self.ctx.mk_sort(level);
@@ -3392,13 +3314,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 (false, r)
             },
-            Var { .. } => crate::util::kernel_fail("Loose bvars are not allowed"),
+            Var { .. } => panic!("Loose bvars are not allowed"),
             Pi { .. } => {
                 // VERUS-REWRITE(debug-assert): as for the `Sort` arm above.
-                crate::util::kernel_check(
-                    args.is_empty(),
-                    "whnf_no_unfolding_aux: a pi applied to arguments",
-                );
+                assert!(args.is_empty(), "whnf_no_unfolding_aux: a pi applied to arguments");
                 proof {
                     whnf_claim_refl(*old(self).env, em0);
                     assert(to_model_expr(e_fun) == em0);
@@ -3406,7 +3325,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 (false, e_fun)
             },
-            App { .. } => crate::util::kernel_fail("whnf_no_unfolding_aux: unreduced application"),
+            App { .. } => panic!(),
             Local { .. } | NatLit { .. } | StringLit { .. } => {
                 let r = self.ctx.foldl_apps(e_fun, args.into_iter());
                 proof {
@@ -3451,10 +3370,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return Some(true)
         }
         if let (NatLit { .. }, NatLit { .. }) = (self.ctx.read_expr(x), self.ctx.read_expr(y)) {
-            crate::util::kernel_check(
-                self.ctx.export_file.config.nat_extension_on(),
-                "def_eq_nat: nat literal without the nat extension enabled",
-            );
+            assert!(self.ctx.export_file.config.nat_extension_on());
             proof {
                 if x == y {
                     kconv_refl(*old(self).env, to_model_expr(x));
@@ -3629,10 +3545,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 live_walk_inst(*self, old(self).live@, L, locals@, c0, t20, t2);
             }
             if self.def_eq(t1, t2) {
-                crate::util::kernel_check(
-                    self.ctx.dbj_level_counter < u16::MAX,
-                    "def_eq_binder_aux: too many open de Bruijn levels",
-                );
+                assert!(self.ctx.dbj_level_counter < u16::MAX, "def_eq_binder_aux: too many open de Bruijn levels");
                 let ghost pre = locals@;
                 let ghost live_k = self.live@;
                 proof {
@@ -3671,15 +3584,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 x = body1;
                 y = body2;
             } else {
-                // VERUS-REWRITE(unchecked-unwrap): was
-                // `u16::try_from(locals.len()).unwrap()`. More than 65535 open
-                // binders would panic; declining is what the `Option` return
-                // already provides for.
-                let opened = match u16::try_from(locals.len()) {
-                    Ok(n) => n,
-                    Err(_) => return None,
-                };
-                self.ctx.dbj_level_counter -= opened;
+                self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
                 self.live = Ghost(self.live@.subrange(0, self.ctx.dbj_level_counter as int));
                 proof {
                     assert(self.live@ =~= old(self).live@);
@@ -3701,13 +3606,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 binder_walk_close(*old(self).env, b1s, b2s, t1s, t2s, locals@, c0);
             }
         }
-        // VERUS-REWRITE(unchecked-unwrap): same narrowing as above, on the
-        // normal exit path.
-        let opened = match u16::try_from(locals.len()) {
-            Ok(n) => n,
-            Err(_) => return None,
-        };
-        self.ctx.dbj_level_counter -= opened;
+        self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
         self.live = Ghost(self.live@.subrange(0, self.ctx.dbj_level_counter as int));
         proof {
             assert(self.live@ =~= old(self).live@);
@@ -3918,10 +3817,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
     {
-        crate::util::kernel_check(
-            self.def_eq(u, v),
-            "assert_def_eq: terms are not definitionally equal",
-        )
+        assert!(self.def_eq(u, v))
     }
 
     /// The ORIGINAL nanoda_lib decision procedure, verbatim (restored
@@ -4339,13 +4235,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 r
             },
             _ => {
-                // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. Same panic.
-                let ind_rec_name_prefix = match self.ctx.get_major_induct(rec) {
-                    Some(n) => n,
-                    None => crate::util::kernel_fail(
-                        "reduce_rec: recursor has no major premise inductive",
-                    ),
-                };
+                let ind_rec_name_prefix = self.ctx.get_major_induct(rec).unwrap();
                 let r = self.iota_try_eta_struct(ind_rec_name_prefix, major2);
                 proof {
                     scope_pres_in_scope(*self, major2, r);
@@ -4376,10 +4266,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // equal to the number of parameters in the recursor when we have
         // nested inductive types.
         let num_extra_params_to_major =
-            // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()` on the
-        // `checked_sub`, which underflows when a constructor supplies
-        // fewer arguments than its telescope claims. `?` declines instead.
-        major_ctor_args.len().checked_sub(rec_rule.ctor_telescope_size_wo_params as usize)?;
+            major_ctor_args.len().checked_sub(rec_rule.ctor_telescope_size_wo_params as usize).unwrap();
         let ghost mca = major_ctor_args@;
         let major_ctor_args_wo_params = major_ctor_args.into_iter().skip(
             num_extra_params_to_major,
@@ -4593,7 +4480,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let f = args.get(3).copied()?;
         let appd = match self.ctx.read_expr(qmk) {
             App { arg, .. } => self.ctx.mk_app(f, arg),
-            _ => crate::util::kernel_fail("Quot iota"),
+            _ => panic!("Quot iota"),
         };
         let ghost argv = args@;
         let rest = args.iter().copied().skip(rest_idx);
@@ -4663,11 +4550,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
-        // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. Same panic.
-        let unfolded = match self.unfold_def(e) {
-            Some(u) => u,
-            None => crate::util::kernel_fail("delta: expression is not an unfoldable definition"),
-        };
+        let unfolded = self.unfold_def(e).unwrap();
         proof {
             // one delta step, as in `whnf`'s loop
             if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
@@ -4835,7 +4718,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.failure_cache_insert(x, y);
                         None
                     },
-                    _ => crate::util::kernel_fail("try_eq_const_app: expected a constant head"),
+                    _ => panic!(),
                 }
             },
             _ => None,
@@ -5146,7 +5029,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.is_zero(level), ty),
-            _ => crate::util::kernel_fail("expected a sort"),
+            _ => panic!("expected a sort"),
         }
     }
 
@@ -5168,7 +5051,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
             Sort { level, .. } => (self.ctx.may_be_prop(level), ty),
-            _ => crate::util::kernel_fail("expected a sort"),
+            _ => panic!("expected a sort"),
         }
     }
 
@@ -8992,10 +8875,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(result),
             result.env == env,
     {
-        crate::util::kernel_check(
-            dag.dbj_level_counter == 0,
-            "TypeChecker::new: de Bruijn level counter must start at zero",
-        );
+        assert!(dag.dbj_level_counter == 0, "TypeChecker::new: de Bruijn level counter must start at zero");
         route_stats::conv_fail_clear();
         let shadow_memo = crate::tc_model::WhnfMemo::new(env);
         let shadow_root_entry = 0u64;
@@ -9513,11 +9393,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Same lookup, same fields. The wrapper is what carries a contract, and
     /// the closure is one Verus cannot take anyway.
     ///
-    /// VERUS-REWRITE(assert-macro): the `assert!` becomes `kernel_check`.
-    ///
-    /// VERUS-REWRITE(diverging-panic): the `else` branch's `panic!` becomes
-    /// `kernel_fail`, because this function returns `ExprPtr` and has nothing
-    /// to decline to. Same abort, same message channel.
+    /// VERUS-REWRITE(panic-message): the `else` branch's `panic!` drops its
+    /// `{:?}` argument, which goes through the unverified debug printer. Same
+    /// abort.
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_const(
         &mut self,
@@ -9554,10 +9432,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some((d_uparams, d_ty)) => {
                 // VERUS-REWRITE(tested-env): a declaration's type is closed;
                 // the parser does not check it, so it is tested here.
-                crate::util::kernel_check(
-                    !self.ctx.has_fvars(d_ty) && self.ctx.num_loose_bvars(d_ty) == 0,
-                    "infer_const: the declaration's type is not closed",
-                );
+                assert!(!self.ctx.has_fvars(d_ty) && self.ctx.num_loose_bvars(d_ty) == 0, "infer_const: the declaration's type is not closed");
                 if let (Check, Some(this_declar_info)) = (flag, self.declar_info) {
                     let ls = self.ctx.read_levels(c_uparams);
                     let n = ls.len();
@@ -9572,10 +9447,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                             i <= n,
                         decreases n - i,
                     {
-                        crate::util::kernel_check(
-                            self.ctx.all_uparams_defined(ls[i], this_declar_info.uparams),
-                            "infer_const: constant's universe parameter is not declared",
-                        );
+                        assert!(self.ctx.all_uparams_defined(ls[i], this_declar_info.uparams));
                         i = i + 1;
                     }
                 }
@@ -9586,9 +9458,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // it: same condition, same abort, one frame earlier.
 
                 if self.ctx.read_levels(d_uparams).len() != self.ctx.read_levels(c_uparams).len() {
-                    return crate::util::kernel_fail(
-                        "infer_const: constant's universe arity does not match the declaration's",
-                    );
+                    return panic!("infer_const: constant's universe arity does not match the declaration's");
                 }
                 let r = self.ctx.subst_expr_levels(d_ty, d_uparams, c_uparams);
                 proof {
@@ -9610,7 +9480,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 r
             },
-            None => crate::util::kernel_fail("declaration not found in infer_const"),
+            None => panic!("declaration not found in infer_const"),
         }
     }
 
@@ -9668,11 +9538,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(n) => n,
             None => return None,
         };
-        // VERUS-REWRITE(unchecked-unwrap): was `.unwrap()`. A structure whose
-        // first constructor name is not registered as a constructor would panic.
-        // Well-formed environments do not do that, and nothing in the code says
-        // so; declining is what the `Option` return is for.
-        let ConstructorData { num_params, num_fields, .. } = self.env.get_constructor(&ctor_name0)?;
+        let ConstructorData { num_params, num_fields, .. } = self.env.get_constructor(&ctor_name0).unwrap();
         // VERUS-REWRITE(tested-env): as in `infer_proj`, two consistency checks
         // that never fail on a well-formed environment: the structure's
         // constructor is the one the environment model records, and so is its
@@ -10207,13 +10073,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
     {
         if let (Check, Some(declar_info)) = (flag, self.declar_info) {
-            // VERUS-REWRITE(assert-macro): was `assert!(..)`. Same check, same
-            // abort; see `kernel_check`'s note for why the macro cannot be
-            // written inside `verus!`.
-            crate::util::kernel_check(
-                self.ctx.all_uparams_defined(l, declar_info.uparams),
-                "infer_sort: level mentions an undeclared universe parameter",
-            );
+            assert!(self.ctx.all_uparams_defined(l, declar_info.uparams))
         }
         let out = self.ctx.succ(l);
         self.ctx.mk_sort(out)

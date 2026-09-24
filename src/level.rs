@@ -535,7 +535,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 // VERUS-REWRITE(level-ceiling): `diff - 1` panics on overflow
                 // (the crate builds with overflow checks); the same panic,
                 // made explicit.
-                crate::util::kernel_check(diff > isize::MIN, "leq: level offset overflow");
+                assert!(diff > isize::MIN, "leq: level offset overflow");
                 let res = self.leq_core(s, r_in, diff - 1);
                 proof {
                     assert(forall|rho: Map<nat, nat>| #[trigger]
@@ -549,7 +549,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     crate::level_model::leq_measure_succ_right(to_model(l_in), to_model(s));
                 }
                 // VERUS-REWRITE(level-ceiling): as above, for `diff + 1`.
-                crate::util::kernel_check(diff < isize::MAX, "leq: level offset overflow");
+                assert!(diff < isize::MAX, "leq: level offset overflow");
                 let res = self.leq_core(l_in, s, diff + 1);
                 proof {
                     assert(forall|rho: Map<nat, nat>| #[trigger]

@@ -1604,65 +1604,6 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The kernel's runtime REJECTION checks -- `assert!(..)` / `panic!(..)` on a
-/// malformed declaration -- cannot be written inside `verus!` directly: Verus
-/// specifies `panic!` with `requires false`, so a panic has to be proven
-/// UNREACHABLE. The kernel's are not unreachable and never will be; aborting on
-/// a bad declaration is the whole point of them.
-///
-/// This wrapper is `external_body` so Verus does not look inside, and it states
-/// NOTHING -- no `ensures`, so nothing about it is assumed and it adds no trust
-/// claim (the trust-surface count tracks `assume_specification` and
-/// `external_body` PROOF fns; this is an exec fn that promises nothing). The
-/// surrounding code is still verified line by line; this just performs the
-/// kernel's own check at run time, exactly as the `assert!` did.
-///
-/// Verus treats it as possibly returning normally, which is the conservative
-/// reading: everything after the call still has to verify without assuming the
-/// check passed.
-/// The diverging counterpart of `kernel_check`, for a rejection path in a
-/// function that does NOT return `Option` and so has nothing to decline to.
-/// `infer_const` is the first: it returns an `ExprPtr`, and a missing
-/// declaration leaves it nothing to return.
-///
-/// `external_body` and claim-free like `kernel_check`. Verus treats the result
-/// as an arbitrary `T` it knows nothing about, which is the conservative
-/// reading -- any postcondition would have to hold for that arbitrary value, so
-/// this cannot be used to smuggle a fact in. At run time it panics exactly as
-/// the original `panic!` did.
-#[verifier::external_body]
-pub fn kernel_fail<T>(msg: &str) -> (result:
-    T)
-// It DOES NOT RETURN -- the body is a bare `panic!`. Saying so is what makes
-// it usable in a function that has a contract: without it the caller must
-// prove its own postcondition for the arbitrary `T` this appears to hand
-// back, which is impossible and has nothing to do with the panic path.
-//
-// This is a claim, and a small one: it is checkable by reading the three
-// lines below. The alternative is that every function containing a
-// rejection path has to go contract-free.
-
-    ensures
-        false,
-{
-    panic!("{}", msg)
-}
-
-/// The same claim as `kernel_fail`'s `ensures false`, and checkable the same
-/// way -- by reading the three lines below. Without it this was claim-free:
-/// 21 rejection sites went through a function that told the verifier nothing,
-/// so a guard written to establish a fact established nothing and the fact had
-/// to be assumed somewhere else instead.
-#[verifier::external_body]
-pub fn kernel_check(cond: bool, msg: &str)
-    ensures
-        cond,
-{
-    if !cond {
-        panic!("{}", msg)
-    }
-}
-
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified AS WRITTEN -- body unchanged, and its denotation contract is
     /// now DERIVED from `alloc_expr`'s storage primitive rather than assumed.

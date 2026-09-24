@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **29 rewrites across 25 functions.**
+Current: **70 marked rewrites across 48 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -145,6 +145,8 @@ Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 | `eq_antisymm_many` | `src/level.rs` |
 | `str_lit_to_ctor_reducing` | `src/tc.rs` |
 | `abstr_aux` (`.map` only) | `src/expr.rs` |
+| `def_eq_app` | `src/tc.rs` |
+| `args_def_eq_rev` | `src/tc.rs` |
 
 Rejected outright, and the message is explicit:
 
@@ -190,6 +192,11 @@ needed a different shape.
 | `get_rec_rule` | `src/tc.rs` | `for r in rec_rules.iter().copied()` → the same front-to-back scan by index, so the invariant can say no earlier rule matched (the contract names the FIRST matching rule, which is the model's `find_rule`) |
 | `get_applied_def` | `src/tc.rs` | the two `get_declar` lookups → `env_model::get_declar_hint`, which is literally that match and carries the name claim |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
+| `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
+| `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
+| `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
+| `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
+| `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
 The bodies are the kernel's; what changed is where results are bound.
@@ -205,16 +212,14 @@ still a rejection — but each is an improvement.
 | function | file | was |
 |---|---|---|
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so) |
-| `def_eq_binder_aux` | `src/tc.rs` | `u16::try_from(locals.len()).unwrap()` twice — more than 65535 open binders panics |
-| `infer` | `src/tc.rs` | `nat_type()`/`string_type()` `.unwrap()` — the guard above them tests the CONFIG FLAG, not whether the name is cached, so these could genuinely fire |
+| `reduce_proj` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
 | `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's |
 | `to_ctor_when_k` | `src/tc.rs` | K-like replacement additionally tests that the major premise's type is a proposition (`is_prop`) — the kernel relies on K-like recursors existing only for `Prop` inductives, which is what makes the swap a proof-irrelevance step; never fails on a well-formed environment, costs one inference when K fires |
 | `def_eq_unit`, `try_eta_struct_aux` | `src/tc.rs` | the structure's constructor and its field count tested against the environment model's records, as in `infer_proj` (decline otherwise; never fails on a well-formed environment) |
 | `expand_eta_struct_aux` | `src/tc.rs` | two consistency checks on the environment, as in `infer_proj`, never failing on a well-formed one: the structure's constructor is the one the environment model records, and so is the constructor's field count (declines otherwise) |
 | `reduce_rec` | `src/tc.rs` | the recursor's parameters, motives and minor premises are TESTED to precede its major premise (declines otherwise) — true of every well-formed recursor, and the rule instance's argument prefix assumes it |
 | `reduce_rec` | `src/tc.rs` | a recursor rule's right-hand side with loose de Bruijn indices was used as is; it is now TESTED closed (`num_loose_bvars == 0`, beside the existing `has_fvars` test) and declined otherwise — a well-formed rule is closed |
-| `reduce_rec` | `src/tc.rs` | `checked_sub(..).unwrap()` — underflows when a constructor supplies fewer arguments than its telescope claims |
-| `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |
+| `expand_eta_struct_aux` | `src/tc.rs` | an unguarded index |
 | `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
 | `mk_majors` | `src/inductive.rs` | a major premise's type is TESTED closed (`num_loose_bvars == 0`) before `mk_unique`, which now requires it: `local_type_wf` states every local's type is closed, and without the requirement verified code could create one that is not and refute it. The type is the inductive applied to locals, so the check never fails on a well-formed declaration |
 | `infer_const` | `src/tc.rs` | the declaration's type is TESTED closed (`!has_fvars`, `num_loose_bvars == 0`; `kernel_check`) — the export parser does not check it, and `get_declar_info_ty`'s specification used to claim it, which a malformed export refutes. Never fails on a well-formed export |
@@ -228,24 +233,20 @@ still a rejection — but each is an improvement.
 
 ---
 
-## 5. `panic!` and `assert!` on rejection paths
+## 5. `panic!` and `assert!` on rejection paths — CLOSED (fork `4d9e23468`)
 
-`infer_sort`, `infer_const`, and all 21 sites in the 46-function `def_eq`
-cycle, now routed through `util::kernel_check` / `util::kernel_fail`; also
-`nat_lit_to_constructor`'s `assert!` and its three `.unwrap()`s (which keep
-their panics and gain messages).
+The kernel's panics are rejections, not bugs, and vstd specified every panic
+as `requires false`. They used to be routed through two trusted helpers,
+`util::kernel_check` / `util::kernel_fail`. nanoda now builds vstd with its
+`allow_panic` feature, under which (fork `4d9e23468`) `panic!`, `assert!`,
+`assert_eq!` and `Option`/`Result` `unwrap`/`expect` may be reached and do
+not return. The original `panic!`/`assert!`/`.unwrap()` text is back at
+every rejection site, and both helpers are deleted.
 
-This one is **by design and will not change**. vstd specifies
-`core::panicking::panic` with `requires false` — deliberately, because a panic
-is normally a bug to prove unreachable. Nanoda's panics are *rejections*, so
-they need an adapter that declares divergence instead. `kernel_fail` has
-`ensures false`; `kernel_check(cond, msg)` panics when `cond` is false.
-
-Original message text is preserved verbatim at every site: a panic message is
-observable behaviour, and `src/tests/util.rs` has a `#[should_panic(expected =
-..)]` that depends on one.
-
----
+What the feature costs: any panic in the crate now counts as a rejection
+rather than a verification error. The checks this project ADDED (overflow
+points, closedness and environment-consistency tests) are plain `assert!` /
+`panic!` with messages, and are registered under section 4.
 
 ## Retesting
 

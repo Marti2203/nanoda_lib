@@ -872,21 +872,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 None => true,
             },
     {
-        // VERUS-REWRITE(assert-macro): was `assert!(self.export_file.config.nat_extension)`.
-        // Same check, same abort; the field is read through its accessor
-        // because `Config` is opaque to Verus.
-        crate::util::kernel_check(
-            self.export_file.config.nat_extension_on(),
-            "nat_lit_to_constructor: nat literal without the nat extension enabled",
-        );
+        // VERUS-REWRITE(config-accessor): the field is read through its
+        // accessor because `Config` is opaque to Verus.
+        assert!(self.export_file.config.nat_extension_on());
         // VERUS-REWRITE(accessor-swap): was `self.read_bignum(n).unwrap()`;
         // `read_bignum_value` is `read_bignum(..).cloned()`, and says which
-        // number it read. The unwrap keeps its panic, with a message. The
-        // binding is renamed from `n`, which the contract uses for the pointer.
-        let nv = match crate::expr_arena_bridge::read_bignum_value(self, n) {
-            Some(v) => v,
-            None => crate::util::kernel_fail("nat_lit_to_constructor: literal not in the bignum store"),
-        };
+        // number it read. The binding is renamed from `n`, which the contract
+        // uses for the pointer.
+        let nv = crate::expr_arena_bridge::read_bignum_value(self, n).unwrap();
         // VERUS-REWRITE(wrapper-swap): `n.is_zero()` is `biguint_is_zero`.
         if crate::nat_lit_model::biguint_is_zero(&nv) {
             let r = self.c_nat_zero();
@@ -912,15 +905,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             r
         } else {
             // VERUS-REWRITE(wrapper-swap): `core::ops::Sub::sub(n, 1u8)` is
-            // `biguint_pred`. Both unwraps keep their panics, with messages.
-            let pred = match self.alloc_bignum(crate::nat_lit_model::biguint_pred(nv)) {
-                Some(p) => p,
-                None => crate::util::kernel_fail("nat_lit_to_constructor: could not store the predecessor"),
-            };
-            let pred = match self.mk_nat_lit(pred) {
-                Some(p) => p,
-                None => crate::util::kernel_fail("nat_lit_to_constructor: could not build the predecessor"),
-            };
+            // `biguint_pred`.
+            let pred = self.alloc_bignum(crate::nat_lit_model::biguint_pred(nv)).unwrap();
+            let pred = self.mk_nat_lit(pred).unwrap();
             let succ_c = self.c_nat_succ()?;
             proof {
                 crate::expr_arena_bridge::is_const_shape_model(succ_c);
@@ -1913,10 +1900,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
                     // (this crate builds with overflow checks); the same panic,
                     // made explicit so the result can carry `levels_fit`.
-                    crate::util::kernel_check(
-                        num_open_binders < u16::MAX,
-                        "abstr_levels: too many open de Bruijn levels",
-                    );
+                    assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),
@@ -1945,10 +1929,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
                     // (this crate builds with overflow checks); the same panic,
                     // made explicit so the result can carry `levels_fit`.
-                    crate::util::kernel_check(
-                        num_open_binders < u16::MAX,
-                        "abstr_levels: too many open de Bruijn levels",
-                    );
+                    assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),
@@ -1977,10 +1958,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     // VERUS-REWRITE(level-ceiling): the `+ 1` panics on overflow
                     // (this crate builds with overflow checks); the same panic,
                     // made explicit so the result can carry `levels_fit`.
-                    crate::util::kernel_check(
-                        num_open_binders < u16::MAX,
-                        "abstr_levels: too many open de Bruijn levels",
-                    );
+                    assert!(num_open_binders < u16::MAX, "abstr_levels: too many open de Bruijn levels");
                     proof {
                         crate::expr_model::dbj_serials_below_mono(
                             crate::expr_arena_bridge::to_model(body),
@@ -2193,10 +2171,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         // overflow (overflow checks are on); checked here, and
                         // `u16::MAX` itself is excluded as it is for every
                         // stored `Var` (its loose-variable count would not fit).
-                        crate::util::kernel_check(
-                            offset < u16::MAX - (pos as u16),
-                            "abstr: de Bruijn index overflow",
-                        );
+                        assert!(offset < u16::MAX - (pos as u16), "abstr: de Bruijn index overflow");
                         let res = self.mk_var((pos as u16) + offset);
                         proof {
                             assert(crate::expr_arena_bridge::to_model(res)
@@ -2284,7 +2259,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
                     // overflow; the same check, explicit.
-                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
+                    assert!(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_pi(binder_name, binder_style, binder_type2, body2);
                     proof {
@@ -2323,7 +2298,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let binder_type2 = self.abstr_aux(binder_type, locals, offset);
                     // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
                     // overflow; the same check, explicit.
-                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
+                    assert!(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_lambda(binder_name, binder_style, binder_type2, body2);
                     proof {
@@ -2370,7 +2345,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     let val2 = self.abstr_aux(val, locals, offset);
                     // VERUS-REWRITE(level-ceiling): `offset + 1` panics on
                     // overflow; the same check, explicit.
-                    crate::util::kernel_check(offset < u16::MAX, "abstr: binder depth overflow");
+                    assert!(offset < u16::MAX, "abstr: binder depth overflow");
                     let body2 = self.abstr_aux(body, locals, offset + 1);
                     let res = self.mk_let(binder_name, binder_type2, val2, body2, nondep);
                     proof {

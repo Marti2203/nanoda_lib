@@ -2125,9 +2125,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let hit = self.ctx.contains_param(st.uparams, candidate);
             if hit {
                 if i == u64::MAX {
-                    return crate::util::kernel_fail(
-                        "gen_elim_level: u64 exhausted generating a fresh universe name",
-                    );
+                    return panic!("gen_elim_level: u64 exhausted generating a fresh universe name");
                 }
                 i += 1;
             } else {
@@ -2155,7 +2153,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let n = st.ind_consts.len();
         if st.local_indices.len() < n {
-            crate::util::kernel_check(false, "mk_majors: local_indices is shorter than ind_consts");
+            panic!("mk_majors: local_indices is shorter than ind_consts");
             return
         }
         let mut idx: usize = 0;
@@ -2177,10 +2175,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // inductive applied to locals, so it is closed; `mk_unique`
             // requires it (every local's type is). Never fails on a
             // well-formed declaration.
-            crate::util::kernel_check(
-                self.ctx.num_loose_bvars(ty) == 0,
-                "mk_majors: a major premise's type has loose bound variables",
-            );
+            assert!(self.ctx.num_loose_bvars(ty) == 0, "mk_majors: a major premise's type has loose bound variables");
             st.majors.push(self.ctx.mk_unique(t, BinderStyle::Default, ty));
             idx = idx + 1;
         }
