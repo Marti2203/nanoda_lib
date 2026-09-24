@@ -276,14 +276,10 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::get_declar_val ](
                 && to_model_of_env(*env)[name_id(*n)] == (
                 level_names(to_model_of_levels(uparams)),
                 expr_to_model(val),
-            ) && nlbv(expr_to_model(val))
-                == 0
-            // A top-level declaration's stored value is CLOSED in the
-            // free-variable sense too, not just the loose-de-Bruijn sense.
-            // Local constants exist only while a declaration is being checked;
-            // nothing that survives into the environment can mention one.
-            // `nlbv == 0` above is the de Bruijn half and does NOT imply this.
-             && !has_fv(expr_to_model(val)) && forall|j: int|
+            // (A well-formed declaration's value is closed, but the export
+            // parser does not check it, so it is not claimed here: users test
+            // the node's cached flags.)
+            ) && forall|j: int|
                 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
                     uparams,
                 )[j] is Param,
@@ -449,13 +445,8 @@ pub assume_specification<'x, 'a>[ get_declar_info_ty ](
                 && to_model_of_declar_ty(*env)[name_id(*n)] == (
                 level_names(to_model_of_levels(uparams)),
                 expr_to_model(ty),
-            ) && nlbv(expr_to_model(ty))
-                == 0
-            // Closed in the free-variable sense too, for the same reason
-            // `get_declar_val` is: local constants exist only while a
-            // declaration is being checked, so a stored TYPE cannot mention one.
-            // `nlbv == 0` above is the de Bruijn half and does not imply this.
-             && !has_fv(expr_to_model(ty)) && forall|j: int|
+            // (Closedness is not claimed, as for `get_declar_val`.)
+            ) && forall|j: int|
                 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
                     uparams,
                 )[j] is Param,

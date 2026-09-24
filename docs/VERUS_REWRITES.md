@@ -217,6 +217,9 @@ still a rejection — but each is an improvement.
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |
 | `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
 | `mk_majors` | `src/inductive.rs` | a major premise's type is TESTED closed (`num_loose_bvars == 0`) before `mk_unique`, which now requires it: `local_type_wf` states every local's type is closed, and without the requirement verified code could create one that is not and refute it. The type is the inductive applied to locals, so the check never fails on a well-formed declaration |
+| `infer_const` | `src/tc.rs` | the declaration's type is TESTED closed (`!has_fvars`, `num_loose_bvars == 0`; `kernel_check`) — the export parser does not check it, and `get_declar_info_ty`'s specification used to claim it, which a malformed export refutes. Never fails on a well-formed export |
+| `infer_proj` | `src/tc.rs` | the same closedness test on the structure constructor's type |
+| `unfold_def` | `src/tc.rs` | a declaration value that is not closed is not unfolded (declines) — same reason, for `get_declar_val`'s former claim. Never true of a well-formed export |
 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` (panics at `u64::MAX` -- the crate builds with overflow checks) |
 | `abstr_aux` | `src/expr.rs` | `offset + 1` under a binder and the index sum `pos + offset` panic on `u16` overflow (overflow checks are on); both made explicit (the index check also excludes `u16::MAX` itself, which no stored `Var` may hold). With `inst` needing no depth bound at all, this is what retired the arena axiom `depth < 60000` (refutable by allocating a deep term) |
 | `leq_core` | `src/level.rs` | `diff - 1` / `diff + 1` in the `Succ` arms panic on `isize` overflow (overflow checks are on); the same checks are made explicit, which is what replaced the arena axiom bounding `leq_measure` (refutable by allocating ~500M nested levels) |

@@ -1691,6 +1691,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(t) => t,
             None => crate::util::kernel_fail("infer_proj: the structure has no constructor"),
         };
+        // VERUS-REWRITE(tested-env): as in `infer_const`.
+        crate::util::kernel_check(
+            !self.ctx.has_fvars(ctor_ty0) && self.ctx.num_loose_bvars(ctor_ty0) == 0,
+            "infer_proj: the constructor's type is not closed",
+        );
         // VERUS-REWRITE(hoisted-arity-check): the kernel panics on an arity
         // mismatch INSIDE `subst_expr_levels`; hoisting the same check here
         // re-establishes it one frame earlier, exactly as `infer_const` does.
@@ -1944,7 +1949,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let f2: nat = if m1 >= m2 { m1 } else { m2 };
                     crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, f2);
                     crate::tc_model::proj_field_type_final_p(dty, denv, lctx, true, f2, cur, bt_r, body_r, am.skip(np as int), idx, s_m);
-                    assert(idx - idx == 0);
+                    assert(fi == idx as int);
+                    assert(fi as usize == idx && (idx - fi) as nat == 0);
+                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, f2, cur, am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, btm));
                     assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, f2, ctm, am, np as nat, 0, idx as nat, s_m, btm));
                     crate::tc_model::types_to_mono(dty, denv, lctx, true, s_m, Ts, fs, f2);
                     crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ts, to_model_expr(structure_ty), hs, f2);
@@ -9256,6 +9263,12 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         match crate::env_model::get_declar_info_ty(self.env, &c_name) {
             Some((d_uparams, d_ty)) => {
+                // VERUS-REWRITE(tested-env): a declaration's type is closed;
+                // the parser does not check it, so it is tested here.
+                crate::util::kernel_check(
+                    !self.ctx.has_fvars(d_ty) && self.ctx.num_loose_bvars(d_ty) == 0,
+                    "infer_const: the declaration's type is not closed",
+                );
                 if let (Check, Some(this_declar_info)) = (flag, self.declar_info) {
                     let ls = self.ctx.read_levels(c_uparams);
                     let n = ls.len();
@@ -9624,6 +9637,13 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let (name, levels) = self.ctx.try_const_info(fun)?;
         let (def_uparams, def_value) = self.env.get_declar_val(&name)?;
+        // VERUS-REWRITE(tested-env): a declaration's value is closed, but the
+        // export parser does not check it, so it is tested (the node caches
+        // both flags); an open value is not unfolded. Never true of a
+        // well-formed export.
+        if self.ctx.has_fvars(def_value) || self.ctx.num_loose_bvars(def_value) != 0 {
+            return None
+        }
         if self.ctx.read_levels(levels).len() == self.ctx.read_levels(def_uparams).len() {
             let def_val = self.ctx.subst_expr_levels(def_value, def_uparams, levels);
             let ghost id = crate::level_arena_bridge::name_id(name);

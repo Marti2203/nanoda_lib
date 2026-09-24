@@ -1191,27 +1191,6 @@ pub ghost struct RecDataSpec {
 
 pub uninterp spec fn rec_data_of(id: u64) -> Option<RecDataSpec>;
 
-/// Disclosed trust: every recursor rule's right-hand side is a CLOSED
-/// term (no loose bound variables, no free variables) with no string
-/// literals -- a Lean export's rule values are generated closed lambda
-/// abstractions over the rule's telescope.
-/// The rule's SIZE is deliberately NOT trusted here: `rec_ready` gates
-/// firing on `size(rhs) <= 500` and producers check it at run time.
-#[verifier::external_body]
-pub proof fn rec_rule_rhs_wf(id: u64, i: int)
-    requires
-        rec_data_of(id) is Some,
-        0 <= i < rec_data_of(id)->Some_0.rules.len(),
-    ensures
-        nlbv(rec_data_of(id)->Some_0.rules[i].rhs) == 0,
-        !has_fv(rec_data_of(id)->Some_0.rules[i].rhs),
-        crate::beta_model::string_free(rec_data_of(id)->Some_0.rules[i].rhs),
-        // A rule value abstracts at least the motive: a lambda.
-        rec_data_of(id)->Some_0.rules[i].rhs is Bind,
-        // A rule's constructor id IS a constructor (one declaration per name).
-        ctor_num_params_of(rec_data_of(id)->Some_0.rules[i].ctor_id) is Some,
-{
-}
 
 /// `e` is SOME representation of `Nat` zero -- reused by `verified_def_
 /// eq_nat` (`tc_model.rs`) so it doesn't have to restate this disjunction
@@ -1473,6 +1452,86 @@ pub fn verified_fv_absent<'t, 'p: 't>(
 
 
 
+
+/// `Some(true)` certifies the term contains no string literal
+/// (`string_free`), by the same walk as `verified_fv_absent`.
+pub fn verified_string_free<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32) -> (result: Option<bool>)
+    ensures
+        result == Some(true) ==> crate::beta_model::string_free(to_model(e)),
+    decreases fuel,
+{
+    if fuel == 0 {
+        return None;
+    }
+    let el = ctx.read_expr(e);
+    if let Some((f, a)) = expr_as_app(&el) {
+        if verified_string_free(ctx, f, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_string_free(ctx, a, fuel - 1) != Some(true) {
+            return None;
+        }
+        return Some(true);
+    }
+    if let Some((_, _, ty, body)) = expr_as_pi(&el) {
+        if verified_string_free(ctx, ty, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_string_free(ctx, body, fuel - 1) != Some(true) {
+            return None;
+        }
+        return Some(true);
+    }
+    if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
+        if verified_string_free(ctx, ty, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_string_free(ctx, body, fuel - 1) != Some(true) {
+            return None;
+        }
+        return Some(true);
+    }
+    if let Some((_, ty, v, body, _)) = expr_as_let(&el) {
+        if verified_string_free(ctx, ty, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_string_free(ctx, v, fuel - 1) != Some(true) {
+            return None;
+        }
+        if verified_string_free(ctx, body, fuel - 1) != Some(true) {
+            return None;
+        }
+        return Some(true);
+    }
+    if let Some((_, _, st)) = expr_as_proj(&el) {
+        if verified_string_free(ctx, st, fuel - 1) != Some(true) {
+            return None;
+        }
+        return Some(true);
+    }
+    if expr_as_var(&el).is_some() || expr_as_sort(&el).is_some() {
+        return Some(true);
+    }
+    if expr_is_const_shape(&el) {
+        proof {
+            is_const_shape_model(e);
+        }
+        return Some(true);
+    }
+    if expr_as_local(ctx, e).is_some() {
+        proof {
+            is_local_shape_model(e);
+        }
+        return Some(true);
+    }
+    if expr_as_nat_lit(ctx, e).is_some() {
+        proof {
+            is_nat_lit_shape_model(e);
+        }
+        return Some(true);
+    }
+    None
+}
 
 /// `p` is `e`'s `Nat` predecessor, under EITHER representation -- ditto.
 pub open spec fn nat_repr_pred<'a>(e: ExprPtr<'a>, p: ExprPtr<'a>) -> bool {

@@ -391,7 +391,7 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(
                     Some(v) => v,
                     None => return None,
                 };
-                if ctx.has_fvars(val) {
+                if ctx.has_fvars(val) || ctx.num_loose_bvars(val) != 0 {
                     return None;
                 }
                 proof {
@@ -414,7 +414,7 @@ pub fn verified_env_cap_scan<'t, 'p: 't, 'x>(
                 // Same check the value branch already does. The scan walked
                 // types for depth and `max_var_below` but never for free
                 // variables; `subst_expr_levels` needs exactly this.
-                if ctx.has_fvars(ty) {
+                if ctx.has_fvars(ty) || ctx.num_loose_bvars(ty) != 0 {
                     return None;
                 }
                 proof {

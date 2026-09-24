@@ -103,7 +103,7 @@ use crate::expr_arena_bridge::{
 };
 use crate::expr_arena_bridge::{
     expr_as_nat_lit, read_bignum_value, verified_foldl_apps, verified_nat_lit_to_constructor,
-    verified_subst_expr_levels, verified_whnf_no_unfolding_step,
+    verified_string_free, verified_subst_expr_levels, verified_whnf_no_unfolding_step,
 };
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{is_local_shape, local_binder_type_of, local_id_of};
@@ -324,6 +324,9 @@ pub fn verified_unfold_def_step_free<'t, 'p: 't, 'x>(
         Some(p) => p,
         None => return None,
     };
+    if ctx.num_loose_bvars(def_value) != 0 {
+        return None;
+    }
     // Per-definition certification. One test, not two: `!has_fv` is what the
     // model actually requires. The size ceiling that used to stand beside it
     // bought no coverage (measured 2026-09-13: lifting it leaves every corpus
@@ -594,6 +597,13 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             rec_stat(54);
             return None;
         }
+    }
+    // The export's rule rhs is taken as given by the parser; the rule fires
+    // only where it is a closed, string-free lambda for a real constructor.
+    if ctx.num_loose_bvars(rhs) != 0 || ctx.has_fvars(rhs) || expr_as_lambda(&ctx.read_expr(rhs)).is_none()
+        || verified_string_free(ctx, rhs, 100000) != Some(true) || get_constructor_num_params(env, &cname).is_none() {
+        rec_stat(62);
+        return None;
     }
     let uv = read_levels_vec(ctx, uparams);
     let lvv = read_levels_vec(ctx, rlevels);
@@ -8202,6 +8212,9 @@ pub fn verified_infer_const<'t, 'p: 't, 'x>(
         Some(p) => p,
         None => return None,
     };
+    if ctx.has_fvars(ty) || ctx.num_loose_bvars(ty) != 0 {
+        return None;
+    }
     let uparams_vec = read_levels_vec(ctx, uparams);
     let c_uparams_vec = read_levels_vec(ctx, c_uparams);
     if uparams_vec.len() != c_uparams_vec.len() {

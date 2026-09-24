@@ -709,6 +709,14 @@ pub open spec fn nat_fold_result(s: ExprSpec) -> ExprSpec {
     }
 }
 
+pub open spec fn rule_rhs_ok(rule: RecRuleSpec) -> bool {
+    &&& nlbv(rule.rhs) == 0
+    &&& !crate::expr_model::has_fv(rule.rhs)
+    &&& string_free(rule.rhs)
+    &&& rule.rhs is Bind
+    &&& crate::expr_arena_bridge::ctor_num_params_of(rule.ctor_id) is Some
+}
+
 pub open spec fn rec_ready(s: ExprSpec) -> bool {
     match spine_head(s) {
         ExprSpec::Const(rid, lv) => match rec_data_of(rid) {
@@ -723,6 +731,12 @@ pub open spec fn rec_ready(s: ExprSpec) -> bool {
                                 let rule = rd.rules[ri];
                                 rule.nfields <= spine_args(major).len() && spine_args(major).len()
                                     <= 64 && size(rule.rhs) <= 500
+                                // the rule's right-hand side is well formed
+                                // (closed, a lambda, no string literals) and
+                                // its constructor is one -- facts about the
+                                // export the parser does not check, so the
+                                // rule fires only where they hold
+                                 && rule_rhs_ok(rule)
                             },
                             None => false,
                         },
@@ -1008,7 +1022,6 @@ pub proof fn rec_unpack(s: ExprSpec) -> (r: (
     let ri = find_rule(rd.rules, cid)->Some_0;
     let rhs = rd.rules[ri].rhs;
     let body = crate::expr_model::subst_expr_levels(rhs, rd.uparams, lv);
-    crate::expr_arena_bridge::rec_rule_rhs_wf(rid, ri);
     crate::expr_model::subst_expr_levels_sat_rel(rhs, rd.uparams, lv);
     subst_expr_levels_rel_nlbv(rhs, rd.uparams, lv, body);
     subst_expr_levels_rel_size(rhs, rd.uparams, lv, body);
