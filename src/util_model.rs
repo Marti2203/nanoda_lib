@@ -272,34 +272,53 @@ pub open spec fn dm_is_tc(m: DagMarker) -> bool {
 // `Ptr<A>` is already registered `external_type_specification` (as `ExPtr<A>`)
 // in `level_arena_bridge.rs` -- re-registering it here would conflict, so
 // this file just adds more `assume_specification`s for its methods.
-// HASHING, registered so the kernel's `hash64!` macro is expressible inside
-// `verus!`. Every item here is CLAIM-FREE by design: the hash is a cache
-// field that no model function reads, so nothing about its value is needed --
-// only that the calls type-check. They exist to let the `mk_*` constructors
-// be verified in place, which retires their denotation axioms.
+// HASHING, so the kernel's `hash64!` macro is specified as written. A
+// hasher's state is modelled by the sequence of machine words written to it
+// (`hseq`), and `FxHasher::finish` is a function of that sequence
+// (`fx_finish`). That is exactly `rustc-hash` 1.1's `FxHasher` on a 64-bit
+// target: every integer write is one `add_to_hash(value as usize)`, and the
+// state is a fold over those words. `Ptr` hashes as `write_u64(raw)`; the
+// derived `BinderStyle` hash writes its discriminant, one word.
+//
+// What this buys is that a node's stored hash is a FUNCTION of its contents,
+// which is what makes the arena's hash-consing sound: `alloc_name` and
+// `alloc_level` require the canonical hash.
+pub uninterp spec fn hseq<H>(h: H) -> Seq<int>;
+
+pub uninterp spec fn fx_finish(s: Seq<int>) -> u64;
+
+pub uninterp spec fn binder_style_word(b: crate::expr::BinderStyle) -> int;
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExFxHasher(rustc_hash::FxHasher);
 
 pub assume_specification[ rustc_hash::FxHasher::default ]() -> (result: rustc_hash::FxHasher)
+    ensures
+        hseq(result) == Seq::<int>::empty(),
 ;
 
 pub assume_specification<H: core::hash::Hasher>[ <u64 as core::hash::Hash>::hash::<H> ](
     x: &u64,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(*x as int),
 ;
 
 pub assume_specification<H: core::hash::Hasher>[ <u16 as core::hash::Hash>::hash::<H> ](
     x: &u16,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(*x as int),
 ;
 
 pub assume_specification<A, H: core::hash::Hasher>[ <Ptr<A> as core::hash::Hash>::hash::<H> ](
     x: &Ptr<A>,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(x.raw as int),
 ;
 
 pub assume_specification<
@@ -308,23 +327,31 @@ pub assume_specification<
     x: &crate::expr::BinderStyle,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(binder_style_word(*x)),
 ;
 
 pub assume_specification<H: core::hash::Hasher>[ <bool as core::hash::Hash>::hash::<H> ](
     x: &bool,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(if *x { 1int } else { 0int }),
 ;
 
 pub assume_specification<H: core::hash::Hasher>[ <usize as core::hash::Hash>::hash::<H> ](
     x: &usize,
     state: &mut H,
 )
+    ensures
+        hseq(*final(state)) == hseq(*old(state)).push(*x as int),
 ;
 
 pub assume_specification[ <rustc_hash::FxHasher as core::hash::Hasher>::finish ](
     state: &rustc_hash::FxHasher,
 ) -> (result: u64)
+    ensures
+        result == fx_finish(hseq(*state)),
 ;
 
 /// Ghost counterpart to the real (exec) `Ptr::raw` accessor -- needed

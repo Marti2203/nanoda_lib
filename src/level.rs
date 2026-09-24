@@ -7,13 +7,13 @@ use crate::util::{LevelPtr, LevelsPtr, NamePtr, TcCtx};
 
 pub(crate) const ZERO_HASH: u64 = 283;
 
-pub(crate) const SUCC_HASH: u64 = 541;
+pub const SUCC_HASH: u64 = 541;
 
-pub(crate) const MAX_HASH: u64 = 1091;
+pub const MAX_HASH: u64 = 1091;
 
-pub(crate) const IMAX_HASH: u64 = 1747;
+pub const IMAX_HASH: u64 = 1747;
 
-pub(crate) const PARAM_HASH: u64 = 947;
+pub const PARAM_HASH: u64 = 947;
 
 } // verus!
 use Level::*;

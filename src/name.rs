@@ -8,9 +8,9 @@ use Name::*;
 
 pub(crate) const ANON_HASH: u64 = 43;
 
-pub(crate) const STR_HASH: u64 = 911;
+pub const STR_HASH: u64 = 911;
 
-pub(crate) const NUM_HASH: u64 = 103;
+pub const NUM_HASH: u64 = 103;
 
 } // verus!
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

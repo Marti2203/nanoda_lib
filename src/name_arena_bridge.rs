@@ -407,12 +407,29 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
     assert(ns.push(n)[i as int] == ns[i as int]);
 }
 
+/// The canonical hash of a name node: what `hash64!` computes from its
+/// contents. The arena compares nodes including this field, so it is what
+/// makes hash-consing (`to_model_name_injective`) hold.
+pub open spec fn name_hash_ok<'t>(n: Name<'t>) -> bool {
+    match n {
+        Name::Anon => true,
+        Name::Str(p, s, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::name::STR_HASH as int).push(p.raw as int).push(s.raw as int),
+        ),
+        Name::Num(p, k, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::name::NUM_HASH as int).push(p.raw as int).push(k as int),
+        ),
+    }
+}
+
 /// THE storage primitive for names -- the analogue of `alloc_expr`'s and
 /// `alloc_level`'s, justified the same way by `name_model_at_append` above.
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
     ctx: &mut TcCtx<'t, 'p>,
     n: Name<'t>,
 ) -> (result: NamePtr<'t>) where 'p: 't
+    requires
+        name_hash_ok(n),
     ensures
         to_model_name(result) == to_model_of_name(n),
         // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
@@ -447,7 +464,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
 /// where hash-consing enters, and it enters as an assumption.
 ///
 /// The `==>` direction is free (`to_model_name` is a function); the content is
-/// the converse.
+/// the converse. It holds because the arena compares whole nodes, hash
+/// included, and every node carries its CANONICAL hash: `alloc_name` requires
+/// `name_hash_ok`, which the constructors prove from `hash64!`'s
+/// specification, and the parser builds names with the same macro.
 #[verifier::external_body]
 pub proof fn to_model_name_injective<'a>(n1: NamePtr<'a>, n2: NamePtr<'a>)
     ensures

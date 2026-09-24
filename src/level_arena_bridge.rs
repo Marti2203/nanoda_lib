@@ -221,10 +221,32 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
 /// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
 /// justified the same way by `level_model_at_append` above. The constructor
 /// contracts below are derived from it rather than assumed.
+/// The canonical hash of a level node (see `name_hash_ok`): what makes the
+/// level arena's hash-consing (`level_ptr_eq_iff_same_model_param`) hold.
+pub open spec fn level_hash_ok<'t>(l: Level<'t>) -> bool {
+    match l {
+        Level::Zero => true,
+        Level::Succ(a, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::level::SUCC_HASH as int).push(a.raw as int),
+        ),
+        Level::Max(a, b, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::level::MAX_HASH as int).push(a.raw as int).push(b.raw as int),
+        ),
+        Level::IMax(a, b, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::level::IMAX_HASH as int).push(a.raw as int).push(b.raw as int),
+        ),
+        Level::Param(n, h) => h == crate::util_model::fx_finish(
+            Seq::<int>::empty().push(crate::level::PARAM_HASH as int).push(n.raw as int),
+        ),
+    }
+}
+
 pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_level ](
     ctx: &mut TcCtx<'t, 'p>,
     l: Level<'t>,
 ) -> (result: LevelPtr<'t>) where 'p: 't
+    requires
+        level_hash_ok(l),
     ensures
         to_model(result) == to_model_of_level(l),
         final(ctx).expr_cache == old(ctx).expr_cache,
