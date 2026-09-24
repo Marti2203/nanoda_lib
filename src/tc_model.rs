@@ -90,7 +90,7 @@ use crate::expr_arena_bridge::{
 };
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{
-    bool_true_arity_is_zero_any, nat_succ_arity_is_zero, nat_type_id, nat_zero_arity_is_zero, string_type_id,
+    nat_type_id, string_type_id,
 };
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{
@@ -1138,7 +1138,6 @@ pub fn verified_nat_fold_step_free<'t, 'p: 't, 'x>(
         assert(nat_fold_ready(sp));
         // the folded literal is r
         if op == 7 || op == 8 {
-            bool_true_arity_is_zero_any(r);
             is_const_shape_model(r);
             const_levels_vec_model(r);
             assert(to_model(r) == ExprSpec::Const(const_id(r), const_levels_vec(r)));
@@ -1206,7 +1205,6 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
         proof {
             is_const_shape_model(w);
             const_levels_vec_model(w);
-            nat_zero_arity_is_zero(w);
             assert(to_model(w) == ExprSpec::Const(const_id(w), const_levels_vec(w)));
             assert(const_levels_vec(w).len() == 0);
         }
@@ -1235,7 +1233,6 @@ pub fn verified_nat_operand_reduce_free<'t, 'p: 't, 'x>(
                         assert(to_model(f_exec) == to_model(fun));
                         is_const_shape_model(fun);
                         const_levels_vec_model(fun);
-                        nat_succ_arity_is_zero(fun);
                         assert(to_model(fun) == ExprSpec::Const(
                             nat_succ_id(),
                             const_levels_vec(fun),
@@ -2276,8 +2273,8 @@ pub open spec fn const_app_found_claim<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>, h: na
 /// A `nat_repr_pred(e, p)` pair's whole term is `deq_any`-related to the
 /// CANONICAL successor application `App(const_expr_no_levels(succ),
 /// to_model(p))`: exact equality for the real-`App` representation (its
-/// head pinned to the canonical form by `nat_succ_arity_is_zero` +
-/// `const_expr_no_levels_canonical`), one `pstep` (the `NatLit`
+/// head pinned to the canonical form by `nat_repr_pred`'s empty-levels
+/// clause + `const_expr_no_levels_canonical`), one `pstep` (the `NatLit`
 /// unfolding rule) for the literal representation. The connecting edge
 /// `verified_def_eq_nat`'s pred case needs on each side.
 pub proof fn nat_repr_pred_reaches_succ_app<'t>(
@@ -2300,11 +2297,10 @@ pub proof fn nat_repr_pred_reaches_succ_app<'t>(
     );
     if exists|fun: ExprPtr<'t>|
         to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-            && is_const_shape(fun) && const_id(fun) == nat_succ_id() {
+            && is_const_shape(fun) && const_id(fun) == nat_succ_id() && const_levels_vec(fun).len() == 0 {
         let fun = choose|fun: ExprPtr<'t>|
             to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(p)))
-                && is_const_shape(fun) && const_id(fun) == nat_succ_id();
-        nat_succ_arity_is_zero(fun);
+                && is_const_shape(fun) && const_id(fun) == nat_succ_id() && const_levels_vec(fun).len() == 0;
         const_levels_vec_model(fun);
         is_const_shape_model(fun);
         assert(const_levels_vec(fun).len() == 0);
@@ -7322,8 +7318,8 @@ pub proof fn deq_p_any_trans(
 /// form `pstep`'s own `NatLit` rule targets, for ANY `env` (this fact
 /// needs no delta lookup). The `NatLit` case is one real `pstep` step
 /// (matching `pstep`'s own rule literally); the `Const`-shape case is
-/// ZERO steps (`pstep_star_refl`) once `nat_zero_arity_is_zero` pins its
-/// levels down to empty, letting `const_expr_no_levels_canonical`
+/// ZERO steps (`pstep_star_refl`): `nat_repr_is_zero` pins its levels
+/// down to empty, letting `const_expr_no_levels_canonical`
 /// identify it with the canonical value directly. This is the connecting
 /// lemma `verified_def_eq_nat`'s "both sides are some zero
 /// representation" disjunct needs to lift to a real `full_def_eq(x, y)`
@@ -7348,7 +7344,6 @@ pub proof fn nat_repr_is_zero_reaches_canonical<'t>(
         assert(const_id(e) == nat_zero_id());
         is_const_shape_model(e);
         const_levels_vec_model(e);
-        nat_zero_arity_is_zero(e);
         assert(const_levels_vec(e).len() == 0);
         assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
         const_expr_no_levels_canonical(to_model(e), nat_zero_id());

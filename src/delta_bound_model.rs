@@ -92,6 +92,8 @@ use crate::expr_arena_bridge::expr_ptr_eq;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::nat_succ_id;
 use crate::expr_arena_bridge::verified_fv_absent;
+#[cfg(verus_only)]
+use crate::expr_arena_bridge::nat_repr_pred;
 use crate::expr_arena_bridge::verified_size;
 use crate::expr_arena_bridge::{abstr_levels_with_locals, expr_as_lambda, expr_as_pi, get_dbj_level_counter};
 #[cfg(verus_only)]
@@ -3919,16 +3921,7 @@ pub fn verified_conv_inner<'t, 'p: 't, 'x>(
     if let (Some(xp), Some(yp)) = (xp_opt, yp_opt) {
         if let Some(true) = verified_conv(ctx, env, memo, xp, yp, fuel, budget - 1) {
             proof {
-                let sc = const_expr_no_levels(nat_succ_id());
-                let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
-                let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
-                nat_repr_pred_reaches_succ_app(em, x, xp);
-                nat_repr_pred_reaches_succ_app(em, y, yp);
-                deq_any_refl(em, sc);
-                deq_any_app_congr(em, sc, sc, to_model(xp), to_model(yp));
-                deq_any_trans(em, to_model(x), ax, ay);
-                deq_any_symm(em, to_model(y), ay);
-                deq_any_trans(em, to_model(x), ay, to_model(y));
+                nat_succ_pair_deq(em, x, y, xp, yp);
             }
             conv_stat(9);
             return Some(true);
@@ -4542,6 +4535,36 @@ pub fn verified_conv_spine_p<'t, 'p: 't, 'x>(
     }
     conv_stat(2);
     Some(true)
+}
+
+/// Two successor representations with convertible predecessors are
+/// convertible: `Nat.succ` congruence, each side reached from its
+/// representation. Out of `verified_conv_inner` to keep that query in budget.
+#[verifier::spinoff_prover]
+pub proof fn nat_succ_pair_deq<'t>(
+    em: Map<u64, (Seq<u64>, ExprSpec)>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    xp: ExprPtr<'t>,
+    yp: ExprPtr<'t>,
+)
+    requires
+        nat_repr_pred(x, xp),
+        nat_repr_pred(y, yp),
+        deq_any(em, to_model(xp), to_model(yp)),
+    ensures
+        deq_any(em, to_model(x), to_model(y)),
+{
+    let sc = const_expr_no_levels(nat_succ_id());
+    let ax = ExprSpec::App(Box::new(sc), Box::new(to_model(xp)));
+    let ay = ExprSpec::App(Box::new(sc), Box::new(to_model(yp)));
+    nat_repr_pred_reaches_succ_app(em, x, xp);
+    nat_repr_pred_reaches_succ_app(em, y, yp);
+    deq_any_refl(em, sc);
+    deq_any_app_congr(em, sc, sc, to_model(xp), to_model(yp));
+    deq_any_trans(em, to_model(x), ax, ay);
+    deq_any_symm(em, to_model(y), ay);
+    deq_any_trans(em, to_model(x), ay, to_model(y));
 }
 
 /// K-LIKE RECURSOR LEAF (2026-09-08): the kernel's `to_ctor_when_k` --

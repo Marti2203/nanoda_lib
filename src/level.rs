@@ -236,12 +236,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 interp(to_model(l), rho) <= interp(to_model(r), rho),
     {
         proof {
-            crate::level_model::leq_measure_bounded(to_model(l), to_model(r));
+            crate::level_arena_bridge::leq_measure_bounded(l, r);
         }
         let l_prime = self.simplify(l);
         let r_prime = self.simplify(r);
         proof {
-            crate::level_model::leq_measure_bounded(to_model(l_prime), to_model(r_prime));
+            crate::level_arena_bridge::leq_measure_bounded(l_prime, r_prime);
         }
         let res = self.leq_core(l_prime, r_prime, 0);
         proof {
