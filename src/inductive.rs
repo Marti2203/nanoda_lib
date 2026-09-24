@@ -1994,6 +1994,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// To be a target for k-like reduction, a type cannot be mutual or nested, must be an inductive
 /// prop, must have only one constructor, and the constructor can take only the type's parameters
 /// as arguments.///
@@ -2016,7 +2018,7 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
     ensures
         // compared by index, as the kernel's `==` does
         result == (ctor_apps@.len() >= local_params@.len() && forall|i: int|
-            0 <= i < local_params@.len() ==> #[trigger] ctor_apps@[i].raw == local_params@[i].raw),
+            0 <= i < local_params@.len() ==> #[trigger] crate::util_model::ptr_raw(ctor_apps@[i]) == crate::util_model::ptr_raw(local_params@[i])),
 {
     if ctor_apps.len() < local_params.len() {
         return false
@@ -2028,7 +2030,7 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
             0 <= i <= n,
             n == local_params@.len(),
             n <= ctor_apps@.len(),
-            forall|k: int| 0 <= k < i ==> #[trigger] ctor_apps@[k].raw == local_params@[k].raw,
+            forall|k: int| 0 <= k < i ==> #[trigger] crate::util_model::ptr_raw(ctor_apps@[k]) == crate::util_model::ptr_raw(local_params@[k]),
         decreases n - i,
     {
         if ctor_apps[i] != local_params[i] {

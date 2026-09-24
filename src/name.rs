@@ -7,6 +7,8 @@ use vstd::prelude::*;
 // expressible there; values unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 
+broadcast use crate::util::ptr_eta;
+
 pub(crate) const ANON_HASH: u64 = 43;
 
 pub const STR_HASH: u64 = 911;

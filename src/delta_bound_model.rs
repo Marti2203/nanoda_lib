@@ -206,6 +206,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// A single round of `tc.rs::TypeChecker::lazy_delta_step`'s own loop
 /// (`tc.rs:1270-1309`) -- mirrors the real function's `DeltaResult<'a>`
 /// (`FoundEqResult`/`Exhausted`), plus a THIRD case (`Continue`) this

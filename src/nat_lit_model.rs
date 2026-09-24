@@ -72,6 +72,8 @@ pub(crate) fn biguint_mul(x: BigUint, y: BigUint) -> BigUint {
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 #[verifier::external_body]

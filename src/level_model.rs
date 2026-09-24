@@ -17,6 +17,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// Arena-free mirror of `crate::level::Level`. `Param` carries a raw `u64` id
 /// rather than an interned `Name`, since name identity plays no role in the
 /// semantics below (only equality) — and unlike a ghost `nat`, `u64` is a

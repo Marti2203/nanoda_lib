@@ -46,16 +46,58 @@ pub(crate) type UniqueHashMap<K, V> = HashMap<K, V, BuildHasherDefault<UniqueHas
 /// reuse the same indices for different nodes; the tag is what keeps their
 /// pointers different values to the verifier. See `docs/ARENA_IDENTITY.md`.
 /// Runtime `==` and `Hash` see only `raw`.
+::vstd::prelude::verus! {
+
+/// The fields are private, so a pointer can only come from the arena
+/// (`Ptr::from`, used by allocation and the parser); verified code can copy
+/// and compare pointers but cannot make one up. Specifications read the
+/// fields through `raw_of` / `arena_of`.
 #[derive(Clone, Copy)]
+#[verifier::accept_recursive_types(A)]
 pub struct Ptr<A> {
-    /// `pub` so that `ExPtr` can be a TRANSPARENT `external_type_specification`
-    /// (Verus rejects private fields on those), which is what lets
-    /// `util_model.rs` DEFINE `ptr_raw` as this field rather than assume a
-    /// relationship to it. Nothing outside this crate reads it.
-    pub raw: u32,
-    pub ph: PhantomData<A>,
-    pub arena: vstd::prelude::Ghost<vstd::prelude::nat>,
+    raw: u32,
+    ph: PhantomData<A>,
+    arena: Ghost<nat>,
 }
+
+/// The packed index (marker bit + position).
+pub closed spec fn raw_of<A>(p: Ptr<A>) -> u32 {
+    p.raw
+}
+
+/// The arena the pointer indexes into.
+pub closed spec fn arena_of<A>(p: Ptr<A>) -> nat {
+    p.arena@
+}
+
+/// The pointer with this index and arena (spec only: verified code cannot
+/// build one).
+pub closed spec fn ptr_of<A>(raw: u32, arena: nat) -> Ptr<A> {
+    Ptr { raw, ph: PhantomData, arena: Ghost(arena) }
+}
+
+/// Every pointer is `ptr_of` its own index and arena, so two pointers with
+/// equal `raw_of` and `arena_of` are equal. Broadcast in every verified
+/// module; one instance per pointer term.
+pub broadcast proof fn ptr_eta<A>(p: Ptr<A>)
+    ensures
+        p == ptr_of::<A>(#[trigger] raw_of(p), arena_of(p)),
+{
+    assert(p.ph == PhantomData::<A>);
+}
+
+/// A pointer is its index and its arena.
+pub proof fn ptr_ext<A>(a: Ptr<A>, b: Ptr<A>)
+    requires
+        raw_of(a) == raw_of(b),
+        arena_of(a) == arena_of(b),
+    ensures
+        a == b,
+{
+    assert(a.ph == b.ph);
+}
+
+} // verus!
 
 impl<A> PartialEq for Ptr<A> {
     fn eq(&self, other: &Self) -> bool {
@@ -83,6 +125,7 @@ impl<A> Ptr<A> {
 // `raw` field (`util_model.rs`), so these prove the bit-packing contract they
 // used to only assert.
 ::vstd::prelude::verus! {
+
 
 impl<A> Ptr<A> {
     /// Exposes the packed representation for `util_model.rs`'s Verus proof
@@ -146,7 +189,7 @@ impl<A> Ptr<A> {
             DagMarker::ExportFile => 0,
             DagMarker::TcCtx => TC_BIT,
         };
-        Self { raw: tag | idx_u32, ph: PhantomData, arena: vstd::prelude::Ghost::assume_new() }
+        Self { raw: tag | idx_u32, ph: PhantomData, arena: Ghost::assume_new() }
     }
 }
 

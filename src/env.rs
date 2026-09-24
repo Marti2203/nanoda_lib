@@ -17,6 +17,8 @@ pub enum ReducibilityHint {
 
 ::vstd::prelude::verus! {
 
+broadcast use crate::util::ptr_eta;
+
 impl ReducibilityHint {
     /// Check whether `self` is "less than" `other` in terms of reducibility; during
     /// delta reduction in equality checking, we want to unfold the greater of the two

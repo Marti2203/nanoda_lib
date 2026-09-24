@@ -48,24 +48,12 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 pub struct ExTcCtx<'t, 'p>(TcCtx<'t, 'p>);
 
-/// `accept_recursive_types(A)` rather than `reject`: `Ptr<A>` is `{ raw: u32,
-/// ph: PhantomData<A> }` -- the parameter is purely phantom, so a `Ptr` holds
-/// no `A` at all and recursion through it is vacuous. Rejecting it is what
-/// stopped `Level` from being made transparent (`ExLevel`), since
-/// `LevelPtr = Ptr<Level>` then counts as a non-positive recursive use.
-/// TRANSPARENT, so `Ptr`'s packed `raw` field is visible and `ptr_raw` can be
-/// DEFINED as it. Opaque, the encoding needed four `assume_specification`s
-/// each documented as mirroring the real body -- a correspondence nothing
-/// checked. (Transparency is why `Ptr`'s fields are `pub`: Verus rejects
-/// private fields on a transparent `external_type_specification`.)
-#[allow(dead_code)]
-#[verifier::accept_recursive_types(A)]
-#[verifier::external_type_specification]
-pub struct ExPtr<A>(Ptr<A>);
 
 /// TRANSPARENT, not `external_body`. A single-field proxy struct without
 /// `external_body` makes an external ENUM's variants visible to Verus, which
@@ -97,7 +85,7 @@ pub uninterp spec fn to_model<'a>(ptr: LevelPtr<'a>) -> LevelSpec;
 /// — matching hash-consing's guarantee that pointer equality means
 /// structural equality.
 pub open spec fn name_id<'a>(n: NamePtr<'a>) -> u64 {
-    n.raw as u64
+    crate::util_model::ptr_raw(n) as u64
 }
 
 /// Within one context: two pointers from different arenas can share an
@@ -109,9 +97,8 @@ pub proof fn name_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'a>, n2
     ensures
         (n1 == n2) <==> (name_id(n1) == name_id(n2)),
 {
-    if n1.raw == n2.raw {
-        assert(n1.ph == n2.ph);
-        assert(n1.arena == n2.arena);
+    if crate::util_model::ptr_raw(n1) == crate::util_model::ptr_raw(n2) && crate::util::arena_of(n1) == crate::util::arena_of(n2) {
+        crate::util::ptr_ext(n1, n2);
     }
 }
 
@@ -121,7 +108,7 @@ pub proof fn name_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'a>, n2
 pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
     ensures
         result == (name_id(a) == name_id(b)),
-        a.arena@ == b.arena@ ==> result == (a == b),
+        crate::util::arena_of(a) == crate::util::arena_of(b) ==> result == (a == b),
 {
     a == b
 }
@@ -239,16 +226,16 @@ pub open spec fn level_hash_ok<'t>(l: Level<'t>) -> bool {
     match l {
         Level::Zero => true,
         Level::Succ(a, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::level::SUCC_HASH as int).push(a.raw as int),
+            Seq::<int>::empty().push(crate::level::SUCC_HASH as int).push(crate::util_model::ptr_raw(a) as int),
         ),
         Level::Max(a, b, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::level::MAX_HASH as int).push(a.raw as int).push(b.raw as int),
+            Seq::<int>::empty().push(crate::level::MAX_HASH as int).push(crate::util_model::ptr_raw(a) as int).push(crate::util_model::ptr_raw(b) as int),
         ),
         Level::IMax(a, b, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::level::IMAX_HASH as int).push(a.raw as int).push(b.raw as int),
+            Seq::<int>::empty().push(crate::level::IMAX_HASH as int).push(crate::util_model::ptr_raw(a) as int).push(crate::util_model::ptr_raw(b) as int),
         ),
         Level::Param(n, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::level::PARAM_HASH as int).push(n.raw as int),
+            Seq::<int>::empty().push(crate::level::PARAM_HASH as int).push(crate::util_model::ptr_raw(n) as int),
         ),
     }
 }

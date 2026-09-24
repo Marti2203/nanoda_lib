@@ -522,6 +522,8 @@ pub mod route_stats {
     #[inline]
     ::vstd::prelude::verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// Verified, not assumed: vstd specifies `AtomicU64::fetch_add`.
 pub fn bump(c: &AtomicU64) {
     c.fetch_add(1, Ordering::Relaxed);
@@ -3870,22 +3872,32 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
         let y_n = self.whnf_no_unfolding_cheap_proj(y);
 
-        if ((!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode) && Some(y_n) == self.ctx.c_bool_true() {
-            let x_nn = self.whnf(x_n);
-            if Some(x_nn) == self.ctx.c_bool_true() {
-                proof {
-                    // both are `Bool.true`: the same constant, no universes
-                    crate::expr_arena_bridge::is_const_shape_model(x_nn);
-                    crate::expr_arena_bridge::is_const_shape_model(y_n);
-                    assert(crate::expr_arena_bridge::const_levels_vec(x_nn) =~= crate::expr_arena_bridge::const_levels_vec(y_n));
-                    assert(to_model_expr(x_nn) == to_model_expr(y_n));
-                    assert(def_eq_claim(*old(self).env, to_model_expr(x_n), to_model_expr(y_n)));
-                    def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
+        // VERUS-REWRITE(named-temp): the two `c_bool_true()` results are bound to
+        // locals where they are called, so the proof can say which pointer each
+        // comparison matched; the `&&` becomes a nested `if`, which keeps its
+        // short-circuit. Same calls, same order.
+        if (!self.ctx.has_fvars(x_n)) || self.ctx.eager_mode {
+            let bt_y = self.ctx.c_bool_true();
+            if Some(y_n) == bt_y {
+                let x_nn = self.whnf(x_n);
+                let bt_x = self.ctx.c_bool_true();
+                if Some(x_nn) == bt_x {
+                    proof {
+                        // both are `Bool.true`: the same constant, no universes
+                        crate::util_model::owned_raw_eq(*self.ctx, x_nn, bt_x->Some_0);
+                        crate::util_model::owned_raw_eq(*self.ctx, y_n, bt_y->Some_0);
+                        crate::expr_arena_bridge::is_const_shape_model(x_nn);
+                        crate::expr_arena_bridge::is_const_shape_model(y_n);
+                        assert(crate::expr_arena_bridge::const_levels_vec(x_nn) =~= crate::expr_arena_bridge::const_levels_vec(y_n));
+                        assert(to_model_expr(x_nn) == to_model_expr(y_n));
+                        assert(def_eq_claim(*old(self).env, to_model_expr(x_n), to_model_expr(y_n)));
+                        def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
+                    }
+                    route_stats::legacy_branch(2);
+                    route_stats::bump_legacy_true();
+                    self.shadow_check(x, y, true);
+                    return true
                 }
-                route_stats::legacy_branch(2);
-                route_stats::bump_legacy_true();
-                self.shadow_check(x, y, true);
-                return true
             }
         }
         if let Some(easy) = self.def_eq_quick_check(x_n, y_n) {
@@ -10064,6 +10076,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             {
                 let r = rec_rules[i];
                 proof {
+                    assert(crate::tc_model::rec_rule_ctor_name_of(rec_rules@[i as int]) == r.ctor_name);
                     crate::util_model::owned_raw_eq(*self.ctx, r.ctor_name, major_ctor_name);
                 }
                 if r.ctor_name == major_ctor_name {

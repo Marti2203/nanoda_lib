@@ -152,6 +152,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// First rule's constructor name (the gate for the K-like leaf; its
 /// correctness is certified downstream by proof irrelevance + iota).
 pub(crate) fn first_rule_ctor_name<'t>(rules: &std::sync::Arc<[RecRule<'t>]>) -> (result: Option<NamePtr<'t>>)
@@ -1419,8 +1421,8 @@ impl<'x, 't> WhnfCert<'x, 't> {
     {
         proof {
             use_type_invariant(self);
-            if self.e.raw == e.raw {
-                assert(self.e.ph == e.ph);
+            if crate::util_model::ptr_raw(self.e) == crate::util_model::ptr_raw(e) && crate::util::arena_of(self.e) == crate::util::arena_of(e) {
+                crate::util::ptr_ext(self.e, e);
             }
         }
         expr_ptr_eq(self.e, e)
@@ -1797,8 +1799,8 @@ impl<'x, 't> InferCert<'x, 't> {
     {
         proof {
             use_type_invariant(self);
-            if self.e.raw == e.raw {
-                assert(self.e.ph == e.ph);
+            if crate::util_model::ptr_raw(self.e) == crate::util_model::ptr_raw(e) && crate::util::arena_of(self.e) == crate::util::arena_of(e) {
+                crate::util::ptr_ext(self.e, e);
             }
         }
         expr_ptr_eq(self.e, e)
@@ -1870,11 +1872,11 @@ impl<'x, 't> ConvCert<'x, 't> {
     {
         proof {
             use_type_invariant(self);
-            if self.x.raw == x.raw {
-                assert(self.x.ph == x.ph);
+            if crate::util_model::ptr_raw(self.x) == crate::util_model::ptr_raw(x) && crate::util::arena_of(self.x) == crate::util::arena_of(x) {
+                crate::util::ptr_ext(self.x, x);
             }
-            if self.y.raw == y.raw {
-                assert(self.y.ph == y.ph);
+            if crate::util_model::ptr_raw(self.y) == crate::util_model::ptr_raw(y) && crate::util::arena_of(self.y) == crate::util::arena_of(y) {
+                crate::util::ptr_ext(self.y, y);
             }
         }
         expr_ptr_eq(self.x, x) && expr_ptr_eq(self.y, y)

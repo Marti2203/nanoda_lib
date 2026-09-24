@@ -5,9 +5,7 @@
 //! Same trust-boundary shape as `expr_arena_bridge.rs`/`level_arena_bridge.
 //! rs`: nothing in `name.rs`/`util.rs` is modified, `Name<'a>` is registered
 //! `external_body` (already done once, crate-wide, via `ExName` in
-//! `level_arena_bridge.rs` -- not redeclared here, same way `Ptr<A>`'s
-//! single `ExPtr` registration there is reused freely by every other bridge
-//! file without re-registering it), and plain non-`verus!` helper functions
+//! `level_arena_bridge.rs` -- not redeclared here), and plain non-`verus!` helper functions
 //! do the real pattern-matching, each with its own small trusted contract.
 //!
 //! `NameSpec::Str`'s `u32` suffix carries a fresh opaque `string_id`, not
@@ -49,6 +47,8 @@ use vstd::prelude::*;
 use vstd::set_lib::*;
 
 verus! {
+
+broadcast use crate::util::ptr_eta;
 
 /// What a `NamePtr` denotes in the `NameSpec` model -- uninterpreted, same
 /// trust boundary as `expr_arena_bridge::to_model`/`level_arena_bridge::
@@ -414,10 +414,10 @@ pub open spec fn name_hash_ok<'t>(n: Name<'t>) -> bool {
     match n {
         Name::Anon => true,
         Name::Str(p, s, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::name::STR_HASH as int).push(p.raw as int).push(s.raw as int),
+            Seq::<int>::empty().push(crate::name::STR_HASH as int).push(crate::util_model::ptr_raw(p) as int).push(crate::util_model::ptr_raw(s) as int),
         ),
         Name::Num(p, k, h) => h == crate::util_model::fx_finish(
-            Seq::<int>::empty().push(crate::name::NUM_HASH as int).push(p.raw as int).push(k as int),
+            Seq::<int>::empty().push(crate::name::NUM_HASH as int).push(crate::util_model::ptr_raw(p) as int).push(k as int),
         ),
     }
 }

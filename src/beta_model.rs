@@ -52,6 +52,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// Shift every free (`>= cutoff`) `Var` in `e` by `d` (`+1` when moving a
 /// term under an additional binder to protect it from capture; `-1` when
 /// removing a binder after substitution has eliminated every reference to

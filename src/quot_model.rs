@@ -50,6 +50,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// The type a `Local` (free variable) was created with -- a side-channel
 /// fact, since `to_model` alone erases it (`to_model(local) ==
 /// ExprSpec::Free(expr_id(local))`, with no room for the type).

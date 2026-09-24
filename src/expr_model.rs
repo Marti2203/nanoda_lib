@@ -31,6 +31,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// Trivial-equality wrapper around `Ghost<nat>`, letting `ExprSpec` keep a
 /// plain `#[derive(PartialEq)]` (matching the recursive-`Box` pattern
 /// already used successfully by `LevelSpec`) instead of a hand-written

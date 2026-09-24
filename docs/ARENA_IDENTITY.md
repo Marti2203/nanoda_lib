@@ -109,3 +109,12 @@ parameter. Delta-free chains are stated under `EnvSpec::empty_at(export)`;
 weakening requires equal exports. `nat_found_claim` quantifies over the
 environments of its export only. `env_model_nofv` is open, with only its
 definitions (`nofv_defs`) opaque, so its export and tables are visible.
+
+## Pointers cannot be forged
+
+`Ptr` is defined inside `verus!` with private fields. Verified code copies and
+compares pointers but cannot construct one or change its index or tag; only
+`util.rs` (the arena and the parser, through `Ptr::from`) makes them.
+Specifications read a pointer through `raw_of` / `arena_of`, and the broadcast
+lemma `ptr_eta` (every pointer is `ptr_of(raw_of(p), arena_of(p))`) gives the
+extensionality that hidden fields would otherwise lose.

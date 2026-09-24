@@ -191,6 +191,7 @@ needed a different shape.
 | `reduce_rec` | `src/tc.rs` | the recursor's counts, major index and rules read through `env_model::get_recursor_data` (literally those fields, with the environment model's claim) instead of off `rec`; the three argument iterators bound to names so the proof can state what each yields; `args.len()` read once so the proof knows the length fits a `usize` |
 | `get_rec_rule` | `src/tc.rs` | `for r in rec_rules.iter().copied()` → the same front-to-back scan by index, so the invariant can say no earlier rule matched (the contract names the FIRST matching rule, which is the model's `find_rule`) |
 | `get_applied_def` | `src/tc.rs` | the two `get_declar` lookups → `env_model::get_declar_hint`, which is literally that match and carries the name claim |
+| `def_eq` | `src/tc.rs` | the two `c_bool_true()` results in the `Bool.true` shortcut are bound to locals where they are called, and the `&&` becomes a nested `if` (same calls, same order, same short-circuit), so the proof can name the pointer each comparison matched |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
@@ -225,6 +226,7 @@ still a rejection — but each is an improvement.
 | `infer_const` | `src/tc.rs` | the declaration's type is TESTED closed (`!has_fvars`, `num_loose_bvars == 0`; `kernel_check`) — the export parser does not check it, and `get_declar_info_ty`'s specification used to claim it, which a malformed export refutes. Never fails on a well-formed export |
 | `infer_proj` | `src/tc.rs` | the same closedness test on the structure constructor's type |
 | `unfold_def` | `src/tc.rs` | a declaration value that is not closed is not unfolded (declines) — same reason, for `get_declar_val`'s former claim. Never true of a well-formed export |
+| `Ptr` | `src/util.rs` | the struct is defined inside `verus!` with PRIVATE fields (were `pub` for a transparent registration), so verified code cannot build or alter a pointer; specifications read it through `raw_of` / `arena_of` |
 | `mk_dbj_level`, `remake_dbj_level`, `mk_unique` | `src/util.rs` | a local's type is TESTED closed before the local is stored (`assert!`); `local_type_wf` states it of every stored local, and unverified callers never checked it. Never fails on a well-formed declaration |
 | `go1` (`ExprBVar`) | `src/parser.rs` | a bound variable at index `u16::MAX` is rejected when read; it was stored, and its loose-bvar count overflows on first use while `read_expr` claims every stored `Var` is below `u16::MAX` |
 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` (panics at `u64::MAX` -- the crate builds with overflow checks) |

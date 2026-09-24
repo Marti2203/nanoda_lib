@@ -5,6 +5,8 @@ use crate::util::{LevelPtr, LevelsPtr, NamePtr, TcCtx};
 // expressible there; values unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 
+broadcast use crate::util::ptr_eta;
+
 pub(crate) const ZERO_HASH: u64 = 283;
 
 pub const SUCC_HASH: u64 = 541;
@@ -1221,14 +1223,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let found = ls.iter().copied().any(
                     |x: LevelPtr<'t>| -> (r: bool)
                         ensures
-                            r == (x.raw == level.raw),
+                            r == (crate::util_model::ptr_raw(x) == crate::util_model::ptr_raw(level)),
                         { x == level },
                 );
                 proof {
                     broadcast use vstd::std_specs::iter::group_iter_axioms;
 
                     if found {
-                        let j = choose|j: int| 0 <= j < ls@.len() && #[trigger] ls@[j].raw == level.raw;
+                        let j = choose|j: int| 0 <= j < ls@.len() && #[trigger] crate::util_model::ptr_raw(ls@[j]) == crate::util_model::ptr_raw(level);
                         crate::util_model::owned_raw_eq(*self, ls@[j], level);
                         assert(to_model(ls@[j]) == to_model(level));
                         assert(to_model_of_levels(params)[j] == to_model(level));

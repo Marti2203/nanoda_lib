@@ -98,6 +98,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// `InductiveCheckState`'s two remaining field types, registered OPAQUELY so the
 /// struct itself can be TRANSPARENT. Same trick as `Declar`'s payloads: Verus
 /// needs the field types KNOWN, not readable, and nothing reads inside these.
@@ -675,7 +677,7 @@ pub fn verified_id_set_eq<'t>(a: &[NamePtr<'t>], b: &[NamePtr<'t>]) -> (result: 
 /// Compares indices (`raw`), which is what the kernel's `==` does; for
 /// pointers of one context that is pointer equality (`owned_raw_eq`).
 pub open spec fn ptr_in_seq<'t>(haystack: Seq<ExprPtr<'t>>, needle: ExprPtr<'t>) -> bool {
-    exists|j: int| 0 <= j < haystack.len() && #[trigger] haystack[j].raw == needle.raw
+    exists|j: int| 0 <= j < haystack.len() && #[trigger] crate::util_model::ptr_raw(haystack[j]) == crate::util_model::ptr_raw(needle)
 }
 
 pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (result: bool)
@@ -686,7 +688,7 @@ pub fn expr_ptr_in_slice<'t>(haystack: &[ExprPtr<'t>], needle: ExprPtr<'t>) -> (
     while i < haystack.len()
         invariant
             i <= haystack.len(),
-            forall|j: int| 0 <= j < i ==> #[trigger] haystack@[j].raw != needle.raw,
+            forall|j: int| 0 <= j < i ==> #[trigger] crate::util_model::ptr_raw(haystack@[j]) != crate::util_model::ptr_raw(needle),
         decreases haystack.len() - i,
     {
         if expr_ptr_eq(haystack[i], needle) {

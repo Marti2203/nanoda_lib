@@ -86,6 +86,8 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// TRANSPARENT, like `ExLevel`. The variants are visible to Verus, so the
 /// kernel's own `match self.read_expr(p) { .. }` can be verified as written
 /// and the `expr_as_*` accessors below become provable rather than assumed.
@@ -507,7 +509,7 @@ pub proof fn expr_model_at_append<'a>(es: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
 /// A `Local` pointer's free-variable identity, standing in for genuine
 /// `ExprPtr` identity (see the module doc comment).
 pub open spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32 {
-    ptr.raw
+    crate::util_model::ptr_raw(ptr)
 }
 
 /// Within one context (see `name_id_injective`).
@@ -518,9 +520,8 @@ pub proof fn expr_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, a: ExprPtr<'a>, b: 
     ensures
         (a == b) <==> (expr_id(a) == expr_id(b)),
 {
-    if a.raw == b.raw {
-        assert(a.ph == b.ph);
-        assert(a.arena == b.arena);
+    if crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b) && crate::util::arena_of(a) == crate::util::arena_of(b) {
+        crate::util::ptr_ext(a, b);
     }
 }
 
@@ -529,8 +530,8 @@ pub proof fn expr_id_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, a: ExprPtr<'a>, b: 
 #[allow(dead_code)]
 pub(crate) fn expr_ptr_eq<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
     ensures
-        result == (a.raw == b.raw),
-        a.arena@ == b.arena@ ==> result == (a == b),
+        result == (crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b)),
+        crate::util::arena_of(a) == crate::util::arena_of(b) ==> result == (a == b),
 {
     a == b
 }

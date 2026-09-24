@@ -145,6 +145,8 @@ pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReducibilityHintSpec {
     Opaque,

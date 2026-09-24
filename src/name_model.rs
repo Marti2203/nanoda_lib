@@ -13,6 +13,8 @@ use vstd::prelude::*;
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum NameSpec {
     Anon,

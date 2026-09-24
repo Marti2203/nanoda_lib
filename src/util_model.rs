@@ -39,6 +39,8 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
+broadcast use crate::util::ptr_eta;
+
 /// `TypeChecker`'s composite field types, registered so `TypeChecker` itself can
 /// be a TRANSPARENT `external_type_specification` -- the same first step that
 /// `TcCtx` needed, and the beachhead for anything in `tc.rs`.
@@ -114,7 +116,7 @@ pub proof fn ptr_keys_obey_model<A>(s: Set<Ptr<A>>)
     requires
         forall|a: Ptr<A>, b: Ptr<A>|
             #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && a.raw == b.raw ==> a == b,
+            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b) ==> a == b,
     ensures
         keys_obey_model::<Ptr<A>>(s),
 {
@@ -125,7 +127,7 @@ pub proof fn ptr_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16)>)
     requires
         forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
             #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 ==> a == b,
+            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 ==> a == b,
     ensures
         keys_obey_model::<(Ptr<A>, u16)>(s),
 {
@@ -136,7 +138,7 @@ pub proof fn ptr_u16_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16, u16)>)
     requires
         forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
             #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 && a.2 == b.2 ==> a == b,
+            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 && a.2 == b.2 ==> a == b,
     ensures
         keys_obey_model::<(Ptr<A>, u16, u16)>(s),
 {
@@ -147,8 +149,8 @@ pub proof fn ptr_triple_keys_obey_model<A, B, C>(s: Set<(Ptr<A>, Ptr<B>, Ptr<C>)
     requires
         forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
             #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw && a.2.raw
-                == b.2.raw ==> a == b,
+            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) && crate::util_model::ptr_raw(a.2)
+                == crate::util_model::ptr_raw(b.2) ==> a == b,
     ensures
         keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(s),
 {
@@ -160,7 +162,7 @@ pub proof fn sorted_pair_keys_obey_model<'t>(s: Set<crate::util::SortedPair<'t>>
     requires
         forall|a: crate::util::SortedPair<'t>, b: crate::util::SortedPair<'t>|
             #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw ==> a == b,
+            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) ==> a == b,
     ensures
         keys_obey_model::<crate::util::SortedPair<'t>>(s),
 {
@@ -174,7 +176,7 @@ pub proof fn ptr_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set<Ptr
 {
     assert forall|a: Ptr<A>, b: Ptr<A>|
         #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && a.raw == b.raw implies a == b by {
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b) implies a == b by {
         owned_raw_eq(c, a, b);
     }
     ptr_keys_obey_model(s);
@@ -188,7 +190,7 @@ pub proof fn ptr_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set
 {
     assert forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
         #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 implies a == b by {
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 implies a == b by {
         owned_raw_eq(c, a.0, b.0);
     }
     ptr_u16_keys_obey_model(s);
@@ -202,7 +204,7 @@ pub proof fn ptr_u16_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s:
 {
     assert forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
         #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1 == b.1 && a.2 == b.2 implies a
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 && a.2 == b.2 implies a
             == b by {
         owned_raw_eq(c, a.0, b.0);
     }
@@ -218,7 +220,7 @@ pub proof fn ptr_triple_owned_keys<'t, 'p, A, B, C>(c: crate::util::TcCtx<'t, 'p
 {
     assert forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
         #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw && a.2.raw == b.2.raw
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) && crate::util_model::ptr_raw(a.2) == crate::util_model::ptr_raw(b.2)
         implies a == b by {
         owned_raw_eq(c, a.0, b.0);
         owned_raw_eq(c, a.1, b.1);
@@ -235,7 +237,7 @@ pub proof fn sorted_pair_owned_keys<'t, 'p>(c: crate::util::TcCtx<'t, 'p>, s: Se
 {
     assert forall|a: crate::util::SortedPair<'t>, b: crate::util::SortedPair<'t>|
         #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && a.0.raw == b.0.raw && a.1.raw == b.1.raw implies a == b by {
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) implies a == b by {
         owned_raw_eq(c, a.0, b.0);
         owned_raw_eq(c, a.1, b.1);
     }
@@ -419,18 +421,18 @@ pub open spec fn export_id<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> nat {
 /// The pointer indexes the context's own dag (bit 31 set), rather than the
 /// export file's.
 pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
-    p.raw >= 0x8000_0000u32
+    crate::util_model::ptr_raw(p) >= 0x8000_0000u32
 }
 
 /// An export-file pointer of the export arena `a`.
 pub open spec fn export_tagged<A>(a: nat, p: crate::util::Ptr<A>) -> bool {
-    !ptr_is_tc(p) && p.arena@ == a
+    !ptr_is_tc(p) && crate::util::arena_of(p) == a
 }
 
 /// `p` carries the id of the arena its marker selects, out of the pair
 /// `ids` (the context's own dag, the export file).
 pub open spec fn owns_in<A>(ids: (nat, nat), p: crate::util::Ptr<A>) -> bool {
-    p.arena@ == if ptr_is_tc(p) { ids.0 } else { ids.1 }
+    crate::util::arena_of(p) == if ptr_is_tc(p) { ids.0 } else { ids.1 }
 }
 
 pub open spec fn owns_all_in<A>(ids: (nat, nat), s: Seq<crate::util::Ptr<A>>) -> bool {
@@ -453,7 +455,7 @@ pub proof fn owned_raw_eq<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, a: crate::ut
         owns(c, a),
         owns(c, b),
     ensures
-        (a == b) <==> (a.raw == b.raw),
+        (a == b) <==> (crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b)),
 {
     owned_raw_eq_in(arena_ids(c), a, b);
 }
@@ -464,11 +466,10 @@ pub proof fn owned_raw_eq_in<A>(ids: (nat, nat), a: crate::util::Ptr<A>, b: crat
         owns_in(ids, a),
         owns_in(ids, b),
     ensures
-        (a == b) <==> (a.raw == b.raw),
+        (a == b) <==> (crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b)),
 {
-    if a.raw == b.raw {
-        assert(a.ph == b.ph);
-        assert(a.arena@ == b.arena@);
+    if crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b) && crate::util::arena_of(a) == crate::util::arena_of(b) {
+        crate::util::ptr_ext(a, b);
     }
 }
 
@@ -522,9 +523,9 @@ pub assume_specification<A>[ <crate::util::Ptr<A> as PartialEq>::eq ](
     b: &crate::util::Ptr<A>,
 ) -> (result: bool)
     ensures
-        result == (a.raw == b.raw),
+        result == (crate::util_model::ptr_raw(*a) == crate::util_model::ptr_raw(*b)),
         // with the arena known the same, `==` is equality of pointers
-        a.arena@ == b.arena@ ==> result == (*a == *b),
+        crate::util::arena_of(*a) == crate::util::arena_of(*b) ==> result == (*a == *b),
 ;
 
 /// `Ptr`'s equality, registered through vstd's `PartialEqSpec` extension as
@@ -549,7 +550,7 @@ impl<A> vstd::std_specs::cmp::PartialEqSpecImpl for crate::util::Ptr<A> {
     }
 
     open spec fn eq_spec(&self, other: &crate::util::Ptr<A>) -> bool {
-        self.raw == other.raw
+        crate::util_model::ptr_raw(*self) == crate::util_model::ptr_raw(*other)
     }
 }
 
@@ -564,9 +565,9 @@ pub open spec fn dm_is_tc(m: DagMarker) -> bool {
     matches!(m, DagMarker::TcCtx)
 }
 
-// `Ptr<A>` is already registered `external_type_specification` (as `ExPtr<A>`)
-// in `level_arena_bridge.rs` -- re-registering it here would conflict, so
-// this file just adds more `assume_specification`s for its methods.
+// `Ptr<A>` is defined inside `verus!` in `util.rs` (private fields, read
+// through `raw_of` / `arena_of`); this file adds `assume_specification`s for
+// its unverified trait impls.
 // HASHING, so the kernel's `hash64!` macro is specified as written. A
 // hasher's state is modelled by the sequence of machine words written to it
 // (`hseq`), and `FxHasher::finish` is a function of that sequence
@@ -613,7 +614,7 @@ pub assume_specification<A, H: core::hash::Hasher>[ <Ptr<A> as core::hash::Hash>
     state: &mut H,
 )
     ensures
-        hseq(*final(state)) == hseq(*old(state)).push(x.raw as int),
+        hseq(*final(state)) == hseq(*old(state)).push(crate::util_model::ptr_raw(*x) as int),
 ;
 
 pub assume_specification<
@@ -660,7 +661,7 @@ pub assume_specification[ <rustc_hash::FxHasher as core::hash::Hasher>::finish ]
 /// four accessors are verified against the same body they used to be compared
 /// against by eye.
 pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
-    p.raw
+    crate::util::raw_of(p)
 }
 
 // ---------------------------------------------------------------------
