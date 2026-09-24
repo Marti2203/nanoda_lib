@@ -94,7 +94,7 @@ impl vstd::std_specs::cmp::PartialEqSpecImpl for NatLitPayload {
 /// same payload value by accident). See `NatLitPayload`'s own doc comment
 /// for why this indirection exists at all.
 #[derive(Clone, Copy)]
-pub struct StringLitPayload(pub Ghost<nat>);
+pub struct StringLitPayload(pub Ghost<Seq<nat>>);
 
 impl PartialEq for StringLitPayload {
     fn eq(&self, _other: &Self) -> bool {

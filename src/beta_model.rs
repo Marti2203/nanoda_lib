@@ -258,7 +258,7 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
 /// model(len)`, the SAME call with the SAME argument, so they're equal by
 /// pure reflexivity -- no case analysis needed at all, simpler even than
 /// `NatLit`'s own (which needed one `if n.0@ == 0` split).
-pub uninterp spec fn string_lit_expand_model(len: nat) -> ExprSpec;
+pub uninterp spec fn string_lit_expand_model(chars: Seq<nat>) -> ExprSpec;
 
 /// The one thing about the opaque expansion that well-scopedness needs: it
 /// mentions no free variable. True by construction -- the kernel builds it
@@ -267,9 +267,9 @@ pub uninterp spec fn string_lit_expand_model(len: nat) -> ExprSpec;
 /// uninterpreted (see above), so it has to be said. Stated about the MODEL
 /// function once, rather than added to each exec claim that produces it.
 #[verifier::external_body]
-pub proof fn string_lit_expand_no_fv(len: nat)
+pub proof fn string_lit_expand_no_fv(chars: Seq<nat>)
     ensures
-        !crate::expr_model::has_fv(string_lit_expand_model(len)),
+        !crate::expr_model::has_fv(string_lit_expand_model(chars)),
 {
 }
 

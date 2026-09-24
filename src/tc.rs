@@ -962,7 +962,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // the string literal unfolds to its constructor chain (the model's
             // own `StringLit` rule), and that is then whnf'd
             match result {
-                Some(r) => whnf_claim(*old(self).env, ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_len(x)))), to_model_expr(r)),
+                Some(r) => whnf_claim(*old(self).env, ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_chars(x)))), to_model_expr(r)),
                 None => true,
             },
     {
@@ -970,13 +970,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(c) => {
                 proof {
                     // the expansion has no locals at all
-                    crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_len(x));
+                    crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_chars(x));
                     no_fv_in_scope(*self, c);
                 }
                 let r = self.whnf(c);
                 proof {
                     let fm = crate::env_model::to_model_of_env(*old(self).env);
-                    let sl = ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_len(x))));
+                    let sl = ExprSpec::StringLit(crate::expr_model::StringLitPayload(Ghost(crate::expr_arena_bridge::string_chars(x))));
                     assert(crate::beta_model::pstep(fm, sl, to_model_expr(c)));
                     crate::beta_model::pstep_star_one(fm, sl, to_model_expr(c));
                     crate::beta_model::defeq_of_pstep_star(fm, sl, to_model_expr(c));
@@ -985,7 +985,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     kconv_of_deq(*old(self).env, sl, to_model_expr(c));
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // scope: the expansion has no locals, and whnf adds none
-                    crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_len(x));
+                    crate::beta_model::string_lit_expand_no_fv(crate::expr_arena_bridge::string_chars(x));
                     assert forall|SS: ISet<u32>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(sl, SS, k) implies crate::expr_model::dbj_deep_in(to_model_expr(r), SS, k) by {
                         crate::expr_model::no_fv_dbj_deep_in(to_model_expr(c), SS, k);
                     }

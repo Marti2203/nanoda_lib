@@ -159,7 +159,7 @@ pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
         Expr::Proj { idx, structure, .. } => ExprSpec::Proj(idx, Box::new(to_model(structure))),
         Expr::NatLit { ptr, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(ptr)))),
         Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
-            StringLitPayload(Ghost(string_len(ptr))),
+            StringLitPayload(Ghost(string_chars(ptr))),
         ),
         Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(e)),
     }
@@ -213,7 +213,7 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
                 NatLitPayload(Ghost(bignum_ptr_value(ptr))),
             ),
             Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
-                StringLitPayload(Ghost(string_len(ptr))),
+                StringLitPayload(Ghost(string_chars(ptr))),
             ),
             Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(es[i as int])),
             Expr::App { fun, arg, .. } => if ptr_index(fun) < i && ptr_index(arg) < i {
@@ -365,7 +365,7 @@ pub open spec fn expr_model_at2<'a>(
                 NatLitPayload(Ghost(bignum_ptr_value(ptr))),
             ),
             Expr::StringLit { ptr, .. } => ExprSpec::StringLit(
-                StringLitPayload(Ghost(string_len(ptr))),
+                StringLitPayload(Ghost(string_chars(ptr))),
             ),
             Expr::Local { .. } => ExprSpec::Free(local_fvar_id_of(store[i as int])),
             Expr::App { fun, arg, .. } => if child_ok(fun, is_tc, i) && child_ok(arg, is_tc, i) {
@@ -1698,7 +1698,7 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
         is_string_lit_shape(ptr),
     ensures
         to_model(ptr) == ExprSpec::StringLit(
-            StringLitPayload(Ghost(string_len(string_lit_ptr_of(ptr)))),
+            StringLitPayload(Ghost(string_chars(string_lit_ptr_of(ptr)))),
         ),
 {
 }
@@ -1714,7 +1714,12 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
 /// directly). Callers instead take `string_len(s)` bounded by an
 /// explicit parameter, the same "caller-supplied sufficient bound"
 /// pattern used throughout this whole arc.
-pub uninterp spec fn string_len<'a>(s: StringPtr<'a>) -> nat;
+/// The character codes of a stored string.
+pub uninterp spec fn string_chars<'a>(s: StringPtr<'a>) -> Seq<nat>;
+
+pub open spec fn string_len<'a>(s: StringPtr<'a>) -> nat {
+    string_chars(s).len()
+}
 
 /// `expr.rs::str_lit_to_constructor`'s real construction, counted by
 /// hand: `List.nil`'s own wrapper is depth 1; each character adds
@@ -1740,7 +1745,7 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
                 &&& nlbv(to_model(r)) <= 0
                 &&& max_var_below(to_model(r), 0)
                 &&& depth(to_model(r)) <= string_len(s) + 3
-                &&& to_model(r) == string_lit_expand_model(string_len(s))
+                &&& to_model(r) == string_lit_expand_model(string_chars(s))
             },
             None => true,
         },
@@ -2318,7 +2323,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
             is_string_lit_shape_model(e);
         }
         assert(to_model(e) == ExprSpec::StringLit(
-            StringLitPayload(Ghost(string_len(string_lit_ptr_of(e)))),
+            StringLitPayload(Ghost(string_chars(string_lit_ptr_of(e)))),
         ));
         return Some(e);
     }
