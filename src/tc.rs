@@ -2099,7 +2099,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         fun = self.infer(fun, flag);
         let ghost mut k: nat = 0;
         let ghost (T0, f0) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env0, to_model_expr(fun0), T, f)
-            && kconv(env0, T, to_model_expr(fun));
+            && crate::expr_model::nlbv(T) <= 0 && kconv(env0, T, to_model_expr(fun));
         let ghost mut T = T0;
         let ghost mut fT: nat = f0;
         proof {
@@ -2139,6 +2139,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|j: int| 0 <= j < args@.len() ==> to_model_expr(#[trigger] args@[j]) == SA[n - 1 - j],
                 ktypes(env0, crate::beta_model::spine_app(H, SA.take(k as int)), T, fT),
                 kconv(env0, T, crate::expr_model::subst_full(to_model_expr(fun), crate::expr_arena_bridge::ptr_models(ctx@), 0)),
+                crate::expr_model::nlbv(T) <= 0,
         {
             match self.ctx.read_expr(fun) {
                 Pi { binder_type, body, .. } => {
@@ -2197,6 +2198,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(SA.take(k as int).push(am) =~= SA.take(k as int + 1));
                         crate::expr_arena_bridge::ptr_models_push(ctx_pre, arg);
                         T = crate::expr_model::subst_full(to_model_expr(body), cm.push(am), 0);
+                        assert forall|j: int| 0 <= j < cm.push(am).len() implies crate::expr_model::nlbv(#[trigger] cm.push(am)[j]) <= 0 by {
+                            if j < cm.len() {
+                                assert(cm.push(am)[j] == cm[j]);
+                            }
+                        }
+                        assert(crate::expr_model::nlbv(to_model_expr(body)) <= cm.len() + 1);
+                        crate::beta_model::subst_full_nlbv_bound_n(to_model_expr(body), cm.push(am), 0);
                         fT = f2;
                         k = k + 1;
                         kconv_refl(env0, T);
@@ -2699,7 +2707,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             // the let rule, one fuel above the body's derivation
             let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(*old(self).env, to_model_expr(body), T, f)
-                && kconv(*old(self).env, T, to_model_expr(r));
+                && crate::expr_model::nlbv(T) <= 0 && kconv(*old(self).env, T, to_model_expr(r));
             assert(crate::tc_model::fuel_marker(f));
             assert(to_model_expr(body) == crate::expr_model::subst_full(to_model_expr(body0), seq![to_model_expr(val)], 0));
             let lt = ExprSpec::Let(
@@ -6255,9 +6263,11 @@ pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: n
 /// What `infer` promises, and what both inference caches hold: the input has
 /// a type in the kernel's judgement, and the result is convertible to it --
 /// typing up to conversion, the judgement's own shape (`e : T`, `T == T'`
-/// gives `e : T'`), which `types_to` leaves to its users.
+/// gives `e : T'`), which `types_to` leaves to its users. The derived type
+/// is closed, as a closed term's type is.
 pub open spec fn kinfer_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
-    exists|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f) && kconv(env, T, t)
+    exists|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, t)
 }
 
 pub open spec fn ktc_marker(T: ExprSpec, f: nat) -> bool {
@@ -6268,6 +6278,7 @@ pub open spec fn ktc_marker(T: ExprSpec, f: nat) -> bool {
 pub proof fn kinfer_of_ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: nat)
     requires
         ktypes(env, e, t, f),
+        crate::expr_model::nlbv(t) <= 0,
     ensures
         kinfer_claim(env, e, t),
 {
@@ -6283,7 +6294,8 @@ pub proof fn kinfer_conv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r1: ExprSpec, r2
     ensures
         kinfer_claim(env, e, r2),
 {
-    let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f) && kconv(env, T, r1);
+    let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, r1);
     kconv_trans(env, T, r1, r2);
     assert(ktc_marker(T, f));
 }
