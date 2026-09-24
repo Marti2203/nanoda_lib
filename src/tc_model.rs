@@ -4326,6 +4326,76 @@ pub open spec fn struct_type_of(
         struct_type_marker(ils, rest) && deq_p(dty, denv, lctx, io, tx, spine_app(ExprSpec::Const(ind, ils), params + rest), h)
 }
 
+pub open spec fn eta_ctor_marker(cls: Seq<LevelSpec>, fields: Seq<ExprSpec>, ty0: ExprSpec, f0: nat) -> bool {
+    true
+}
+
+/// "`tx` is convertible to the type of SOME application of the constructor
+/// `cid` to `params` and `nf` fields" -- what the kernel's `try_eta_struct`
+/// knows about the side it expands: its type agrees with the type of the
+/// other side, which is such an application. Inverting that application's
+/// typing gives the structure applied to `params`, so this says what
+/// `struct_type_of` says, from the facts the kernel actually has.
+#[verifier::opaque]
+pub open spec fn ctor_typed_like(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    cid: u64,
+    params: Seq<ExprSpec>,
+    nf: nat,
+    h: nat,
+) -> bool
+    decreases h, 3int, 0nat,
+{
+    exists|cls: Seq<LevelSpec>, fields: Seq<ExprSpec>, ty0: ExprSpec, f0: nat| #[trigger]
+        eta_ctor_marker(cls, fields, ty0, f0) && fields.len() == nf && f0 < h && types_to(
+            dty,
+            denv,
+            lctx,
+            io,
+            spine_app(ExprSpec::Const(cid, cls), params + fields),
+            ty0,
+            f0,
+        ) && deq_p(dty, denv, lctx, io, tx, ty0, h)
+}
+
+pub proof fn ctor_typed_like_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: Map<u64, (Seq<u64>, ExprSpec)>,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    tx: ExprSpec,
+    cid: u64,
+    params: Seq<ExprSpec>,
+    nf: nat,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        ctor_typed_like(dty, env, lctx, io, tx, cid, params, nf, h1),
+        h1 <= h2,
+    ensures
+        ctor_typed_like(dty, env, lctx, io, tx, cid, params, nf, h2),
+    decreases h1, 2int,
+{
+    reveal_with_fuel(ctor_typed_like, 1);
+    let (cls, fields, ty0, f0) = choose|cls: Seq<LevelSpec>, fields: Seq<ExprSpec>, ty0: ExprSpec, f0: nat| #[trigger]
+        eta_ctor_marker(cls, fields, ty0, f0) && fields.len() == nf && f0 < h1 && types_to(
+            dty,
+            env,
+            lctx,
+            io,
+            spine_app(ExprSpec::Const(cid, cls), params + fields),
+            ty0,
+            f0,
+        ) && deq_p(dty, env, lctx, io, tx, ty0, h1);
+    deq_p_mono(dty, env, lctx, io, tx, ty0, h1, h2);
+    assert(eta_ctor_marker(cls, fields, ty0, f0));
+}
+
 /// STRUCTURE ETA, the kernel's `try_eta_struct`, in the same shape the
 /// function-eta leaf uses: `x` is definitionally equal to its OWN eta
 /// expansion, `Ctor params* x.0 x.1 .. x.(n-1)`. The route builds that
@@ -4357,7 +4427,17 @@ pub open spec fn eta_struct_expand(
         nf: nat,
     | #[trigger]
         eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, lctx, io, x, tx, f)
-            && struct_type_of(dty, denv, lctx, io, tx, ind, params, h) && struct_ctor_of(ind) == Some(cid)
+            && (struct_type_of(dty, denv, lctx, io, tx, ind, params, h) || ctor_typed_like(
+            dty,
+            denv,
+            lctx,
+            io,
+            tx,
+            cid,
+            params,
+            nf,
+            h,
+        )) && struct_ctor_of(ind) == Some(cid)
             && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
@@ -6121,6 +6201,7 @@ pub proof fn eta_struct_expand_mono(
         eta_struct_expand(dty, env, lctx, io, x, y, h2),
     decreases h1, 3int,
 {
+    reveal_with_fuel(ctor_typed_like, 1);
     let (tx, f, ind, cid, ls, params, nf) = choose|
         tx: ExprSpec,
         f: nat,
@@ -6131,12 +6212,26 @@ pub proof fn eta_struct_expand_mono(
         nf: nat,
     | #[trigger]
         eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h1 && types_to(dty, env, lctx, io, x, tx, f)
-            && struct_type_of(dty, env, lctx, io, tx, ind, params, h1) && struct_ctor_of(ind) == Some(cid)
+            && (struct_type_of(dty, env, lctx, io, tx, ind, params, h1) || ctor_typed_like(
+            dty,
+            env,
+            lctx,
+            io,
+            tx,
+            cid,
+            params,
+            nf,
+            h1,
+        )) && struct_ctor_of(ind) == Some(cid)
             && ctor_num_fields_of(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
             params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
         );
-    struct_type_of_mono(dty, env, lctx, io, tx, ind, params, h1, h2);
+    if struct_type_of(dty, env, lctx, io, tx, ind, params, h1) {
+        struct_type_of_mono(dty, env, lctx, io, tx, ind, params, h1, h2);
+    } else {
+        ctor_typed_like_mono(dty, env, lctx, io, tx, cid, params, nf, h1, h2);
+    }
     assert(eta_struct_marker(tx, f, ind, cid, ls, params, nf));
 }
 
