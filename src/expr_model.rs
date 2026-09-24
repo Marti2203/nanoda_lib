@@ -1424,6 +1424,297 @@ pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
 /// Abstraction is a no-op on a term with no free variables -- the dual of
 /// `subst_full_noop`, and what discharges `abstr_aux`'s `!has_fvars(e)`
 /// short-circuit.
+/// Abstracting an id that does not occur changes nothing.
+pub proof fn abstr_full_absent(e: ExprSpec, x: u32, off: nat)
+    requires
+        fv_absent(e, x),
+    ensures
+        abstr_full(e, seq![x], off) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            find_from_end_no_match(seq![x], id);
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_absent(*f, x, off);
+            abstr_full_absent(*a, x, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_full_absent(*ty, x, off);
+            abstr_full_absent(*b, x, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_absent(*ty, x, off);
+            abstr_full_absent(*v, x, off);
+            abstr_full_absent(*b, x, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_absent(*st, x, off);
+        },
+        _ => {},
+    }
+}
+
+/// Abstracting nothing changes nothing.
+pub proof fn abstr_full_empty(e: ExprSpec, off: nat)
+    ensures
+        abstr_full(e, Seq::<u32>::empty(), off) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            find_from_end_no_match(Seq::<u32>::empty(), id);
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_empty(*f, off);
+            abstr_full_empty(*a, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_full_empty(*ty, off);
+            abstr_full_empty(*b, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_empty(*ty, off);
+            abstr_full_empty(*v, off);
+            abstr_full_empty(*b, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_empty(*st, off);
+        },
+        _ => {},
+    }
+}
+
+/// Abstracting the innermost id first, then the rest one binder further out,
+/// is abstracting them all at once.
+pub proof fn abstr_full_compose(e: ExprSpec, ids: Seq<u32>, x: u32, off: nat)
+    requires
+        forall|j: int| 0 <= j < ids.len() ==> ids[j] != x,
+    ensures
+        abstr_full(abstr_full(e, seq![x], off), ids, off + 1) == abstr_full(e, ids.push(x), off),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            let l2 = ids.push(x);
+            assert(l2.subrange(0, l2.len() - 1) =~= ids);
+            if id == x {
+                find_from_end_first_match(seq![x], id, 0);
+                find_from_end_first_match(l2, id, 0);
+            } else {
+                find_from_end_no_match(seq![x], id);
+                assert(l2[l2.len() - 1] != id);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_compose(*f, ids, x, off);
+            abstr_full_compose(*a, ids, x, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_full_compose(*ty, ids, x, off);
+            abstr_full_compose(*b, ids, x, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_compose(*ty, ids, x, off);
+            abstr_full_compose(*v, ids, x, off);
+            abstr_full_compose(*b, ids, x, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_compose(*st, ids, x, off);
+        },
+        _ => {},
+    }
+}
+
+/// Abstract, then instantiate with the same local: the round trip.
+pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: u32, off: nat)
+    requires
+        nlbv(e) <= off,
+        off + depth(e) < 0x1_0000_0000,
+    ensures
+        subst_full(abstr_full(e, seq![x], off), seq![ExprSpec::Free(x)], off) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            if id == x {
+                find_from_end_first_match(seq![x], id, 0);
+                assert(((off + 0) as u32) as nat == off);
+            } else {
+                find_from_end_no_match(seq![x], id);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_inst_roundtrip(*f, x, off);
+            abstr_inst_roundtrip(*a, x, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_inst_roundtrip(*ty, x, off);
+            abstr_inst_roundtrip(*b, x, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_inst_roundtrip(*ty, x, off);
+            abstr_inst_roundtrip(*v, x, off);
+            abstr_inst_roundtrip(*b, x, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_inst_roundtrip(*st, x, off);
+        },
+        _ => {},
+    }
+}
+
+/// The abstracted id is gone.
+pub proof fn abstr_full_removes(e: ExprSpec, x: u32, off: nat)
+    ensures
+        fv_absent(abstr_full(e, seq![x], off), x),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            if id == x {
+                find_from_end_first_match(seq![x], id, 0);
+            } else {
+                find_from_end_no_match(seq![x], id);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_removes(*f, x, off);
+            abstr_full_removes(*a, x, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_full_removes(*ty, x, off);
+            abstr_full_removes(*b, x, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_removes(*ty, x, off);
+            abstr_full_removes(*v, x, off);
+            abstr_full_removes(*b, x, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_removes(*st, x, off);
+        },
+        _ => {},
+    }
+}
+
+/// Abstracting one id adds one loose index at most.
+pub proof fn abstr_full_nlbv1(e: ExprSpec, x: u32, off: nat)
+    requires
+        nlbv(e) <= off,
+    ensures
+        nlbv(abstr_full(e, seq![x], off)) <= off + 1,
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            if id == x {
+                find_from_end_first_match(seq![x], id, 0);
+            } else {
+                find_from_end_no_match(seq![x], id);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_nlbv1(*f, x, off);
+            abstr_full_nlbv1(*a, x, off);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_full_nlbv1(*ty, x, off);
+            abstr_full_nlbv1(*b, x, off + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_nlbv1(*ty, x, off);
+            abstr_full_nlbv1(*v, x, off);
+            abstr_full_nlbv1(*b, x, off + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_nlbv1(*st, x, off);
+        },
+        _ => {},
+    }
+}
+
+/// `abstr_levels_full_eq_abstr_full`, asking only that the ids are the
+/// nodes of their levels AMONG THOSE THE TERM MAY MENTION (`S`), not
+/// globally: in-scope terms mention only live locals, one per level.
+pub proof fn abstr_levels_eq_abstr_full_in(
+    e: ExprSpec,
+    ids: Seq<u32>,
+    S: ISet<u32>,
+    start_pos: u16,
+    nob: u16,
+    offset: nat,
+)
+    requires
+        start_pos <= nob,
+        ids.len() == nob - start_pos,
+        forall|k: int|
+            0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(ids[k]) == Some(
+                (start_pos + k) as u16,
+            ),
+        forall|id: u32, k: int|
+            #![trigger S.contains(id), ids[k]]
+            0 <= k < ids.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(id) == Some(
+                (start_pos + k) as u16,
+            ) ==> id == ids[k],
+        dbj_deep_in(e, S, nob),
+        nob as nat + offset + depth(e) < 65536,
+    ensures
+        abstr_levels_full(e, start_pos, (nob as nat + offset) as u16) == abstr_full(e, ids, offset),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            match crate::expr_arena_bridge::dbj_serial(id) {
+                Some(s) => {
+                    if s < start_pos {
+                        assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(ids[j]) == Some(
+                                (start_pos + j) as u16,
+                            ));
+                        }
+                        find_from_end_no_match(ids, id);
+                    } else {
+                        assert(s < nob);
+                        let k = (s - start_pos) as int;
+                        assert(0 <= k < ids.len());
+                        assert(S.contains(id));
+                        assert(id == ids[k]);
+                        let pos = (ids.len() - 1 - k) as nat;
+                        assert(ids[(ids.len() - 1 - pos) as int] == id);
+                        assert forall|j: int| 0 <= j < pos implies #[trigger] ids[(ids.len() - 1
+                            - j) as int] != id by {
+                            assert(crate::expr_arena_bridge::dbj_serial(
+                                ids[(ids.len() - 1 - j) as int],
+                            ) == Some((start_pos + (ids.len() - 1 - j)) as u16));
+                        }
+                        find_from_end_first_match(ids, id, pos);
+                    }
+                },
+                None => {},
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_levels_eq_abstr_full_in(*f, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(*a, ids, S, start_pos, nob, offset);
+        },
+        ExprSpec::Bind(ty, b) => {
+            abstr_levels_eq_abstr_full_in(*ty, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(*b, ids, S, start_pos, nob, offset + 1);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_levels_eq_abstr_full_in(*ty, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(*v, ids, S, start_pos, nob, offset);
+            abstr_levels_eq_abstr_full_in(*b, ids, S, start_pos, nob, offset + 1);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_levels_eq_abstr_full_in(*st, ids, S, start_pos, nob, offset);
+        },
+        _ => {},
+    }
+}
+
 pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
     requires
         !has_fv(e),

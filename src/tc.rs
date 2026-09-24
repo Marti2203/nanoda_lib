@@ -1489,6 +1489,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
     fn infer_proj(
         &mut self,
         _ty_name: NamePtr<'t>,
@@ -1882,6 +1883,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
     pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
@@ -2265,6 +2267,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
     fn infer_lambda(&mut self, mut e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
             tc_wf(*old(self)),
@@ -2275,6 +2278,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             (*final(self)).live == (*old(self)).live,
             scope_pres(to_model_expr(e), to_model_expr(result)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
     {
         let mut locals = Vec::new();
         let start_pos = self.ctx.dbj_level_counter;
@@ -2283,7 +2287,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // the end takes those levels back out.
         let ghost e0 = e;
         let ghost L = crate::expr_model::occ(to_model_expr(e0), start_pos);
+        // Typing: the telescope walked so far (`lam_walk`); each binder type
+        // is the type of the local opened for it.
+        let ghost env0 = *self.env;
+        let ghost mut Xs = seq![to_model_expr(e)];
+        let ghost mut As = Seq::<ExprSpec>::empty();
+        let ghost mut Bs = Seq::<ExprSpec>::empty();
         proof {
+            reveal(lam_walk);
+            assert(crate::expr_arena_bridge::ptr_models(locals@) =~= Seq::<ExprSpec>::empty());
+            crate::beta_model::subst_full_empty(to_model_expr(e), 0);
             broadcast use vstd::iset::lemma_iset_new;
 
             crate::expr_model::occ_self(to_model_expr(e0), live_set(*self), start_pos);
@@ -2313,6 +2326,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_model::nlbv(to_model_expr(e)) <= locals@.len(),
                 crate::expr_model::nlbv(to_model_expr(e0)) <= 0,
                 opened_locals(locals@, start_pos, walk_set(L, self.live@, start_pos)),
+                env0 == *old(self).env,
+                lam_walk(Xs, As, Bs, locals@),
+                Xs.len() == locals@.len() + 1,
+                Xs[locals@.len() as int] == crate::expr_model::subst_full(
+                    to_model_expr(e),
+                    crate::expr_arena_bridge::ptr_models(locals@),
+                    0,
+                ),
+                Xs[0] == to_model_expr(e0),
+                forall|j: int| 0 <= j < locals@.len() ==> #[trigger] As[j] == to_model_expr(
+                    crate::expr_arena_bridge::local_binder_type_of(locals@[j]),
+                ),
         {
             let ghost bt0 = binder_type;
             let binder_type = self.ctx.inst(binder_type, locals.as_slice());
@@ -2335,6 +2360,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 "infer_lambda: too many open de Bruijn levels",
             );
             let ghost live_k = self.live@;
+            let ghost pre = locals@;
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
             self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(local)));
             proof {
@@ -2349,6 +2375,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(ids_of(locals@.push(local)) =~= ids_of(locals@).push(crate::expr_arena_bridge::expr_id(local)));
             }
             locals.push(local);
+            proof {
+                assert(locals@ =~= pre.push(local));
+                assert(to_model_expr(e) == ExprSpec::Bind(Box::new(to_model_expr(bt0)), Box::new(to_model_expr(body))));
+                lam_walk_push(Xs, As, Bs, pre, to_model_expr(bt0), to_model_expr(body), local);
+                Xs = Xs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(locals@), 0));
+                As = As.push(crate::expr_model::subst_full(to_model_expr(bt0), crate::expr_arena_bridge::ptr_models(pre), 0));
+                Bs = Bs.push(crate::expr_model::subst_full(to_model_expr(body), crate::expr_arena_bridge::ptr_models(pre), 1));
+            }
             proof {
                 // `read_expr` gave `to_model(e) == Bind(_, to_model(body))`, and
                 // `depth` of a `Bind` is one more than its widest child -- so the
@@ -2378,9 +2412,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(crate::expr_model::dbj_deep_in(to_model_expr(instd), Sx, B));
             crate::expr_model::dbj_deep_in_below(to_model_expr(infd), Sx, B);
         }
+        let ghost n = locals@.len();
+        let ghost lf = locals@;
+        let ghost ks = ids_of(lf);
+        let ghost Tn = to_model_expr(infd);
+        proof {
+            assert(to_model_expr(instd) == Xs[n as int]);
+            assert(self.live@ == old(self).live@ + ks);
+            lam_top(env0, Xs, As, Bs, lf, Tn, Sx, L, old(self).live@, start_pos);
+        }
+        // VERUS-REWRITE(level-ceiling): the abstractions below need the open
+        // levels plus the term's depth to fit in a `u16`; terms are below
+        // depth 60000, so this is what is left for the levels.
+        crate::util::kernel_check(
+            self.ctx.dbj_level_counter < 5536,
+            "infer_lambda: too many open de Bruijn levels",
+        );
         let mut abstrd = self.ctx.abstr_levels(infd, start_pos);
         proof {
             broadcast use vstd::iset::lemma_iset_new;
+
+            lam_top_abstr(lf, As, Sx, L, old(self).live@, start_pos, Tn);
 
             crate::expr_model::abstr_levels_dbj_deep_in(
                 to_model_expr(infd),
@@ -2409,6 +2461,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 opened_locals(locals@, start_pos, Sx),
                 crate::expr_model::dbj_deep_in(to_model_expr(abstrd), L, start_pos),
                 crate::expr_model::nlbv(to_model_expr(abstrd)) <= locals@.len(),
+                locals@.len() <= n,
+                n == lf.len(),
+                locals@ == lf.take(locals@.len() as int),
+                ks == ids_of(lf),
+                lam_frame(lf, As, Sx, L, old(self).live@, start_pos),
+                start_pos as nat + n < 5536,
+                to_model_expr(abstrd) == crate::expr_model::abstr_full(
+                    lam_close(As, ks, Tn, locals@.len() as nat),
+                    ks.take(locals@.len() as int),
+                    0,
+                ),
         // The loop drains `locals`, so on exit the counter is back at
         // `start_pos` -- but a `while let` carries no exit reason, so
         // without this the function's counter frame has nothing to stand on.
@@ -2421,6 +2484,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live == old(self).live,
                 crate::expr_model::dbj_deep_in(to_model_expr(abstrd), L, start_pos),
                 crate::expr_model::nlbv(to_model_expr(abstrd)) <= 0,
+                to_model_expr(abstrd) == crate::expr_model::abstr_full(
+                    lam_close(As, ks, Tn, locals@.len() as nat),
+                    ks.take(locals@.len() as int),
+                    0,
+                ),
         {
             proof {
                 // the popped local is the old last one
@@ -2458,6 +2526,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         );
                         crate::expr_model::abstr_levels_nlbv(to_model_expr(binder_type), start_pos, self.ctx.dbj_level_counter);
                     }
+                    let ghost i = locals@.len();
+                    proof {
+                        assert(lf.take(i as int + 1) =~= locals@.push(local));
+                        assert(local == lf[i as int]);
+                        lam_pop_step(lf, As, Sx, L, old(self).live@, start_pos, Tn, i, to_model_expr(binder_type));
+                    }
                     abstrd = self.ctx.mk_pi(binder_name, binder_style, t, abstrd);
                 },
                 _ => crate::util::kernel_fail("infer_lambda: binder type is not a sort"),
@@ -2465,6 +2539,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         proof {
             scope_pres_of_occ(to_model_expr(e0), to_model_expr(abstrd), start_pos);
+            crate::expr_model::abstr_full_empty(lam_close(As, ks, Tn, 0), 0);
+            assert(ks.take(0) =~= Seq::<u32>::empty());
         }
         abstrd
     }
@@ -6492,6 +6568,493 @@ pub proof fn pi_telescope<'x, 't>(
             ExprSpec::Sort(crate::level_model::LevelSpec::IMax(Box::new(us[i as int]), Box::new(acc))),
             f,
         );
+    }
+}
+
+/// A lambda telescope's walk state: the term at each depth is a binder, and
+/// opening its body with that depth's local gives the next depth.
+#[verifier::opaque]
+pub open spec fn lam_walk<'t>(
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+) -> bool {
+    &&& Xs.len() == locals.len() + 1 && As.len() == locals.len() && Bs.len() == locals.len()
+    &&& forall|j: int| 0 <= j < locals.len() ==> #[trigger] Xs[j] == ExprSpec::Bind(Box::new(As[j]), Box::new(Bs[j]))
+    &&& forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::subst_full(
+        #[trigger] Bs[j],
+        seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[j]))],
+        0,
+    ) == Xs[j + 1]
+}
+
+/// One more binder of the walk.
+pub proof fn lam_walk_step<'t>(
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    btm: ExprSpec,
+    bodym: ExprSpec,
+    loc: crate::util::ExprPtr<'t>,
+)
+    requires
+        lam_walk(Xs, As, Bs, locals),
+        Xs[locals.len() as int] == crate::expr_model::subst_full(
+            ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
+            crate::expr_arena_bridge::ptr_models(locals),
+            0,
+        ),
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::is_local_shape(#[trigger] locals[j]),
+        crate::expr_arena_bridge::is_local_shape(loc),
+    ensures
+        lam_walk(
+            Xs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0)),
+            As.push(crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0)),
+            Bs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals), 1)),
+            locals.push(loc),
+        ),
+{
+    reveal(lam_walk);
+    let lm = crate::expr_arena_bridge::ptr_models(locals);
+    let k = locals.len() as int;
+    let a = crate::expr_model::subst_full(btm, lm, 0);
+    let b = crate::expr_model::subst_full(bodym, lm, 1);
+    let x = crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0);
+    let (Xs2, As2, Bs2, l2) = (Xs.push(x), As.push(a), Bs.push(b), locals.push(loc));
+    crate::expr_arena_bridge::is_local_shape_model(loc);
+    assert forall|j: int| 0 <= j < lm.len() implies #[trigger] crate::expr_model::nlbv(lm[j]) <= 0 by {
+        crate::expr_arena_bridge::is_local_shape_model(locals[j]);
+    }
+    crate::expr_model::subst_full_push(bodym, lm, ExprSpec::Free(crate::expr_arena_bridge::expr_id(loc)), 0);
+    crate::expr_arena_bridge::ptr_models_push(locals, loc);
+    assert(Xs[k] == ExprSpec::Bind(Box::new(a), Box::new(b)));
+    assert forall|j: int| 0 <= j < l2.len() implies #[trigger] Xs2[j] == ExprSpec::Bind(Box::new(As2[j]), Box::new(Bs2[j])) by {
+        if j < k {
+            assert(Xs2[j] == Xs[j] && As2[j] == As[j] && Bs2[j] == Bs[j]);
+        }
+    }
+    assert forall|j: int| 0 <= j < l2.len() implies crate::expr_model::subst_full(
+        #[trigger] Bs2[j],
+        seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(l2[j]))],
+        0,
+    ) == Xs2[j + 1] by {
+        if j < k {
+            assert(Bs2[j] == Bs[j] && l2[j] == locals[j] && Xs2[j + 1] == Xs[j + 1]);
+        }
+    }
+}
+
+/// `lam_walk_step`, plus each binder type being its local's type.
+pub proof fn lam_walk_push<'t>(
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    btm: ExprSpec,
+    bodym: ExprSpec,
+    loc: crate::util::ExprPtr<'t>,
+)
+    requires
+        lam_walk(Xs, As, Bs, locals),
+        Xs[locals.len() as int] == crate::expr_model::subst_full(
+            ExprSpec::Bind(Box::new(btm), Box::new(bodym)),
+            crate::expr_arena_bridge::ptr_models(locals),
+            0,
+        ),
+        forall|j: int| 0 <= j < locals.len() ==> #[trigger] As[j] == to_model_expr(
+            crate::expr_arena_bridge::local_binder_type_of(locals[j]),
+        ),
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_arena_bridge::is_local_shape(#[trigger] locals[j]),
+        crate::expr_arena_bridge::is_local_shape(loc),
+        to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc)) == crate::expr_model::subst_full(
+            btm,
+            crate::expr_arena_bridge::ptr_models(locals),
+            0,
+        ),
+    ensures
+        lam_walk(
+            Xs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals.push(loc)), 0)),
+            As.push(crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0)),
+            Bs.push(crate::expr_model::subst_full(bodym, crate::expr_arena_bridge::ptr_models(locals), 1)),
+            locals.push(loc),
+        ),
+        forall|j: int| 0 <= j < locals.len() + 1 ==> #[trigger] As.push(
+            crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0),
+        )[j] == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals.push(loc)[j])),
+{
+    reveal(lam_walk);
+    lam_walk_step(Xs, As, Bs, locals, btm, bodym, loc);
+    let a = crate::expr_model::subst_full(btm, crate::expr_arena_bridge::ptr_models(locals), 0);
+    assert forall|j: int| 0 <= j < locals.len() + 1 implies #[trigger] As.push(a)[j] == to_model_expr(
+        crate::expr_arena_bridge::local_binder_type_of(locals.push(loc)[j]),
+    ) by {
+        if j < locals.len() {
+            assert(locals.push(loc)[j] == locals[j]);
+        }
+    }
+}
+
+/// The type the lambda rule assigns a telescope from depth `i` in, given the
+/// innermost body's type `T`: each binder abstracts its own local out of its
+/// type and out of the rest.
+pub open spec fn lam_close(As: Seq<ExprSpec>, ks: Seq<u32>, T: ExprSpec, i: nat) -> ExprSpec
+    decreases As.len() - i,
+{
+    if i >= As.len() {
+        T
+    } else {
+        ExprSpec::Bind(
+            Box::new(crate::expr_model::abstr_full(As[i as int], seq![ks[i as int]], 0)),
+            Box::new(crate::expr_model::abstr_full(lam_close(As, ks, T, i + 1), seq![ks[i as int]], 0)),
+        )
+    }
+}
+
+/// THE LAMBDA TELESCOPE: from the innermost body's type outwards, each binder
+/// has the lambda rule's type, the body's type taken up to conversion.
+#[verifier::spinoff_prover]
+pub proof fn lam_telescope<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    T: ExprSpec,
+    i: nat,
+)
+    requires
+        lam_walk(Xs, As, Bs, locals),
+        kinfer_claim(env, Xs[locals.len() as int], T),
+        crate::expr_model::nlbv(T) <= 0,
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::nlbv(#[trigger] As[j]) <= 0,
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::fv_absent(
+            #[trigger] As[j],
+            crate::expr_arena_bridge::expr_id(locals[j]),
+        ),
+        i <= locals.len(),
+    ensures
+        kinfer_claim(env, Xs[i as int], lam_close(As, ids_of(locals), T, i)),
+        crate::expr_model::nlbv(lam_close(As, ids_of(locals), T, i)) <= 0,
+    decreases locals.len() - i,
+{
+    reveal(lam_walk);
+    let n = locals.len() as int;
+    let ks = ids_of(locals);
+    if i as int == n {
+    } else {
+        lam_telescope(env, Xs, As, Bs, locals, T, i + 1);
+        let ii = i as int;
+        let k = ks[ii];
+        let C1 = lam_close(As, ks, T, i + 1);
+        let dty = crate::env_model::to_model_of_declar_ty(env);
+        let denv = crate::env_model::to_model_of_env(env);
+        let lctx = crate::expr_arena_bridge::arena_lctx();
+        let (T1, f) = choose|T1: ExprSpec, f: nat| #[trigger] ktc_marker(T1, f) && ktypes(env, Xs[ii + 1], T1, f)
+            && crate::expr_model::nlbv(T1) <= 0 && kconv(env, T1, C1);
+        let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T1, C1, h);
+        let g: nat = if f >= h { f } else { h };
+        crate::tc_model::types_to_mono(dty, denv, lctx, true, Xs[ii + 1], T1, f, g);
+        crate::tc_model::deq_p_mono(dty, denv, lctx, true, T1, C1, h, g);
+        assert(Xs[ii] == ExprSpec::Bind(Box::new(As[ii]), Box::new(Bs[ii])));
+        assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(k)], 0) == Xs[ii + 1]);
+        assert(crate::tc_model::bind_marker(k, T1, C1));
+        let R = lam_close(As, ks, T, i);
+        assert(R == ExprSpec::Bind(
+            Box::new(crate::expr_model::abstr_full(As[ii], seq![k], 0)),
+            Box::new(crate::expr_model::abstr_full(C1, seq![k], 0)),
+        ));
+        assert(ktypes(env, Xs[ii], R, g + 1));
+        assert(crate::expr_model::nlbv(As[ii]) <= 0);
+        assert(crate::expr_model::fv_absent(As[ii], k));
+        crate::expr_model::abstr_full_absent(As[ii], k, 0);
+        crate::expr_model::abstr_full_nlbv1(C1, k, 0);
+        assert(crate::expr_model::nlbv(R) <= 0);
+        kinfer_of_ktypes(env, Xs[ii], R, g + 1);
+    }
+}
+
+/// ONE POP of `infer_lambda`'s second loop: wrapping the abstracted rest in the
+/// binder's abstracted type is abstracting the telescope one depth further out.
+pub proof fn lam_close_step(As: Seq<ExprSpec>, ks: Seq<u32>, T: ExprSpec, i: nat)
+    requires
+        i < As.len(),
+        As.len() == ks.len(),
+        crate::expr_model::fv_absent(As[i as int], ks[i as int]),
+        forall|j: int| 0 <= j < i ==> #[trigger] ks[j] != ks[i as int],
+    ensures
+        ExprSpec::Bind(
+            Box::new(crate::expr_model::abstr_full(As[i as int], ks.take(i as int), 0)),
+            Box::new(crate::expr_model::abstr_full(lam_close(As, ks, T, i + 1), ks.take(i as int + 1), 0)),
+        ) == crate::expr_model::abstr_full(lam_close(As, ks, T, i), ks.take(i as int), 0),
+{
+    let ii = i as int;
+    let k = ks[ii];
+    let P = ks.take(ii);
+    let C1 = lam_close(As, ks, T, i + 1);
+    crate::expr_model::abstr_full_absent(As[ii], k, 0);
+    assert forall|j: int| 0 <= j < P.len() implies P[j] != k by {
+        assert(P[j] == ks[j]);
+    }
+    crate::expr_model::abstr_full_compose(C1, P, k, 0);
+    assert(P.push(k) =~= ks.take(ii + 1));
+}
+
+/// What `infer_lambda`'s closing loop keeps fixed: the walk's locals, their
+/// types, and the scope they were opened in.
+#[verifier::opaque]
+pub open spec fn lam_frame<'t>(
+    lf: Seq<crate::util::ExprPtr<'t>>,
+    As: Seq<ExprSpec>,
+    S: vstd::iset::ISet<u32>,
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    c1: u16,
+) -> bool {
+    &&& lf.len() == As.len()
+    &&& opened_locals(lf, c1, S)
+    &&& forall|j: int| 0 <= j < lf.len() ==> #[trigger] As[j] == to_model_expr(
+        crate::expr_arena_bridge::local_binder_type_of(lf[j]),
+    )
+    &&& live0.len() == c1
+    &&& forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1)
+    &&& forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
+        (live0 + ids_of(lf))[s],
+    ) == Some(s as u16)
+    &&& S == walk_set(L, live0 + ids_of(lf), c1)
+    &&& c1 as nat + lf.len() < 0x1_0000
+}
+
+/// `infer_lambda` between its loops: the telescope types the input at the
+/// lambda rule's type, and the closing loop's frame holds.
+pub proof fn lam_top<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    lf: Seq<crate::util::ExprPtr<'t>>,
+    Tn: ExprSpec,
+    S: vstd::iset::ISet<u32>,
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    c1: u16,
+)
+    requires
+        lam_walk(Xs, As, Bs, lf),
+        kinfer_claim(env, Xs[lf.len() as int], Tn),
+        crate::expr_model::nlbv(Tn) <= 0,
+        forall|j: int| 0 <= j < lf.len() ==> #[trigger] As[j] == to_model_expr(
+            crate::expr_arena_bridge::local_binder_type_of(lf[j]),
+        ),
+        opened_locals(lf, c1, S),
+        live0.len() == c1,
+        forall|t: u32| #[trigger] L.contains(t) ==> live0.contains(t) && crate::expr_model::serial_below(t, c1),
+        forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
+            (live0 + ids_of(lf))[s],
+        ) == Some(s as u16),
+        S == walk_set(L, live0 + ids_of(lf), c1),
+        c1 as nat + lf.len() < 0x1_0000,
+    ensures
+        kinfer_claim(env, Xs[0], lam_close(As, ids_of(lf), Tn, 0)),
+        lam_frame(lf, As, S, L, live0, c1),
+{
+    opened_locals_fresh(lf, c1, S);
+    assert forall|j: int| 0 <= j < lf.len() implies crate::expr_model::nlbv(#[trigger] As[j]) <= 0
+        && crate::expr_model::fv_absent(As[j], crate::expr_arena_bridge::expr_id(lf[j])) by {
+        assert(As[j] == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[j])));
+    }
+    lam_telescope(env, Xs, As, Bs, lf, Tn, 0);
+    reveal(lam_walk);
+    reveal(lam_frame);
+}
+
+/// The closing loop's start: the kernel's abstraction of the body's type is
+/// the lambda rule's type with every opened local abstracted.
+pub proof fn lam_top_abstr<'t>(
+    lf: Seq<crate::util::ExprPtr<'t>>,
+    As: Seq<ExprSpec>,
+    S: vstd::iset::ISet<u32>,
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    c1: u16,
+    Tn: ExprSpec,
+)
+    requires
+        lam_frame(lf, As, S, L, live0, c1),
+        crate::expr_model::dbj_deep_in(Tn, S, (c1 + lf.len()) as u16),
+        c1 as nat + lf.len() + crate::expr_model::depth(Tn) < 0xFFFF,
+    ensures
+        crate::expr_model::abstr_levels_full(Tn, c1, (c1 + lf.len()) as u16) == crate::expr_model::abstr_full(
+            lam_close(As, ids_of(lf), Tn, lf.len()),
+            ids_of(lf).take(lf.len() as int),
+            0,
+        ),
+{
+    reveal(lam_frame);
+    lam_abstr_levels(Tn, lf, S, L, live0, c1, lf.len());
+}
+
+/// ONE POP of `infer_lambda`'s closing loop: the kernel wraps its abstracted
+/// rest in the binder's type abstracted at the current level, and that is the
+/// lambda rule's type abstracted one depth further out.
+pub proof fn lam_pop_step<'t>(
+    lf: Seq<crate::util::ExprPtr<'t>>,
+    As: Seq<ExprSpec>,
+    S: vstd::iset::ISet<u32>,
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    c1: u16,
+    Tn: ExprSpec,
+    i: nat,
+    bt: ExprSpec,
+)
+    requires
+        lam_frame(lf, As, S, L, live0, c1),
+        i < lf.len(),
+        bt == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[i as int])),
+        c1 as nat + i + crate::expr_model::depth(bt) < 0xFFFF,
+    ensures
+        ExprSpec::Bind(
+            Box::new(crate::expr_model::abstr_levels_full(bt, c1, (c1 + i) as u16)),
+            Box::new(crate::expr_model::abstr_full(
+                lam_close(As, ids_of(lf), Tn, i + 1),
+                ids_of(lf).take(i as int + 1),
+                0,
+            )),
+        ) == crate::expr_model::abstr_full(lam_close(As, ids_of(lf), Tn, i), ids_of(lf).take(i as int), 0),
+{
+    reveal(lam_frame);
+    let ks = ids_of(lf);
+    let ii = i as int;
+    assert(As[ii] == bt);
+    assert(opened_locals(lf, c1, S));
+    assert(crate::expr_arena_bridge::is_local_shape(lf[ii]));
+    lam_abstr_levels(bt, lf, S, L, live0, c1, i);
+    opened_locals_fresh(lf, c1, S);
+    assert(crate::expr_model::fv_absent(As[ii], ks[ii]));
+    assert forall|j: int| 0 <= j < i implies #[trigger] ks[j] != ks[ii] by {
+        assert(crate::expr_arena_bridge::is_local_shape(lf[j]));
+        assert(crate::expr_arena_bridge::dbj_serial(ks[j]) == Some((c1 + j) as u16));
+        assert(crate::expr_arena_bridge::dbj_serial(ks[ii]) == Some((c1 + i) as u16));
+    }
+    lam_close_step(As, ks, Tn, i);
+}
+
+/// An opened local does not occur in its own type: the type is deep below
+/// the local's level.
+pub proof fn opened_locals_fresh<'t>(
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    c1: u16,
+    S: vstd::iset::ISet<u32>,
+)
+    requires
+        opened_locals(locals, c1, S),
+    ensures
+        forall|j: int| 0 <= j < locals.len() ==> crate::expr_model::fv_absent(
+            to_model_expr(crate::expr_arena_bridge::local_binder_type_of(#[trigger] locals[j])),
+            crate::expr_arena_bridge::expr_id(locals[j]),
+        ),
+{
+    broadcast use vstd::iset::lemma_iset_new;
+
+    assert forall|j: int| 0 <= j < locals.len() implies crate::expr_model::fv_absent(
+        to_model_expr(crate::expr_arena_bridge::local_binder_type_of(#[trigger] locals[j])),
+        crate::expr_arena_bridge::expr_id(locals[j]),
+    ) by {
+        let ty = to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals[j]));
+        let c = (c1 + j) as u16;
+        crate::expr_model::dbj_deep_in_weaken(ty, S, c, crate::expr_model::all_ids(), c);
+        crate::expr_model::dbj_deep_fv_absent(ty, crate::expr_arena_bridge::expr_id(locals[j]), c);
+    }
+}
+
+/// `infer_lambda`'s abstraction of the levels from `c1` up, with `m` of the
+/// walk's locals open, is the model's abstraction of those locals' nodes.
+pub proof fn lam_abstr_levels<'t>(
+    e: ExprSpec,
+    lf: Seq<crate::util::ExprPtr<'t>>,
+    S: vstd::iset::ISet<u32>,
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    c1: u16,
+    m: nat,
+)
+    requires
+        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1),
+        live0.len() == c1,
+        c1 as nat + lf.len() < 0x1_0000,
+        forall|s: int| 0 <= s < (live0 + ids_of(lf)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
+            (live0 + ids_of(lf))[s],
+        ) == Some(s as u16),
+        S == walk_set(L, live0 + ids_of(lf), c1),
+        m <= lf.len(),
+        crate::expr_model::dbj_deep_in(e, S, (c1 + m) as u16),
+        c1 as nat + m + crate::expr_model::depth(e) < 0xFFFF,
+    ensures
+        crate::expr_model::abstr_levels_full(e, c1, (c1 + m) as u16) == crate::expr_model::abstr_full(
+            e,
+            ids_of(lf).take(m as int),
+            0,
+        ),
+{
+    let ids = ids_of(lf);
+    let P = ids.take(m as int);
+    walk_set_unique(L, live0, lf, c1);
+    assert forall|k: int| 0 <= k < P.len() implies #[trigger] crate::expr_arena_bridge::dbj_serial(P[k]) == Some(
+        (c1 + k) as u16,
+    ) by {
+        assert(P[k] == ids[k]);
+        assert((live0 + ids)[c1 + k] == ids[k]);
+    }
+    assert forall|id: u32, k: int|
+        #![trigger S.contains(id), P[k]]
+        0 <= k < P.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16)
+            implies id == P[k] by {
+        assert(P[k] == ids[k]);
+        assert(walk_set(L, live0 + ids, c1).contains(id));
+    }
+    crate::expr_model::abstr_levels_eq_abstr_full_in(e, P, S, c1, (c1 + m) as u16, 0);
+}
+
+/// A walk's scope names each opened level by exactly one node: the local the
+/// walk opened there.
+pub proof fn walk_set_unique<'t>(
+    L: vstd::iset::ISet<u32>,
+    live0: Seq<u32>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    c1: u16,
+)
+    requires
+        forall|t: u32| #[trigger] L.contains(t) ==> crate::expr_model::serial_below(t, c1),
+        live0.len() == c1,
+        c1 as nat + locals.len() < 0x1_0000,
+        forall|s: int| 0 <= s < (live0 + ids_of(locals)).len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(
+            (live0 + ids_of(locals))[s],
+        ) == Some(s as u16),
+    ensures
+        forall|id: u32, k: int|
+            #![trigger walk_set(L, live0 + ids_of(locals), c1).contains(id), ids_of(locals)[k]]
+            0 <= k < ids_of(locals).len() && walk_set(L, live0 + ids_of(locals), c1).contains(id)
+                && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16) ==> id == ids_of(locals)[k],
+{
+    broadcast use vstd::iset::lemma_iset_new;
+
+    let lv = live0 + ids_of(locals);
+    let ids = ids_of(locals);
+    assert forall|id: u32, k: int|
+        #![trigger walk_set(L, lv, c1).contains(id), ids[k]]
+        0 <= k < ids.len() && walk_set(L, lv, c1).contains(id)
+            && crate::expr_arena_bridge::dbj_serial(id) == Some((c1 + k) as u16) implies id == ids[k] by {
+        if L.contains(id) {
+            assert(crate::expr_model::serial_below(id, c1));
+        } else {
+            assert(lv.contains(id));
+            let s = choose|s: int| 0 <= s < lv.len() && lv[s] == id;
+            assert(crate::expr_arena_bridge::dbj_serial(lv[s]) == Some(s as u16));
+            assert(s == c1 + k);
+            assert(lv[c1 + k] == ids[k]);
+        }
     }
 }
 

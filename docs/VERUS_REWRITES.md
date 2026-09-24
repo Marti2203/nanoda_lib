@@ -188,6 +188,7 @@ still a rejection — but each is an improvement.
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded `.unwrap()` and an unguarded index |
 | `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop`, wrapping `u64` silently |
+| `infer_lambda` | `src/tc.rs` | `abstr_levels` walks the body's type with the open-level count in a `u16`, raised once per binder: more open levels than `u16::MAX` minus the term's depth wrapped it silently. Now checked before the abstraction: fewer than 5536 open levels, which with the corpus depth bound (60000) keeps the sum below `u16::MAX`. (`abstr_levels`' own ceiling was relaxed from 60000 to `u16::MAX`, the real one) |
 
 ---
 

@@ -3138,17 +3138,21 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec| #[trigger]
-            bind_marker(lid, infd) && types_to(
+        // The body's type is taken up to conversion (`infd ~ bt2`), as the
+        // application rule takes its function type: the kernel abstracts the
+        // type it INFERRED, which is only convertible to the one a
+        // derivation assigns.
+        ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+            bind_marker(lid, infd, bt2) && types_to(
                 dty,
                 denv,
                 lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 (fuel - 1) as nat,
-            ) && t == ExprSpec::Bind(
+            ) && deq_p(dty, denv, lctx, io, infd, bt2, (fuel - 1) as nat) && t == ExprSpec::Bind(
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
-                Box::new(abstr_full(infd, seq![lid], 0)),
+                Box::new(abstr_full(bt2, seq![lid], 0)),
             ),
         _ => false,
     })
@@ -3405,29 +3409,29 @@ pub proof fn types_to_mono(
         assert(f1 > 0);
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
-        if exists|lid: u32, infd: ExprSpec| #[trigger]
-            bind_marker(lid, infd) && types_to(
+        if exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+            bind_marker(lid, infd, bt2) && types_to(
                 dty,
                 denv,
                 lctx, io,
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 g1,
-            ) && t == ExprSpec::Bind(
+            ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
-                Box::new(abstr_full(infd, seq![lid], 0)),
+                Box::new(abstr_full(bt2, seq![lid], 0)),
             ) {
-            let (lid, infd) = choose|lid: u32, infd: ExprSpec| #[trigger]
-                bind_marker(lid, infd) && types_to(
+            let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+                bind_marker(lid, infd, bt2) && types_to(
                     dty,
                     denv,
                     lctx, io,
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     infd,
                     g1,
-                ) && t == ExprSpec::Bind(
+                ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(
                     Box::new(abstr_full(*binder_type, seq![lid], 0)),
-                    Box::new(abstr_full(infd, seq![lid], 0)),
+                    Box::new(abstr_full(bt2, seq![lid], 0)),
                 );
             types_to_mono(
                 dty,
@@ -3438,15 +3442,8 @@ pub proof fn types_to_mono(
                 g1,
                 g2,
             );
-            assert(bind_marker(lid, infd));
-            assert(types_to(
-                dty,
-                denv,
-                lctx, io,
-                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
-                infd,
-                (f2 - 1) as nat,
-            ));
+            deq_p_mono(dty, denv, lctx, io, infd, bt2, g1, g2);
+            assert(bind_marker(lid, infd, bt2));
             assert(types_to(dty, denv, lctx, io, e, t, f2));
         } else {
             let (lid, bt_ty, dom_level, instd_ty, cod_level) = choose|
@@ -4042,7 +4039,8 @@ pub proof fn types_to_lambda(
             fuel,
         ),
 {
-    assert(bind_marker(lid, infd));
+    deq_p_refl(dty, denv, lctx, io, infd, (fuel - 1) as nat);
+    assert(bind_marker(lid, infd, infd));
 }
 
 pub proof fn types_to_pi(
@@ -4169,7 +4167,7 @@ pub open spec fn proof_irrel_pair(
 /// already trigger on `fuel_marker`/`proj_marker` instead. Monotonicity in
 /// the derivation height needs to re-exhibit these witnesses, so the binder
 /// rules now carry markers of their own.
-pub open spec fn bind_marker(lid: u32, infd: ExprSpec) -> bool {
+pub open spec fn bind_marker(lid: u32, infd: ExprSpec, bt2: ExprSpec) -> bool {
     true
 }
 

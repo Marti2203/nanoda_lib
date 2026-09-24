@@ -1708,7 +1708,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             ),
             old(self).dbj_level_counter as nat + crate::expr_model::depth(
                 crate::expr_arena_bridge::to_model(e),
-            ) < 60000,
+            ) < 0xFFFF,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
                 crate::expr_arena_bridge::to_model(e),
@@ -1761,7 +1761,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // one at each `Bind`, so the SUM is what stays under.
             num_open_binders as nat + crate::expr_model::depth(
                 crate::expr_arena_bridge::to_model(e),
-            ) < 60000,
+            ) < 0xFFFF,
         ensures
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_levels_full(
                 crate::expr_arena_bridge::to_model(e),
