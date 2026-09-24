@@ -55,8 +55,6 @@ use crate::beta_model::{
 use crate::env::ReducibilityHint;
 use crate::env::{Env, RecRule};
 #[cfg(verus_only)]
-use crate::env_model::ctor_num_params_of_agrees;
-#[cfg(verus_only)]
 use crate::env_model::to_model as reducibility_hint_to_model;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_ctor_num_params;
@@ -70,7 +68,7 @@ use crate::env_model::to_model_of_env;
 use crate::env_model::{env_global_cap, env_global_wf_ty};
 #[cfg(verus_only)]
 use crate::env_model::{
-    env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_data_of_agrees, rec_rules_model, to_model_of_recursors,
+    env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors,
 };
 use crate::env_model::{
     get_constructor_num_params, get_declar_hint, get_declar_info_ty, get_recursor_data, reducibility_hint_as_regular,
@@ -651,7 +649,6 @@ pub fn verified_rec_step_free<'t, 'p: 't, 'x>(
             rules: rec_rules_model(rules@),
         };
         assert(to_model_of_recursors(*env)[rid] == rd);
-        rec_data_of_agrees(*env, rid);
         assert(rec_data_of(rid) == Some(rd));
         // The rule.
         find_rule_of_find_index(rules@, cname);
@@ -782,7 +779,6 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
         assert(to_model(s2) == spine_app(to_model(fun), cargs_model));
         assert(const_id(fun) == name_id(name));
         assert(cargs_model[i as int] == to_model(field));
-        ctor_num_params_of_agrees(*env, name_id(name));
         pstep_star_iota(
             cm,
             idx,

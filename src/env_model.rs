@@ -340,7 +340,7 @@ pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
 /// declaration per export: `get_declar_val` only ever returns
 /// Definition/Theorem values and `get_constructor` only Constructor
 /// data, so their key sets are disjoint; disclosed trust of the same
-/// character as `ctor_num_params_of_agrees`).
+/// character as `get_constructor_num_params`'s global clause).
 pub uninterp spec fn env_global_closed<'x, 'a>(env: Env<'x, 'a>) -> bool;
 
 /// Closedness of every declaration TYPE, the sibling of `env_global_closed`
@@ -500,34 +500,13 @@ pub assume_specification<'x, 'a>[ get_constructor_num_params ](
     ensures
         match result {
             Some(num_params) => to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
-                && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
+                && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params
+                // the arena-global view agrees (a name id is one declaration)
+                && crate::expr_arena_bridge::ctor_num_params_of(name_id(*n)) == Some(num_params),
             None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
         },
 ;
 
-/// Ties any env's per-env constructor-arity lookup to the ARENA-GLOBAL
-/// `ctor_num_params_of` (`expr_arena_bridge`, defined next to
-/// `nat_zero_id` -- see its doc for why it is global): whenever a
-/// constructor is visible in SOME env, the global map agrees with what
-/// that env reports. Disclosed trust, same character as `to_model`'s own
-/// arena-global convention: a name id maps to ONE declaration per
-/// export, and every `Env` (any cutoff, any temp extension) is a view of
-/// that one declaration set -- so per-env lookups can never disagree
-/// with each other, and pinning them all to one global map is consistent.
-/// This is the bridge `pstep`'s future iota rule will consume: the rule
-/// itself mentions only `ctor_num_params_of` (no env parameter), and a
-/// producer discharges it from its own env's `get_constructor_num_params`
-/// result via this lemma.
-#[verifier::external_body]
-pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires
-        to_model_of_ctor_num_params(env).contains_key(id),
-    ensures
-        crate::expr_arena_bridge::ctor_num_params_of(id) == Some(
-            to_model_of_ctor_num_params(env)[id],
-        ),
-{
-}
 
 /// The one substantive real-world fact `get_recursor_data` asserts beyond
 /// bookkeeping: a recursor's own universe parameters are always genuinely
@@ -540,7 +519,7 @@ pub proof fn ctor_num_params_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
 /// The env's recursors at the MODEL level (rec-iota P0): keyed by name id,
 /// the same shape `get_recursor_data` returns, with rule values modeled
 /// through `to_model`. Tied to the arena-global `rec_data_of` by
-/// `rec_data_of_agrees` (disclosed trust, exactly `ctor_num_params_of_agrees`'s
+/// `get_recursor_data`'s global clause (disclosed trust, exactly `get_constructor_num_params`'s
 /// character).
 pub uninterp spec fn to_model_of_recursors<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, RecDataSpec>;
 
@@ -573,21 +552,13 @@ pub assume_specification<'x, 'a>[ get_recursor_data ](
                 major_idx: major as nat,
                 uparams: level_names(to_model_of_levels(uparams)),
                 rules: rec_rules_model(rules@),
-            },
+            } && crate::expr_arena_bridge::rec_data_of(name_id(*n)) == Some(
+                to_model_of_recursors(*env)[name_id(*n)],
+            ),
             None => true,
         },
 ;
 
-/// Ties any env's recursor lookup to the arena-global `rec_data_of`
-/// (see `ctor_num_params_of_agrees`).
-#[verifier::external_body]
-pub proof fn rec_data_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires
-        to_model_of_recursors(env).contains_key(id),
-    ensures
-        crate::expr_arena_bridge::rec_data_of(id) == Some(to_model_of_recursors(env)[id]),
-{
-}
 
 /// `def_eq_unit`'s own env lookups -- unlike `get_declar_hint`/`get_
 /// constructor_num_params`, neither needs a semantic fact connecting the
@@ -602,16 +573,6 @@ pub proof fn rec_data_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
 /// wrappers above this one is tied to a map (2026-09-06, projection typing).
 pub uninterp spec fn to_model_of_struct_ctor<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u64>;
 
-/// Same disclosed trust as `ctor_num_params_of_agrees`: a structure visible
-/// in SOME env has the arena-global first-constructor its env reports.
-#[verifier::external_body]
-pub proof fn struct_ctor_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires
-        to_model_of_struct_ctor(env).contains_key(id),
-    ensures
-        crate::expr_arena_bridge::struct_ctor_of(id) == Some(to_model_of_struct_ctor(env)[id]),
-{
-}
 
 pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
     env: &Env<'x, 'a>,
@@ -621,7 +582,8 @@ pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
     ensures
         match result {
             Some(c) => to_model_of_struct_ctor(*env).contains_key(name_id(*n))
-                && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
+                && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c)
+                && crate::expr_arena_bridge::struct_ctor_of(name_id(*n)) == Some(name_id(c)),
             None => true,
         },
 ;
@@ -632,18 +594,6 @@ pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
 /// needs them to agree on one ground truth.
 pub uninterp spec fn to_model_of_ctor_num_fields<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
 
-/// Same disclosed trust as `struct_ctor_of_agrees`: a constructor visible in
-/// SOME env has the arena-global field count its env reports.
-#[verifier::external_body]
-pub proof fn ctor_num_fields_of_agrees<'x, 'a>(env: Env<'x, 'a>, id: u64)
-    requires
-        to_model_of_ctor_num_fields(env).contains_key(id),
-    ensures
-        crate::expr_arena_bridge::ctor_num_fields_of(id) == Some(
-            to_model_of_ctor_num_fields(env)[id],
-        ),
-{
-}
 
 pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
     env: &Env<'x, 'a>,
@@ -652,7 +602,8 @@ pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
     ensures
         match result {
             Some(k) => to_model_of_ctor_num_fields(*env).contains_key(name_id(*n))
-                && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
+                && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k
+                && crate::expr_arena_bridge::ctor_num_fields_of(name_id(*n)) == Some(k),
             None => true,
         },
 ;

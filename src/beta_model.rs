@@ -203,28 +203,13 @@ pub open spec fn subst1(body: ExprSpec, arg: ExprSpec) -> ExprSpec {
 /// `env == Map::empty()` (see its own doc comment) -- `env.contains_key
 /// (id)` is always false there, so delta never actually fires in that
 /// proof.
-/// A representationally-empty-level-args `Const(id, [])` node -- stands in
-/// for `ExprSpec::Const(id, Vec::new())`, which can't be written directly:
-/// `Vec::new()` has no spec-mode constructor at all (confirmed directly --
-/// attempting it inside an `open spec fn` fails with "cannot call function
-/// ... with mode exec"), unlike `Box`/`Ghost`/enum-variant construction,
-/// all of which DO work in spec code. Needed so `pstep`'s `NatLit`-
-/// unfolding rule (below) can pin its target down to a SPECIFIC value via
-/// `==` -- required for `pstep_diamond`'s determinism argument (two
-/// independently-obtained steps out of the same `NatLit` must land on the
-/// SAME value) -- without which the target could only be characterized
-/// relationally, the way `Const`'s own delta rule already is via `subst_
-/// expr_levels_rel`. Uninterpreted and trusted (like `nat_zero_id`/`nat_
-/// succ_id` themselves) rather than derived, since deriving it would
-/// require the very `Vec` construction this sidesteps; its only assumed
-/// property is `const_expr_no_levels_shape` below, which is exactly enough
-/// (`Const` shape, matching `id`, empty level-arg list) for every `nlbv`/
-/// `size`/`depth`/`max_var_below`/`shift`/`subst` fact downstream lemmas
-/// need, mirroring how those same facts about a real `Const` node never
-/// depend on its specific `levels` content either.
-pub uninterp spec fn const_expr_no_levels(id: u64) -> ExprSpec;
+/// The level-free constant `Const(id, [])` -- the target `pstep`'s `NatLit`
+/// unfolding rule pins down by `==` (`pstep_diamond`'s determinism argument
+/// needs two steps out of the same `NatLit` to land on the SAME value).
+pub open spec fn const_expr_no_levels(id: u64) -> ExprSpec {
+    ExprSpec::Const(id, Seq::empty())
+}
 
-#[verifier::external_body]
 pub proof fn const_expr_no_levels_shape(id: u64)
     ensures
         match const_expr_no_levels(id) {
@@ -234,20 +219,8 @@ pub proof fn const_expr_no_levels_shape(id: u64)
 {
 }
 
-/// Any REAL `Const(id, [])`-shaped `ExprSpec` -- however it was actually
-/// built -- equals `const_expr_no_levels(id)`. Needed to bridge `pstep`'s
-/// `NatLit`-unfolding rule (which only ever compares `const_expr_no_
-/// levels(id)` to ITSELF, see its own doc comment) to genuine arena-
-/// derived `Const` values, whose `Seq<LevelSpec>` payload is a real,
-/// independently-obtained `Vec` -- without this, connecting the rule to
-/// e.g. `verified_nat_lit_to_constructor`'s actual output would hit the
-/// exact same `Vec`-equality gap `const_expr_no_levels` was introduced to
-/// route around in the first place. Trusted (not derived) for the same
-/// reason: deriving it would need genuine `Vec` extensionality, which this
-/// vstd fork's `Vec` `PartialEq` doesn't supply (see `expr_spec_eq`'s own
-/// doc comment in `expr_model.rs`).
-#[verifier::external_body]
-#[verifier::spinoff_prover]
+/// Any `Const(id, [])`-shaped `ExprSpec`, however it was built, is
+/// `const_expr_no_levels(id)`.
 pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
     requires
         match e {
@@ -257,6 +230,9 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
     ensures
         e == const_expr_no_levels(id),
 {
+    if let ExprSpec::Const(rid, rlevels) = e {
+        assert(rlevels =~= Seq::<crate::level_model::LevelSpec>::empty());
+    }
 }
 
 /// `StringLit(len)`'s own unfolding target: `String.ofList` applied to the
@@ -360,7 +336,7 @@ pub open spec fn pstep(env: Map<u64, (Seq<u64>, ExprSpec)>, e1: ExprSpec, e2: Ex
         // non-parallel form breaks Takahashi's iota-vs-congruence
         // critical pair (see the proj-iota design notes). Constructor
         // arity comes from the ARENA-GLOBAL `ctor_num_params_of` (no
-        // env parameter -- `env_model::ctor_num_params_of_agrees` ties
+        // env parameter -- `env_model::get_constructor_num_params` ties
         // per-env lookups to it).
         ,
         ExprSpec::Proj(pidx, inner) => (match e2 {

@@ -884,8 +884,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => return None,
             }
             proof {
-                crate::env_model::struct_ctor_of_agrees(env0, crate::level_arena_bridge::name_id(*inductive_name));
-                crate::env_model::ctor_num_fields_of_agrees(env0, crate::level_arena_bridge::name_id(name));
             }
             let (x_type, y_type) = (self.infer(x, InferOnly), self.infer(y, InferOnly));
             if self.def_eq(x_type, y_type) {
@@ -1107,8 +1105,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let y_type = self.infer(y, InferOnly);
         let b = self.def_eq(x_ty, y_type);
         proof {
-            crate::env_model::struct_ctor_of_agrees(env0, crate::level_arena_bridge::name_id(name));
-            crate::env_model::ctor_num_fields_of_agrees(env0, crate::level_arena_bridge::name_id(*ctor_name));
             assert(crate::tc_model::unit_like_head(crate::level_arena_bridge::name_id(name)));
             crate::expr_arena_bridge::is_const_shape_model(xf);
             crate::expr_arena_bridge::const_levels_vec_model(xf);
@@ -1513,7 +1509,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let lv = crate::expr_arena_bridge::const_levels_vec(f);
                     assert(to_model_expr(f) == ExprSpec::Const(id, lv));
                     assert(sm == crate::beta_model::spine_app(ExprSpec::Const(id, lv), am2));
-                    crate::env_model::ctor_num_params_of_agrees(env, id);
                     assert(crate::expr_arena_bridge::ctor_num_params_of(id) == Some(num_params));
                     assert(am2[i as int] == to_model_expr(a));
                     // `iota_extract`'s trigger, written in its own shape
@@ -1684,8 +1679,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost ctor_id = crate::level_arena_bridge::name_id(all_ctor_names[0]);
         let ghost np = *num_params;
         proof {
-            crate::env_model::struct_ctor_of_agrees(env0, ind_id);
-            crate::env_model::ctor_num_params_of_agrees(env0, ctor_id);
         }
         // VERUS-REWRITE(accessor-swap): the same `DeclarInfo`, reached through
         // the accessor that carries the environment's claim about it -- every
@@ -4331,7 +4324,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 uparams: crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(rd_uparams)),
                 rules: crate::env_model::rec_rules_model(rec_rules@),
             };
-            crate::env_model::rec_data_of_agrees(env0, rid);
             assert(crate::expr_arena_bridge::rec_data_of(rid) == Some(rd));
             // the rule
             let cname = crate::expr_arena_bridge::const_name_of(major_ctor);
@@ -9423,8 +9415,6 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             None => return None,
         }
         proof {
-            crate::env_model::struct_ctor_of_agrees(env0, crate::level_arena_bridge::name_id(c_name));
-            crate::env_model::ctor_num_fields_of_agrees(env0, crate::level_arena_bridge::name_id(ctor_name0));
         }
         // VERUS-REWRITE(unchecked-index): `args[i]` below was unguarded. For a
         // well-typed `e_type` the head application supplies at least as many

@@ -1290,7 +1290,7 @@ pub uninterp spec fn nat_succ_id() -> u64;
 /// `to_model` itself), and every `Env` is a cutoff/temp-extension VIEW
 /// of that one declaration set, so any env where the constructor is
 /// visible reports the same `num_params` -- the per-env lookup is tied
-/// to this via `env_model::ctor_num_params_of_agrees` (disclosed
+/// to this via `env_model::get_constructor_num_params`'s global clause (disclosed
 /// trust). See the proj-iota design notes: the alternative (threading a
 /// ctor-arity map through all ~19 `pstep`-family signatures) was
 /// rejected.
@@ -1298,7 +1298,7 @@ pub uninterp spec fn ctor_num_params_of(id: u64) -> Option<u16>;
 
 /// Arena-global "structure -> its first (only) constructor" lookup, the
 /// same convention as `ctor_num_params_of` (tied to each env's
-/// `to_model_of_struct_ctor` by `env_model::struct_ctor_of_agrees`); the
+/// `to_model_of_struct_ctor` by `env_model::get_structure_first_ctor`'s global clause); the
 /// typing model's `Proj` rule reads it (2026-09-06).
 pub uninterp spec fn struct_ctor_of(id: u64) -> Option<u64>;
 

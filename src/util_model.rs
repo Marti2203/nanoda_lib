@@ -374,41 +374,6 @@ pub open spec fn index_set_distinct<T, S>(s: indexmap::IndexSet<T, S>) -> bool {
             && #[trigger] index_set_seq(s)[i] == #[trigger] index_set_seq(s)[j] ==> i == j
 }
 
-/// `get_index`: retrieve by position.
-pub assume_specification<T, S>[ indexmap::IndexSet::<T, S>::get_index ](
-    s: &indexmap::IndexSet<T, S>,
-    index: usize,
-) -> (r: Option<&T>)
-    ensures
-        (index < index_set_seq(*s).len()) == (r is Some),
-        r matches Some(x) ==> *x == index_set_seq(*s)[index as int],
-;
-
-/// `insert_full`: append when absent, no-op when present. Together with
-/// `get_index` this is what makes hash-consing observable -- the returned
-/// index always locates the value afterwards, whichever branch was taken.
-pub assume_specification<
-    T: core::hash::Hash + Eq,
-    S: core::hash::BuildHasher,
->[ indexmap::IndexSet::<T, S>::insert_full ](s: &mut indexmap::IndexSet<T, S>, value: T) -> (r: (
-    usize,
-    bool,
-))
-    ensures
-        ({
-            let before = index_set_seq(*old(s));
-            let after = index_set_seq(*final(s));
-            &&& r.0 < after.len()
-            &&& after[r.0 as int]
-                == value
-            // appended when absent, unchanged when already present
-            &&& if r.1 {
-                after =~= before.push(value) && r.0 == before.len()
-            } else {
-                after =~= before
-            }
-        }),
-;
 
 // `get_index_of` is deliberately NOT specified. indexmap's signature is
 // generic over any `Q: Equivalent<T>`, Verus requires an

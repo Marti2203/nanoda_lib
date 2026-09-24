@@ -71,8 +71,6 @@ use crate::env::Env;
 use crate::env_model::get_declar_info_ty;
 use crate::env_model::verified_is_lt;
 #[cfg(verus_only)]
-use crate::env_model::{ctor_num_fields_of_agrees, ctor_num_params_of_agrees, struct_ctor_of_agrees};
-#[cfg(verus_only)]
 use crate::env_model::{
     env_global_cap, env_global_cap_le, env_global_closed, env_global_closed_pin, env_global_closed_ty,
     env_global_closed_ty_pin, env_global_size_cap, env_global_size_cap_le, env_global_wf_ty,
@@ -2572,7 +2570,6 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
     };
     let ghost ctor_id = name_id(ctor_name);
     proof {
-        struct_ctor_of_agrees(*env, ind_id);
         assert(struct_ctor_of(ind_id) == Some(ctor_id));
     }
     let np = match get_constructor_num_params(env, &ctor_name) {
@@ -2580,7 +2577,6 @@ pub fn verified_infer_proj_free<'t, 'p: 't, 'x>(
         None => return None,
     };
     proof {
-        ctor_num_params_of_agrees(*env, ctor_id);
         assert(ctor_num_params_of(ctor_id) == Some(np));
     }
     if (np as usize) > args_s.len() {
@@ -3267,8 +3263,6 @@ pub fn verified_eta_struct_shadow<'t, 'p: 't, 'x>(
         return None;
     }
     proof {
-        struct_ctor_of_agrees(*env, name_id(ind_name));
-        ctor_num_fields_of_agrees(*env, name_id(ctor));
     }
     // `params ++ x.0 .. x.(nf-1)`
     let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
@@ -3450,8 +3444,6 @@ pub fn verified_eta_struct_shadow_via<'t, 'p: 't, 'x>(
         return None;
     }
     proof {
-        struct_ctor_of_agrees(*env, name_id(ind_name));
-        ctor_num_fields_of_agrees(*env, name_id(ctor));
     }
     // `params ++ x.0 .. x.(nf-1)`
     let mut new_args: Vec<ExprPtr<'t>> = Vec::new();
@@ -3654,8 +3646,6 @@ pub fn verified_unit_shadow<'t, 'p: 't, 'x>(
         _ => return None,
     }
     proof {
-        struct_ctor_of_agrees(*env, name_id(name));
-        ctor_num_fields_of_agrees(*env, name_id(ctor));
         assert(struct_ctor_of(name_id(name)) == Some(name_id(ctor)));
         assert(ctor_num_fields_of(name_id(ctor)) == Some(0u16));
         assert(unit_like_head(name_id(name)));
