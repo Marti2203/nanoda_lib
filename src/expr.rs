@@ -1673,6 +1673,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1685,6 +1687,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
                 n <= binders@.len(),
+                crate::expr_arena_bridge::abstr_pi_telescope_model(
+                    Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
+                    Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i])),
+                    crate::expr_arena_bridge::to_model(e),
+                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
                 (forall|i: int|
                     #![trigger binders@[i]]
                     0 <= i < binders@.len() ==> {
@@ -1696,7 +1703,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let ghost e_old = e;
             let b = binders[n - 1];
             e = self.abstr_pi(b, e);
+            proof {
+                let ids = Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i]));
+                let tys = Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i]));
+                assert(ids.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
+                assert(tys.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::quot_model::local_type(binders@[i])));
+            }
             n = n - 1;
+        }
+        proof {
+            assert(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])) =~= Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
         }
         e
     }
@@ -1725,6 +1741,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
     {
         let mut e = e0;
         let mut n = binders.len();
@@ -1737,6 +1755,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
                 n <= binders@.len(),
+                crate::expr_arena_bridge::abstr_pi_telescope_model(
+                    Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
+                    Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i])),
+                    crate::expr_arena_bridge::to_model(e),
+                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
                 (forall|i: int|
                     #![trigger binders@[i]]
                     0 <= i < binders@.len() ==> {
@@ -1748,7 +1771,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             let ghost e_old = e;
             let b = binders[n - 1];
             e = self.apply_lambda(b, e);
+            proof {
+                let ids = Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i]));
+                let tys = Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i]));
+                assert(ids.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
+                assert(tys.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::quot_model::local_type(binders@[i])));
+            }
             n = n - 1;
+        }
+        proof {
+            assert(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])) =~= Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
         }
         e
     }
