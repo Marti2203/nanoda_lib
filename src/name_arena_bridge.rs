@@ -516,21 +516,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::anonymous ](ctx: &TcCtx<'t, '
         to_model_name(result) == NameSpec::Anon,
 ;
 
-/// `TcCtx::str1` (`util.rs:469-473`): a fresh `Str(Anon, "u")`-shaped
-/// name -- callers needing `gen_elim_level`'s search loop (`verified_
-/// gen_elim_level` above) don't need anything about ITS specific model
-/// value, only that it exists as SOME real `NamePtr`, so `ensures true`.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
-    ctx: &mut TcCtx<'t, 'p>,
-    s: &'static str,
-) -> (result: NamePtr<'t>) where 'p: 't
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),        // names only: the expression caches are untouched
-        final(ctx).expr_cache == old(ctx).expr_cache,
-;
-
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
 /// standing in for `append_index_after`'s fresh suffix (`name.rs:60-70`,

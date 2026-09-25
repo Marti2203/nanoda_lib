@@ -532,6 +532,19 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.str(n, s2)
     }
 
+    /// Verified in place, body unchanged: a one-component name, owned.
+    pub fn str1(&mut self, s: &'static str) -> (result: NamePtr<'t>)
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+    {
+        let anon = self.alloc_name(Name::Anon);
+        let s = self.alloc_string(CowStr::Borrowed(s));
+        self.str(anon, s)
+    }
+
     /// Verified in place, body unchanged: a context over `export_file` and
     /// `tdag`, its level counter at zero and its caches empty.
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> (result: Self)
@@ -725,11 +738,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.str(anon, s)
     }
 
-    pub fn str1(&mut self, s: &'static str) -> NamePtr<'t> {
-        let anon = self.alloc_name(Name::Anon);
-        let s = self.alloc_string(CowStr::Borrowed(s));
-        self.str(anon, s)
-    }
 
 
     pub fn zero(&self) -> LevelPtr<'t> {
