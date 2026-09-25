@@ -120,35 +120,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
     }
 }
 
-impl<'t, 'p: 't> TcCtx<'t, 'p> {
-    /// Require that the set of un-specialized names for the derived recursors matches the set
-    /// of recursor names that appeared in the export file. Prevents addition to the environment
-    /// of new recursors that don't belong.
-    fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>) {
-        let from_parser = self.export_file.ind_name_to_recursor_names.get(ind_name).unwrap();
-        // Shadow-only: the certified set equality on the same two name lists.
-        if crate::tc::route_stats::shadow_enabled() {
-            let a: Vec<NamePtr<'t>> = derived.iter().copied().collect();
-            let b: Vec<NamePtr<'t>> = from_parser.iter().copied().collect();
-            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECNAMES_TOTAL);
-            if crate::inductive_model::verified_id_set_eq(&a, &b) {
-                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECNAMES_CERT);
-            }
-        }
-        if &derived == from_parser {
-            return;
-        } else {
-            panic!(
-                "for inductive type {:?},\nexpected recursors {:?},\nwhile export file contained recursors {:?}",
-                self.debug_print(*ind_name),
-                self.debug_print(derived.iter().copied().collect::<Vec<_>>()),
-                self.debug_print(from_parser.iter().copied().collect::<Vec<_>>()),
-            )
-        }
-    }
-
-}
-
 pub(crate) struct InductiveCheckState<'a> {
     /// Maps the specialized type's fresh name to its "actual"/unspecialized type,
     /// where the unspecialized type retains free variables.
@@ -1130,6 +1101,79 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 false
             }
             _ => panic!("Not an inductive declaration"),
+        }
+    }
+}
+
+/// The parser's recursor-name table is the export file's own: its keys and
+/// every name in its sets are export pointers.
+pub open spec fn export_rec_names_ok<'p>(ef: ExportFile<'p>) -> bool {
+    let a = ef.name_cache.arena_id();
+    forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
+        ==> crate::util_model::export_tagged(a, k)
+            && forall|n: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@[k]@.contains(n) ==> crate::util_model::export_tagged(a, n)
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// The panic `ck_recursor_names_simple` raises on a mismatch, with the same
+    /// message (Verus does not process its `format!` arguments). Claims nothing.
+    #[verifier::external_body]
+    fn recursor_names_mismatch(&self, ind_name: &NamePtr<'t>, derived: &FxHashSet<NamePtr<'t>>, from_parser: &FxHashSet<NamePtr<'t>>) -> ! {
+        panic!(
+            "for inductive type {:?},\nexpected recursors {:?},\nwhile export file contained recursors {:?}",
+            self.debug_print(*ind_name),
+            self.debug_print(derived.iter().copied().collect::<Vec<_>>()),
+            self.debug_print(from_parser.iter().copied().collect::<Vec<_>>()),
+        )
+    }
+
+    /// Require that the set of un-specialized names for the derived recursors matches the set
+    /// of recursor names that appeared in the export file. Prevents addition to the environment
+    /// of new recursors that don't belong.
+    ///
+    /// Verified in place: returns only when the two sets are equal
+    /// (`HashSet`'s `==`, specified on the fork's vstd as set equality).
+    ///
+    /// VERUS-REWRITE(panic-wrapper): the mismatch `panic!` with its formatted
+    /// message is the same call behind `recursor_names_mismatch`;
+    /// VERUS-REWRITE(deref-eq): `&derived == from_parser` is
+    /// `derived == *from_parser` -- `&A == &B` is `A == B`, and only the
+    /// latter carries the set-equality specification.
+    fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>)
+        requires
+            export_rec_names_ok(*self.export_file),
+            crate::util_model::export_tagged(self.export_file.name_cache.arena_id(), *ind_name),
+            forall|n: NamePtr<'t>| #[trigger] derived@.contains(n) ==> crate::util_model::owns(*self, n),
+        ensures
+            ({
+                let m = self.export_file.ind_name_to_recursor_names@;
+                m.contains_key(*ind_name) && derived@ == m[*ind_name]@
+            }),
+    {
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            export_keys_obey_model(self.export_file.name_cache.arena_id(),
+                self.export_file.ind_name_to_recursor_names@.dom().insert(*ind_name));
+        }
+        let from_parser = self.export_file.ind_name_to_recursor_names.get(ind_name).unwrap();
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            let a = self.export_file.name_cache.arena_id();
+            assert(self.export_file.ind_name_to_recursor_names@.contains_key(*ind_name));
+            assert(self.export_file.ind_name_to_recursor_names@[*ind_name] == *from_parser);
+            assert forall|n: NamePtr<'t>| #[trigger] derived@.union(from_parser@).contains(n) implies crate::util_model::owns(*self, n) by {
+                if from_parser@.contains(n) {
+                    export_tagged_owned(*self, n);
+                }
+            }
+            crate::util_model::ptr_owned_keys(*self, derived@.union(from_parser@));
+        }
+        if derived == *from_parser {
+            return;
+        } else {
+            self.recursor_names_mismatch(ind_name, &derived, from_parser)
         }
     }
 }

@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **159 marked rewrites across 101 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **161 marked rewrites across 102 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -236,6 +236,19 @@ pointer ... the dereference is implicit"): Verus does not model the implicit
 | `assert_nonnested_ctors_def_eq` | `src/inductive.rs` |
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` (`assert!(!std::ptr::eq(..))`) | `src/inductive.rs` |
 | `restore_and_check` | `src/inductive.rs` |
+
+### Formatted panic messages and `&A == &B` — 2 rewrites
+
+`ck_recursor_names_simple`: the mismatch `panic!` formats `debug_print` output,
+which Verus cannot process, so the same `panic!` sits behind the claim-free
+`recursor_names_mismatch` (`#[verifier::external_body]`, returns `!`); and
+`&derived == from_parser` is `derived == *from_parser` -- the same comparison,
+written on the sets, where the fork's `HashSet` `PartialEq` specification
+applies (`&A`'s forwarding `eq` carries none).
+
+| function | file |
+|---|---|
+| `ck_recursor_names_simple` | `src/inductive.rs` |
 
 ### A local named `old` — 2 rewrites
 
