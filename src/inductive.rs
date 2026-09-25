@@ -713,64 +713,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
 
-    fn mk_recursor_aux(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        ind_name: NamePtr<'t>,
-        motive: ExprPtr<'t>,
-        major: ExprPtr<'t>,
-        local_indices: &[ExprPtr<'t>],
-        flat_mapped_minors: &[ExprPtr<'t>],
-        rec_rules: &[RecRule<'t>],
-    ) -> Declar<'t> {
-        // VERUS-REWRITE(rec-ty-split): the type is built by the verified
-        // `mk_recursor_ty` (the same calls, in the same order); the
-        // `RecursorData` is assembled here, its counts from the same slices.
-        let rec_ty = self.mk_recursor_ty(st, motive, major, local_indices, flat_mapped_minors);
-
-        let recursor = RecursorData {
-            info: DeclarInfo {
-                name: {
-                    let rec_str_ptr = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
-                    self.ctx.str(ind_name, rec_str_ptr)
-                },
-                uparams: st.rec_uparams.unwrap(),
-                ty: rec_ty,
-            },
-            all_inductives: Arc::from(st.all_inductives_incl_specialized.iter().map(|x| x.name).collect::<Vec<_>>()),
-            num_params: u16::try_from(st.local_params.len()).unwrap(),
-            num_indices: u16::try_from(local_indices.len()).unwrap(),
-            num_motives: u16::try_from(st.motives.len()).unwrap(),
-            num_minors: u16::try_from(flat_mapped_minors.len()).unwrap(),
-            rec_rules: Arc::from(rec_rules),
-            is_k: st.k_target.unwrap(),
-        };
-
-        Declar::Recursor(recursor)
-    }
-
-    pub(crate) fn mk_recursors(&mut self, st: &InductiveCheckState<'t>) -> Vec<Declar<'t>> {
-        let rec_rules = self.mk_rec_rules(st);
-        let mut recursors = Vec::new();
-        for (i, ind) in st.all_inductives_incl_specialized.iter().enumerate() {
-            let motive = st.motives[i];
-            let major = st.majors[i];
-            let local_indices = st.local_indices.get(i).unwrap();
-            let minors = st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>();
-            let recursor = self.mk_recursor_aux(
-                st,
-                ind.name,
-                motive,
-                major,
-                local_indices,
-                minors.as_slice(),
-                rec_rules[i].as_slice(),
-            );
-            recursors.push(recursor);
-        }
-        recursors
-    }
-
     /// Return an ordered map, mapping the specialized recursor names to the
     /// unspecialized recursor names. For example:
     ///
@@ -1547,6 +1489,29 @@ pub proof fn flat_ptrs_prefix<'t>(s: Seq<Vec<ExprPtr<'t>>>, i: int)
         assert(r[i] == s[i]);
         flat_ptrs_prefix(r, i);
     }
+}
+
+/// VERUS-REWRITE(flat-map-collect): `hs.iter().map(|x| x.name).collect::<Vec<_>>()`
+/// is this scan; vstd cannot specify `collect` through a `map` closure.
+/// Same elements, same order.
+fn ind_names<'t>(hs: &Vec<IndTyHeader<'t>>) -> (result: Vec<NamePtr<'t>>)
+    ensures
+        result@.len() == hs@.len(),
+        forall|i: int| 0 <= i < hs@.len() ==> #[trigger] result@[i] == hs@[i].name,
+{
+    let mut out = Vec::new();
+    let mut i: usize = 0;
+    while i < hs.len()
+        invariant
+            i <= hs@.len(),
+            out@.len() == i,
+            forall|k: int| 0 <= k < i ==> #[trigger] out@[k] == hs@[k].name,
+        decreases hs@.len() - i,
+    {
+        out.push(hs[i].name);
+        i += 1;
+    }
+    out
 }
 
 /// A level-free local's recorded type is closed.
@@ -2623,6 +2588,219 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             i += 1;
         }
         rec_rules
+    }
+
+    /// Verified in place: the recursor declaration for one block inductive.
+    /// Its recorded counts are the lengths the type was built from, so the
+    /// type's binder spine is exactly params + motives + minors + indices +
+    /// the major premise -- what `major_idx` and iota index into.
+    ///
+    /// VERUS-REWRITE(rec-ty-split): the type is built by the verified
+    /// `mk_recursor_ty` (the same calls, in the same order).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_recursor_aux(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        ind_name: NamePtr<'t>,
+        motive: ExprPtr<'t>,
+        major: ExprPtr<'t>,
+        local_indices: &[ExprPtr<'t>],
+        flat_mapped_minors: &[ExprPtr<'t>],
+        rec_rules: &[RecRule<'t>],
+    ) -> (result: Declar<'t>)
+        requires
+            crate::util_model::owns(*old(self).ctx, ind_name),
+            major_ok(*old(self).ctx, motive),
+            major_ok(*old(self).ctx, major),
+            forall|i: int| 0 <= i < local_indices@.len() ==> level_free_local(*old(self).ctx, #[trigger] local_indices@[i]),
+            forall|i: int| 0 <= i < flat_mapped_minors@.len() ==> major_ok(*old(self).ctx, #[trigger] flat_mapped_minors@[i]),
+            forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            match result {
+                Declar::Recursor(r) => {
+                    &&& r.num_params == st.local_params@.len()
+                    &&& r.num_motives == st.motives@.len()
+                    &&& r.num_minors == flat_mapped_minors@.len()
+                    &&& r.num_indices == local_indices@.len()
+                    &&& crate::util_model::owns(*(*final(self)).ctx, r.info.ty)
+                    &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
+                        == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
+                    &&& r.rec_rules@.len() == rec_rules@.len()
+                },
+                _ => false,
+            },
+    {
+        proof {
+            assert forall|i: int| 0 <= i < local_indices@.len() implies crate::util_model::owns(*self.ctx, #[trigger] local_indices@[i]) by {
+                assert(level_free_local(*self.ctx, local_indices@[i]));
+            }
+            assert forall|i: int| 0 <= i < flat_mapped_minors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] flat_mapped_minors@[i]) by {
+                assert(major_ok(*self.ctx, flat_mapped_minors@[i]));
+            }
+            assert forall|i: int| 0 <= i < st.motives@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.motives@[i]) by {
+                assert(major_ok(*self.ctx, st.motives@[i]));
+            }
+            assert forall|i: int| 0 <= i < st.local_params@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.local_params@[i]) by {
+                assert(level_free_local(*self.ctx, st.local_params@[i]));
+            }
+            assert(forall|i: int| #![trigger local_indices@[i]] 0 <= i < local_indices@.len() ==> level_free_local(*self.ctx, local_indices@[i]));
+            assert(forall|i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> major_ok(*self.ctx, flat_mapped_minors@[i]));
+            assert(forall|i: int| #![trigger st.motives@[i]] 0 <= i < st.motives@.len() ==> major_ok(*self.ctx, st.motives@[i]));
+            assert(forall|i: int| #![trigger st.local_params@[i]] 0 <= i < st.local_params@.len() ==> level_free_local(*self.ctx, st.local_params@[i]));
+        }
+        let rec_ty = self.mk_recursor_ty(st, motive, major, local_indices, flat_mapped_minors);
+
+        let recursor = RecursorData {
+            info: DeclarInfo {
+                name: {
+                    let rec_str_ptr = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
+                    self.ctx.str(ind_name, rec_str_ptr)
+                },
+                uparams: st.rec_uparams.unwrap(),
+                ty: rec_ty,
+            },
+            all_inductives: Arc::from(ind_names(&st.all_inductives_incl_specialized)),
+            num_params: u16::try_from(st.local_params.len()).unwrap(),
+            num_indices: u16::try_from(local_indices.len()).unwrap(),
+            num_motives: u16::try_from(st.motives.len()).unwrap(),
+            num_minors: u16::try_from(flat_mapped_minors.len()).unwrap(),
+            rec_rules: Arc::from(rec_rules),
+            is_k: st.k_target.unwrap(),
+        };
+
+        Declar::Recursor(recursor)
+    }
+
+    /// Verified in place: one recursor per block inductive, each with its
+    /// counts and binder spine in agreement (see `mk_recursor_aux`).
+    ///
+    /// VERUS-REWRITE(enumerate): `for (i, ind) in st.all_inductives_incl_specialized.iter().enumerate()`
+    /// is the index walk it stands for; VERUS-REWRITE(flat-map-collect): the
+    /// flattened minors through `flatten_minors`. Same elements, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    pub(crate) fn mk_recursors(&mut self, st: &InductiveCheckState<'t>) -> (result: Vec<Declar<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
+                && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                ==> level_free(*old(self).ctx, #[trigger] st.all_inductives_incl_specialized@[i].ctors@[j].ty),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
+            forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
+            forall|i: int| 0 <= i < st.majors@.len() ==> major_ok(*old(self).ctx, #[trigger] st.majors@[i]),
+            forall|i: int, j: int| 0 <= i < st.local_indices@.len() && 0 <= j < st.local_indices@[i]@.len()
+                ==> level_free_local(*old(self).ctx, #[trigger] st.local_indices@[i]@[j]),
+            forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+                ==> major_ok(*old(self).ctx, #[trigger] st.minors@[i]@[j]),
+            st.minors@.len() == st.all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < st.minors@.len()
+                ==> (#[trigger] st.minors@[i])@.len() == st.all_inductives_incl_specialized@[i].ctors@.len(),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+            st.all_inductives_incl_specialized@.len() <= st.motives@.len(),
+            st.all_inductives_incl_specialized@.len() <= st.majors@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result@.len() == st.all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < result@.len() ==> match #[trigger] result@[i] {
+                Declar::Recursor(r) => {
+                    &&& crate::util_model::owns(*(*final(self)).ctx, r.info.ty)
+                    &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
+                        == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
+                    &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[i].ctors@.len()
+                },
+                _ => false,
+            },
+    {
+        let rec_rules = self.mk_rec_rules(st);
+        let mut recursors: Vec<Declar<'t>> = Vec::new();
+        let mut i: usize = 0;
+        while i < st.all_inductives_incl_specialized.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
+                forall|k: int| 0 <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+                forall|k: int| 0 <= k < st.majors@.len() ==> major_ok(*self.ctx, #[trigger] st.majors@[k]),
+                forall|a: int, j: int| 0 <= a < st.local_indices@.len() && 0 <= j < st.local_indices@[a]@.len()
+                    ==> level_free_local(*self.ctx, #[trigger] st.local_indices@[a]@[j]),
+                forall|a: int, j: int| 0 <= a < st.minors@.len() && 0 <= j < st.minors@[a]@.len()
+                    ==> major_ok(*self.ctx, #[trigger] st.minors@[a]@[j]),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.all_inductives_incl_specialized@.len() <= st.motives@.len(),
+                st.all_inductives_incl_specialized@.len() <= st.majors@.len(),
+                rec_rules@.len() == st.all_inductives_incl_specialized@.len(),
+                forall|a: int| 0 <= a < rec_rules@.len()
+                    ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
+                i <= st.all_inductives_incl_specialized@.len(),
+                recursors@.len() == i,
+                forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
+                    Declar::Recursor(r) => {
+                        &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                        &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
+                            == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
+                        &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
+                    },
+                    _ => false,
+                },
+            decreases st.all_inductives_incl_specialized@.len() - i,
+        {
+            let ind = &st.all_inductives_incl_specialized[i];
+            let motive = st.motives[i];
+            let major = st.majors[i];
+            let local_indices = st.local_indices.get(i).unwrap();
+            let minors = flatten_minors(&st.minors);
+            proof {
+                flat_ptrs_major_ok(*self.ctx, st.minors@);
+                assert(major_ok(*self.ctx, st.motives@[i as int]));
+                assert(major_ok(*self.ctx, st.majors@[i as int]));
+                assert forall|j: int| 0 <= j < local_indices@.len() implies level_free_local(*self.ctx, #[trigger] local_indices@[j]) by {
+                    assert(level_free_local(*self.ctx, st.local_indices@[i as int]@[j]));
+                }
+                assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[i as int].name));
+            }
+            let recursor = self.mk_recursor_aux(
+                st,
+                ind.name,
+                motive,
+                major,
+                local_indices,
+                minors.as_slice(),
+                rec_rules[i].as_slice(),
+            );
+            let ghost r0 = recursors@;
+            recursors.push(recursor);
+            proof {
+                assert forall|a: int| 0 <= a < recursors@.len() implies match #[trigger] recursors@[a] {
+                    Declar::Recursor(r) => {
+                        &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                        &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
+                            == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
+                        &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
+                    },
+                    _ => false,
+                } by {
+                    if a < r0.len() { assert(recursors@[a] == r0[a]); }
+                }
+            }
+            i += 1;
+        }
+        recursors
     }
 
     /// Verified in place, body unchanged: the constructor's non-parameter

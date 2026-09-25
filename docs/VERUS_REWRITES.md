@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **110 marked rewrites across 77 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **113 marked rewrites across 79 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -104,12 +104,13 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate` — 4 rewrites
+### `Iterator::enumerate` — 5 rewrites
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
 | `which_valid_ind_app` | `src/inductive.rs` | `enumerate`: with the fork's specification the loop body still cannot show `ind_const == st.ind_consts@[i]` (tried 2026-09-25) |
+| `mk_recursors` | `src/inductive.rs` | `enumerate` over the block inductives |
 | `mk_minors1group` | `src/inductive.rs` | `enumerate` over the constructors; also the iterators handed to `foldl_apps`/`abstr_pis` bound to locals so the proof can name their elements (same calls) |
 | `handle_rec_args_minor` | `src/inductive.rs` | `enumerate` over `rec_args`; also the reversed index iterator and the two `xs` iterators bound to locals so the proof can name their elements (same calls) |
 
@@ -145,21 +146,23 @@ Binding the call to a local first is behaviour-identical.
 |---|---|
 | `no_dupes_all_params` | `src/level.rs` |
 
-### `flat_map` + `collect` — 2 rewrites
+### `flat_map` / `map` + `collect` — 4 rewrites
 
-`st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`:
-vstd specifies neither `flat_map` nor `collect`. It is the verified free
-function `flatten_minors` (`src/inductive.rs`), the nested scan it stands for,
-whose result is `flat_ptrs(minors@)`; same elements, same order.
+`st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`
+and `hs.iter().map(|x| x.name).collect::<Vec<_>>()`: vstd specifies neither
+`flat_map` nor `collect` through a closure adapter (`collect` instantiates its
+postcondition at the adapter's unresolved `Item` projection). They are the
+verified free functions `flatten_minors` (result `flat_ptrs(minors@)`) and
+`ind_names` (`src/inductive.rs`), the scans they stand for; same elements,
+same order.
 
 | function | file |
 |---|---|
-| `flatten_minors` (the definition) | `src/inductive.rs` |
-| `mk_rec_rules` | `src/inductive.rs` |
+| `flatten_minors`, `ind_names` (the definitions) | `src/inductive.rs` |
+| `mk_rec_rules`, `mk_recursors` | `src/inductive.rs` |
 
-`handle_rec_ctor_args_rec_rule` calls it too (its marker is under
-`index-walk` below). The third site, `mk_recursors`, is still unverified and
-keeps the original.
+`handle_rec_ctor_args_rec_rule` and `mk_recursor_aux` call them too (their
+markers are under `index-walk` / `rec-ty-split`).
 
 ### `Box<dyn Error>` — 1 rewrite
 
@@ -263,8 +266,8 @@ needed a different shape.
 | `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
-| `mk_rec_rule1` | `src/inductive.rs` | the rule's value is built by the verified `mk_rec_rule_val` (the same calls, same order), which proves its binder arity is params + motives + minors + constructor arguments; the `RecRule` is assembled in the shell |
-| `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity equals the counts recorded beside it plus one; the `RecursorData` is assembled in the shell (its `Arc` conversions have no specification), counts from the same slices |
+| `mk_rec_rule1` | `src/inductive.rs` | the rule's value is built by the verified `mk_rec_rule_val` (the same calls, same order), which proves its binder arity is params + motives + minors + constructor arguments; `mk_rec_rule1` itself is verified in place and assembles the `RecRule` |
+| `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity; `mk_recursor_aux` itself is verified in place and proves the recorded counts are those lengths, so the arity is the counts plus one. The fork specifies `Arc::<[T]>::from` (slice and `Vec`); the name list goes through `ind_names` |
 | `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls. A fresh `Env` cannot be shown to match the context's arenas without a new trusted fact, so the environment side stays outside |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
