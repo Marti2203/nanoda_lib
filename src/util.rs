@@ -146,6 +146,15 @@ impl<A> Ptr<A> {
 // used to only assert.
 ::vstd::prelude::verus! {
 
+/// The stored-child test `alloc_expr` makes: a pointer into the context's
+/// own tier is below the current length.
+fn child_stored<A>(p: Ptr<A>, len: usize) -> (result: bool)
+    ensures
+        result == (!crate::name_arena_bridge::ptr_is_tc(p) || crate::name_arena_bridge::ptr_index(p) < len),
+{
+    !matches!(p.dag_marker(), DagMarker::TcCtx) || p.idx() < len
+}
+
 /// `Ptr::from`'s capacity panic, formatted as it formats it. Claims nothing.
 #[verifier::external_body]
 fn index_capacity_exceeded(idx: usize) -> ! {
@@ -748,6 +757,127 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         r
     }
 
+    /// Verified in place, body unchanged: the node the pointer's dag stores at
+    /// its index, which is what the pointer denotes (a `Local` denotes `Free`
+    /// of the pointer: two contexts can store the same local value at
+    /// different indices). The payload projections are that node's fields.
+    pub fn read_expr(&self, p: ExprPtr<'t>) -> (result: Expr<'t>)
+        requires
+            crate::util_model::owns(*self, p),
+        ensures
+            crate::expr_arena_bridge::expr_children_owned(*self, result),
+            !(result is Local) ==> crate::expr_arena_bridge::to_model_of_expr(result) == crate::expr_arena_bridge::to_model(p),
+            crate::expr_arena_bridge::node_cache_ok(result),
+            result matches Expr::Const { name, levels, .. } ==> crate::expr_arena_bridge::const_name_of(p) == name
+                && crate::expr_arena_bridge::const_levels_of(p) == levels,
+            result matches Expr::Local { id, binder_type, .. } ==> crate::expr_arena_bridge::local_id_of(p) == id
+                && crate::expr_arena_bridge::local_binder_type_of(p) == binder_type,
+            result matches Expr::NatLit { ptr: np, .. } ==> crate::expr_arena_bridge::nat_lit_ptr_of(p) == np,
+            result matches Expr::StringLit { ptr: sp, .. } ==> crate::expr_arena_bridge::string_lit_ptr_of(p) == sp,
+            result matches Expr::Local { .. } ==> crate::expr_arena_bridge::to_model(p) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(p)),
+            result matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), crate::expr_arena_bridge::expr_id(p)) == crate::expr_arena_bridge::fvar_dbj_serial(id),
+            result matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*self), crate::expr_arena_bridge::expr_id(p)) == crate::expr_arena_bridge::fvar_unique_serial(id),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            crate::util_model::ptr_is_tc_agree(p);
+            crate::expr_arena_bridge::to_model_at(p);
+            crate::expr_arena_bridge::serials_at(crate::util_model::arena_ids(*self), p);
+        }
+        match p.dag_marker() {
+            DagMarker::ExportFile => self.export_file.dag.exprs.get_index(p.idx()).copied().unwrap(),
+            DagMarker::TcCtx => self.dag.exprs.get_index(p.idx()).copied().unwrap(),
+        }
+    }
+
+    /// Store an `Expr`, getting back a pointer to the allocated item. If the item was
+    /// already stored, forego the allocation and return a pointer to the previously inserted
+    /// element. Checks the longer-lived storage first.
+    ///
+    /// Verified: the pointer denotes the node given, whose fields its payload
+    /// projections read. Locals are refused (`mk_dbj_level`,
+    /// `remake_dbj_level` and `mk_unique` number them; `unique_serial_injective`
+    /// rests on nothing else storing one). VERUS-REWRITE(arena-tokens): as in
+    /// `alloc_name`. VERUS-REWRITE(stored-child-check): children in this
+    /// context's own tier are TESTED to be already stored, as in `alloc_name`.
+    pub fn alloc_expr(&mut self, e: Expr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
+            crate::expr_arena_bridge::expr_children_owned(*old(self), e),
+            crate::expr_arena_bridge::node_cache_ok(e),
+            !(e is Local),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model_of_expr(e),
+            e matches Expr::Const { name, levels, .. } ==> crate::expr_arena_bridge::const_name_of(result) == name
+                && crate::expr_arena_bridge::const_levels_of(result) == levels,
+            e matches Expr::NatLit { ptr, .. } ==> crate::expr_arena_bridge::nat_lit_ptr_of(result) == ptr,
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let ghost ids = crate::util_model::arena_ids(*self);
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.exprs);
+            assert forall|m: Expr<'t>| #[trigger] ek.to_set().insert(e).contains(m)
+                implies crate::expr_arena_bridge::expr_parts_owned_in(ids, m) by {
+                if m != e {
+                    let i = choose|i: int| 0 <= i < ek.len() && ek[i] == m;
+                    assert(crate::expr_arena_bridge::expr_node_ok(ek[i], i as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
+                }
+            }
+            crate::expr_arena_bridge::owned_exprs_keys_obey_model(ids, ek.to_set().insert(e));
+        }
+        if let Some(idx) = self.export_file.dag.exprs.get_index_of(&e) {
+            proof {
+                let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.exprs);
+                assert(ek[idx as int] == e);
+                assert(crate::expr_arena_bridge::expr_node_ok(ek[idx as int], idx as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
+            }
+            let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
+            proof { crate::expr_arena_bridge::to_model_at(r); }
+            r
+        } else {
+            let len = self.dag.exprs.len();
+            let stored = match e {
+                Expr::App { fun, arg, .. } => child_stored(fun, len) && child_stored(arg, len),
+                Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
+                    child_stored(binder_type, len) && child_stored(body, len),
+                Expr::Let { binder_type, val, body, .. } =>
+                    child_stored(binder_type, len) && child_stored(val, len) && child_stored(body, len),
+                Expr::Proj { structure, .. } => child_stored(structure, len),
+                _ => true,
+            };
+            if !stored {
+                panic!("alloc_expr: a child that is not stored");
+            }
+            let ghost tk = crate::indexmap_model::iset_keys(&self.dag.exprs);
+            proof {
+                assert forall|m: Expr<'t>| #[trigger] tk.to_set().insert(e).contains(m)
+                    implies crate::expr_arena_bridge::expr_parts_owned_in(ids, m) by {
+                    if m != e {
+                        let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                        assert(crate::expr_arena_bridge::expr_node_ok(tk[i], i as nat, true, self.dag.id(), self.dag.partner()));
+                    }
+                }
+                crate::expr_arena_bridge::owned_exprs_keys_obey_model(ids, tk.to_set().insert(e));
+                assert(crate::expr_arena_bridge::expr_node_ok(e, tk.len() as nat, true, self.dag.id(), self.dag.partner()));
+            }
+            let (idx, _) = crate::arena_history::arena_insert(&mut self.dag.exprs, Tracked(&mut self.dag.toks.borrow_mut().exprs), e);
+            proof { use_type_invariant(&*self.dag); }
+            let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
+            proof { crate::expr_arena_bridge::to_model_at(r); }
+            r
+        }
+    }
+
     /// Level zero. Verified: position 0 of the export file's levels is zero.
     pub fn zero(&self) -> (result: LevelPtr<'t>)
         requires
@@ -946,13 +1076,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (self.read_name(p), self.read_name(q))
     }
 
-    pub fn read_expr(&self, p: ExprPtr<'t>) -> Expr<'t> {
-        match p.dag_marker() {
-            DagMarker::ExportFile => self.export_file.dag.exprs.get_index(p.idx()).copied().unwrap(),
-            DagMarker::TcCtx => self.dag.exprs.get_index(p.idx()).copied().unwrap(),
-        }
-    }
-
     pub fn read_string(&self, p: StringPtr<'t>) -> &CowStr<'t> {
         match p.dag_marker() {
             DagMarker::ExportFile => self.export_file.dag.strings.get_index(p.idx()).unwrap(),
@@ -971,17 +1094,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         match p.dag_marker() {
             DagMarker::ExportFile => self.export_file.dag.uparams.get_index(p.idx()).cloned().unwrap(),
             DagMarker::TcCtx => self.dag.uparams.get_index(p.idx()).cloned().unwrap(),
-        }
-    }
-
-    /// Store an `Expr`, getting back a pointer to the allocated item. If the item was
-    /// already stored, forego the allocation and return a pointer to the previously inserted
-    /// element. Checks the longer-lived storage first.
-    pub fn alloc_expr(&mut self, e: Expr<'t>) -> ExprPtr<'t> {
-        if let Some(idx) = self.export_file.dag.exprs.get_index_of(&e) {
-            Ptr::from(DagMarker::ExportFile, idx)
-        } else {
-            Ptr::from(DagMarker::TcCtx, self.dag.exprs.insert_full(e).0)
         }
     }
 
@@ -1231,6 +1343,8 @@ impl<'a> LeanDag<'a> {
         &&& crate::indexmap_model::iset_keys(&self.levels)[0] == Level::Zero
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
             ==> crate::level_arena_bridge::level_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.levels)[i], i as nat, t.is_tc, t.names.id(), t.partner)
+        &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
+            ==> crate::expr_arena_bridge::expr_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i], i as nat, t.is_tc, t.names.id(), t.partner)
     }
 
     /// The dag's arena.
@@ -2467,6 +2581,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn fvar_to_bvar(&mut self, num_open_binders: u16, dbj_level: u16) -> (result:
         ExprPtr<'t>)
         requires
+            crate::util_model::ctx_ok(*old(self)),
             dbj_level < num_open_binders,
         ensures
             crate::util_model::owns(*final(self), result),
@@ -2480,6 +2595,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn mk_var(&mut self, dbj_idx: u16) -> (result: ExprPtr<'t>)
         requires
+            crate::util_model::ctx_ok(*old(self)),
             dbj_idx < u16::MAX,
         ensures
             crate::util_model::owns(*final(self), result),

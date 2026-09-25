@@ -107,9 +107,110 @@ pub struct ExBinderStyle(BinderStyle);
 #[verifier::external_type_specification]
 pub struct ExFVarId(FVarId);
 
-/// What an `ExprPtr` denotes in our `ExprSpec` model. Uninterpreted, same
-/// trust boundary as `level_arena_bridge::to_model`.
-pub uninterp spec fn to_model<'a>(ptr: ExprPtr<'a>) -> ExprSpec;
+/// The node the pointer's arena history holds at its index, if any.
+pub open spec fn expr_node_at<'a>(p: ExprPtr<'a>) -> Option<Expr<'a>> {
+    let h = crate::arena_history::arena_hist::<Expr<'a>>(crate::util::arena_of(p));
+    if ptr_index(p) < h.len() {
+        Some(h[ptr_index(p) as int])
+    } else {
+        None
+    }
+}
+
+/// A node's expression children are placed for the denotation's recursion
+/// (see `child_ok`).
+pub open spec fn expr_children_below2<'a>(e: Expr<'a>, tc: bool, i: nat) -> bool {
+    match e {
+        Expr::App { fun, arg, .. } => child_ok(fun, tc, i) && child_ok(arg, tc, i),
+        Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
+            child_ok(binder_type, tc, i) && child_ok(body, tc, i),
+        Expr::Let { binder_type, val, body, .. } => child_ok(binder_type, tc, i) && child_ok(val, tc, i)
+            && child_ok(body, tc, i),
+        Expr::Proj { structure, .. } => child_ok(structure, tc, i),
+        _ => true,
+    }
+}
+
+/// What an `ExprPtr` denotes in our `ExprSpec` model: the node its arena's
+/// history holds at its index (`arena_history.rs`), children read the same
+/// way, recursing on (tier, index) as `to_model_name` does. A `Local`
+/// denotes `Free` of the pointer itself. A node with misplaced children
+/// (which no stored node has, `expr_node_ok`) denotes `Closed`. Closed;
+/// `to_model_at` states the unfolding.
+pub closed spec fn to_model<'a>(ptr: ExprPtr<'a>) -> ExprSpec
+    decreases
+            (if ptr_is_tc(ptr) {
+                1int
+            } else {
+                0int
+            }),
+            ptr_index(ptr),
+{
+    let h = crate::arena_history::arena_hist::<Expr<'a>>(crate::util::arena_of(ptr));
+    let i = ptr_index(ptr);
+    let tc = ptr_is_tc(ptr);
+    if i >= h.len() {
+        ExprSpec::Closed
+    } else {
+        match h[i as int] {
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
+            Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
+            Expr::NatLit { ptr: np, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(np)))),
+            Expr::StringLit { ptr: sp, .. } => ExprSpec::StringLit(StringLitPayload(Ghost(string_chars(sp)))),
+            Expr::Local { .. } => ExprSpec::Free(expr_id(ptr)),
+            Expr::App { fun, arg, .. } => if child_ok(fun, tc, i) && child_ok(arg, tc, i) {
+                ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg)))
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
+                if child_ok(binder_type, tc, i) && child_ok(body, tc, i) {
+                ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Let { binder_type, val, body, .. } => if child_ok(binder_type, tc, i) && child_ok(val, tc, i)
+                && child_ok(body, tc, i) {
+                ExprSpec::Let(Box::new(to_model(binder_type)), Box::new(to_model(val)), Box::new(to_model(body)))
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Proj { idx, structure, .. } => if child_ok(structure, tc, i) {
+                ExprSpec::Proj(idx, Box::new(to_model(structure)))
+            } else {
+                ExprSpec::Closed
+            },
+        }
+    }
+}
+
+/// A pointer denotes what its arena's history holds at its index, read
+/// structurally (a `Local` as `Free` of the pointer), when that node's
+/// children are placed as stored nodes' are.
+pub proof fn to_model_at<'a>(p: ExprPtr<'a>)
+    ensures
+        match expr_node_at(p) {
+            Some(e) => expr_children_below2(e, ptr_is_tc(p), ptr_index(p)) ==> to_model(p) == if e is Local {
+                ExprSpec::Free(expr_id(p))
+            } else {
+                to_model_of_expr(e)
+            },
+            None => true,
+        },
+{
+}
+
+/// Only a stored node of a shape denotes that shape (the four leaf shapes the
+/// payload projections read).
+pub proof fn to_model_shape<'a>(p: ExprPtr<'a>)
+    ensures
+        to_model(p) is Const ==> expr_node_at(p) matches Some(Expr::Const { .. }),
+        to_model(p) is Free ==> expr_node_at(p) matches Some(Expr::Local { .. }),
+        to_model(p) is NatLit ==> expr_node_at(p) matches Some(Expr::NatLit { .. }),
+        to_model(p) is StringLit ==> expr_node_at(p) matches Some(Expr::StringLit { .. }),
+{
+}
 
 /// What a *shallow* `Expr` value (as returned by `read_expr`, before
 /// following any of its child pointers) denotes.
@@ -560,16 +661,47 @@ pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
     }
 }
 
-/// The same, keyed by the id a `Free` node carries in the model. Uninterpreted;
-/// `read_expr` ties it to the node.
-/// Keyed by the context's arena pair too: two contexts reuse the same local
-/// ids for different de Bruijn levels.
-pub uninterp spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16>;
+/// The node a raw id names in the arena pair `aids`: the tier bit picks the
+/// arena, the rest is the index into its history.
+pub open spec fn raw_node(aids: (nat, nat), id: u32) -> Option<Expr<'static>> {
+    let h = crate::arena_history::arena_hist::<Expr<'static>>(if id >= 0x8000_0000u32 { aids.0 } else { aids.1 });
+    let i = (id & 0x7FFF_FFFFu32) as nat;
+    if i < h.len() {
+        Some(h[i as int])
+    } else {
+        None
+    }
+}
+
+/// The same, keyed by the id a `Free` node carries in the model: the level a
+/// stored `DbjLevel` local was made at. Keyed by the context's arena pair
+/// too: two contexts reuse the same local ids for different de Bruijn levels.
+pub closed spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16> {
+    match raw_node(aids, id) {
+        Some(Expr::Local { id: fid, .. }) => fvar_dbj_serial(fid),
+        _ => None,
+    }
+}
 
 /// The same for a `Unique` local: the counter value it was created with.
-/// `mk_unique` ties it to the node; two uniques from one context with
-/// different serials are therefore different locals.
-pub uninterp spec fn unique_serial(aids: (nat, nat), id: u32) -> Option<u32>;
+/// `mk_unique` numbers them; two uniques from one context with different
+/// serials are therefore different locals.
+pub closed spec fn unique_serial(aids: (nat, nat), id: u32) -> Option<u32> {
+    match raw_node(aids, id) {
+        Some(Expr::Local { id: fid, .. }) => fvar_unique_serial(fid),
+        _ => None,
+    }
+}
+
+/// An owned pointer's serials are those of the local stored there.
+pub proof fn serials_at<'a>(aids: (nat, nat), p: ExprPtr<'a>)
+    requires
+        crate::util_model::owns_in(aids, p),
+    ensures
+        expr_node_at(p) matches Some(Expr::Local { id, .. }) ==> dbj_serial(aids, expr_id(p)) == fvar_dbj_serial(id)
+            && unique_serial(aids, expr_id(p)) == fvar_unique_serial(id),
+{
+}
 
 /// The serial a `Unique` fvar id carries (`None` for a level local).
 pub open spec fn fvar_unique_serial(id: FVarId) -> Option<u32> {
@@ -688,6 +820,111 @@ pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<u32> {
 /// arithmetic as written; the alternative was a guard, which would be a
 /// behaviour change on a path no real term reaches (a de Bruijn index of
 /// 65535 means 65535 enclosing binders).
+/// An expression node's pointers belong to the arena pair `ids`.
+pub open spec fn expr_parts_owned_in<'a>(ids: (nat, nat), e: Expr<'a>) -> bool {
+    match e {
+        Expr::StringLit { ptr, .. } => crate::util_model::owns_in(ids, ptr),
+        Expr::NatLit { ptr, .. } => crate::util_model::owns_in(ids, ptr),
+        Expr::Proj { ty_name, structure, .. } => crate::util_model::owns_in(ids, ty_name) && crate::util_model::owns_in(ids, structure),
+        Expr::Var { .. } => true,
+        Expr::Sort { level, .. } => crate::util_model::owns_in(ids, level),
+        Expr::Const { name, levels, .. } => crate::util_model::owns_in(ids, name) && crate::util_model::owns_in(ids, levels),
+        Expr::App { fun, arg, .. } => crate::util_model::owns_in(ids, fun) && crate::util_model::owns_in(ids, arg),
+        Expr::Pi { binder_name, binder_type, body, .. } => crate::util_model::owns_in(ids, binder_name) && crate::util_model::owns_in(ids, binder_type) && crate::util_model::owns_in(ids, body),
+        Expr::Lambda { binder_name, binder_type, body, .. } => crate::util_model::owns_in(ids, binder_name) && crate::util_model::owns_in(ids, binder_type) && crate::util_model::owns_in(ids, body),
+        Expr::Let { binder_name, binder_type, val, body, .. } => crate::util_model::owns_in(ids, binder_name) && crate::util_model::owns_in(ids, binder_type) && crate::util_model::owns_in(ids, val) && crate::util_model::owns_in(ids, body),
+        Expr::Local { binder_name, binder_type, .. } => crate::util_model::owns_in(ids, binder_name) && crate::util_model::owns_in(ids, binder_type),
+    }
+}
+
+/// An expression node's pointers are all in the export tier.
+pub open spec fn expr_parts_export<'a>(e: Expr<'a>) -> bool {
+    match e {
+        Expr::StringLit { ptr, .. } => !crate::util_model::ptr_is_tc(ptr),
+        Expr::NatLit { ptr, .. } => !crate::util_model::ptr_is_tc(ptr),
+        Expr::Proj { ty_name, structure, .. } => !crate::util_model::ptr_is_tc(ty_name) && !crate::util_model::ptr_is_tc(structure),
+        Expr::Var { .. } => true,
+        Expr::Sort { level, .. } => !crate::util_model::ptr_is_tc(level),
+        Expr::Const { name, levels, .. } => !crate::util_model::ptr_is_tc(name) && !crate::util_model::ptr_is_tc(levels),
+        Expr::App { fun, arg, .. } => !crate::util_model::ptr_is_tc(fun) && !crate::util_model::ptr_is_tc(arg),
+        Expr::Pi { binder_name, binder_type, body, .. } => !crate::util_model::ptr_is_tc(binder_name) && !crate::util_model::ptr_is_tc(binder_type) && !crate::util_model::ptr_is_tc(body),
+        Expr::Lambda { binder_name, binder_type, body, .. } => !crate::util_model::ptr_is_tc(binder_name) && !crate::util_model::ptr_is_tc(binder_type) && !crate::util_model::ptr_is_tc(body),
+        Expr::Let { binder_name, binder_type, val, body, .. } => !crate::util_model::ptr_is_tc(binder_name) && !crate::util_model::ptr_is_tc(binder_type) && !crate::util_model::ptr_is_tc(val) && !crate::util_model::ptr_is_tc(body),
+        Expr::Local { binder_name, binder_type, .. } => !crate::util_model::ptr_is_tc(binder_name) && !crate::util_model::ptr_is_tc(binder_type),
+    }
+}
+
+/// A stored expression node is well formed at position `i` of a dag of tier
+/// `tc` with arena `id` and export partner `partner` (see `name_node_ok`):
+/// its children are placed for the denotation, its pointers belong to the
+/// dag's arenas (all export-tier for an export dag), and its cached flags are
+/// right.
+pub open spec fn expr_node_ok<'a>(e: Expr<'a>, i: nat, tc: bool, id: nat, partner: nat) -> bool {
+    &&& expr_children_below2(e, tc, i)
+    &&& expr_parts_owned_in((id, partner), e)
+    &&& (!tc ==> expr_parts_export(e))
+    &&& node_cache_ok(e)
+}
+
+/// Runtime `==` on expressions: the derived comparison (pointers by `raw`).
+pub open spec fn expr_raw_eq<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
+    match (a, b) {
+        (Expr::StringLit { hash: hash1, ptr: ptr1 }, Expr::StringLit { hash: hash2, ptr: ptr2 }) => hash1 == hash2 && crate::util_model::ptr_raw(ptr1) == crate::util_model::ptr_raw(ptr2),
+        (Expr::NatLit { hash: hash1, ptr: ptr1 }, Expr::NatLit { hash: hash2, ptr: ptr2 }) => hash1 == hash2 && crate::util_model::ptr_raw(ptr1) == crate::util_model::ptr_raw(ptr2),
+        (Expr::Proj { hash: hash1, ty_name: ty_name1, idx: idx1, structure: structure1, num_loose_bvars: num_loose_bvars1, has_fvars: has_fvars1 }, Expr::Proj { hash: hash2, ty_name: ty_name2, idx: idx2, structure: structure2, num_loose_bvars: num_loose_bvars2, has_fvars: has_fvars2 }) => hash1 == hash2 && crate::util_model::ptr_raw(ty_name1) == crate::util_model::ptr_raw(ty_name2) && idx1 == idx2 && crate::util_model::ptr_raw(structure1) == crate::util_model::ptr_raw(structure2) && num_loose_bvars1 == num_loose_bvars2 && has_fvars1 == has_fvars2,
+        (Expr::Var { hash: hash1, dbj_idx: dbj_idx1 }, Expr::Var { hash: hash2, dbj_idx: dbj_idx2 }) => hash1 == hash2 && dbj_idx1 == dbj_idx2,
+        (Expr::Sort { hash: hash1, level: level1 }, Expr::Sort { hash: hash2, level: level2 }) => hash1 == hash2 && crate::util_model::ptr_raw(level1) == crate::util_model::ptr_raw(level2),
+        (Expr::Const { hash: hash1, name: name1, levels: levels1 }, Expr::Const { hash: hash2, name: name2, levels: levels2 }) => hash1 == hash2 && crate::util_model::ptr_raw(name1) == crate::util_model::ptr_raw(name2) && crate::util_model::ptr_raw(levels1) == crate::util_model::ptr_raw(levels2),
+        (Expr::App { hash: hash1, fun: fun1, arg: arg1, num_loose_bvars: num_loose_bvars1, has_fvars: has_fvars1 }, Expr::App { hash: hash2, fun: fun2, arg: arg2, num_loose_bvars: num_loose_bvars2, has_fvars: has_fvars2 }) => hash1 == hash2 && crate::util_model::ptr_raw(fun1) == crate::util_model::ptr_raw(fun2) && crate::util_model::ptr_raw(arg1) == crate::util_model::ptr_raw(arg2) && num_loose_bvars1 == num_loose_bvars2 && has_fvars1 == has_fvars2,
+        (Expr::Pi { hash: hash1, binder_name: binder_name1, binder_style: binder_style1, binder_type: binder_type1, body: body1, num_loose_bvars: num_loose_bvars1, has_fvars: has_fvars1 }, Expr::Pi { hash: hash2, binder_name: binder_name2, binder_style: binder_style2, binder_type: binder_type2, body: body2, num_loose_bvars: num_loose_bvars2, has_fvars: has_fvars2 }) => hash1 == hash2 && crate::util_model::ptr_raw(binder_name1) == crate::util_model::ptr_raw(binder_name2) && binder_style1 == binder_style2 && crate::util_model::ptr_raw(binder_type1) == crate::util_model::ptr_raw(binder_type2) && crate::util_model::ptr_raw(body1) == crate::util_model::ptr_raw(body2) && num_loose_bvars1 == num_loose_bvars2 && has_fvars1 == has_fvars2,
+        (Expr::Lambda { hash: hash1, binder_name: binder_name1, binder_style: binder_style1, binder_type: binder_type1, body: body1, num_loose_bvars: num_loose_bvars1, has_fvars: has_fvars1 }, Expr::Lambda { hash: hash2, binder_name: binder_name2, binder_style: binder_style2, binder_type: binder_type2, body: body2, num_loose_bvars: num_loose_bvars2, has_fvars: has_fvars2 }) => hash1 == hash2 && crate::util_model::ptr_raw(binder_name1) == crate::util_model::ptr_raw(binder_name2) && binder_style1 == binder_style2 && crate::util_model::ptr_raw(binder_type1) == crate::util_model::ptr_raw(binder_type2) && crate::util_model::ptr_raw(body1) == crate::util_model::ptr_raw(body2) && num_loose_bvars1 == num_loose_bvars2 && has_fvars1 == has_fvars2,
+        (Expr::Let { hash: hash1, binder_name: binder_name1, binder_type: binder_type1, val: val1, body: body1, num_loose_bvars: num_loose_bvars1, has_fvars: has_fvars1, nondep: nondep1 }, Expr::Let { hash: hash2, binder_name: binder_name2, binder_type: binder_type2, val: val2, body: body2, num_loose_bvars: num_loose_bvars2, has_fvars: has_fvars2, nondep: nondep2 }) => hash1 == hash2 && crate::util_model::ptr_raw(binder_name1) == crate::util_model::ptr_raw(binder_name2) && crate::util_model::ptr_raw(binder_type1) == crate::util_model::ptr_raw(binder_type2) && crate::util_model::ptr_raw(val1) == crate::util_model::ptr_raw(val2) && crate::util_model::ptr_raw(body1) == crate::util_model::ptr_raw(body2) && num_loose_bvars1 == num_loose_bvars2 && has_fvars1 == has_fvars2 && nondep1 == nondep2,
+        (Expr::Local { hash: hash1, binder_name: binder_name1, binder_style: binder_style1, binder_type: binder_type1, id: id1 }, Expr::Local { hash: hash2, binder_name: binder_name2, binder_style: binder_style2, binder_type: binder_type2, id: id2 }) => hash1 == hash2 && crate::util_model::ptr_raw(binder_name1) == crate::util_model::ptr_raw(binder_name2) && binder_style1 == binder_style2 && crate::util_model::ptr_raw(binder_type1) == crate::util_model::ptr_raw(binder_type2) && id1 == id2,
+        _ => false,
+    }
+}
+
+/// THE HASH-TABLE KEY MODEL FOR EXPRESSIONS (see `name_keys_obey_model`):
+/// `Expr`'s `==` is derived (pointers by `raw`), its `Hash` writes the stored
+/// hash, and it is `Copy`.
+#[verifier::external_body]
+pub proof fn expr_keys_obey_model<'a>(s: Set<Expr<'a>>)
+    requires
+        forall|a: Expr<'a>, b: Expr<'a>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && expr_raw_eq(a, b) ==> a == b,
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Expr<'a>>(s),
+{
+}
+
+/// Expressions whose pointers belong to one arena pair obey the key model.
+pub proof fn owned_exprs_keys_obey_model<'a>(ids: (nat, nat), s: Set<Expr<'a>>)
+    requires
+        forall|e: Expr<'a>| #[trigger] s.contains(e) ==> expr_parts_owned_in(ids, e),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Expr<'a>>(s),
+{
+    assert forall|a: Expr<'a>, b: Expr<'a>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && expr_raw_eq(a, b) implies a == b by {
+        match (a, b) {
+            (Expr::StringLit { ptr: ptr1, .. }, Expr::StringLit { ptr: ptr2, .. }) => { crate::util_model::owned_raw_eq_in(ids, ptr1, ptr2); },
+            (Expr::NatLit { ptr: ptr1, .. }, Expr::NatLit { ptr: ptr2, .. }) => { crate::util_model::owned_raw_eq_in(ids, ptr1, ptr2); },
+            (Expr::Proj { ty_name: ty_name1, structure: structure1, .. }, Expr::Proj { ty_name: ty_name2, structure: structure2, .. }) => { crate::util_model::owned_raw_eq_in(ids, ty_name1, ty_name2); crate::util_model::owned_raw_eq_in(ids, structure1, structure2); },
+            (Expr::Sort { level: level1, .. }, Expr::Sort { level: level2, .. }) => { crate::util_model::owned_raw_eq_in(ids, level1, level2); },
+            (Expr::Const { name: name1, levels: levels1, .. }, Expr::Const { name: name2, levels: levels2, .. }) => { crate::util_model::owned_raw_eq_in(ids, name1, name2); crate::util_model::owned_raw_eq_in(ids, levels1, levels2); },
+            (Expr::App { fun: fun1, arg: arg1, .. }, Expr::App { fun: fun2, arg: arg2, .. }) => { crate::util_model::owned_raw_eq_in(ids, fun1, fun2); crate::util_model::owned_raw_eq_in(ids, arg1, arg2); },
+            (Expr::Pi { binder_name: binder_name1, binder_type: binder_type1, body: body1, .. }, Expr::Pi { binder_name: binder_name2, binder_type: binder_type2, body: body2, .. }) => { crate::util_model::owned_raw_eq_in(ids, binder_name1, binder_name2); crate::util_model::owned_raw_eq_in(ids, binder_type1, binder_type2); crate::util_model::owned_raw_eq_in(ids, body1, body2); },
+            (Expr::Lambda { binder_name: binder_name1, binder_type: binder_type1, body: body1, .. }, Expr::Lambda { binder_name: binder_name2, binder_type: binder_type2, body: body2, .. }) => { crate::util_model::owned_raw_eq_in(ids, binder_name1, binder_name2); crate::util_model::owned_raw_eq_in(ids, binder_type1, binder_type2); crate::util_model::owned_raw_eq_in(ids, body1, body2); },
+            (Expr::Let { binder_name: binder_name1, binder_type: binder_type1, val: val1, body: body1, .. }, Expr::Let { binder_name: binder_name2, binder_type: binder_type2, val: val2, body: body2, .. }) => { crate::util_model::owned_raw_eq_in(ids, binder_name1, binder_name2); crate::util_model::owned_raw_eq_in(ids, binder_type1, binder_type2); crate::util_model::owned_raw_eq_in(ids, val1, val2); crate::util_model::owned_raw_eq_in(ids, body1, body2); },
+            (Expr::Local { binder_name: binder_name1, binder_type: binder_type1, .. }, Expr::Local { binder_name: binder_name2, binder_type: binder_type2, .. }) => { crate::util_model::owned_raw_eq_in(ids, binder_name1, binder_name2); crate::util_model::owned_raw_eq_in(ids, binder_type1, binder_type2); },
+            _ => {},
+        }
+    }
+    expr_keys_obey_model(s);
+}
+
 pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
     match e {
         Expr::App { num_loose_bvars, has_fvars, .. } => num_loose_bvars as nat == nlbv(
@@ -736,46 +973,6 @@ pub open spec fn expr_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, e: Expr<'t>) -> b
             && crate::util_model::owns(c, binder_type),
     }
 }
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
-    ctx: &TcCtx<'t, 'p>,
-    ptr: ExprPtr<'t>,
-) -> (result: Expr<'t>) where 'p: 't
-    requires
-        crate::util_model::owns(*ctx, ptr),
-    ensures
-        expr_children_owned(*ctx, result),
-        // A local's identity is its pointer (`Free(expr_id(ptr))`, below), not
-        // its stored value: two contexts can store the same local value at
-        // different indices.
-        !(result is Local) ==> to_model_of_expr(result) == to_model(ptr),
-        node_cache_ok(result),
-        // `const_name_of`/`const_levels_of` are uninterpreted, so until now the
-        // ONLY way to learn what they are was `expr_as_const`'s own axiom --
-        // which is keyed on a caller-supplied `(ptr, e)` pair and silently
-        // assumes the caller passed a pair that actually corresponds. Keying
-        // the same fact on `read_expr` instead removes that unchecked side
-        // condition: `read_expr` reads the node the pointer names, so there is
-        // no pair to get wrong. This is what lets the kernel's own
-        // `unfold_const_apps` match on `Const { .. }` directly.
-        result matches Expr::Const { name, levels, .. } ==> const_name_of(ptr) == name
-            && const_levels_of(ptr) == levels,
-        result matches Expr::Local { id, binder_type, .. } ==> local_id_of(ptr) == id
-            && local_binder_type_of(ptr) == binder_type,
-        result matches Expr::NatLit { ptr: np, .. } ==> nat_lit_ptr_of(ptr) == np,
-        result matches Expr::StringLit { ptr: sp, .. } ==> string_lit_ptr_of(ptr) == sp,
-        // The last of `expr_is_local`'s claims, re-keyed here for the same
-        // reason as the others: keyed on `read_expr` there is no `(ptr, e)`
-        // pair to get wrong. This is what lets the kernel's `abstr_aux` learn
-        // anything at its `Local` arm.
-        result matches Expr::Local { .. } ==> to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
-        // The de Bruijn-LEVEL serial, keyed here for the same reason as the
-        // payload clauses above: on `read_expr` there is no `(ptr, e)` pair to
-        // get wrong.
-        result matches Expr::Local { id, .. } ==> dbj_serial(crate::util_model::arena_ids(*ctx), expr_id(ptr)) == fvar_dbj_serial(id),
-        // and the unique serial, for the same reason
-        result matches Expr::Local { id, .. } ==> unique_serial(crate::util_model::arena_ids(*ctx), expr_id(ptr)) == fvar_unique_serial(id),
-;
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,
 // assuming exactly the six clauses above (`to_model_of_expr(e) ==
@@ -902,9 +1099,20 @@ pub open spec fn is_const_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::Const(_, _))
 }
 
-pub uninterp spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a>;
+/// A `Const` pointer's name and levels: the stored node's fields.
+pub open spec fn const_name_of<'a>(ptr: ExprPtr<'a>) -> NamePtr<'a> {
+    match expr_node_at(ptr) {
+        Some(Expr::Const { name, .. }) => name,
+        _ => arbitrary(),
+    }
+}
 
-pub uninterp spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a>;
+pub open spec fn const_levels_of<'a>(ptr: ExprPtr<'a>) -> LevelsPtr<'a> {
+    match expr_node_at(ptr) {
+        Some(Expr::Const { levels, .. }) => levels,
+        _ => arbitrary(),
+    }
+}
 
 pub open spec fn const_id<'a>(ptr: ExprPtr<'a>) -> u64 {
     name_id(const_name_of(ptr))
@@ -930,13 +1138,13 @@ pub proof fn const_levels_vec_model<'a>(ptr: ExprPtr<'a>)
 /// own call sites -- e.g. `expr_is_closed_leaf`'s `is_const_shape(ptr)`
 /// disjunct needs exactly this to relate its own result back to
 /// `to_model(ptr)`'s actual shape.
-#[verifier::external_body]
 pub proof fn is_const_shape_model<'a>(ptr: ExprPtr<'a>)
     requires
         is_const_shape(ptr),
     ensures
         to_model(ptr) == ExprSpec::Const(const_id(ptr), const_levels_vec(ptr)),
 {
+    to_model_shape(ptr);
 }
 
 /// `Local`'s payload, same trust-boundary shape as `Const`'s
@@ -949,9 +1157,19 @@ pub open spec fn is_local_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::Free(_))
 }
 
-pub uninterp spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId;
+pub open spec fn local_id_of<'a>(ptr: ExprPtr<'a>) -> FVarId {
+    match expr_node_at(ptr) {
+        Some(Expr::Local { id, .. }) => id,
+        _ => arbitrary(),
+    }
+}
 
-pub uninterp spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a>;
+pub open spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a> {
+    match expr_node_at(ptr) {
+        Some(Expr::Local { binder_type, .. }) => binder_type,
+        _ => arbitrary(),
+    }
+}
 
 /// The arena's local context, viewed at the MODEL level: the (total,
 /// ambient) map from a `Local`-shaped node's model identity
@@ -983,13 +1201,13 @@ pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
 /// asserts at its own call sites, just callable from the shape flag
 /// alone (needed by `types_to` producers that hold `is_local_shape`
 /// from an earlier accessor rather than a fresh `expr_is_local` call).
-#[verifier::external_body]
 pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
     requires
         is_local_shape(ptr),
     ensures
         to_model(ptr) == ExprSpec::Free(expr_id(ptr)),
 {
+    to_model_shape(ptr);
 }
 
 /// Was an `assume_specification`. `ExFVarId` is transparent now, so comparing
@@ -1766,7 +1984,12 @@ pub open spec fn is_nat_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::NatLit(_))
 }
 
-pub uninterp spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr<'a>;
+pub open spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr<'a> {
+    match expr_node_at(ptr) {
+        Some(Expr::NatLit { ptr: np, .. }) => np,
+        _ => arbitrary(),
+    }
+}
 
 pub uninterp spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat;
 
@@ -1774,13 +1997,13 @@ pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
     bignum_ptr_value(nat_lit_ptr_of(ptr))
 }
 
-#[verifier::external_body]
 pub proof fn is_nat_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     requires
         is_nat_lit_shape(ptr),
     ensures
         to_model(ptr) == ExprSpec::NatLit(NatLitPayload(Ghost(nat_lit_value(ptr)))),
 {
+    to_model_shape(ptr);
 }
 
 /// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
@@ -1815,7 +2038,12 @@ pub open spec fn is_string_lit_shape<'a>(ptr: ExprPtr<'a>) -> bool {
     matches!(to_model(ptr), ExprSpec::StringLit(_))
 }
 
-pub uninterp spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a>;
+pub open spec fn string_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> StringPtr<'a> {
+    match expr_node_at(ptr) {
+        Some(Expr::StringLit { ptr: sp, .. }) => sp,
+        _ => arbitrary(),
+    }
+}
 
 /// Same change as `expr_as_local`: proven from `read_expr` rather than assumed.
 pub fn expr_as_string_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (result: bool)
@@ -1827,7 +2055,6 @@ pub fn expr_as_string_lit<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> 
     matches!(ctx.read_expr(ptr), Expr::StringLit { .. })
 }
 
-#[verifier::external_body]
 pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
     requires
         is_string_lit_shape(ptr),
@@ -1836,6 +2063,7 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
             StringLitPayload(Ghost(string_chars(string_lit_ptr_of(ptr)))),
         ),
 {
+    to_model_shape(ptr);
 }
 
 /// A string's character count -- an uninterpreted quantity (this arc
@@ -2033,48 +2261,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
             Some(p) => bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
             None => true,
         },
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
-
-/// THE storage primitive for expressions: allocation returns a pointer
-/// denoting exactly the node handed in. Hash-consing may return an existing
-/// pointer rather than appending, but either way the stored node IS `e`, and
-/// children keep their denotations by `expr_model_at_append` (proven above).
-///
-/// The `mk_*` contracts are DERIVED from this rather than assumed separately.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: Expr<'t>,
-) -> (result: ExprPtr<'t>) where 'p: 't
-    requires
-        expr_children_owned(*old(ctx), e),
-        // what `read_expr` promises of every stored node has to hold of what
-        // is stored: the cached flags are right
-        node_cache_ok(e),
-        // locals come only from `mk_dbj_level`, `remake_dbj_level` and
-        // `mk_unique`, which number them: `unique_serial_injective` holds
-        // because nothing else stores one
-        !(e is Local),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        !(e is Local) ==> to_model(result) == to_model_of_expr(e),
-        e is Local ==> to_model(result) == ExprSpec::Free(expr_id(result)),
-        // The same clause `read_expr` carries, on the write side. `const_name_of`
-        // and `const_levels_of` are uninterpreted, so `to_model(result)` alone
-        // cannot say what they are -- which is why `mk_const` was the one
-        // constructor of fifteen still needing its own axiom while the other
-        // twelve derived from this one. With this, it derives too.
-        e matches Expr::Const { name, levels, .. } ==> const_name_of(result) == name
-            && const_levels_of(result) == levels,
-        // Same, for the literal's payload pointer: `nat_lit_ptr_of` is a
-        // separate uninterpreted projection from the one the denotation
-        // carries, so `to_model(result)` alone does not pin it.
-        e matches Expr::NatLit { ptr, .. } ==> nat_lit_ptr_of(result) == ptr,
-        // FRAME. Allocation touches the dag, never the memo caches. Without
-        // this, every constructor call inside a cache-wrapped function havocs
-        // the cache and its soundness invariant cannot survive the body.
         final(ctx).expr_cache == old(ctx).expr_cache,
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
