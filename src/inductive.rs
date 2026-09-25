@@ -697,58 +697,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    /// Check whether `ind_ty_app` is a valid application of some arguments
-    /// to `parent_ind_const`. The arguments need to be the parameters for the
-    /// inductive block.
-    fn is_valid_ind_app(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        parent_ind_name: NamePtr<'t>,
-        ind_ty_app: ExprPtr<'t>,
-    ) -> bool {
-        // The arguments applied to the constructor are the params + indices.
-        let (base_const, ctor_apps) = self.ctx.unfold_apps(ind_ty_app);
-        let (ind_name, appd_levels) = match self.ctx.read_expr(base_const) {
-            Const { name, levels, .. } if name == parent_ind_name => (name, levels),
-            _ => return false,
-        };
-        let ind_name_pos = st
-            .ind_consts
-            .iter()
-            .copied()
-            .position(|x| match self.ctx.read_expr(x) {
-                Const { name, .. } => name == ind_name,
-                _ => panic!(),
-            })
-            .unwrap();
-        match self.ctx.read_expr(st.ind_consts[ind_name_pos]) {
-            Const { levels, .. } => {
-                let (lhs, rhs) = (self.ctx.read_levels(appd_levels), self.ctx.read_levels(levels));
-                if lhs.len() != rhs.len() {
-                    return false;
-                }
-                for i in 0..lhs.len() {
-                    if !self.ctx.eq_antisymm(lhs[i], rhs[i]) {
-                        return false;
-                    }
-                }
-            }
-            _ => return false,
-        };
-        let ind_name_num_indices = st.local_indices[ind_name_pos].len();
-
-        if ctor_apps.len() != (st.local_params.len() + ind_name_num_indices) {
-            return false;
-        }
-        // Require that no args in an index position have an instance of an inductive
-        // currently being declared.
-        for index_app in &ctor_apps[st.local_params.len()..] {
-            if self.has_ind_occ(*index_app, &st.ind_consts) {
-                return false;
-            }
-        }
-        ctor_app_params_ok(ctor_apps.as_slice(), st.local_params.as_slice())
-    }
 
     // For an expression `E` and a list
     // of names `NS`, recursively search through `E` for a `Const { name, levels }`
@@ -758,16 +706,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     // This is used in the formation of inductive types, to determine whether
     // a type is recursive, reflexive, contains only positive occurrences, and
     // has only valid applications.
-    fn has_ind_occ(&mut self, e: ExprPtr<'t>, haystack: &[ExprPtr<'t>]) -> bool {
-        let f = |nptr| {
-            haystack.iter().copied().any(|c| match self.ctx.read_expr(c) {
-                Const { name, .. } => name == nptr,
-                _ => panic!(),
-            })
-        };
-
-        self.ctx.find_const(e, f)
-    }
 
     /// For some application of arguments to an inductive type (e.g. `Eq A a`), get back
     /// the applied indices, and the index showing which inductive type from the block
@@ -1999,7 +1937,204 @@ pub(crate) open spec fn elim_ctor_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveChec
         ==> level_free(c, st.all_inductives_incl_specialized@[0].ctors@[0].ty)
 }
 
+
+/// The name ids of a slice of constants.
+pub open spec fn const_ids<'t>(cs: Seq<ExprPtr<'t>>) -> Seq<u64> {
+    Seq::new(cs.len(), |i: int| crate::expr_arena_bridge::const_id(cs[i]))
+}
+
+/// `e` is the parent inductive applied to the block's parameters and then its
+/// own indices, with no block inductive inside an index.
+pub(crate) open spec fn ind_app_ok<'t>(st: InductiveCheckState<'t>, parent: NamePtr<'t>, e: ExprSpec) -> bool {
+    &&& (match crate::beta_model::spine_head(e) {
+        ExprSpec::Const(id, _) => id == crate::level_arena_bridge::name_id(parent),
+        _ => false,
+    })
+    &&& exists|pos: int| 0 <= pos < st.ind_consts@.len() && 0 <= pos < st.local_indices@.len()
+        && #[trigger] crate::expr_arena_bridge::const_id(st.ind_consts@[pos]) == crate::level_arena_bridge::name_id(parent)
+        && crate::beta_model::spine_args(e).len() == st.local_params@.len() + st.local_indices@[pos]@.len()
+    &&& crate::beta_model::spine_args(e).len() >= st.local_params@.len()
+    &&& forall|j: int| 0 <= j < st.local_params@.len() ==> #[trigger] crate::beta_model::spine_args(e)[j]
+        == crate::expr_arena_bridge::to_model(st.local_params@[j])
+    &&& forall|j: int| st.local_params@.len() <= j < crate::beta_model::spine_args(e).len()
+        ==> !crate::inductive_model::contains_const_named(#[trigger] crate::beta_model::spine_args(e)[j], const_ids(st.ind_consts@))
+}
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Check whether `ind_ty_app` is a valid application of some arguments
+    /// to `parent_ind_const`. The arguments need to be the parameters for the
+    /// inductive block.
+    ///
+    /// Verified in place: on `true`, `ind_app_ok`.
+    ///
+    /// VERUS-REWRITE(range-slice): `for index_app in &ctor_apps[np..]` is the
+    /// index walk over `np..len` (a `RangeFrom` slice fails its precondition
+    /// discharge in Verus); same elements, same order, same early return.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn is_valid_ind_app(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        parent_ind_name: NamePtr<'t>,
+        ind_ty_app: ExprPtr<'t>,
+    ) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self).ctx, ind_ty_app),
+            crate::util_model::owns(*old(self).ctx, parent_ind_name),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            result ==> ind_app_ok(*st, parent_ind_name, crate::expr_arena_bridge::to_model(ind_ty_app)),
+    {
+        // The arguments applied to the constructor are the params + indices.
+        let (base_const, ctor_apps) = self.ctx.unfold_apps(ind_ty_app);
+        let (ind_name, appd_levels) = match self.ctx.read_expr(base_const) {
+            Const { name, levels, .. } if name == parent_ind_name => (name, levels),
+            _ => return false,
+        };
+        let ghost ctx0 = *self.ctx;
+        let ind_name_pos = st
+            .ind_consts
+            .iter()
+            .copied()
+            .position(|x: ExprPtr<'t>| -> (b: bool)
+                requires
+                    crate::util_model::owns(ctx0, x),
+                ensures
+                    b == (crate::expr_arena_bridge::const_id(x) == crate::level_arena_bridge::name_id(ind_name)),
+            {
+                match self.ctx.read_expr(x) {
+                    Const { name, .. } => name == ind_name,
+                    _ => panic!(),
+                }
+            })
+            .unwrap();
+        match self.ctx.read_expr(st.ind_consts[ind_name_pos]) {
+            Const { levels, .. } => {
+                let (lhs, rhs) = (self.ctx.read_levels(appd_levels), self.ctx.read_levels(levels));
+                if lhs.len() != rhs.len() {
+                    return false;
+                }
+                for i in 0..lhs.len()
+                    invariant
+                        self.env == old(self).env,
+                        self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                        crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                        self.live == old(self).live,
+                        self.tc_cache == old(self).tc_cache,
+                        self.ctx.expr_cache.dsubst_cache == old(self).ctx.expr_cache.dsubst_cache,
+                        self.shadow_memo == old(self).shadow_memo,
+                        self.declar_info == old(self).declar_info,
+                        lhs@.len() == rhs@.len(),
+                        crate::util_model::owns_all(*self.ctx, lhs@),
+                        crate::util_model::owns_all(*self.ctx, rhs@),
+                {
+                    if !self.ctx.eq_antisymm(lhs[i], rhs[i]) {
+                        return false;
+                    }
+                }
+            }
+            _ => return false,
+        };
+        let ind_name_num_indices = st.local_indices[ind_name_pos].len();
+
+        // VERUS-REWRITE(len-sum): `np + num_indices` on `usize` has nothing
+        // bounding it for Verus; overflow is a panic, as in a debug build.
+        let expected_len = match st.local_params.len().checked_add(ind_name_num_indices) {
+            Some(n) => n,
+            None => panic!("argument count overflow"),
+        };
+        if ctor_apps.len() != expected_len {
+            return false;
+        }
+        // Require that no args in an index position have an instance of an inductive
+        // currently being declared.
+        let mut k = st.local_params.len();
+        while k < ctor_apps.len()
+            invariant
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                self.tc_cache == old(self).tc_cache,
+                self.ctx.expr_cache.dsubst_cache == old(self).ctx.expr_cache.dsubst_cache,
+                self.shadow_memo == old(self).shadow_memo,
+                self.declar_info == old(self).declar_info,
+                st.local_params@.len() <= k <= ctor_apps@.len(),
+                crate::util_model::owns_all(*self.ctx, ctor_apps@),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                forall|j: int| st.local_params@.len() <= j < k ==> !crate::inductive_model::contains_const_named(
+                    crate::expr_arena_bridge::to_model(#[trigger] ctor_apps@[j]), const_ids(st.ind_consts@)),
+            decreases ctor_apps@.len() - k,
+        {
+            let index_app = &ctor_apps[k];
+            if self.has_ind_occ(*index_app, &st.ind_consts) {
+                return false;
+            }
+            k += 1;
+        }
+        let r = ctor_app_params_ok(ctor_apps.as_slice(), st.local_params.as_slice());
+        proof {
+            if r {
+                let am = crate::expr_arena_bridge::ptr_models(ctor_apps@);
+                crate::expr_arena_bridge::is_const_shape_model(base_const);
+                crate::beta_model::spine_destruct_app(crate::expr_arena_bridge::to_model(base_const), am);
+                assert(crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(ind_ty_app)) =~= am);
+                assert forall|j: int| 0 <= j < st.local_params@.len() implies #[trigger] am[j]
+                    == crate::expr_arena_bridge::to_model(st.local_params@[j]) by {
+                    crate::util_model::owned_raw_eq(*self.ctx, ctor_apps@[j], st.local_params@[j]);
+                }
+                assert(crate::expr_arena_bridge::const_id(st.ind_consts@[ind_name_pos as int]) == crate::level_arena_bridge::name_id(parent_ind_name));
+            }
+        }
+        r
+    }
+
+    /// VERUS-REWRITE(closure-specialised): the closure handed to `find_const`
+    /// ("the constant's name is one of `haystack`'s constants' names", reading
+    /// each through `self`) is `find_const_named` over those names, read out
+    /// first. `haystack` holds only constants (the block's `ind_consts`, made by
+    /// `mk_const`), so the original's `panic!` on a non-constant cannot differ.
+    ///
+    /// On `false`, no constant of `e` is one of the block's.
+    fn has_ind_occ(&mut self, e: ExprPtr<'t>, haystack: &[ExprPtr<'t>]) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self).ctx, e),
+            crate::util_model::owns_all(*old(self).ctx, haystack@),
+        ensures
+            *final(self) == *old(self),
+            !result ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(e), const_ids(haystack@)),
+    {
+        let mut names: Vec<NamePtr<'t>> = Vec::new();
+        for c in it: haystack.iter().copied()
+            invariant
+                *self == *old(self),
+                it.seq() == haystack@,
+                names@.len() == it.index(),
+                crate::util_model::owns_all(*self.ctx, haystack@),
+                forall|k: int| 0 <= k < names@.len() ==> #[trigger] crate::level_arena_bridge::name_id(names@[k])
+                    == crate::expr_arena_bridge::const_id(haystack@[k]) && crate::util_model::owns(*self.ctx, names@[k]),
+        {
+            match self.ctx.read_expr(c) {
+                Const { name, .. } => names.push(name),
+                _ => panic!(),
+            }
+        }
+        proof {
+            assert(crate::expr::name_ids(names@) =~= const_ids(haystack@));
+            assert forall|k: int| 0 <= k < names@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(*self.ctx), #[trigger] names@[k]) by {
+                assert(crate::level_arena_bridge::name_id(names@[k]) == crate::expr_arena_bridge::const_id(haystack@[k]));
+                assert(crate::util_model::owns(*self.ctx, names@[k]));
+            }
+        }
+        self.ctx.find_const_named(e, names.as_slice())
+    }
+
     /// Verified in place: on `true` the block satisfies `large_elim_ok`.
     ///
     /// VERUS-REWRITE(slice-pattern): the two `match ... .as_slice() { [] => ..,

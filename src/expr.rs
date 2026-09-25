@@ -614,6 +614,86 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 ::vstd::prelude::verus! {
 
+/// The ids of a slice of names, as `contains_const_named` takes them.
+pub open spec fn name_ids<'t>(names: Seq<NamePtr<'t>>) -> Seq<u64> {
+    Seq::new(names.len(), |i: int| crate::level_arena_bridge::name_id(names[i]))
+}
+
+/// Every memoised `false` is a term with none of the names.
+pub open spec fn find_const_cache_ok<'t, 'p>(c: TcCtx<'t, 'p>, cache: Map<ExprPtr<'t>, bool>, ids: Seq<u64>) -> bool {
+    forall|k: ExprPtr<'t>| #[trigger] cache.contains_key(k) ==> crate::util_model::owns(c, k)
+        && (cache[k] == false ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(k), ids))
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// `find_const` specialised to the one predicate `has_ind_occ` passes --
+    /// "the constant's name is one of `names`" -- so it can carry a contract.
+    /// Same traversal (into a local's type too), same memo. On `false`, no
+    /// constant of `e` is named in `names`.
+    pub(crate) fn find_const_named(&self, e: ExprPtr<'t>, names: &[NamePtr<'t>]) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::util_model::owns_all(*self, names@),
+        ensures
+            !result ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(e), name_ids(names@)),
+    {
+        let mut cache = crate::util::new_fx_hash_map();
+        self.find_const_named_aux(e, names, &mut cache)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn find_const_named_aux(&self, e: ExprPtr<'t>, names: &[NamePtr<'t>], cache: &mut FxHashMap<ExprPtr<'t>, bool>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::util_model::owns_all(*self, names@),
+            find_const_cache_ok(*self, old(cache)@, name_ids(names@)),
+        ensures
+            find_const_cache_ok(*self, final(cache)@, name_ids(names@)),
+            !result ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(e), name_ids(names@)),
+    {
+        proof {
+            crate::util_model::ptr_map_keys(*self, cache@, e);
+            crate::util_model::build_hasher_default_valid_fx();
+        }
+        if let Some(cached) = cache.get(&e) {
+            *cached
+        } else {
+            let r = match self.read_expr(e) {
+                Var { .. } | Sort { .. } | NatLit { .. } | StringLit { .. } => false,
+                Const { name, .. } => {
+                    let hit = crate::inductive_model::name_in_slice(names, name);
+                    proof {
+                        crate::expr_arena_bridge::is_const_shape_model(e);
+                        assert(name_ids(names@) =~= Seq::new(names@.len(), |i: int| crate::level_arena_bridge::name_id(names@[i])));
+                    }
+                    hit
+                },
+                App { fun, arg, .. } => self.find_const_named_aux(fun, names, cache) || self.find_const_named_aux(arg, names, cache),
+                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                    self.find_const_named_aux(binder_type, names, cache) || self.find_const_named_aux(body, names, cache)
+                }
+                Let { binder_type, val, body, .. } => {
+                    self.find_const_named_aux(binder_type, names, cache)
+                        || self.find_const_named_aux(val, names, cache)
+                        || self.find_const_named_aux(body, names, cache)
+                }
+                Local { binder_type, .. } => self.find_const_named_aux(binder_type, names, cache),
+                Proj { structure, .. } => self.find_const_named_aux(structure, names, cache),
+            };
+            proof {
+                crate::util_model::ptr_map_keys(*self, cache@, e);
+                crate::util_model::build_hasher_default_valid_fx();
+            }
+            cache.insert(e, r);
+            r
+        }
+    }
+}
+
+} // verus!
+
+::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged: the name at the head of the major
     /// premise's type, read out of the recursor's own type.
