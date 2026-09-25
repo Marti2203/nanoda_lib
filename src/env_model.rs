@@ -716,29 +716,6 @@ pub open spec fn declar_owned<'x, 'a>(env: Env<'x, 'a>, d: Declar<'a>) -> bool {
     declar_owned_in(env_arena_ids(env), d)
 }
 
-/// Derived `Clone`s: every field is `Copy` or an `Arc` (whose clone is the
-/// same allocation), so the copy is the original.
-pub assume_specification<'a>[ <crate::env::ConstructorData<'a> as Clone>::clone ](
-    d: &crate::env::ConstructorData<'a>,
-) -> (r: crate::env::ConstructorData<'a>)
-    ensures
-        r == *d,
-;
-
-pub assume_specification<'a>[ <Declar<'a> as Clone>::clone ](
-    d: &Declar<'a>,
-) -> (r: Declar<'a>)
-    ensures
-        r == *d,
-;
-
-pub assume_specification<'a>[ <crate::env::RecursorData<'a> as Clone>::clone ](
-    d: &crate::env::RecursorData<'a>,
-) -> (r: crate::env::RecursorData<'a>)
-    ensures
-        r == *d,
-;
-
 /// Callable, claim nothing: consistency checks between a declaration and its
 /// counterpart, whose results only decide an `assert!`. (Each compares name
 /// sets through `HashSet` `collect`, which vstd does not specify.)
@@ -775,16 +752,6 @@ pub assume_specification<'a>[ <RecRule<'a> as PartialEq>::eq ](a: &RecRule<'a>, 
 pub fn same_object<T>(a: &T, b: &T) -> bool {
     std::ptr::eq(a, b)
 }
-
-/// The derived `Clone`: every field is `Copy` or an `Arc` (whose clone is the
-/// same allocation), so the copy is the original.
-pub assume_specification<'a>[ <crate::env::InductiveData<'a> as Clone>::clone ](
-    d: &crate::env::InductiveData<'a>,
-) -> (r: crate::env::InductiveData<'a>)
-    ensures
-        r == *d,
-;
-
 
 } // verus!
 #[cfg(test)]

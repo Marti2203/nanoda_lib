@@ -58,7 +58,7 @@ pub struct DeclarInfo<'a> {
 }
 
 /// Computation rules for iota-reduction (pattern matching).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Copy, PartialEq, Eq)]
 pub struct RecRule<'a> {
     pub ctor_name: NamePtr<'a>,
     /// the constructor's telescope size minus the params (but including indices).
@@ -67,7 +67,7 @@ pub struct RecRule<'a> {
     pub val: ExprPtr<'a>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Declar<'a> {
     Axiom { info: DeclarInfo<'a> },
     Quot { info: DeclarInfo<'a> },
@@ -81,7 +81,7 @@ pub enum Declar<'a> {
 
 /// This structure is what's taken from the export file; it contains enough
 /// information to begin the process of checking an inductive declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct InductiveData<'a> {
     pub info: DeclarInfo<'a>,
     /// `true` when recursive (that is, the inductive type appears as an argument in a constructor).
@@ -134,7 +134,7 @@ impl<'a> InductiveData<'a> {
 /// (num_params := 3) (num_fields := 1)`
 ///
 /// `Syntax.node (num_params := 0) (num_fields := 3)`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ConstructorData<'a> {
     pub info: DeclarInfo<'a>,
     pub inductive_name: NamePtr<'a>,
@@ -156,7 +156,7 @@ impl<'a> ConstructorData<'a> {
 }
 
 /// Information received from the export file regarding a recursor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RecursorData<'a> {
     pub info: DeclarInfo<'a>,
     pub all_inductives: Arc<[NamePtr<'a>]>,
@@ -662,4 +662,92 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
 
 } // verus!
 
+::vstd::prelude::verus! {
 
+// The `Clone` impls below are the `#[derive(Clone)]` expansions written out
+// (each field cloned; a `Copy` field copied, which is what its derived `clone`
+// does), so they carry the derived clone's evident contract, `r == *self`.
+
+impl<'a> Clone for RecRule<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]` on a `Copy` type.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        *self
+    }
+}
+
+impl<'a> Clone for InductiveData<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]`, written out.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        InductiveData {
+            info: self.info,
+            is_recursive: self.is_recursive,
+            is_nested: self.is_nested,
+            num_params: self.num_params,
+            num_indices: self.num_indices,
+            all_ind_names: self.all_ind_names.clone(),
+            all_ctor_names: self.all_ctor_names.clone(),
+        }
+    }
+}
+
+impl<'a> Clone for ConstructorData<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]`, written out.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        ConstructorData {
+            info: self.info,
+            inductive_name: self.inductive_name,
+            ctor_idx: self.ctor_idx,
+            num_params: self.num_params,
+            num_fields: self.num_fields,
+        }
+    }
+}
+
+impl<'a> Clone for RecursorData<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]`, written out.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        RecursorData {
+            info: self.info,
+            all_inductives: self.all_inductives.clone(),
+            num_params: self.num_params,
+            num_indices: self.num_indices,
+            num_motives: self.num_motives,
+            num_minors: self.num_minors,
+            rec_rules: self.rec_rules.clone(),
+            is_k: self.is_k,
+        }
+    }
+}
+
+impl<'a> Clone for Declar<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]`, written out.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        match self {
+            Declar::Axiom { info } => Declar::Axiom { info: *info },
+            Declar::Quot { info } => Declar::Quot { info: *info },
+            Declar::Theorem { info, val } => Declar::Theorem { info: *info, val: *val },
+            Declar::Definition { info, val, hint } => Declar::Definition { info: *info, val: *val, hint: *hint },
+            Declar::Opaque { info, val } => Declar::Opaque { info: *info, val: *val },
+            Declar::Inductive(i) => Declar::Inductive(i.clone()),
+            Declar::Constructor(c) => Declar::Constructor(c.clone()),
+            Declar::Recursor(r) => Declar::Recursor(r.clone()),
+        }
+    }
+}
+
+} // verus!

@@ -69,7 +69,7 @@ pub(crate) struct InductiveCheckState<'a> {
 /// `init_k_target` reads `.ctors`, so an opaque header would not let the
 /// kernel's own body be verified as written. Nothing outside this crate
 /// reads them.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct IndTyHeader<'a> {
     pub name: NamePtr<'a>,
     pub ty: ExprPtr<'a>,
@@ -78,7 +78,7 @@ pub struct IndTyHeader<'a> {
 
 /// Same, and for the same reason -- `init_k_target` reads `.ty` off one of
 /// these.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Copy)]
 pub struct CtorHeader<'a> {
     pub name: NamePtr<'a>,
     pub ty: ExprPtr<'a>,
@@ -313,20 +313,34 @@ pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: Induct
 {
 }
 
-/// The derived `Clone` of `RecRule` (all three fields `Copy`) is the original.
-pub assume_specification<'a>[ <RecRule<'a> as Clone>::clone ](r: &RecRule<'a>) -> (c: RecRule<'a>)
-    ensures
-        c == *r,
-;
+impl<'a> Clone for CtorHeader<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]` on a `Copy` type.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r == *self,
+    {
+        *self
+    }
+}
 
-/// The derived `Clone` of `IndTyHeader` copies its fields; its constructor
-/// list is a `Vec` of `Copy` headers, so the clone holds the same elements.
-pub assume_specification<'a>[ <IndTyHeader<'a> as Clone>::clone ](h: &IndTyHeader<'a>) -> (r: IndTyHeader<'a>)
-    ensures
-        r.name == h.name,
-        r.ty == h.ty,
-        r.ctors@ == h.ctors@,
-;
+impl<'a> Clone for IndTyHeader<'a> {
+    /// VERUS-REWRITE(derive-expanded): `#[derive(Clone)]`, written out.
+    fn clone(&self) -> (r: Self)
+        ensures
+            r.name == self.name,
+            r.ty == self.ty,
+            r.ctors@ == self.ctors@,
+    {
+        let ctors = self.ctors.clone();
+        proof {
+            assert forall|i: int| 0 <= i < ctors@.len() implies ctors@[i] == self.ctors@[i] by {
+                assert(vstd::pervasive::cloned(self.ctors@[i], ctors@[i]));
+            }
+            assert(ctors@ =~= self.ctors@);
+        }
+        IndTyHeader { name: self.name, ty: self.ty, ctors }
+    }
+}
 
 
 /// A constructor type walked syntactically by `large_elim_test_aux`: the

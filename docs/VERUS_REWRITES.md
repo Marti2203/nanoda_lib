@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **183 marked rewrites across 109 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **185 marked rewrites across 111 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -181,6 +181,22 @@ same `Box<dyn Error>` and unwraps it -- the same message, the same panic. The
 | function | file |
 |---|---|
 | `check_declar_info_unwrap` | `src/tc.rs` |
+
+### Derived `Clone` — 7 rewrites
+
+Verus accepts `#[derive(Clone)]` on a kernel type but gives the derived
+`clone` no postcondition, so each derive was paired with a trusted
+`assume_specification` saying the copy is the original. The derives are
+written out instead, as `impl Clone` blocks inside `verus!` that prove
+`r == *self` (for `IndTyHeader`, field-wise, its `Vec` of `Copy` headers
+element by element). Each is exactly the derive's expansion: every field
+cloned, a `Copy` field copied. Retired six claiming specifications. Undo if
+Verus comes to specify derived `Clone`s.
+
+| function | file | was |
+|---|---|---|
+| `Clone for RecRule`, `InductiveData`, `ConstructorData`, `RecursorData`, `Declar` (`clone`) | `src/env.rs` | `#[derive(Clone)]` |
+| `Clone for CtorHeader`, `IndTyHeader` (`clone`) | `src/inductive.rs` | `#[derive(Clone)]` |
 
 ## 2. Rewrites needing a Verus language feature
 
