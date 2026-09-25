@@ -184,8 +184,28 @@ impl<'a> RecursorData<'a> {
     }
 }
 
+::vstd::prelude::verus! {
+
+/// The header every declaration carries.
+pub open spec fn declar_info<'a>(d: Declar<'a>) -> DeclarInfo<'a> {
+    match d {
+        Declar::Axiom { info, .. }
+        | Declar::Quot { info, .. }
+        | Declar::Theorem { info, .. }
+        | Declar::Definition { info, .. }
+        | Declar::Inductive(InductiveData { info, .. })
+        | Declar::Constructor(ConstructorData { info, .. })
+        | Declar::Recursor(RecursorData { info, .. })
+        | Declar::Opaque { info, .. } => info,
+    }
+}
+
 impl<'a> Declar<'a> {
-    pub fn info(&self) -> &DeclarInfo<'a> {
+    /// Verified in place, body unchanged.
+    pub fn info(&self) -> (result: &DeclarInfo<'a>)
+        ensures
+            *result == declar_info(*self),
+    {
         use Declar::*;
         match self {
             Axiom { info, .. }
@@ -199,6 +219,8 @@ impl<'a> Declar<'a> {
         }
     }
 }
+
+} // verus!
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notation<'a> {

@@ -144,17 +144,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
-    /// Make the `_.rec` names for the base inductive type, or the base types for a mutual block
-    /// (uses the `all_ind_names` of the declaration currently being checked).
-    fn mk_base_rec_names(&mut self, all_ind_names: &[NamePtr<'t>]) -> FxHashSet<NamePtr<'t>> {
-        let rec_str_ptr = self.alloc_string(std::borrow::Cow::Borrowed("rec"));
-        let mut out = new_fx_hash_set();
-        for ind_name in all_ind_names.iter().copied() {
-            out.insert(self.str(ind_name, rec_str_ptr));
-        }
-        out
-    }
-
     /// Require that the set of un-specialized names for the derived recursors matches the set
     /// of recursor names that appeared in the export file. Prevents addition to the environment
     /// of new recursors that don't belong.
@@ -281,109 +270,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
 
-    fn assert_nonnested_rec_rule_def_eq(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        old: LevelsPtr<'t>,
-        imported_rr: &RecRule<'t>,
-        constructed_rr: &RecRule<'t>,
-    ) {
-        assert!(!std::ptr::eq(imported_rr, constructed_rr));
-        // Should be structurally != because they come from different envs.
-        assert_ne!(imported_rr, constructed_rr);
-        assert!(!st.is_nested());
-        self.tc_cache.clear();
-        assert_eq!(imported_rr.ctor_name, constructed_rr.ctor_name);
-        assert_eq!(imported_rr.ctor_telescope_size_wo_params, constructed_rr.ctor_telescope_size_wo_params);
-        let rr_made_val = self.ctx.subst_expr_levels(constructed_rr.val, st.rec_uparams.unwrap(), old);
-        self.assert_def_eq(imported_rr.val, rr_made_val);
-    }
-
-    fn assert_nonnested_recursors_def_eq(&mut self, st: &InductiveCheckState<'t>, recursors: &Vec<Declar<'t>>) {
-        assert!(!st.is_nested());
-        for new_rec in recursors {
-            match (self.env.get_old_declar(&new_rec.info().name), new_rec) {
-                (
-                    Some(old @ Declar::Recursor(old_r @ RecursorData { rec_rules: old_rec_rules, .. })),
-                    new @ Declar::Recursor(new_r @ RecursorData { rec_rules: new_rec_rules, .. }),
-                ) => {
-                    self.tc_cache.clear();
-                    assert!(old_r.aux_data_ck(new_r));
-                    assert!(!std::ptr::eq(old, new));
-                    // Should be structurally != because they come from different envs.
-                    assert_ne!(old, new);
-                    let imported_w_new_uparams =
-                        self.ctx.subst_expr_levels(old.info().ty, old.info().uparams, st.rec_uparams.unwrap());
-                    self.assert_def_eq(imported_w_new_uparams, new.info().ty);
-                    assert_eq!(old_rec_rules.len(), new_rec_rules.len());
-                    for (r_old, r_new) in old_rec_rules.iter().zip(new_rec_rules.iter()) {
-                        self.assert_nonnested_rec_rule_def_eq(st, old.info().uparams, r_old, r_new)
-                    }
-                }
-                _ => panic!("Expected (Declar::Recursor, Declar::Recursor)"),
-            };
-        }
-    }
-
-
-
-    fn restore_recursors(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        specialized_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
-        // e.g. `Lean.Syntax.Node.rec`, `SExpr.rec`
-        base_rec_names: &FxHashSet<NamePtr<'t>>,
-    ) {
-        // Check the recursors for the base inductives (NOT the specialized types)
-        for rec_name in base_rec_names.iter().copied() {
-            self.check_restored_recursor1(st, ind_names_no_specialized, specialized_rec_name_to_rec_name, rec_name)
-        }
-
-        // Check the recursors constructed for the specialized types,
-        // like `_nested.Array_1.rec` after restoring it to `Lean.Syntax.rec_1`
-        for specialized_ty_rec_name in specialized_rec_name_to_rec_name.keys().copied() {
-            self.check_restored_recursor1(
-                st,
-                ind_names_no_specialized,
-                specialized_rec_name_to_rec_name,
-                specialized_ty_rec_name,
-            )
-        }
-    }
-
-    fn restore_and_check(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        unmodified_mutuals: &Vec<IndTyHeader<'t>>,
-        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
-        base_rec_names: &FxHashSet<NamePtr<'t>>,
-        specialized_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-    ) {
-        for unmodified_ind_type in unmodified_mutuals.iter() {
-            match (
-                self.env.get_old_declar(&unmodified_ind_type.name),
-                self.env.get_temp_declar(&unmodified_ind_type.name),
-            ) {
-                (Some(Declar::Inductive(old)), Some(Declar::Inductive(new))) => {
-                    assert!(old.aux_data_ck(new));
-                    debug_assert!(!crate::env_model::same_object(old, new));
-                    self.tc_cache.clear();
-                    self.assert_def_eq(old.info.ty, new.info.ty);
-                }
-                _ => panic!(),
-            }
-
-            for ctor in unmodified_ind_type.ctors.iter() {
-                let ctor = match self.env.get_old_declar(&ctor.name) {
-                    Some(Declar::Constructor(c)) => c.clone(),
-                    _ => panic!(),
-                };
-                self.check_restored_ctor1(st, &specialized_to_unspecialized_rec_names, &ctor);
-            }
-        }
-        self.restore_recursors(st, &specialized_to_unspecialized_rec_names, ind_names_no_specialized, base_rec_names)
-    }
 }
 
 // ===========================================================================
@@ -594,6 +480,12 @@ pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: Induct
         walk_k_ok(env, b, k),
 {
 }
+
+/// The derived `Clone` of `RecRule` (all three fields `Copy`) is the original.
+pub assume_specification<'a>[ <RecRule<'a> as Clone>::clone ](r: &RecRule<'a>) -> (c: RecRule<'a>)
+    ensures
+        c == *r,
+;
 
 /// The derived `Clone` of `IndTyHeader` copies its fields; its constructor
 /// list is a `Vec` of `Copy` headers, so the clone holds the same elements.
@@ -1047,6 +939,11 @@ pub(crate) open spec fn headers_owned<'t, 'p>(c: TcCtx<'t, 'p>, hs: Seq<IndTyHea
     }
 }
 
+/// Every level in `ls` is a universe parameter.
+pub open spec fn levels_all_param<'t>(ls: LevelsPtr<'t>) -> bool {
+    forall|j: int| 0 <= j < to_model_of_levels(ls).len() ==> #[trigger] to_model_of_levels(ls)[j] is Param
+}
+
 /// The constructor types of every block inductive are level free.
 pub(crate) open spec fn ctors_level_free<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
     forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
@@ -1074,6 +971,46 @@ pub(crate) proof fn ptr_map_get<'t, 'p, A, B>(c: TcCtx<'t, 'p>, m: &crate::util:
     broadcast use vstd::std_specs::hash::group_hash_axioms;
     crate::util_model::build_hasher_default_valid_fx();
     crate::util_model::ptr_owned_keys(c, crate::indexmap_model::imap_view(m).dom().insert(k));
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Make the `_.rec` names for the base inductive type, or the base types for a mutual block
+    /// (uses the `all_ind_names` of the declaration currently being checked).
+    ///
+    /// Verified in place, body unchanged: every name in the set is owned.
+    fn mk_base_rec_names(&mut self, all_ind_names: &[NamePtr<'t>]) -> (result: FxHashSet<NamePtr<'t>>)
+        requires
+            crate::util_model::owns_all(*old(self), all_ind_names@),
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+            forall|n: NamePtr<'t>| #[trigger] result@.contains(n) ==> crate::util_model::owns(*final(self), n),
+    {
+        let rec_str_ptr = self.alloc_string(std::borrow::Cow::Borrowed("rec"));
+        let mut out = new_fx_hash_set();
+        for ind_name in it: all_ind_names.iter().copied()
+            invariant
+                it.seq() == all_ind_names@,
+                crate::util_model::owns_all(*self, all_ind_names@),
+                crate::util_model::owns(*self, rec_str_ptr),
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                self.expr_cache == old(self).expr_cache,
+                forall|n: NamePtr<'t>| #[trigger] out@.contains(n) ==> crate::util_model::owns(*self, n),
+        {
+            proof {
+                assert(crate::util_model::owns(*self, all_ind_names@[it.index() as int]));
+            }
+            let r = self.str(ind_name, rec_str_ptr);
+            proof {
+                crate::util_model::build_hasher_default_valid_fx();
+                crate::util_model::ptr_owned_keys(*self, out@.insert(r));
+            }
+            out.insert(r);
+        }
+        out
+    }
 }
 
 /// A level-free local's recorded type is closed.
@@ -2179,6 +2116,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
             forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
+            forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] rec_rules@[k].val),
         ensures
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2187,6 +2125,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
             match result {
                 Declar::Recursor(r) => {
+                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
                     &&& r.num_params == st.local_params@.len()
                     &&& r.num_motives == st.motives@.len()
                     &&& r.num_minors == flat_mapped_minors@.len()
@@ -2278,6 +2217,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             result@.len() == st.all_inductives_incl_specialized@.len(),
             forall|i: int| 0 <= i < result@.len() ==> match #[trigger] result@[i] {
                 Declar::Recursor(r) => {
+                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
                     &&& crate::util_model::owns(*(*final(self)).ctx, r.info.ty)
                     &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
@@ -2307,12 +2247,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.all_inductives_incl_specialized@.len() <= st.motives@.len(),
                 st.all_inductives_incl_specialized@.len() <= st.majors@.len(),
                 rec_rules@.len() == st.all_inductives_incl_specialized@.len(),
+                forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
+                    ==> crate::util_model::owns(*self.ctx, (#[trigger] rec_rules@[a]@[j]).val),
                 forall|a: int| 0 <= a < rec_rules@.len()
                     ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
                 forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
                     Declar::Recursor(r) => {
+                        &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
                         &&& crate::util_model::owns(*self.ctx, r.info.ty)
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
@@ -2335,6 +2278,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(level_free_local(*self.ctx, st.local_indices@[i as int]@[j]));
                 }
                 assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[i as int].name));
+                assert forall|k: int| 0 <= k < rec_rules@[i as int]@.len() implies crate::util_model::owns(*self.ctx, #[trigger] rec_rules@[i as int]@[k].val) by {
+                    let rr = rec_rules@[i as int]@[k];
+                    assert(crate::util_model::owns(*self.ctx, rr.val));
+                }
             }
             let recursor = self.mk_recursor_aux(
                 st,
@@ -2350,6 +2297,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 assert forall|a: int| 0 <= a < recursors@.len() implies match #[trigger] recursors@[a] {
                     Declar::Recursor(r) => {
+                        &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
                         &&& crate::util_model::owns(*self.ctx, r.info.ty)
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
@@ -2470,6 +2418,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_owns(*self, e),
         ensures
             tc_level_free(*self, e),
+            !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
     {
         assert!(!self.ctx.has_fvars(e) && self.ctx.num_loose_bvars(e) == 0, "inductive: a type is not closed");
         proof {
@@ -3870,6 +3819,378 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
             }
         }
+    }
+
+    /// Verified in place: one recursor rule of the export file checked
+    /// against the constructed one.
+    ///
+    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`;
+    /// VERUS-REWRITE(hoisted-arity-check): the universe arity test
+    /// `subst_expr_levels` panics on is made one frame earlier, as in
+    /// `infer_const`; VERUS-REWRITE(tested-closed): the constructed rule's
+    /// value and both sides of `assert_def_eq` are tested closed;
+    /// VERUS-REWRITE(name-clash): the parameter `old` is `old_uparams` --
+    /// `old` is Verus's pre-state operator, which the contract uses.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn assert_nonnested_rec_rule_def_eq(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        old_uparams: LevelsPtr<'t>,
+        imported_rr: &RecRule<'t>,
+        constructed_rr: &RecRule<'t>,
+    )
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, old_uparams),
+            crate::util_model::owns(*old(self).ctx, imported_rr.val),
+            crate::util_model::owns(*old(self).ctx, constructed_rr.val),
+            st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
+                && levels_all_param(ls),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        assert!(!crate::env_model::same_object(imported_rr, constructed_rr));
+        // Should be structurally != because they come from different envs.
+        assert_ne!(imported_rr, constructed_rr);
+        assert!(!st.is_nested());
+        self.tc_cache.clear();
+        assert_eq!(imported_rr.ctor_name, constructed_rr.ctor_name);
+        assert_eq!(imported_rr.ctor_telescope_size_wo_params, constructed_rr.ctor_telescope_size_wo_params);
+        if self.ctx.read_levels(st.rec_uparams.unwrap()).len() != self.ctx.read_levels(old_uparams).len() {
+            return panic!("recursor rule: universe arity mismatch");
+        }
+        self.assert_closed(constructed_rr.val);
+        let rr_made_val = self.ctx.subst_expr_levels(constructed_rr.val, st.rec_uparams.unwrap(), old_uparams);
+        self.assert_closed(imported_rr.val);
+        self.assert_closed(rr_made_val);
+        proof {
+            level_free_in_scope(*self, imported_rr.val);
+            level_free_in_scope(*self, rr_made_val);
+        }
+        self.assert_def_eq(imported_rr.val, rr_made_val);
+    }
+
+    /// Verified in place: each constructed recursor checked against the
+    /// export file's -- its type (under the recursor's universe parameters) and
+    /// every rule.
+    ///
+    /// VERUS-REWRITE(index-walk): `for new_rec in recursors` and the rule
+    /// loop over `old_rec_rules.iter().zip(new_rec_rules.iter())` are the
+    /// scans by index they stand for (`zip` has no specification);
+    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`;
+    /// VERUS-REWRITE(tested-params): the imported recursor's universe
+    /// parameters are tested to be distinct parameters (`no_dupes_all_params`,
+    /// what `check_declar_info` tests of every declaration it checks) before
+    /// `subst_expr_levels` substitutes for them; VERUS-REWRITE(hoisted-arity-check),
+    /// VERUS-REWRITE(tested-closed): as in `assert_nonnested_rec_rule_def_eq`;
+    /// VERUS-REWRITE(name-clash): the pattern binding `old` is `old_d` (the
+    /// rule loop's invariant uses Verus's `old`).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn assert_nonnested_recursors_def_eq(&mut self, st: &InductiveCheckState<'t>, recursors: &Vec<Declar<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
+                && levels_all_param(ls),
+            forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
+                Declar::Recursor(r) => {
+                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] r.rec_rules@[k].val)
+                    &&& crate::util_model::owns(*old(self).ctx, r.info.ty)
+                    &&& crate::util_model::owns(*old(self).ctx, r.info.name)
+                },
+                _ => true,
+            },
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        assert!(!st.is_nested());
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+        }
+        let mut n: usize = 0;
+        while n < recursors.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*self.ctx, ls) && levels_all_param(ls),
+                forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
+                    Declar::Recursor(r) => {
+                        &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
+                        &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                        &&& crate::util_model::owns(*self.ctx, r.info.name)
+                    },
+                    _ => true,
+                },
+            decreases recursors@.len() - n,
+        {
+            let new_rec = &recursors[n];
+            proof { let _ = recursors@[n as int]; }
+            match (self.env.get_old_declar(&new_rec.info().name), new_rec) {
+                (
+                    Some(old_d @ Declar::Recursor(old_r @ RecursorData { rec_rules: old_rec_rules, .. })),
+                    new @ Declar::Recursor(new_r @ RecursorData { rec_rules: new_rec_rules, .. }),
+                ) => {
+                    self.tc_cache.clear();
+                    assert!(old_r.aux_data_ck(new_r));
+                    assert!(!crate::env_model::same_object(old_d, new));
+                    // Should be structurally != because they come from different envs.
+                    assert_ne!(old_d, new);
+                    assert!(self.ctx.no_dupes_all_params(old_d.info().uparams));
+                    if self.ctx.read_levels(old_d.info().uparams).len() != self.ctx.read_levels(st.rec_uparams.unwrap()).len() {
+                        return panic!("recursor: universe arity mismatch");
+                    }
+                    self.assert_closed(old_d.info().ty);
+                    let imported_w_new_uparams =
+                        self.ctx.subst_expr_levels(old_d.info().ty, old_d.info().uparams, st.rec_uparams.unwrap());
+                    self.assert_closed(imported_w_new_uparams);
+                    self.assert_closed(new.info().ty);
+                    proof {
+                        level_free_in_scope(*self, imported_w_new_uparams);
+                        level_free_in_scope(*self, new_r.info.ty);
+                    }
+                    self.assert_def_eq(imported_w_new_uparams, new.info().ty);
+                    assert_eq!(old_rec_rules.len(), new_rec_rules.len());
+                    let mut j: usize = 0;
+                    while j < old_rec_rules.len()
+                        invariant
+                            crate::tc::tc_wf(*self),
+                            self.env == old(self).env,
+                            self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                            crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                            self.live == old(self).live,
+                            st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*self.ctx, ls) && levels_all_param(ls),
+                            forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
+                                Declar::Recursor(r) => {
+                                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
+                                    &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                                    &&& crate::util_model::owns(*self.ctx, r.info.name)
+                                },
+                                _ => true,
+                            },
+                            crate::env_model::recursor_data_owned(*self.env, *old_r),
+                            n < recursors@.len(),
+                            *new_rec == recursors@[n as int],
+                            *new_rec == Declar::Recursor(*new_r),
+                            *old_d == Declar::Recursor(*old_r),
+                            *new == Declar::Recursor(*new_r),
+                            new_r.rec_rules == *new_rec_rules,
+                            old_r.rec_rules == *old_rec_rules,
+                            old_rec_rules@.len() == new_rec_rules@.len(),
+                        decreases old_rec_rules@.len() - j,
+                    {
+                        let r_old = &old_rec_rules[j];
+                        let r_new = &new_rec_rules[j];
+                        proof {
+                            assert(crate::env_model::env_owns(*self.env, old_r.rec_rules@[j as int].val));
+                            assert(crate::env_model::env_owns(*self.env, old_r.info.uparams));
+                            assert(match recursors@[n as int] {
+                                Declar::Recursor(r) => forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val),
+                                _ => true,
+                            });
+                            assert(crate::util_model::owns(*self.ctx, new_r.rec_rules@[j as int].val));
+                        }
+                        self.assert_nonnested_rec_rule_def_eq(st, old_d.info().uparams, r_old, r_new);
+                        j += 1;
+                    }
+                }
+                _ => panic!("Expected (Declar::Recursor, Declar::Recursor)"),
+            };
+            n += 1;
+        }
+    }
+
+    /// Verified in place: every recursor of the block, and every recursor made
+    /// for a specialized type, restored and checked.
+    ///
+    /// VERUS-REWRITE(for-next): `for rec_name in base_rec_names.iter().copied()`
+    /// is the `loop` over `next()` it desugars to, with the set's iterator and
+    /// its copy bound to locals so the proof can name what is left of the set;
+    /// the second `for`,
+    /// over `map.keys().copied()`, is the scan by position (`get_index`).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_recursors(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        specialized_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
+        // e.g. `Lean.Syntax.Node.rec`, `SExpr.rec`
+        base_rec_names: &FxHashSet<NamePtr<'t>>,
+    )
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, specialized_rec_name_to_rec_name),
+            forall|n: NamePtr<'t>| #[trigger] base_rec_names@.contains(n) ==> crate::util_model::owns(*old(self).ctx, n),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        // Check the recursors for the base inductives (NOT the specialized types)
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::iter::copied_postcondition;
+            crate::util_model::build_hasher_default_valid_fx();
+            crate::util_model::ptr_owned_keys(*self.ctx, base_rec_names@);
+        }
+        let set_it = base_rec_names.iter();
+        let ghost set_rem = vstd::std_specs::iter::IteratorSpec::remaining(&set_it);
+        let mut rec_it = set_it.copied();
+        proof {
+            assert forall|k: int| 0 <= k < vstd::std_specs::iter::IteratorSpec::remaining(&rec_it).len()
+                implies crate::util_model::owns(*self.ctx, #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&rec_it)[k]) by {
+                let x = vstd::std_specs::iter::IteratorSpec::remaining(&rec_it)[k];
+                assert(x == *set_rem[k]);
+                assert(set_rem.unref()[k] == x);
+                assert(set_rem.unref().to_set().contains(x));
+                assert(base_rec_names@.contains(x));
+            }
+        }
+        loop
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
+                ptr_map_owned(*self.ctx, specialized_rec_name_to_rec_name),
+                vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&rec_it),
+                forall|k: int| 0 <= k < vstd::std_specs::iter::IteratorSpec::remaining(&rec_it).len()
+                    ==> crate::util_model::owns(*self.ctx, #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&rec_it)[k]),
+        {
+            let ghost rem0 = vstd::std_specs::iter::IteratorSpec::remaining(&rec_it);
+            match rec_it.next() {
+                Some(rec_name) => {
+                    proof {
+                        assert(crate::util_model::owns(*self.ctx, rem0[0]));
+                        assert forall|k: int| 0 <= k < vstd::std_specs::iter::IteratorSpec::remaining(&rec_it).len()
+                            implies crate::util_model::owns(*self.ctx, #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&rec_it)[k]) by {
+                            assert(vstd::std_specs::iter::IteratorSpec::remaining(&rec_it)[k] == rem0[k + 1]);
+                        }
+                    }
+                    self.check_restored_recursor1(st, ind_names_no_specialized, specialized_rec_name_to_rec_name, rec_name)
+                }
+                None => break,
+            }
+        }
+
+        // Check the recursors constructed for the specialized types,
+        // like `_nested.Array_1.rec` after restoring it to `Lean.Syntax.rec_1`
+        let mut k: usize = 0;
+        while k < specialized_rec_name_to_rec_name.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
+                ptr_map_owned(*self.ctx, specialized_rec_name_to_rec_name),
+        {
+            let (specialized_ty_rec_name, _) = specialized_rec_name_to_rec_name.get_index(k).unwrap();
+            proof {
+                let keys = crate::indexmap_model::imap_keys(specialized_rec_name_to_rec_name);
+                assert(keys.to_set().contains(keys[k as int]));
+            }
+            self.check_restored_recursor1(
+                st,
+                ind_names_no_specialized,
+                specialized_rec_name_to_rec_name,
+                *specialized_ty_rec_name,
+            );
+            k += 1;
+        }
+    }
+
+    /// Verified in place: for a nested block, every base type and constructor
+    /// is checked against the export file's, then every recursor.
+    ///
+    /// VERUS-REWRITE(tested-closed): both types handed to `assert_def_eq` are
+    /// tested closed first, as in `check_restored_recursor1`;
+    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_and_check(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        unmodified_mutuals: &Vec<IndTyHeader<'t>>,
+        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
+        base_rec_names: &FxHashSet<NamePtr<'t>>,
+        specialized_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+    )
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, specialized_to_unspecialized_rec_names),
+            forall|n: NamePtr<'t>| #[trigger] base_rec_names@.contains(n) ==> crate::util_model::owns(*old(self).ctx, n),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        for unmodified_ind_type in it: unmodified_mutuals.iter()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
+                ptr_map_owned(*self.ctx, specialized_to_unspecialized_rec_names),
+                forall|n: NamePtr<'t>| #[trigger] base_rec_names@.contains(n) ==> crate::util_model::owns(*self.ctx, n),
+        {
+            match (
+                self.env.get_old_declar(&unmodified_ind_type.name),
+                self.env.get_temp_declar(&unmodified_ind_type.name),
+            ) {
+                (Some(Declar::Inductive(old)), Some(Declar::Inductive(new))) => {
+                    assert!(old.aux_data_ck(new));
+                    debug_assert!(!crate::env_model::same_object(old, new));
+                    self.tc_cache.clear();
+                    self.assert_closed(old.info.ty);
+                    self.assert_closed(new.info.ty);
+                    proof {
+                        level_free_in_scope(*self, old.info.ty);
+                        level_free_in_scope(*self, new.info.ty);
+                    }
+                    self.assert_def_eq(old.info.ty, new.info.ty);
+                }
+                _ => panic!(),
+            }
+
+            for ctor in it2: unmodified_ind_type.ctors.iter()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    self.env == old(self).env,
+                    self.ctx.dbj_level_counter == 0,
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.live == old(self).live,
+                    ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
+                    ptr_map_owned(*self.ctx, specialized_to_unspecialized_rec_names),
+            {
+                let ctor = match self.env.get_old_declar(&ctor.name) {
+                    Some(Declar::Constructor(c)) => c.clone(),
+                    _ => panic!(),
+                };
+                self.check_restored_ctor1(st, &specialized_to_unspecialized_rec_names, &ctor);
+            }
+        }
+        self.restore_recursors(st, &specialized_to_unspecialized_rec_names, ind_names_no_specialized, base_rec_names)
     }
 
     /// Verified in place, body unchanged: the constructor's non-parameter
