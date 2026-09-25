@@ -76,7 +76,7 @@ macro_rules! pi_telescope {
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 /// The panics `check_eq` / `check_quot` raise with a formatted message, the
 /// same `panic!`s (Verus does not process their `format!` arguments). Claim

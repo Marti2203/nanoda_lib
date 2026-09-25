@@ -84,7 +84,7 @@ use vstd::prelude::*;
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 /// `InductiveCheckState`'s two remaining field types, registered OPAQUELY so the
 /// struct itself can be TRANSPARENT. Same trick as `Declar`'s payloads: Verus

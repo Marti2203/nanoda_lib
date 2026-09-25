@@ -48,7 +48,7 @@ use vstd::set_lib::*;
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 /// What a `NamePtr` denotes in the `NameSpec` model -- uninterpreted, same
 /// trust boundary as `expr_arena_bridge::to_model`/`level_arena_bridge::

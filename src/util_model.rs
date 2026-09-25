@@ -39,7 +39,7 @@ pub(crate) fn dag_marker_is_tc(m: &DagMarker) -> bool {
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 /// `TypeChecker`'s composite field types, registered so `TypeChecker` itself can
 /// be a TRANSPARENT `external_type_specification` -- the same first step that
@@ -369,9 +369,6 @@ pub proof fn sorted_pair_set_keys<'t, 'p>(
 /// (`c_nat_zero` and its four siblings, `quot_kind_code`, `nat_bin_op_code`)
 /// can only be proved rather than assumed if their cached name is
 /// projectable. Its field types just have to be KNOWN.
-#[allow(dead_code)]
-#[verifier::external_type_specification]
-pub struct ExExportFile<'p>(crate::util::ExportFile<'p>);
 
 
 /// OPAQUE -- but not for the reason an earlier note here gave. It claimed
@@ -426,7 +423,7 @@ pub open spec fn dag_arena<'a>(d: crate::util::LeanDag<'a>) -> nat {
 /// is DEFINED as the tag the export file's name cache carries (so the cached
 /// names are the export file's by construction, with no linking axiom).
 pub open spec fn arena_ids<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> (nat, nat) {
-    (dag_arena(*c.dag), c.export_file.name_cache.arena_id())
+    (dag_arena(*c.dag), c.export_file.arena())
 }
 
 /// The context's export file's arena (the second of `arena_ids`).

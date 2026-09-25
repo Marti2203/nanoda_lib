@@ -403,6 +403,8 @@ impl<'t> ExprCache<'t> {
 
 } // verus!
 
+::vstd::prelude::verus! {
+
 pub struct ExportFile<'p> {
     /// The underlying storage for `Name`, `Level`, and `Expr` items (and Strings).
     /// `pub` so `ExExportFile` can be TRANSPARENT (Verus rejects private
@@ -417,8 +419,39 @@ pub struct ExportFile<'p> {
     pub config: Config,
     // Information used for setting EnvLimit during inductive checking.
     pub mutual_block_sizes: FxHashMap<NamePtr<'p>, (usize, usize)>,
-    pub ind_name_to_recursor_names: FxHashMap<NamePtr<'p>, FxHashSet<NamePtr<'p>>>,
+    /// VERUS-REWRITE(visibility): `pub(crate)` rather than `pub` (nothing
+    /// outside the crate reads it), which is what lets the struct carry a
+    /// type invariant: Verus refuses one on a struct all of whose fields are
+    /// public outside the crate.
+    pub(crate) ind_name_to_recursor_names: FxHashMap<NamePtr<'p>, FxHashSet<NamePtr<'p>>>,
 }
+
+impl<'p> ExportFile<'p> {
+    /// The name cache's arena is the dag's: the export tier's pointers
+    /// (tagged with the cache's id) index the dag's storage. The parser builds
+    /// both; unverified, so assumed of every export file.
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        self.name_cache.arena_id() == self.dag.id()
+    }
+
+    /// The export tier's arena: the tag its name cache carries. Closed,
+    /// because the struct's fields are only visible inside the crate (a type
+    /// invariant needs that) and public contracts mention this.
+    pub closed spec fn arena(self) -> nat {
+        self.name_cache.arena_id()
+    }
+
+}
+
+/// `arena`'s definition, for proofs inside the crate.
+pub(crate) broadcast proof fn lemma_export_arena<'p>(ef: ExportFile<'p>)
+    ensures
+        #[trigger] ef.arena() == ef.name_cache.arena_id(),
+{
+}
+
+} // verus!
 
 impl<'p> ExportFile<'p> {
     pub fn new_env(&self, env_limit: EnvLimit<'p>) -> Env<'_, '_> {
@@ -550,7 +583,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> (result: Self)
         ensures
             result.export_file == export_file,
-            crate::util_model::arena_ids(result) == (crate::util_model::dag_arena(*old(tdag)), export_file.name_cache.arena_id()),
+            crate::util_model::arena_ids(result) == (crate::util_model::dag_arena(*old(tdag)), export_file.arena()),
             result.dbj_level_counter == 0,
             crate::expr_arena_bridge::dsubst_cache_sound(result),
     {

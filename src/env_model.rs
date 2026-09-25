@@ -48,7 +48,7 @@ use vstd::prelude::*;
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReducibilityHintSpec {
@@ -276,12 +276,13 @@ pub fn ctx_env_ext<'x, 't, 'p: 't>(
 }
 
 /// A context's export file's declarations belong to the context's arenas.
-pub proof fn export_declars_owned<'t, 'p>(c: crate::util::TcCtx<'t, 'p>)
+pub(crate) proof fn export_declars_owned<'t, 'p>(c: crate::util::TcCtx<'t, 'p>)
     requires
         crate::inductive::export_ok(*c.export_file),
     ensures
         declar_map_owned_in(crate::util_model::arena_ids(c), &c.export_file.declars),
 {
+    crate::inductive::export_ok_facts(*c.export_file);
     let ids = crate::util_model::arena_ids(c);
     let m = crate::indexmap_model::imap_view(&c.export_file.declars);
     assert forall|k: NamePtr<'p>| #[trigger] m.contains_key(k)

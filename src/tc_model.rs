@@ -122,7 +122,7 @@ use vstd::prelude::*;
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 
 /// TRANSPARENT. Its three fields are already `pub`, so nothing had to change

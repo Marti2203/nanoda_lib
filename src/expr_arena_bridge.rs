@@ -86,7 +86,7 @@ pub(crate) fn read_bignum_value<'t, 'p: 't>(
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 /// TRANSPARENT, like `ExLevel`. The variants are visible to Verus, so the
 /// kernel's own `match self.read_expr(p) { .. }` can be verified as written

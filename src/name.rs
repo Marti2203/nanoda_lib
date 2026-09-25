@@ -7,7 +7,7 @@ use vstd::prelude::*;
 // expressible there; values unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 pub(crate) const ANON_HASH: u64 = 43;
 

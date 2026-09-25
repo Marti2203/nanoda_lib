@@ -9,7 +9,7 @@ use Expr::*;
 // expressible there; the values are unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn quot_kind_code(&self, name: NamePtr<'t>) -> (result: Option<u8>)

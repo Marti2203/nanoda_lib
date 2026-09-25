@@ -56,7 +56,7 @@ IndexMap's), and a key-model fact per node type.
 ## Stages
 
 0. IndexSet specifications (`indexmap_model.rs`).
-1. `arena_hist`, `ArenaTok`, `arena_pin`, `arena_insert`; `LeanDag` in
+1. (done) `arena_hist`, `ArenaTok`, `arena_pin`, `arena_insert`; `LeanDag` in
    `verus!` with tokens and the invariant; `dag_arena` defined.
-2. The export file's name-cache tag is its dag's id.
+2. (done) The export file's name-cache tag is its dag's id: `ExportFile` carries it as a type invariant; public contracts read the tag through the closed `ExportFile::arena`, and `export_ok` and its siblings are closed (unfolded by `export_ok_facts`).
 3. Names. 4. Levels. 5. Expressions. 6. Strings and bignums.

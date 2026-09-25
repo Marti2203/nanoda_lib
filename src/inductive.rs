@@ -931,8 +931,8 @@ pub open spec fn declar_export_tagged<'a>(a: nat, d: Declar<'a>) -> bool {
 /// The export file's declarations are its own: every name and every pointer
 /// in the declaration map is an export pointer of the file's arena. What the
 /// parser builds; the checker's entry points take it as given.
-pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
-    let a = ef.name_cache.arena_id();
+pub closed spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
+    let a = ef.arena();
     &&& crate::indexmap_model::imap_wf(&ef.declars)
     &&& forall|k: NamePtr<'p>| #[trigger] crate::indexmap_model::imap_view(&ef.declars).contains_key(k)
         ==> crate::util_model::export_tagged(a, k)
@@ -941,10 +941,25 @@ pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
             && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k
 }
 
+/// `export_ok` unfolded, for proofs outside this module (it is closed: the
+/// export file's fields are visible only inside the crate).
+pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)
+    requires
+        export_ok(ef),
+    ensures
+        crate::indexmap_model::imap_wf(&ef.declars),
+        forall|k: NamePtr<'p>| #[trigger] crate::indexmap_model::imap_view(&ef.declars).contains_key(k)
+            ==> crate::util_model::export_tagged(ef.arena(), k)
+                && declar_export_tagged(ef.arena(), crate::indexmap_model::imap_view(&ef.declars)[k])
+                && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(&ef.declars)[k])
+                && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k,
+{
+}
+
 /// The parser's mutual-block table is keyed by the export file's own names.
-pub open spec fn export_blocks_ok<'p>(ef: ExportFile<'p>) -> bool {
+pub closed spec fn export_blocks_ok<'p>(ef: ExportFile<'p>) -> bool {
     forall|k: NamePtr<'p>| #[trigger] ef.mutual_block_sizes@.contains_key(k)
-        ==> crate::util_model::export_tagged(ef.name_cache.arena_id(), k)
+        ==> crate::util_model::export_tagged(ef.arena(), k)
 }
 
 /// Export pointers of one arena obey the hash-table key model: equal raw
@@ -965,14 +980,14 @@ pub proof fn export_keys_obey_model<A>(a: nat, s: Set<crate::util::Ptr<A>>)
 
 /// The export file's declaration names, with one more export name, obey the
 /// hash-table key model -- what a `declars.get` needs.
-pub proof fn export_declars_get<'p>(ef: ExportFile<'p>, n: NamePtr<'p>)
+pub(crate) proof fn export_declars_get<'p>(ef: ExportFile<'p>, n: NamePtr<'p>)
     requires
         export_ok(ef),
-        crate::util_model::export_tagged(ef.name_cache.arena_id(), n),
+        crate::util_model::export_tagged(ef.arena(), n),
     ensures
         vstd::std_specs::hash::keys_obey_model::<NamePtr<'p>>(crate::indexmap_model::imap_view(&ef.declars).dom().insert(n)),
 {
-    let a = ef.name_cache.arena_id();
+    let a = ef.arena();
     let s = crate::indexmap_model::imap_view(&ef.declars).dom().insert(n);
     assert forall|x: NamePtr<'p>| #[trigger] s.contains(x) implies crate::util_model::export_tagged(a, x) by {
         if x != n {
@@ -1095,12 +1110,12 @@ impl<'t, 'p: 't> ExportFile<'p> {
     pub(crate) fn is_recursive(&self, ind_name: &NamePtr<'t>) -> (result: bool)
         requires
             export_ok(*self),
-            crate::util_model::export_tagged(self.name_cache.arena_id(), *ind_name),
+            crate::util_model::export_tagged(self.arena(), *ind_name),
     {
         proof {
             broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
             crate::util_model::build_hasher_default_valid_fx();
-            export_keys_obey_model(self.name_cache.arena_id(),
+            export_keys_obey_model(self.arena(),
                 crate::indexmap_model::imap_view(&self.declars).dom().insert(*ind_name));
         }
         match self.declars.get(ind_name).unwrap() {
@@ -1108,7 +1123,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 let mut dag = LeanDag::new(&self.config);
                 let ctx = TcCtx::new(self, &mut dag);
                 proof {
-                    let a = self.name_cache.arena_id();
+                    let a = self.arena();
                     assert(declar_export_tagged(a, Declar::Inductive(*ind)));
                     assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]) by {
                         export_tagged_owned(ctx, ind.all_ind_names@[k]);
@@ -1119,7 +1134,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     invariant
                         export_ok(*self),
                         ctx.export_file == self,
-                        forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(self.name_cache.arena_id(), #[trigger] ind.all_ctor_names@[k]),
+                        forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(self.arena(), #[trigger] ind.all_ctor_names@[k]),
                         forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]),
                     decreases ind.all_ctor_names@.len() - c,
                 {
@@ -1127,8 +1142,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     proof {
                         broadcast use vstd::std_specs::hash::group_hash_axioms;
                         crate::util_model::build_hasher_default_valid_fx();
-                        assert(crate::util_model::export_tagged(self.name_cache.arena_id(), ind.all_ctor_names@[c as int]));
-                        export_keys_obey_model(self.name_cache.arena_id(),
+                        assert(crate::util_model::export_tagged(self.arena(), ind.all_ctor_names@[c as int]));
+                        export_keys_obey_model(self.arena(),
                             crate::indexmap_model::imap_view(&self.declars).dom().insert(*ctor_name));
                     }
                     match self.declars.get(ctor_name).unwrap() {
@@ -1136,7 +1151,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                             let mut ctor_ty = ctor_data.info.ty;
                             proof {
                                 broadcast use vstd::std_specs::hash::group_hash_axioms;
-                                let a = self.name_cache.arena_id();
+                                let a = self.arena();
                                 assert(crate::indexmap_model::imap_view(&self.declars).contains_key(*ctor_name));
                                 assert(declar_export_tagged(a, Declar::Constructor(*ctor_data)));
                                 export_tagged_owned(ctx, ctor_ty);
@@ -1169,8 +1184,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
 
 /// The parser's recursor-name table is the export file's own: its keys and
 /// every name in its sets are export pointers.
-pub open spec fn export_rec_names_ok<'p>(ef: ExportFile<'p>) -> bool {
-    let a = ef.name_cache.arena_id();
+pub closed spec fn export_rec_names_ok<'p>(ef: ExportFile<'p>) -> bool {
+    let a = ef.arena();
     forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
         ==> crate::util_model::export_tagged(a, k)
             && forall|n: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@[k]@.contains(n) ==> crate::util_model::export_tagged(a, n)
@@ -1204,7 +1219,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>)
         requires
             export_rec_names_ok(*self.export_file),
-            crate::util_model::export_tagged(self.export_file.name_cache.arena_id(), *ind_name),
+            crate::util_model::export_tagged(self.export_file.arena(), *ind_name),
             forall|n: NamePtr<'t>| #[trigger] derived@.contains(n) ==> crate::util_model::owns(*self, n),
         ensures
             ({
@@ -1215,14 +1230,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         proof {
             broadcast use vstd::std_specs::hash::group_hash_axioms;
             crate::util_model::build_hasher_default_valid_fx();
-            export_keys_obey_model(self.export_file.name_cache.arena_id(),
+            export_keys_obey_model(self.export_file.arena(),
                 self.export_file.ind_name_to_recursor_names@.dom().insert(*ind_name));
         }
         let from_parser = self.export_file.ind_name_to_recursor_names.get(ind_name).unwrap();
         proof {
             broadcast use vstd::std_specs::hash::group_hash_axioms;
             crate::util_model::build_hasher_default_valid_fx();
-            let a = self.export_file.name_cache.arena_id();
+            let a = self.export_file.arena();
             assert(self.export_file.ind_name_to_recursor_names@.contains_key(*ind_name));
             assert(self.export_file.ind_name_to_recursor_names@[*ind_name] == *from_parser);
             assert forall|n: NamePtr<'t>| #[trigger] derived@.union(from_parser@).contains(n) implies crate::util_model::owns(*self, n) by {
@@ -1300,9 +1315,9 @@ impl<'t, 'p: 't> ExportFile<'p> {
             export_ok(*self),
             export_rec_names_ok(*self),
             export_blocks_ok(*self),
-            declar_export_tagged(self.name_cache.arena_id(), *d),
+            declar_export_tagged(self.arena(), *d),
     {
-        let ghost a = self.name_cache.arena_id();
+        let ghost a = self.arena();
         let (ind, env_limit) = match d {
             Declar::Inductive(ind) => {
                 // Assert computed `is_recursive` value matches the export file. Lean considers
@@ -1315,7 +1330,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 while k < ind.all_ind_names.len()
                     invariant
                         export_ok(*self),
-                        a == self.name_cache.arena_id(),
+                        a == self.arena(),
                         forall|j: int| 0 <= j < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[j]),
                     decreases ind.all_ind_names@.len() - k,
                 {
@@ -1341,7 +1356,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     while j < ind.all_ind_names.len()
                         invariant
                             export_ok(*self),
-                            a == self.name_cache.arena_id(),
+                            a == self.arena(),
                             crate::util_model::arena_ids(ctx).1 == a,
                             crate::util_model::owns(ctx, nested_pfx),
                             forall|x: int| 0 <= x < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[x]),
@@ -1372,7 +1387,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     while j < ind.all_ctor_names.len()
                         invariant
                             export_ok(*self),
-                            a == self.name_cache.arena_id(),
+                            a == self.arena(),
                             crate::util_model::arena_ids(ctx).1 == a,
                             crate::util_model::owns(ctx, nested_pfx),
                             forall|x: int| 0 <= x < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ctor_names@[x]),

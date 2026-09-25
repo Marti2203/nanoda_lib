@@ -19,7 +19,7 @@ pub enum ReducibilityHint {
 
 ::vstd::prelude::verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 impl ReducibilityHint {
     /// Check whether `self` is "less than" `other` in terms of reducibility; during

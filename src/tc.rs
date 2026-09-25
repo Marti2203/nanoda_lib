@@ -84,6 +84,8 @@ pub struct TypeChecker<'x, 't, 'p> {
 
 verus! {
 
+broadcast use crate::util::lemma_export_arena;
+
 impl<'p> ExportFile<'p> {
     /// The recursor-arm rejections, with the messages `check_declar` gave
     /// them (the same `with_ctx` + `panic!`; Verus does not process the
@@ -152,10 +154,10 @@ impl<'p> ExportFile<'p> {
             crate::inductive::export_ok(*self),
             crate::inductive::export_rec_names_ok(*self),
             crate::inductive::export_blocks_ok(*self),
-            crate::inductive::declar_export_tagged(self.name_cache.arena_id(), *d),
+            crate::inductive::declar_export_tagged(self.arena(), *d),
     {
         use Declar::*;
-        let ghost a = self.name_cache.arena_id();
+        let ghost a = self.arena();
         match d {
             Axiom { .. } => {
                 let mut dag = crate::util::LeanDag::new(&self.config);

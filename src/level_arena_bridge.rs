@@ -48,7 +48,7 @@ use vstd::prelude::*;
 
 verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 #[allow(dead_code)]
 #[verifier::external_type_specification]

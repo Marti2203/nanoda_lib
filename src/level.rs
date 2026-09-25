@@ -5,7 +5,7 @@ use crate::util::{LevelPtr, LevelsPtr, NamePtr, TcCtx};
 // expressible there; values unchanged and no spec reads them.
 ::vstd::prelude::verus! {
 
-broadcast use crate::util::ptr_eta;
+broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
 pub(crate) const ZERO_HASH: u64 = 283;
 
