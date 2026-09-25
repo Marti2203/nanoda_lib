@@ -62,4 +62,30 @@ IndexMap's), and a key-model fact per node type.
 3. (done) Names: `to_model_name` defined; `read_name`, `alloc_name`, `anonymous` verified.
 4. (done) Levels: `to_model` defined; `read_level`, `alloc_level`, `zero` verified. The level-SEQUENCE arena (`read_levels`, `alloc_levels_slice`) waits on a vstd rule for looking up an `Arc<[T]>` by `&[T]`.
 5. (done) Expressions: `to_model` defined, the payload projections (`const_name_of` and the rest) are the stored node's fields, the local serials are read from the history; `read_expr` and `alloc_expr` verified; `is_const_shape_model` and its three siblings are lemmas.
-6. Strings and bignums.
+6. Not done yet. Each remaining arena fact, and what it waits on:
+   - `read_levels`, `alloc_levels_slice` (the level-sequence arena): a vstd
+     rule for looking up an `Arc<[T]>` key by `&[T]`.
+   - `alloc_string`, `alloc_bignum`, `read_bignum_value`: a key-model fact
+     for `Cow<str>` / `BigUint` (third-party types), which would replace
+     them one for one or better.
+   - `to_model_name_injective`, `level_ptr_eq_iff_same_model_param`
+     (hash-consing): provable for STORED pointers from distinct keys,
+     canonical hashes and checker/export disjointness, but callers only hold
+     `owns`, which does not say stored; an out-of-range export pointer
+     denotes the default. Stated for all owned pointers they are consistent
+     only because the export history beyond its contents is left open.
+   - `mk_unique`, `unique_serial_injective`: the unique counter lives in the
+     context, not the dag, so "every stored unique serial is below the
+     counter" has no home yet; and the pretty printer renames locals under
+     the same id in its own context.
+   - `str_lit_to_constructor`, `append_index_after`: string content
+     (`format!`), not arena structure.
+
+Also done along the way: the level (`mk_dbj_level`) and closing
+(`replace_dbj_level`) local constructors, and the arena's local context
+(`arena_lctx`, so `arena_lctx_local` is a lemma).
+
+A soundness finding: defining the name denotation made
+`to_model_name_injective` refutable, because every dag held a copy of the
+anonymous name at index 0 (so two owned pointers provably denoted it).
+Checker dags now start empty; see `Parser::new`.
