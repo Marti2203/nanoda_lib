@@ -855,68 +855,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         out
     }
 
-    /// Shadow-only (NANODA_SHADOW=1): rebuild this recursor rule's value with
-    /// the certified builder (`inductive_model::verified_mk_rec_rule_val`) and
-    /// check it is the very same term, and independently re-derive the rule's
-    /// recorded field count. The builder's postcondition is that the value
-    /// binds exactly `num_params + num_motives + num_minors + ctor_args`
-    /// arguments, which are the positions `reduce_rec` supplies when it fires
-    /// the rule; the field count is re-derived through
-    /// `verified_pi_telescope_size`, whose own postcondition ties it to the
-    /// constructor type's binder count. Never affects a verdict.
-    #[allow(clippy::too_many_arguments)]
-    fn shadow_check_rec_rule(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        ctor: CtorHeader<'t>,
-        flat_mapped_minors: &[ExprPtr<'t>],
-        this_minor: ExprPtr<'t>,
-        all_ctor_args: &[ExprPtr<'t>],
-        handled_rec_args: &[ExprPtr<'t>],
-        kernel_val: ExprPtr<'t>,
-        kernel_num_fields: usize,
-    ) {
-        if !crate::tc::route_stats::shadow_enabled() {
-            return;
-        }
-        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_TOTAL);
-        let motives = st.motives.clone();
-        let params = st.local_params.clone();
-        let minors_v: Vec<ExprPtr<'t>> = flat_mapped_minors.to_vec();
-        let args_v: Vec<ExprPtr<'t>> = all_ctor_args.to_vec();
-        let rec_args_v: Vec<ExprPtr<'t>> = handled_rec_args.to_vec();
-        let verified_val = crate::inductive_model::verified_mk_rec_rule_val(
-            self.ctx,
-            params.as_slice(),
-            motives.as_slice(),
-            minors_v.as_slice(),
-            args_v.as_slice(),
-            rec_args_v.as_slice(),
-            this_minor,
-        );
-        // This counts BIND nodes; the kernel's `num_fields` below counts PI
-        // nodes (`ctx.pi_telescope_size`). The model conflates `Pi` and
-        // `Lambda` into `ExprSpec::Bind`, so the shadow cannot tell them apart.
-        //
-        // This is NOT a soundness gap, and the direction matters: the check
-        // below is `verified_fields == Some(kernel_num_fields)`, so a
-        // divergence bumps DISAGREE. The coarser count can cost a spurious
-        // disagreement; it can never produce a false certification.
-        //
-        // And it does not diverge on well-typed input: a `Lambda` is never
-        // `Sort`-typed, so it cannot appear anywhere in the leading spine of a
-        // constructor type. Recorded because the two names differ by nothing at
-        // this call site, not because anything is wrong.
-        let verified_fields = match crate::inductive_model::verified_pi_telescope_size(self.ctx, ctor.ty, 100000) {
-            Some(n) => (n as usize).checked_sub(params.len()),
-            None => None,
-        };
-        if verified_val == kernel_val && verified_fields == Some(kernel_num_fields) {
-            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_CERT);
-        } else {
-            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_RECRULE_DISAGREE);
-        }
-    }
 
     fn mk_rec_rule1(
         &mut self,
@@ -927,25 +865,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ) -> RecRule<'t> {
         let (_, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
         let handled_rec_args = self.handle_rec_ctor_args_rec_rule(st, rec_ctor_args.as_slice());
-        let comp_rhs = self.ctx.foldl_apps(this_minor, all_ctor_args.iter().copied());
-        let comp_rhs = self.ctx.foldl_apps(comp_rhs, handled_rec_args.iter().copied());
-        let comp_rhs = self.ctx.abstr_lambda_telescope(all_ctor_args.as_slice(), comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(flat_mapped_minors, comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(st.motives.as_slice(), comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(st.local_params.as_slice(), comp_rhs);
-        // PI count, not the shadow's BIND count -- see the note at the
-        // `verified_pi_telescope_size` call above.
+        // VERUS-REWRITE(rule-val-split): the value is built by the verified
+        // `mk_rec_rule_val` (the same calls, same order); the `RecRule` is
+        // assembled here.
+        let comp_rhs = self.mk_rec_rule_val(st, this_minor, flat_mapped_minors, all_ctor_args.as_slice(), handled_rec_args.as_slice());
         let num_fields = self.ctx.pi_telescope_size(ctor.ty) as usize - st.local_params.len();
-        self.shadow_check_rec_rule(
-            st,
-            ctor,
-            flat_mapped_minors,
-            this_minor,
-            all_ctor_args.as_slice(),
-            handled_rec_args.as_slice(),
-            comp_rhs,
-            num_fields,
-        );
         RecRule {
             ctor_name: ctor.name,
             ctor_telescope_size_wo_params: u16::try_from(num_fields).unwrap(),
@@ -1764,6 +1688,20 @@ pub proof fn tele_size_step<'t>(bs: Seq<ExprPtr<'t>>, e: ExprSpec)
     );
 }
 
+/// An application spine headed by a local has no leading binders.
+pub proof fn spine_free_size(h: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        h is Free,
+    ensures
+        crate::inductive_model::pi_telescope_size_spec(crate::beta_model::spine_app(h, args)) == 0,
+{
+    if args.len() > 0 {
+        let init = args.subrange(0, args.len() - 1);
+        assert(args =~= init.push(args[args.len() - 1]));
+        crate::beta_model::spine_app_compose_last(h, init, args[args.len() - 1]);
+    }
+}
+
 /// The name ids of a slice of constants.
 pub open spec fn const_ids<'t>(cs: Seq<ExprPtr<'t>>) -> Seq<u64> {
     Seq::new(cs.len(), |i: int| crate::expr_arena_bridge::const_id(cs[i]))
@@ -1864,6 +1802,67 @@ pub(crate) open spec fn ctor_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: Induct
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// A recursor rule's value, built exactly as `mk_rec_rule1` built it:
+    /// `minor ctor_args* handled_rec_args*` under the lambda telescopes over the
+    /// constructor's arguments, the minor premises, the motives and the
+    /// parameters. Its binder arity is their counts: what iota reduction
+    /// instantiates.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_rec_rule_val(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        this_minor: ExprPtr<'t>,
+        flat_mapped_minors: &[ExprPtr<'t>],
+        all_ctor_args: &[ExprPtr<'t>],
+        handled_rec_args: &[ExprPtr<'t>],
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self).ctx, this_minor),
+            crate::util_model::owns_all(*old(self).ctx, flat_mapped_minors@),
+            crate::util_model::owns_all(*old(self).ctx, all_ctor_args@),
+            crate::util_model::owns_all(*old(self).ctx, handled_rec_args@),
+            crate::util_model::owns_all(*old(self).ctx, st.motives@),
+            crate::util_model::owns_all(*old(self).ctx, st.local_params@),
+            crate::expr_arena_bridge::to_model(this_minor) is Free,
+            forall|i: int| #![trigger all_ctor_args@[i]] 0 <= i < all_ctor_args@.len() ==> crate::expr_arena_bridge::to_model(all_ctor_args@[i]) is Free,
+            forall|i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> crate::expr_arena_bridge::to_model(flat_mapped_minors@[i]) is Free,
+            forall|i: int| #![trigger st.motives@[i]] 0 <= i < st.motives@.len() ==> crate::expr_arena_bridge::to_model(st.motives@[i]) is Free,
+            forall|i: int| #![trigger st.local_params@[i]] 0 <= i < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(st.local_params@[i]) is Free,
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(result))
+                == st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len() + all_ctor_args@.len(),
+    {
+        let comp_rhs = self.ctx.foldl_apps(this_minor, all_ctor_args.iter().copied());
+        let comp_rhs = self.ctx.foldl_apps(comp_rhs, handled_rec_args.iter().copied());
+        proof {
+            spine_free_size(crate::expr_arena_bridge::to_model(this_minor),
+                crate::expr_arena_bridge::ptr_models(all_ctor_args@));
+            crate::beta_model::spine_app_concat(crate::expr_arena_bridge::to_model(this_minor),
+                crate::expr_arena_bridge::ptr_models(all_ctor_args@), crate::expr_arena_bridge::ptr_models(handled_rec_args@));
+            spine_free_size(crate::expr_arena_bridge::to_model(this_minor),
+                crate::expr_arena_bridge::ptr_models(all_ctor_args@) + crate::expr_arena_bridge::ptr_models(handled_rec_args@));
+        }
+        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
+        let comp_rhs = self.ctx.abstr_lambda_telescope(all_ctor_args, comp_rhs);
+        proof { tele_size_step(all_ctor_args@, prev); }
+        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
+        let comp_rhs = self.ctx.abstr_lambda_telescope(flat_mapped_minors, comp_rhs);
+        proof { tele_size_step(flat_mapped_minors@, prev); }
+        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
+        let comp_rhs = self.ctx.abstr_lambda_telescope(st.motives.as_slice(), comp_rhs);
+        proof { tele_size_step(st.motives@, prev); }
+        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
+        let comp_rhs = self.ctx.abstr_lambda_telescope(st.local_params.as_slice(), comp_rhs);
+        proof { tele_size_step(st.local_params@, prev); }
+        comp_rhs
+    }
+
     /// The recursor's type, built exactly as `mk_recursor_aux` built it:
     /// `motive indices* major` under a `Pi` for the major premise, then the
     /// telescopes over the indices, the minor premises, the motives and the
@@ -2788,7 +2787,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// Verified in place, body unchanged: every type in the block has its binder
     /// walk recorded (`ind_walk_ok`), each ending in a sort equivalent to the
-    /// block's. The shadow's shape certifier for this check is retired.
+    /// block's.
     #[verifier::exec_allows_no_decreases_clause]
     fn check_inductive_specs(&mut self, st: &mut InductiveCheckState<'t>)
         requires

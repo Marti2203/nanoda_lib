@@ -1442,12 +1442,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// indistinguishable in the model from one that ran out of binders. Claiming
     /// maximality here would be claiming something false.
     ///
-    /// `inductive.rs` compares this PI count against the shadow's
-    /// `verified_pi_telescope_size`, which counts BIND nodes. They coincide on
-    /// well-typed input (a `Lambda` is never `Sort`-typed, so it cannot head a
-    /// constructor type), and a divergence could only ever cost a spurious
-    /// disagreement, never a false certification. See the note at that site.
-    ///
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
         requires
