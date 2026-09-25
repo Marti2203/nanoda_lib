@@ -441,6 +441,21 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
+/// THE storage primitive for strings, the fourth beside `alloc_name`,
+/// `alloc_level` and `alloc_expr`. A string has no model beyond its opaque
+/// `string_id`, so the claim is only that the pointer belongs to the context,
+/// and the same frame.
+pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_string ](
+    ctx: &mut TcCtx<'t, 'p>,
+    s: crate::util::CowStr<'t>,
+) -> (result: StringPtr<'t>) where 'p: 't
+    ensures
+        crate::util_model::owns(*final(ctx), result),
+        final(ctx).expr_cache == old(ctx).expr_cache,
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+;
+
 /// Every pointer inside the name node belongs to `c` (see
 /// `expr_children_owned`).
 pub open spec fn name_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, n: crate::name::Name<'t>) -> bool {

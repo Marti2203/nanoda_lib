@@ -1516,7 +1516,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
         requires
             crate::util_model::owns(*self, e0),
-            crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         ensures
             crate::beta_model::spine_bind(
                 crate::expr_arena_bridge::to_model(e0),
@@ -1531,9 +1530,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::util_model::owns(*self, e),
                 crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat)
                     == Some(crate::expr_arena_bridge::to_model(e)),
-                size as nat + crate::expr_model::depth(crate::expr_arena_bridge::to_model(e))
-                    <= crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)),
-                crate::expr_model::depth(crate::expr_arena_bridge::to_model(e0)) <= 60000,
         {
             proof {
                 crate::beta_model::spine_bind_step(
@@ -1543,6 +1539,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     crate::expr_arena_bridge::to_model(body),
                 );
             }
+            // VERUS-REWRITE(level-ceiling): `size += 1` panics on `u16`
+            // overflow (overflow checks are on); the same check, explicit.
+            assert!(size < u16::MAX, "pi_telescope_size: binder count overflow");
             size += 1;
             e = body;
         }

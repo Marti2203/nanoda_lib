@@ -634,113 +634,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
 
-    fn mk_minors1group(&mut self, st: &InductiveCheckState<'t>, ctors: &[CtorHeader<'t>]) -> Vec<ExprPtr<'t>> {
-        let mut out = Vec::new();
-        for (ctor_idx, ctor) in ctors.iter().copied().enumerate() {
-            let (stripd_instd_ctor_type, all_ctor_args, rec_ctor_args) =
-                self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
-            let (ind_ty_idx, applied_indices) = self.get_i_indices(st, stripd_instd_ctor_type);
-            let motive = st.motives.get(ind_ty_idx).copied().expect("Failed to get specified motive");
-            let c_app0 = {
-                let rhs = self.ctx.mk_const(ctor.name, st.uparams);
-                let rhs = self.ctx.foldl_apps(rhs, st.local_params.iter().copied());
-                self.ctx.foldl_apps(rhs, all_ctor_args.iter().copied())
-            };
-            let c_app = self.ctx.foldl_apps(motive, applied_indices.into_iter().rev());
-            let c_app = self.ctx.mk_app(c_app, c_app0);
-            let v = self.handle_rec_args_minor(st, ctor_idx, rec_ctor_args.as_slice());
-
-            let minor_type = self.ctx.abstr_pis(v.iter().copied(), c_app);
-            let minor_type = self.ctx.abstr_pis(all_ctor_args.iter().copied(), minor_type);
-            let minor_name = match self.ctx.read_name(ctor.name) {
-                // Use the constructor's name if it's available;
-                crate::name::Name::Str(_, sfx, _) => self.ctx.str(self.ctx.anonymous(), sfx),
-                // If the constructor name isn't available for some reason, use a generic one
-                _ => {
-                    let minor_name = self.ctx.str1("m");
-                    self.ctx.append_index_after(minor_name, ctor_idx as u64)
-                }
-            };
-            let minor = self.ctx.mk_unique(minor_name, BinderStyle::Default, minor_type);
-            out.push(minor);
-        }
-        out
-    }
-
-    fn mk_minors(&mut self, st: &mut InductiveCheckState<'t>) {
-        assert_eq!(st.all_inductives_incl_specialized.len(), st.ind_consts.len());
-        for ind_ty in st.all_inductives_incl_specialized.iter() {
-            st.minors.push(self.mk_minors1group(st, ind_ty.ctors.as_slice()))
-        }
-    }
-
-    fn handle_rec_ctor_args_rec_rule(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        rec_ctor_args: &[ExprPtr<'t>],
-    ) -> Vec<ExprPtr<'t>> {
-        let mut out = Vec::new();
-        let rec_str_ptr = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
-        let flat_mapped_minors = st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>();
-        for rec_ctor_arg in rec_ctor_args.iter().copied() {
-            self.tc_cache.clear();
-            let u_i_ty = self.infer_then_whnf(rec_ctor_arg, InferFlag::InferOnly);
-            let (u_i_ty, xs) = self.handle_rec_args_aux(u_i_ty);
-            let (it_idx, applied_indices) = self.get_i_indices(st, u_i_ty);
-            let it_name = st.all_inductives_incl_specialized.get(it_idx).map(|x| x.name).unwrap();
-            let rec_name = self.ctx.str(it_name, rec_str_ptr);
-            let rec_app = self.ctx.mk_const(rec_name, st.rec_uparams.unwrap());
-            let app = self.ctx.foldl_apps(rec_app, st.local_params.iter().copied());
-            let app = self.ctx.foldl_apps(app, st.motives.iter().copied());
-            let app = self.ctx.foldl_apps(app, flat_mapped_minors.iter().copied());
-            let app = self.ctx.foldl_apps(app, applied_indices.iter().copied().rev());
-            let app_rhs = self.ctx.foldl_apps(rec_ctor_arg, xs.iter().copied());
-            let app = self.ctx.mk_app(app, app_rhs);
-            let v_hd = self.ctx.abstr_lambda_telescope(xs.as_slice(), app);
-            out.push(v_hd);
-        }
-        out
-    }
-
-
-    fn mk_rec_rule1(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        ctor: CtorHeader<'t>,
-        flat_mapped_minors: &[ExprPtr<'t>],
-        this_minor: ExprPtr<'t>,
-    ) -> RecRule<'t> {
-        let (_, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
-        let handled_rec_args = self.handle_rec_ctor_args_rec_rule(st, rec_ctor_args.as_slice());
-        // VERUS-REWRITE(rule-val-split): the value is built by the verified
-        // `mk_rec_rule_val` (the same calls, same order); the `RecRule` is
-        // assembled here.
-        let comp_rhs = self.mk_rec_rule_val(st, this_minor, flat_mapped_minors, all_ctor_args.as_slice(), handled_rec_args.as_slice());
-        let num_fields = self.ctx.pi_telescope_size(ctor.ty) as usize - st.local_params.len();
-        RecRule {
-            ctor_name: ctor.name,
-            ctor_telescope_size_wo_params: u16::try_from(num_fields).unwrap(),
-            val: comp_rhs,
-        }
-    }
-
-    fn mk_rec_rules(&mut self, st: &InductiveCheckState<'t>) -> Vec<Vec<RecRule<'t>>> {
-        let mut rec_rules = Vec::new();
-        let minors = st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>();
-        let mut overall_ctor_idx = 0;
-        for ind_ty in st.all_inductives_incl_specialized.iter() {
-            let mut grp = Vec::new();
-            for ctor in ind_ty.ctors.iter().copied() {
-                let this_minor = minors[overall_ctor_idx];
-                let rec_rule = self.mk_rec_rule1(st, ctor, minors.as_slice(), this_minor);
-                overall_ctor_idx += 1;
-                grp.push(rec_rule);
-            }
-            rec_rules.push(grp);
-        }
-        rec_rules
-    }
-
     // Assert that the inductive types being added to the extension which
     // are also in the export file are definitionally equal.
     fn assert_nonnested_tys_def_eq(&mut self, base_ind: &InductiveData<'t>, st: &InductiveCheckState<'t>) {
@@ -1556,6 +1449,106 @@ pub open spec fn major_ok<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>) -> bool {
     &&& crate::expr_model::nlbv(crate::quot_model::local_type(l)) <= 0
 }
 
+/// The minor premises in `st.minors`, group after group.
+pub open spec fn flat_ptrs<'t>(s: Seq<Vec<ExprPtr<'t>>>) -> Seq<ExprPtr<'t>>
+    decreases s.len(),
+{
+    if s.len() == 0 { Seq::empty() } else { flat_ptrs(s.drop_last()) + s.last()@ }
+}
+
+/// Every flattened minor is `major_ok` when every grouped one is.
+pub proof fn flat_ptrs_major_ok<'t, 'p>(c: TcCtx<'t, 'p>, s: Seq<Vec<ExprPtr<'t>>>)
+    requires
+        forall|i: int, j: int| 0 <= i < s.len() && 0 <= j < s[i]@.len() ==> major_ok(c, #[trigger] s[i]@[j]),
+    ensures
+        forall|k: int| 0 <= k < flat_ptrs(s).len() ==> major_ok(c, #[trigger] flat_ptrs(s)[k]),
+    decreases s.len(),
+{
+    if s.len() > 0 {
+        let r = s.drop_last();
+        assert forall|i: int, j: int| 0 <= i < r.len() && 0 <= j < r[i]@.len() implies major_ok(c, #[trigger] r[i]@[j]) by {
+            assert(r[i] == s[i]);
+        }
+        flat_ptrs_major_ok(c, r);
+        let f = flat_ptrs(r);
+        assert forall|k: int| 0 <= k < flat_ptrs(s).len() implies major_ok(c, #[trigger] flat_ptrs(s)[k]) by {
+            if k < f.len() {
+                assert(flat_ptrs(s)[k] == f[k]);
+            } else {
+                assert(flat_ptrs(s)[k] == s[s.len() - 1]@[k - f.len()]);
+            }
+        }
+    }
+}
+
+/// VERUS-REWRITE(flat-map-collect): `minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`
+/// is this nested scan; vstd specifies neither `flat_map` nor `collect`.
+/// Same elements, same order.
+fn flatten_minors<'t>(minors: &Vec<Vec<ExprPtr<'t>>>) -> (result: Vec<ExprPtr<'t>>)
+    ensures
+        result@ == flat_ptrs(minors@),
+{
+    let mut out = Vec::new();
+    let mut i: usize = 0;
+    while i < minors.len()
+        invariant
+            i <= minors@.len(),
+            out@ == flat_ptrs(minors@.subrange(0, i as int)),
+        decreases minors@.len() - i,
+    {
+        let v = &minors[i];
+        let mut j: usize = 0;
+        while j < v.len()
+            invariant
+                i < minors@.len(),
+                *v == minors@[i as int],
+                j <= v@.len(),
+                out@ == flat_ptrs(minors@.subrange(0, i as int)) + v@.subrange(0, j as int),
+            decreases v@.len() - j,
+        {
+            let ghost o0 = out@;
+            out.push(v[j]);
+            proof {
+                assert(out@ =~= flat_ptrs(minors@.subrange(0, i as int)) + v@.subrange(0, j + 1));
+            }
+            j += 1;
+        }
+        proof {
+            let s1 = minors@.subrange(0, i + 1);
+            assert(s1.drop_last() =~= minors@.subrange(0, i as int));
+            assert(s1.last() == *v);
+            assert(v@.subrange(0, j as int) =~= v@);
+        }
+        i += 1;
+    }
+    proof {
+        assert(minors@.subrange(0, minors@.len() as int) =~= minors@);
+    }
+    out
+}
+
+/// A group's flattened start plus its length stays within the whole.
+pub proof fn flat_ptrs_prefix<'t>(s: Seq<Vec<ExprPtr<'t>>>, i: int)
+    requires
+        0 <= i < s.len(),
+    ensures
+        flat_ptrs(s.subrange(0, i + 1)) == flat_ptrs(s.subrange(0, i)) + s[i]@,
+        flat_ptrs(s.subrange(0, i)).len() + s[i]@.len() <= flat_ptrs(s).len(),
+    decreases s.len(),
+{
+    let s1 = s.subrange(0, i + 1);
+    assert(s1.drop_last() =~= s.subrange(0, i));
+    if i + 1 == s.len() {
+        assert(s1 =~= s);
+    } else {
+        let r = s.drop_last();
+        assert(r.subrange(0, i + 1) =~= s1);
+        assert(r.subrange(0, i) =~= s.subrange(0, i));
+        assert(r[i] == s[i]);
+        flat_ptrs_prefix(r, i);
+    }
+}
+
 /// A level-free local's recorded type is closed.
 pub proof fn local_type_closed<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
     requires
@@ -2027,6 +2020,609 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             i += 1;
         }
         out
+    }
+
+    /// Verified in place: one minor premise per constructor, each a local with
+    /// a closed type (`Pi args, Pi ihs, motive indices (C params args)`).
+    ///
+    /// VERUS-REWRITE(enumerate): `for (ctor_idx, ctor) in ctors.iter().copied().enumerate()`
+    /// is the index walk it stands for; and VERUS-REWRITE(named-temp): the
+    /// iterators handed to `foldl_apps`/`abstr_pis` are bound to locals so the
+    /// proof can name their elements. Same calls, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn mk_minors1group(&mut self, st: &InductiveCheckState<'t>, ctors: &[CtorHeader<'t>]) -> (result: Vec<ExprPtr<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            forall|i: int| 0 <= i < ctors@.len() ==> level_free(*old(self).ctx, #[trigger] ctors@[i].ty),
+            forall|i: int| 0 <= i < ctors@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] ctors@[i].name),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
+            forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result@.len() == ctors@.len(),
+            forall|i: int| 0 <= i < result@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] result@[i]),
+    {
+        let mut out = Vec::new();
+        let mut ctor_idx: usize = 0;
+        while ctor_idx < ctors.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                forall|i: int| 0 <= i < ctors@.len() ==> level_free(*self.ctx, #[trigger] ctors@[i].ty),
+                forall|i: int| 0 <= i < ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] ctors@[i].name),
+                forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[i]),
+                forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[i]),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                out@.len() == ctor_idx,
+                forall|k: int| 0 <= k < out@.len() ==> major_ok(*self.ctx, #[trigger] out@[k]),
+                ctor_idx <= ctors@.len(),
+            decreases ctors@.len() - ctor_idx,
+        {
+            let ctor = ctors[ctor_idx];
+            proof {
+                assert(level_free(*self.ctx, ctors@[ctor_idx as int].ty));
+            }
+            let (stripd_instd_ctor_type, all_ctor_args, rec_ctor_args) =
+                self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
+            let (ind_ty_idx, applied_indices) = self.get_i_indices(st, stripd_instd_ctor_type);
+            let motive = st.motives.get(ind_ty_idx).copied().expect("Failed to get specified motive");
+            proof {
+                assert(major_ok(*self.ctx, motive));
+                assert(crate::util_model::owns(*self.ctx, ctors@[ctor_idx as int].name));
+            }
+            let c_app0 = {
+                let rhs = self.ctx.mk_const(ctor.name, st.uparams);
+                let ps_it = st.local_params.iter().copied();
+                proof {
+                    broadcast use vstd::std_specs::iter::copied_postcondition;
+                    assert(vstd::std_specs::iter::IteratorSpec::remaining(&ps_it) =~= st.local_params@);
+                }
+                let ghost rhs0 = rhs;
+                let rhs = self.ctx.foldl_apps(rhs, ps_it);
+                let as_it = all_ctor_args.iter().copied();
+                proof {
+                    broadcast use vstd::std_specs::iter::copied_postcondition;
+                    assert(vstd::std_specs::iter::IteratorSpec::remaining(&as_it) =~= all_ctor_args@);
+                    crate::expr_arena_bridge::is_const_shape_model(rhs0);
+                    let pm = crate::expr_arena_bridge::ptr_models(st.local_params@);
+                    assert forall|k: int| 0 <= k < pm.len() implies crate::expr_model::nlbv(#[trigger] pm[k]) <= 0 by {
+                        assert(level_free_local(*self.ctx, st.local_params@[k]));
+                    }
+                    crate::beta_model::spine_app_nlbv(crate::expr_arena_bridge::to_model(rhs0), pm);
+                }
+                let r = self.ctx.foldl_apps(rhs, as_it);
+                proof {
+                    let am = crate::expr_arena_bridge::ptr_models(all_ctor_args@);
+                    assert forall|k: int| 0 <= k < am.len() implies crate::expr_model::nlbv(#[trigger] am[k]) <= 0 by {
+                        assert(level_free_local(*self.ctx, all_ctor_args@[k]));
+                    }
+                    crate::beta_model::spine_app_nlbv(crate::expr_arena_bridge::to_model(rhs), am);
+                }
+                r
+            };
+            let ghost idx_seq = applied_indices@;
+            let rev_it = applied_indices.into_iter().rev();
+            let ghost rev_rem = vstd::std_specs::iter::IteratorSpec::remaining(&rev_it);
+            proof {
+                assert(rev_rem == idx_seq.reverse());
+            }
+            let c_app = self.ctx.foldl_apps(motive, rev_it);
+            proof {
+                let rm = crate::expr_arena_bridge::ptr_models(rev_rem);
+                assert forall|k: int| 0 <= k < rm.len() implies crate::expr_model::nlbv(#[trigger] rm[k]) <= 0 by {
+                    assert(rev_rem[k] == idx_seq[idx_seq.len() - 1 - k]);
+                }
+                crate::beta_model::spine_app_nlbv(crate::expr_arena_bridge::to_model(motive), rm);
+            }
+            let c_app = self.ctx.mk_app(c_app, c_app0);
+            proof {
+                assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c_app)) <= 0) by {
+                    reveal_with_fuel(crate::expr_model::nlbv, 2);
+                }
+                assert forall|k: int| 0 <= k < rec_ctor_args@.len() implies level_free_local(*self.ctx, #[trigger] rec_ctor_args@[k]) by {
+                    assert(level_free_local(*self.ctx, rec_ctor_args@[k]));
+                }
+            }
+            let v = self.handle_rec_args_minor(st, ctor_idx, rec_ctor_args.as_slice());
+
+            let v_it = v.iter().copied();
+            proof {
+                broadcast use vstd::std_specs::iter::copied_postcondition;
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&v_it) =~= v@);
+                assert(forall|k: int| #![trigger v@[k]] 0 <= k < v@.len() ==> major_ok(*self.ctx, v@[k]));
+            }
+            let minor_type = self.ctx.abstr_pis(v_it, c_app);
+            let ghost minor_type0 = minor_type;
+            proof {
+                tele_closed(v@, crate::expr_arena_bridge::to_model(c_app));
+                assert forall|k: int| 0 <= k < all_ctor_args@.len() implies crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] all_ctor_args@[k])) <= 0 by {
+                    local_type_closed(*self.ctx, all_ctor_args@[k]);
+                }
+                assert(forall|k: int| #![trigger all_ctor_args@[k]] 0 <= k < all_ctor_args@.len() ==> level_free_local(*self.ctx, all_ctor_args@[k]));
+            }
+            let args_it = all_ctor_args.iter().copied();
+            proof {
+                broadcast use vstd::std_specs::iter::copied_postcondition;
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&args_it) =~= all_ctor_args@);
+            }
+            let minor_type = self.ctx.abstr_pis(args_it, minor_type);
+            proof {
+                tele_closed(all_ctor_args@, crate::expr_arena_bridge::to_model(minor_type0));
+            }
+            let minor_name = match self.ctx.read_name(ctor.name) {
+                // Use the constructor's name if it's available;
+                crate::name::Name::Str(_, sfx, _) => self.ctx.str(self.ctx.anonymous(), sfx),
+                // If the constructor name isn't available for some reason, use a generic one
+                _ => {
+                    let minor_name = self.ctx.str1("m");
+                    self.ctx.append_index_after(minor_name, ctor_idx as u64)
+                }
+            };
+            let minor = self.ctx.mk_unique(minor_name, BinderStyle::Default, minor_type);
+            let ghost o0 = out@;
+            out.push(minor);
+            proof {
+                assert forall|k: int| 0 <= k < out@.len() implies major_ok(*self.ctx, #[trigger] out@[k]) by {
+                    if k < o0.len() { assert(out@[k] == o0[k]); }
+                }
+            }
+            ctor_idx += 1;
+        }
+        out
+    }
+
+    /// Verified in place: one group of minor premises per block inductive,
+    /// appended to `st.minors`, each a local with a closed type.
+    ///
+    /// VERUS-REWRITE(index-walk): `for ind_ty in st.all_inductives_incl_specialized.iter()`
+    /// is the front-to-back scan by index it stands for, so the invariant can
+    /// name which inductive's group was pushed. Same elements, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_minors(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            forall|i: int, j: int| 0 <= i < old(st).all_inductives_incl_specialized@.len()
+                && 0 <= j < old(st).all_inductives_incl_specialized@[i].ctors@.len()
+                ==> level_free(*old(self).ctx, #[trigger] old(st).all_inductives_incl_specialized@[i].ctors@[j].ty),
+            forall|i: int| 0 <= i < old(st).local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] old(st).local_params@[i]),
+            forall|i: int| 0 <= i < old(st).motives@.len() ==> major_ok(*old(self).ctx, #[trigger] old(st).motives@[i]),
+            crate::inductive_model::st_owned(*old(self).ctx, *old(st)),
+            old(st).ind_consts@.len() <= old(st).local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            *final(st) == (InductiveCheckState { minors: final(st).minors, ..*old(st) }),
+            final(st).minors@.len() == old(st).minors@.len() + old(st).all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < old(st).minors@.len() ==> #[trigger] final(st).minors@[i] == old(st).minors@[i],
+            forall|i: int, j: int| old(st).minors@.len() <= i < final(st).minors@.len() && 0 <= j < final(st).minors@[i]@.len()
+                ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).minors@[i]@[j]),
+            forall|i: int| old(st).minors@.len() <= i < final(st).minors@.len()
+                ==> (#[trigger] final(st).minors@[i])@.len() == old(st).all_inductives_incl_specialized@[i - old(st).minors@.len()].ctors@.len(),
+            crate::inductive_model::st_owned(*(*final(self)).ctx, *final(st)),
+    {
+        let ghost st0 = *st;
+        assert_eq!(st.all_inductives_incl_specialized.len(), st.ind_consts.len());
+        let mut i: usize = 0;
+        while i < st.all_inductives_incl_specialized.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                *st == (InductiveCheckState { minors: st.minors, ..st0 }),
+                forall|a: int, j: int| 0 <= a < st0.all_inductives_incl_specialized@.len()
+                    && 0 <= j < st0.all_inductives_incl_specialized@[a].ctors@.len()
+                    ==> level_free(*self.ctx, #[trigger] st0.all_inductives_incl_specialized@[a].ctors@[j].ty),
+                forall|k: int| 0 <= k < st0.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st0.local_params@[k]),
+                forall|k: int| 0 <= k < st0.motives@.len() ==> major_ok(*self.ctx, #[trigger] st0.motives@[k]),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st0.ind_consts@.len() <= st0.local_indices@.len(),
+                i <= st0.all_inductives_incl_specialized@.len(),
+                st.minors@.len() == st0.minors@.len() + i,
+                forall|k: int| 0 <= k < st0.minors@.len() ==> #[trigger] st.minors@[k] == st0.minors@[k],
+                forall|k: int, j: int| st0.minors@.len() <= k < st.minors@.len() && 0 <= j < st.minors@[k]@.len()
+                    ==> major_ok(*self.ctx, #[trigger] st.minors@[k]@[j]),
+                forall|k: int| st0.minors@.len() <= k < st.minors@.len()
+                    ==> (#[trigger] st.minors@[k])@.len() == st0.all_inductives_incl_specialized@[k - st0.minors@.len()].ctors@.len(),
+            decreases st0.all_inductives_incl_specialized@.len() - i,
+        {
+            let ind_ty = &st.all_inductives_incl_specialized[i];
+            proof {
+                let h = st0.all_inductives_incl_specialized@[i as int];
+                assert(crate::util_model::owns(*self.ctx, h.name));
+                assert forall|j: int| 0 <= j < ind_ty.ctors@.len() implies level_free(*self.ctx, #[trigger] ind_ty.ctors@[j].ty)
+                    && crate::util_model::owns(*self.ctx, ind_ty.ctors@[j].name) by {
+                    assert(level_free(*self.ctx, st0.all_inductives_incl_specialized@[i as int].ctors@[j].ty));
+                }
+            }
+            let ghost ms0 = st.minors@;
+            st.minors.push(self.mk_minors1group(st, ind_ty.ctors.as_slice()));
+            proof {
+                assert forall|k: int, j: int| st0.minors@.len() <= k < st.minors@.len() && 0 <= j < st.minors@[k]@.len()
+                    implies major_ok(*self.ctx, #[trigger] st.minors@[k]@[j]) by {
+                    if k < st.minors@.len() - 1 {
+                        assert(st.minors@[k] == ms0[k]);
+                    }
+                }
+                assert forall|k: int| st0.minors@.len() <= k < st.minors@.len()
+                    implies (#[trigger] st.minors@[k])@.len() == st0.all_inductives_incl_specialized@[k - st0.minors@.len()].ctors@.len() by {
+                    if k < st.minors@.len() - 1 {
+                        assert(st.minors@[k] == ms0[k]);
+                    }
+                }
+                assert forall|k: int| 0 <= k < st.minors@.len() implies crate::util_model::owns_all(*self.ctx, #[trigger] st.minors@[k]@) by {
+                    if k < st.minors@.len() - 1 {
+                        assert(st.minors@[k] == ms0[k]);
+                    } else {
+                        assert forall|j: int| 0 <= j < st.minors@[k]@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.minors@[k]@[j]) by {
+                            assert(major_ok(*self.ctx, st.minors@[k]@[j]));
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// Verified in place: for each recursive constructor argument, the
+    /// recursor applied to it (under its own binders), owned.
+    ///
+    /// VERUS-REWRITE(index-walk): `for rec_ctor_arg in rec_ctor_args.iter().copied()`
+    /// is the front-to-back scan by index; VERUS-REWRITE(named-temp): the
+    /// iterators handed to `foldl_apps` are bound to locals so the proof can
+    /// name their elements. Same calls, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn handle_rec_ctor_args_rec_rule(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        rec_ctor_args: &[ExprPtr<'t>],
+    ) -> (result: Vec<ExprPtr<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            forall|i: int| 0 <= i < rec_ctor_args@.len() ==> level_free_local(*old(self).ctx, #[trigger] rec_ctor_args@[i]),
+            forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+                ==> major_ok(*old(self).ctx, #[trigger] st.minors@[i]@[j]),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::util_model::owns_all(*(*final(self)).ctx, result@),
+    {
+        let mut out = Vec::new();
+        let rec_str_ptr = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
+        let flat_mapped_minors = flatten_minors(&st.minors);
+        proof {
+            flat_ptrs_major_ok(*self.ctx, st.minors@);
+        }
+        let mut i: usize = 0;
+        while i < rec_ctor_args.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                forall|k: int| 0 <= k < rec_ctor_args@.len() ==> level_free_local(*self.ctx, #[trigger] rec_ctor_args@[k]),
+                forall|k: int| 0 <= k < flat_mapped_minors@.len() ==> major_ok(*self.ctx, #[trigger] flat_mapped_minors@[k]),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                crate::util_model::owns(*self.ctx, rec_str_ptr),
+                crate::util_model::owns_all(*self.ctx, out@),
+                i <= rec_ctor_args@.len(),
+            decreases rec_ctor_args@.len() - i,
+        {
+            let rec_ctor_arg = rec_ctor_args[i];
+            proof {
+                assert(level_free_local(*self.ctx, rec_ctor_args@[i as int]));
+            }
+            self.tc_cache.clear();
+            proof {
+                level_free_in_scope(*self, rec_ctor_arg);
+            }
+            let u_i_ty = self.infer_then_whnf(rec_ctor_arg, crate::tc::InferFlag::InferOnly);
+            proof {
+                level_free_pres(*self.ctx, rec_ctor_arg, u_i_ty);
+            }
+            let (u_i_ty, xs) = self.handle_rec_args_aux(u_i_ty);
+            let (it_idx, applied_indices) = self.get_i_indices(st, u_i_ty);
+            let it_name = st.all_inductives_incl_specialized.get(it_idx)
+                .map(|x: &IndTyHeader<'t>| -> (r: NamePtr<'t>) ensures r == x.name { x.name }).unwrap();
+            proof {
+                assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[it_idx as int].name));
+            }
+            let rec_name = self.ctx.str(it_name, rec_str_ptr);
+            let rec_app = self.ctx.mk_const(rec_name, st.rec_uparams.unwrap());
+            proof {
+                broadcast use vstd::std_specs::iter::copied_postcondition, vstd::std_specs::iter::rev_postcondition;
+            }
+            let ps_it = st.local_params.iter().copied();
+            proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&ps_it) =~= st.local_params@); }
+            let app = self.ctx.foldl_apps(rec_app, ps_it);
+            let ms_it = st.motives.iter().copied();
+            proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&ms_it) =~= st.motives@); }
+            let app = self.ctx.foldl_apps(app, ms_it);
+            let mn_it = flat_mapped_minors.iter().copied();
+            proof {
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&mn_it) =~= flat_mapped_minors@);
+                assert forall|k: int| 0 <= k < flat_mapped_minors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] flat_mapped_minors@[k]) by {
+                    assert(major_ok(*self.ctx, flat_mapped_minors@[k]));
+                }
+            }
+            let app = self.ctx.foldl_apps(app, mn_it);
+            let ix_it = applied_indices.iter().copied().rev();
+            proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&ix_it) =~= applied_indices@.reverse()); }
+            let app = self.ctx.foldl_apps(app, ix_it);
+            let xs_it = xs.iter().copied();
+            proof {
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&xs_it) =~= xs@);
+                assert forall|k: int| 0 <= k < xs@.len() implies crate::util_model::owns(*self.ctx, #[trigger] xs@[k]) by {
+                    assert(level_free_local(*self.ctx, xs@[k]));
+                }
+            }
+            let app_rhs = self.ctx.foldl_apps(rec_ctor_arg, xs_it);
+            let app = self.ctx.mk_app(app, app_rhs);
+            proof {
+                assert(forall|k: int| #![trigger xs@[k]] 0 <= k < xs@.len() ==> level_free_local(*self.ctx, xs@[k]));
+            }
+            let v_hd = self.ctx.abstr_lambda_telescope(xs.as_slice(), app);
+            let ghost o0 = out@;
+            out.push(v_hd);
+            proof {
+                assert forall|k: int| 0 <= k < out@.len() implies crate::util_model::owns(*self.ctx, #[trigger] out@[k]) by {
+                    if k < o0.len() { assert(out@[k] == o0[k]); }
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Verified in place: the recursor rule for one constructor. Its value is
+    /// built by the verified `mk_rec_rule_val`, so it binds params, motives,
+    /// minors and the constructor's arguments.
+    ///
+    /// VERUS-REWRITE(level-ceiling): `pi_telescope_size(..) as usize - np`
+    /// panics on underflow (overflow checks are on); the same check, explicit,
+    /// on the telescope size bound to `tele`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_rec_rule1(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        ctor: CtorHeader<'t>,
+        flat_mapped_minors: &[ExprPtr<'t>],
+        this_minor: ExprPtr<'t>,
+    ) -> (result: RecRule<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, ctor.ty),
+            crate::util_model::owns(*old(self).ctx, ctor.name),
+            major_ok(*old(self).ctx, this_minor),
+            forall|i: int| 0 <= i < flat_mapped_minors@.len() ==> major_ok(*old(self).ctx, #[trigger] flat_mapped_minors@[i]),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
+            forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
+            forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+                ==> major_ok(*old(self).ctx, #[trigger] st.minors@[i]@[j]),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result.ctor_name == ctor.name,
+            crate::util_model::owns(*(*final(self)).ctx, result.val),
+            crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(result.val))
+                >= st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len(),
+    {
+        let (_, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
+        let handled_rec_args = self.handle_rec_ctor_args_rec_rule(st, rec_ctor_args.as_slice());
+        proof {
+            assert forall|i: int| 0 <= i < flat_mapped_minors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] flat_mapped_minors@[i]) by {
+                assert(major_ok(*self.ctx, flat_mapped_minors@[i]));
+            }
+            assert forall|i: int| 0 <= i < all_ctor_args@.len() implies crate::util_model::owns(*self.ctx, #[trigger] all_ctor_args@[i]) by {
+                assert(level_free_local(*self.ctx, all_ctor_args@[i]));
+            }
+            assert forall|i: int| 0 <= i < st.motives@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.motives@[i]) by {
+                assert(major_ok(*self.ctx, st.motives@[i]));
+            }
+            assert forall|i: int| 0 <= i < st.local_params@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.local_params@[i]) by {
+                assert(level_free_local(*self.ctx, st.local_params@[i]));
+            }
+            assert(forall|i: int| #![trigger all_ctor_args@[i]] 0 <= i < all_ctor_args@.len() ==> level_free_local(*self.ctx, all_ctor_args@[i]));
+            assert(forall|i: int| #![trigger flat_mapped_minors@[i]] 0 <= i < flat_mapped_minors@.len() ==> major_ok(*self.ctx, flat_mapped_minors@[i]));
+            assert(forall|i: int| #![trigger st.motives@[i]] 0 <= i < st.motives@.len() ==> major_ok(*self.ctx, st.motives@[i]));
+            assert(forall|i: int| #![trigger st.local_params@[i]] 0 <= i < st.local_params@.len() ==> level_free_local(*self.ctx, st.local_params@[i]));
+        }
+        // VERUS-REWRITE(rule-val-split): the value is built by the verified
+        // `mk_rec_rule_val` (the same calls, same order); the `RecRule` is
+        // assembled here.
+        let comp_rhs = self.mk_rec_rule_val(st, this_minor, flat_mapped_minors, all_ctor_args.as_slice(), handled_rec_args.as_slice());
+        let tele = self.ctx.pi_telescope_size(ctor.ty) as usize;
+        assert!(tele >= st.local_params.len(), "mk_rec_rule1: constructor telescope shorter than its parameters");
+        let num_fields = tele - st.local_params.len();
+        RecRule {
+            ctor_name: ctor.name,
+            ctor_telescope_size_wo_params: u16::try_from(num_fields).unwrap(),
+            val: comp_rhs,
+        }
+    }
+
+    /// Verified in place: one group of recursor rules per block inductive,
+    /// one rule per constructor, each for that constructor.
+    ///
+    /// VERUS-REWRITE(index-walk): the two `for` loops over
+    /// `st.all_inductives_incl_specialized.iter()` and `ind_ty.ctors.iter().copied()`
+    /// are the front-to-back scans by index; VERUS-REWRITE(flat-map-collect):
+    /// the flattened minors through `flatten_minors`. Same elements, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn mk_rec_rules(&mut self, st: &InductiveCheckState<'t>) -> (result: Vec<Vec<RecRule<'t>>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
+                && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                ==> level_free(*old(self).ctx, #[trigger] st.all_inductives_incl_specialized@[i].ctors@[j].ty),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
+            forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
+            forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+                ==> major_ok(*old(self).ctx, #[trigger] st.minors@[i]@[j]),
+            st.minors@.len() == st.all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < st.minors@.len()
+                ==> (#[trigger] st.minors@[i])@.len() == st.all_inductives_incl_specialized@[i].ctors@.len(),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result@.len() == st.all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < result@.len()
+                ==> (#[trigger] result@[i])@.len() == st.all_inductives_incl_specialized@[i].ctors@.len(),
+            forall|i: int, j: int| 0 <= i < result@.len() && 0 <= j < result@[i]@.len()
+                ==> (#[trigger] result@[i]@[j]).ctor_name == st.all_inductives_incl_specialized@[i].ctors@[j].name
+                    && crate::util_model::owns(*(*final(self)).ctx, result@[i]@[j].val),
+    {
+        let mut rec_rules: Vec<Vec<RecRule<'t>>> = Vec::new();
+        let minors = flatten_minors(&st.minors);
+        proof {
+            flat_ptrs_major_ok(*self.ctx, st.minors@);
+        }
+        let mut overall_ctor_idx: usize = 0;
+        let mut i: usize = 0;
+        while i < st.all_inductives_incl_specialized.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                forall|a: int, j: int| 0 <= a < st.all_inductives_incl_specialized@.len()
+                    && 0 <= j < st.all_inductives_incl_specialized@[a].ctors@.len()
+                    ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a].ctors@[j].ty),
+                forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
+                forall|k: int| 0 <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+                forall|a: int, j: int| 0 <= a < st.minors@.len() && 0 <= j < st.minors@[a]@.len()
+                    ==> major_ok(*self.ctx, #[trigger] st.minors@[a]@[j]),
+                forall|k: int| 0 <= k < minors@.len() ==> major_ok(*self.ctx, #[trigger] minors@[k]),
+                minors@ == flat_ptrs(st.minors@),
+                st.minors@.len() == st.all_inductives_incl_specialized@.len(),
+                forall|a: int| 0 <= a < st.minors@.len()
+                    ==> (#[trigger] st.minors@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                i <= st.all_inductives_incl_specialized@.len(),
+                overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i as int)).len(),
+                rec_rules@.len() == i,
+                forall|a: int| 0 <= a < rec_rules@.len()
+                    ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
+                forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
+                    ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
+                        && crate::util_model::owns(*self.ctx, rec_rules@[a]@[j].val),
+            decreases st.all_inductives_incl_specialized@.len() - i,
+        {
+            let ind_ty = &st.all_inductives_incl_specialized[i];
+            proof {
+                flat_ptrs_prefix(st.minors@, i as int);
+                assert(st.minors@[i as int]@.len() == ind_ty.ctors@.len());
+            }
+            let mut grp: Vec<RecRule<'t>> = Vec::new();
+            let mut j: usize = 0;
+            while j < ind_ty.ctors.len()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    self.env == old(self).env,
+                    self.ctx.dbj_level_counter == 0,
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.live == old(self).live,
+                    i < st.all_inductives_incl_specialized@.len(),
+                    *ind_ty == st.all_inductives_incl_specialized@[i as int],
+                    forall|a: int, b: int| 0 <= a < st.all_inductives_incl_specialized@.len()
+                        && 0 <= b < st.all_inductives_incl_specialized@[a].ctors@.len()
+                        ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
+                    forall|k: int| 0 <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+                    forall|a: int, b: int| 0 <= a < st.minors@.len() && 0 <= b < st.minors@[a]@.len()
+                        ==> major_ok(*self.ctx, #[trigger] st.minors@[a]@[b]),
+                    forall|k: int| 0 <= k < minors@.len() ==> major_ok(*self.ctx, #[trigger] minors@[k]),
+                    crate::inductive_model::st_owned(*self.ctx, *st),
+                    st.ind_consts@.len() <= st.local_indices@.len(),
+                    j <= ind_ty.ctors@.len(),
+                    overall_ctor_idx + ind_ty.ctors@.len() - j <= minors@.len(),
+                    overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i as int)).len() + j,
+                    grp@.len() == j,
+                    forall|b: int| 0 <= b < grp@.len()
+                        ==> (#[trigger] grp@[b]).ctor_name == ind_ty.ctors@[b].name
+                            && crate::util_model::owns(*self.ctx, grp@[b].val),
+                    forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len()
+                        ==> (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
+                            && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val),
+                decreases ind_ty.ctors@.len() - j,
+            {
+                let ctor = ind_ty.ctors[j];
+                let this_minor = minors[overall_ctor_idx];
+                proof {
+                    assert(level_free(*self.ctx, st.all_inductives_incl_specialized@[i as int].ctors@[j as int].ty));
+                    assert(major_ok(*self.ctx, minors@[overall_ctor_idx as int]));
+                    assert(minors.len() == minors@.len());
+                }
+                let rec_rule = self.mk_rec_rule1(st, ctor, minors.as_slice(), this_minor);
+                overall_ctor_idx += 1;
+                let ghost g0 = grp@;
+                grp.push(rec_rule);
+                proof {
+                    assert forall|b: int| 0 <= b < grp@.len() implies (#[trigger] grp@[b]).ctor_name == ind_ty.ctors@[b].name
+                        && crate::util_model::owns(*self.ctx, grp@[b].val) by {
+                        if b < g0.len() { assert(grp@[b] == g0[b]); }
+                    }
+                }
+                j += 1;
+            }
+            let ghost r0 = rec_rules@;
+            rec_rules.push(grp);
+            proof {
+                assert(st.minors@[i as int]@.len() == ind_ty.ctors@.len());
+                assert forall|a: int| 0 <= a < rec_rules@.len()
+                    implies (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len() by {
+                    if a < r0.len() { assert(rec_rules@[a] == r0[a]); }
+                }
+                assert forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len()
+                    implies (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
+                        && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val) by {
+                    if a < r0.len() { assert(rec_rules@[a] == r0[a]); }
+                }
+            }
+            i += 1;
+        }
+        rec_rules
     }
 
     /// Verified in place, body unchanged: the constructor's non-parameter
