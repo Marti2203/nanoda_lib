@@ -495,8 +495,6 @@ pub mod route_stats {
     pub static SHADOW_QUOT_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_SORT_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_SORT_CERT: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_HDR_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_HDR_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECNAMES_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECNAMES_CERT: AtomicU64 = AtomicU64::new(0);
     /// Which route certified each pair (index = `pair_certified`'s verdict):
@@ -569,7 +567,7 @@ pub fn report() -> String {
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
             let (nt, nc) = (g(&SHADOW_INDTY_TOTAL), g(&SHADOW_INDTY_CERT));
             let nshare = if nt > 0 { 100.0 * nc as f64 / nt as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | distinct universe params: {} of {} | recursor name sets: {} of {} | elimination level: {} of {} agree, {} disagree | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_HDR_CERT), g(&SHADOW_HDR_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_ELIM_CERT), g(&SHADOW_ELIM_TOTAL), g(&SHADOW_ELIM_DISAGREE), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | inductive type shapes: {} of {} certified ({:.1}%) | quotient/Eq expected types: {} of {} | declaration types are sorts (theorems: Prop): {} of {} | recursor name sets: {} of {} | elimination level: {} of {} agree, {} disagree | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, nc, nt, nshare, g(&SHADOW_QUOT_CERT), g(&SHADOW_QUOT_TOTAL), g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_ELIM_CERT), g(&SHADOW_ELIM_TOTAL), g(&SHADOW_ELIM_DISAGREE), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &infer_exit_report() + &format!(
@@ -587,31 +585,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// must not contain duplicate universe parameters, mut not have free variables,
     /// and must have an ascribed type that is actually a type (`infer declaration.type` must
     /// be a sort).
+    // VERUS-REWRITE(dyn-error): the checks run in `check_declar_info_core`
+    // (verified); this wrapper only builds the `Box<dyn Error>`, which Verus
+    // cannot express, and runs the shadow's observation-only certification.
+    // Same checks, same order, same error.
     pub(crate) fn check_declar_info(&mut self, d: &Declar<'t>) -> Result<(), Box<dyn Error>> {
         let info = d.info();
-        assert!(self.ctx.no_dupes_all_params(info.uparams));
-        assert!(!self.ctx.has_fvars(info.ty));
-        let inferred_type = self.infer(info.ty, Check);
+        let is_theorem = matches!(d, Declar::Theorem { .. });
+        let (inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
         self.shadow_infer(info.ty, inferred_type);
-        self.shadow_ensure_sort(info.ty, matches!(d, Declar::Theorem { .. }));
-        if route_stats::shadow_enabled() {
-            route_stats::bump(&route_stats::SHADOW_HDR_TOTAL);
-            if crate::level_arena_bridge::verified_no_dupes_all_params(self.ctx, info.uparams) {
-                route_stats::bump(&route_stats::SHADOW_HDR_CERT);
-            }
-        }
-        let sort = self.ensure_sort(inferred_type);
-
-        // This is sort of a "soft" check in terms of soundness, but for theorems, ensure
-        // that they're propositions.
-        if let Declar::Theorem { .. } = d {
-            if !self.ctx.is_zero(sort) {
-                return Err(Box::<dyn Error>::from(format!(
-                    "Theorem type for {:?} must be `Prop` (sort 0); found type {:?}",
-                    self.ctx.debug_print(info.name),
-                    self.ctx.debug_print(sort)
-                )));
-            }
+        self.shadow_ensure_sort(info.ty, is_theorem);
+        if !ok {
+            return Err(Box::<dyn Error>::from(format!(
+                "Theorem type for {:?} must be `Prop` (sort 0); found type {:?}",
+                self.ctx.debug_print(info.name),
+                self.ctx.debug_print(sort)
+            )));
         }
         Ok(())
     }
@@ -621,21 +610,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Expand `(x : Prod A B)` into `Prod.mk (Prod.fst x) (Prod.snd x)`
 
-    pub(crate) fn ensure_infers_as_sort(&mut self, e: ExprPtr<'t>) -> LevelPtr<'t> {
-        let infd = self.infer(e, Check);
-        self.ensure_sort(infd)
-    }
-
-    pub(crate) fn ensure_sort(&mut self, e: ExprPtr<'t>) -> LevelPtr<'t> {
-        if let Sort { level, .. } = self.ctx.read_expr(e) {
-            return level;
-        }
-        let whnfd = self.whnf(e);
-        match self.ctx.read_expr(whnfd) {
-            Sort { level, .. } => level,
-            _ => panic!("ensur_sort could not produce a sort"),
-        }
-    }
 
     //fn infer_app(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
     //    match self.ctx.read_expr(e) {
@@ -788,6 +762,100 @@ verus! {
 
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// The checks of `check_declar_info`, verified: on success the declared
+    /// type infers to a type that reduces to a sort, and for a theorem that
+    /// sort is `Prop`. `ok` is false exactly on the theorem-not-`Prop` error.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn check_declar_info_core(&mut self, info: &crate::env::DeclarInfo<'t>, is_theorem: bool) -> (result: (ExprPtr<'t>, LevelPtr<'t>, bool))
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, info.uparams),
+            crate::util_model::owns(*(*old(self)).ctx, info.ty),
+            tc_wf(*old(self)),
+            crate::expr_model::nlbv(to_model_expr(info.ty)) <= 0,
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result.0),
+            crate::util_model::owns(*(*final(self)).ctx, result.1),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(info.uparams)),
+            !crate::expr_model::has_fv(to_model_expr(info.ty)),
+            kinfer_claim(*old(self).env, to_model_expr(info.ty), to_model_expr(result.0)),
+            whnf_claim(*old(self).env, to_model_expr(result.0), ExprSpec::Sort(to_model_level(result.1))),
+            !is_theorem ==> result.2,
+            result.2 && is_theorem ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(to_model_level(result.1), rho) == 0,
+    {
+        assert!(self.ctx.no_dupes_all_params(info.uparams));
+        assert!(!self.ctx.has_fvars(info.ty));
+        proof {
+            crate::expr_model::no_fv_dbj_deep_in(
+                crate::env_model::env_arena_ids(*self.env),
+                to_model_expr(info.ty),
+                live_set(*self),
+                self.ctx.dbj_level_counter,
+            );
+        }
+        let inferred_type = self.infer(info.ty, Check);
+        let sort = self.ensure_sort(inferred_type);
+
+        // This is sort of a "soft" check in terms of soundness, but for theorems, ensure
+        // that they're propositions.
+        if is_theorem {
+            if !self.ctx.is_zero(sort) {
+                return (inferred_type, sort, false);
+            }
+        }
+        (inferred_type, sort, true)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn ensure_infers_as_sort(&mut self, e: ExprPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            tc_wf(*old(self)),
+            in_scope(*old(self), e),
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        let infd = self.infer(e, Check);
+        self.ensure_sort(infd)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn ensure_sort(&mut self, e: ExprPtr<'t>) -> (result: LevelPtr<'t>)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            tc_wf(*old(self)),
+            in_scope(*old(self), e),
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            whnf_claim(*old(self).env, to_model_expr(e), ExprSpec::Sort(to_model_level(result))),
+    {
+        if let Sort { level, .. } = self.ctx.read_expr(e) {
+            proof {
+                whnf_claim_refl(*old(self).env, to_model_expr(e));
+            }
+            return level;
+        }
+        let whnfd = self.whnf(e);
+        match self.ctx.read_expr(whnfd) {
+            Sort { level, .. } => level,
+            _ => panic!("ensur_sort could not produce a sort"),
+        }
+    }
+
     #[verifier::exec_allows_no_decreases_clause]
     fn ensure_pi(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
@@ -3830,6 +3898,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            def_eq_claim(*old(self).env, to_model_expr(u), to_model_expr(v)),
     {
         assert!(self.def_eq(u, v))
     }

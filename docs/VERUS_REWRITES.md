@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **70 marked rewrites across 48 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **75 marked rewrites across 53 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -117,6 +117,16 @@ guarding.
 `&mut self`.
 
 ---
+
+### A temporary in a `for` loop's iterator expression — 1 rewrite
+
+`for l in self.read_levels(ls).iter().copied()` is rejected with E0716: Verus's
+`for` desugaring drops the temporary `Arc` while the iterator still borrows it.
+Binding the call to a local first is behaviour-identical.
+
+| function | file |
+|---|---|
+| `no_dupes_all_params` | `src/level.rs` |
 
 ## 2. Rewrites needing a Verus language feature
 

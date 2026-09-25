@@ -666,80 +666,11 @@ pub fn verified_subst_levels<'t, 'p: 't>(
     Some(r)
 }
 
-/// Distinct universe parameters (2026-09-11, shadow of `no_dupes_all_params`):
-/// every element is a `Param` and no two share a name.
+/// Distinct universe parameters (`no_dupes_all_params`'s claim): every
+/// element is a `Param` and no two share a name.
 pub open spec fn distinct_params(ls: Seq<LevelSpec>) -> bool {
     (forall|i: int| 0 <= i < ls.len() ==> (#[trigger] ls[i]) is Param) && (forall|i: int, j: int|
         0 <= i < ls.len() && 0 <= j < ls.len() && i != j ==> #[trigger] ls[i] != #[trigger] ls[j])
-}
-
-pub fn verified_no_dupes_all_params<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ls: LevelsPtr<'t>) -> (result:
-    bool)
-    requires
-        crate::util_model::owns(*ctx, ls),
-    ensures
-        result ==> distinct_params(to_model_of_levels(ls)),
-{
-    let v = read_levels_vec(ctx, ls);
-    let ghost m = to_model_of_levels(ls);
-    let n = v.len();
-    let mut i: usize = 0;
-    while i < n
-        invariant
-            crate::util_model::owns(*ctx, ls),
-            crate::util_model::owns_all(*ctx, v@),
-            n == v@.len(),
-            v@.len() == m.len(),
-            i <= n,
-            forall|a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
-            forall|a: int| 0 <= a < i ==> (#[trigger] m[a]) is Param,
-            forall|a: int, b: int|
-                0 <= a < i && 0 <= b < v@.len() && a != b ==> #[trigger] m[a] != #[trigger] m[b],
-        decreases n - i,
-    {
-        let li = ctx.read_level(v[i]);
-        match level_as_param(&li) {
-            Some(ni) => {
-                let mut j: usize = 0;
-                while j < n
-                    invariant
-                        crate::util_model::owns(*ctx, ls),
-                        crate::util_model::owns_all(*ctx, v@),
-                        n == v@.len(),
-                        v@.len() == m.len(),
-                        i < n,
-                        j <= n,
-                        forall|a: int| 0 <= a < v@.len() ==> to_model(#[trigger] v@[a]) == m[a],
-                        m[i as int] == LevelSpec::Param(name_id(ni)),
-                        forall|b: int| 0 <= b < j && b != i ==> m[i as int] != #[trigger] m[b],
-                    decreases n - j,
-                {
-                    if j != i {
-                        let lj = ctx.read_level(v[j]);
-                        match level_as_param(&lj) {
-                            Some(nj) => {
-                                if name_ptr_eq(ni, nj) {
-                                    return false;
-                                }
-                                proof {
-                                    assert(m[j as int] == LevelSpec::Param(name_id(nj)));
-                                }
-                            },
-                            None => {
-                                return false;
-                            },
-                        }
-                    }
-                    j = j + 1;
-                }
-            },
-            None => {
-                return false;
-            },
-        }
-        i = i + 1;
-    }
-    true
 }
 
 } // verus!

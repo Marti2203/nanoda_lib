@@ -53,24 +53,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         (l, num_succs)
     }
-
-    /// returns `true` iff every element in `ls` is a `Param`, and `ls` has no duplicate elements.
-    pub(crate) fn no_dupes_all_params(&mut self, ls: LevelsPtr<'t>) -> bool {
-        let mut set = crate::util::new_fx_hash_set();
-        for l in self.read_levels(ls).iter().copied() {
-            match self.read_level(l) {
-                Param(..) => {
-                    if set.contains(&l) {
-                        return false;
-                    } else {
-                        set.insert(l);
-                    }
-                }
-                _ => return false,
-            }
-        }
-        true
-    }
 }
 
 // ===========================================================================
@@ -121,6 +103,67 @@ pub proof fn leq_contract_is_not_vacuous()
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// returns `true` iff every element in `ls` is a `Param`, and `ls` has no duplicate elements.
+    ///
+    /// Verified in place: the body is the kernel's, with loop annotations. The
+    /// set holds the pointers seen so far, and hash-consing
+    /// (`level_ptr_eq_iff_same_model_param`) turns "not seen as a pointer" into
+    /// "not seen as a level".
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn no_dupes_all_params(&mut self, ls: LevelsPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), ls),
+        ensures
+            *final(self) == *old(self),
+            result ==> crate::level_arena_bridge::distinct_params(to_model_of_levels(ls)),
+    {
+        let mut set = crate::util::new_fx_hash_set();
+        let ghost m = to_model_of_levels(ls);
+        // VERUS-REWRITE(for-temporary): the `read_levels` result is bound to a
+        // local before the loop; Verus's `for` desugaring drops a temporary in
+        // the iterator expression too early (E0716). Same call, same loop.
+        let rl = self.read_levels(ls);
+        for l in it: rl.iter().copied()
+            invariant
+                *self == *old(self),
+                crate::util_model::owns(*self, ls),
+                crate::util_model::owns_all(*self, it.seq()),
+                it.seq() == rl@,
+                it.seq().len() == m.len(),
+                m == to_model_of_levels(ls),
+                forall|j: int| 0 <= j < it.seq().len() ==> #[trigger] to_model(it.seq()[j]) == m[j],
+                forall|j: int| 0 <= j < it.index() ==> (#[trigger] m[j]) is Param,
+                forall|j: int| 0 <= j < it.index() ==> #[trigger] set@.contains(it.seq()[j]),
+                forall|k: LevelPtr<'t>| #[trigger] set@.contains(k) ==> crate::util_model::owns(*self, k),
+                forall|a: int, b: int|
+                    0 <= a < it.index() && 0 <= b < it.index() && a != b ==> #[trigger] m[a] != #[trigger] m[b],
+        {
+            let ghost i = it.index();
+            match self.read_level(l) {
+                Param(..) => {
+                    proof {
+                        assert(l == it.seq()[i]);
+                        crate::util_model::ptr_owned_keys(*self, set@.insert(l));
+                        crate::util_model::build_hasher_default_valid_fx();
+                    }
+                    if set.contains(&l) {
+                        return false;
+                    } else {
+                        proof {
+                            assert forall|a: int| 0 <= a < i implies #[trigger] m[a] != m[i] by {
+                                assert(set@.contains(it.seq()[a]));
+                                level_ptr_eq_iff_same_model_param(*self, it.seq()[a], l);
+                            }
+                        }
+                        set.insert(l);
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
     /// The two shape guards `leq_core` branches on. Verified AS WRITTEN.
     /// They are what make two of that function's three `panic!()` arms
     /// unreachable: each is reached only under `is_any_max(b)`, and the inner
