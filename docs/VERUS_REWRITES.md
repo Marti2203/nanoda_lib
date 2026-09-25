@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **94 marked rewrites across 67 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **95 marked rewrites across 68 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -241,6 +241,7 @@ needed a different shape.
 | `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
+| `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity equals the counts recorded beside it plus one; the `RecursorData` is assembled in the shell (its `Arc` conversions have no specification), counts from the same slices |
 | `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls. A fresh `Env` cannot be shown to match the context's arenas without a new trusted fact, so the environment side stays outside |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
