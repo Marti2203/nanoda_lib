@@ -82,73 +82,184 @@ pub struct TypeChecker<'x, 't, 'p> {
     pub live: vstd::prelude::Ghost<vstd::seq::Seq<u32>>,
 }
 
+verus! {
+
 impl<'p> ExportFile<'p> {
-    /// The entry point for checking a declaration `d`.
-    pub fn check_declar(&self, d: &Declar<'p>) {
+    /// The recursor-arm rejections, with the messages `check_declar` gave
+    /// them (the same `with_ctx` + `panic!`; Verus does not process the
+    /// `format!` arguments). Claim nothing.
+    #[verifier::external_body]
+    fn recursor_without_inductive(&self, rec: NamePtr<'p>) -> ! {
+        self.with_ctx(|ctx| {
+            panic!("Recursors must be derived from an associated inductive type, but recursor {:?} had none", ctx.debug_print(rec))
+        })
+    }
+
+    #[verifier::external_body]
+    fn recursor_inductive_missing(&self, ind_name: NamePtr<'p>) -> ! {
+        self.with_ctx(|ctx| {
+            panic!("Recursors must be derived from an associated inductive declaration. Inductive declaration {:?} does not exist", ctx.debug_print(ind_name))
+        })
+    }
+
+    #[verifier::external_body]
+    fn recursor_inductive_not_inductive(&self, ind_name: NamePtr<'p>) -> ! {
+        self.with_ctx(|ctx| {
+            panic!("Recursors must be derived from an associated inductive type. Declaration {:?} is not an inductive type", ctx.debug_print(ind_name))
+        })
+    }
+
+    #[verifier::external_body]
+    fn recursor_references_missing(&self, rec: NamePtr<'p>, ind_name: NamePtr<'p>) -> ! {
+        self.with_ctx(|ctx| {
+            panic!(
+                "Recursor {:?} references inductive declaration {:?} which does not exist.",
+                ctx.debug_print(rec),
+                ctx.debug_print(ind_name)
+            )
+        })
+    }
+
+    #[verifier::external_body]
+    fn recursor_before_inductive(&self, rec: NamePtr<'p>, recursor_idx: usize, ind_name: NamePtr<'p>, ind_idx: usize) -> ! {
+        self.with_ctx(|ctx| {
+            panic!(
+                "Inductive declarations must be exported prior to any derived recursors. ({:?}, {}), ({:?}, {})",
+                ctx.debug_print(rec),
+                recursor_idx,
+                ctx.debug_print(ind_name),
+                ind_idx
+            )
+        })
+    }
+
+    /// The entry point for checking a declaration `d`. Verified in place.
+    ///
+    /// VERUS-REWRITE(closure-inlined): each `self.with_tc_and_declar(info, |tc| ..)`
+    /// / `self.with_ctx(|ctx| ..)` is what it builds (a fresh `LeanDag` and
+    /// `TcCtx`, the environment limited by the declaration's name through
+    /// `env_model::ctx_env`, and `TypeChecker::new` with the declaration),
+    /// then the closure's body; `check_declar_info(d).unwrap()` is
+    /// `check_declar_info_unwrap(d)`. VERUS-REWRITE(panic-wrapper): the
+    /// recursor arm's formatted rejections are the same `with_ctx` + `panic!`
+    /// behind `recursor_*`. VERUS-REWRITE(index-walk): the `for` over the
+    /// recursor's inductives is the scan by index. VERUS-REWRITE(tested-closed):
+    /// a definition's value is tested closed before its type is inferred (it
+    /// has to be in scope; the export parser does not check it).
+    #[verifier::exec_allows_no_decreases_clause]
+    pub fn check_declar(&self, d: &Declar<'p>)
+        requires
+            crate::inductive::export_ok(*self),
+            crate::inductive::export_rec_names_ok(*self),
+            crate::inductive::export_blocks_ok(*self),
+            crate::inductive::declar_export_tagged(self.name_cache.arena_id(), *d),
+    {
         use Declar::*;
+        let ghost a = self.name_cache.arena_id();
         match d {
-            Axiom { .. } => self.with_tc_and_declar(*d.info(), |tc| tc.check_declar_info(d).unwrap()),
+            Axiom { .. } => {
+                let mut dag = crate::util::LeanDag::new(&self.config);
+                let mut ctx = TcCtx::new(self, &mut dag);
+                let env = crate::env_model::ctx_env(&ctx, crate::env::EnvLimit::ByName(d.info().name));
+                proof {
+                    let i = crate::env::declar_info(*d);
+                    crate::inductive::export_tagged_owned(ctx, i.name);
+                    crate::inductive::export_tagged_owned(ctx, i.uparams);
+                    crate::inductive::export_tagged_owned(ctx, i.ty);
+                }
+                let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
+                tc.check_declar_info_unwrap(d)
+            }
             Inductive(..) => self.check_inductive_declar(d),
-            Quot { .. } => self.with_ctx(|ctx| crate::quot::check_quot(ctx, d)),
+            Quot { .. } => {
+                let mut dag = crate::util::LeanDag::new(&self.config);
+                let mut ctx = TcCtx::new(self, &mut dag);
+                crate::quot::check_quot(&mut ctx, d)
+            }
             // VERUS-REWRITE(closure-body): the value check (`infer`, then
             // `assert_def_eq` against the declared type) runs in the verified
-            // `check_declar_value`; a closure body cannot carry a contract. Same
-            // calls, same order.
+            // `check_declar_value`. Same calls, same order.
             Definition { val, .. } | Theorem { val, .. } | Opaque { val, .. } => {
-                self.with_tc_and_declar(*d.info(), |tc| {
-                    tc.check_declar_info(d).unwrap();
-                    tc.check_declar_value(*val, d.info().ty);
-                })
+                let mut dag = crate::util::LeanDag::new(&self.config);
+                let mut ctx = TcCtx::new(self, &mut dag);
+                let env = crate::env_model::ctx_env(&ctx, crate::env::EnvLimit::ByName(d.info().name));
+                proof {
+                    let i = crate::env::declar_info(*d);
+                    crate::inductive::export_tagged_owned(ctx, i.name);
+                    crate::inductive::export_tagged_owned(ctx, i.uparams);
+                    crate::inductive::export_tagged_owned(ctx, i.ty);
+                    crate::inductive::export_tagged_owned(ctx, *val);
+                }
+                let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
+                tc.check_declar_info_unwrap(d);
+                tc.assert_closed(*val);
+                proof {
+                    no_fv_in_scope(tc, *val);
+                }
+                tc.check_declar_value(*val, d.info().ty);
             }
             Constructor(ctor_data) => {
-                self.with_tc_and_declar(*d.info(), |tc| tc.check_declar_info(d).unwrap());
+                {
+                    let mut dag = crate::util::LeanDag::new(&self.config);
+                    let mut ctx = TcCtx::new(self, &mut dag);
+                    let env = crate::env_model::ctx_env(&ctx, crate::env::EnvLimit::ByName(d.info().name));
+                    proof {
+                        let i = crate::env::declar_info(*d);
+                        crate::inductive::export_tagged_owned(ctx, i.name);
+                        crate::inductive::export_tagged_owned(ctx, i.uparams);
+                        crate::inductive::export_tagged_owned(ctx, i.ty);
+                    }
+                    let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
+                    tc.check_declar_info_unwrap(d);
+                }
                 assert!(self.declars.get(&ctor_data.inductive_name).is_some());
             }
             Recursor(recursor_data) => {
-                self.with_tc_and_declar(*d.info(), |tc| tc.check_declar_info(d).unwrap());
+                {
+                    let mut dag = crate::util::LeanDag::new(&self.config);
+                    let mut ctx = TcCtx::new(self, &mut dag);
+                    let env = crate::env_model::ctx_env(&ctx, crate::env::EnvLimit::ByName(d.info().name));
+                    proof {
+                        let i = crate::env::declar_info(*d);
+                        crate::inductive::export_tagged_owned(ctx, i.name);
+                        crate::inductive::export_tagged_owned(ctx, i.uparams);
+                        crate::inductive::export_tagged_owned(ctx, i.ty);
+                    }
+                    let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
+                    tc.check_declar_info_unwrap(d);
+                }
                 match recursor_data.all_inductives.get(0) {
-                    None => self.with_ctx(|ctx| {
-                        panic!("Recursors must be derived from an associated inductive type, but recursor {:?} had none", ctx.debug_print(recursor_data.info.name))
-                    }),
+                    None => self.recursor_without_inductive(recursor_data.info.name),
                     Some(ind_name) => match self.declars.get(ind_name) {
-                        None => self.with_ctx(|ctx| {
-                            panic!("Recursors must be derived from an associated inductive declaration. Inductive declaration {:?} does not exist", ctx.debug_print(*ind_name))
-                        }),
+                        None => self.recursor_inductive_missing(*ind_name),
                         Some(Inductive {..}) => (),
-                        Some(_) => self.with_ctx(|ctx| {
-                            panic!("Recursors must be derived from an associated inductive type. Declaration {:?} is not an inductive type", ctx.debug_print(*ind_name))
-                        }),
+                        Some(_) => self.recursor_inductive_not_inductive(*ind_name),
                     }
                 }
                 let recursor_idx = self.declars.get_index_of(&recursor_data.info.name).unwrap();
-                for ind_name in recursor_data.all_inductives.iter() {
+                let mut k: usize = 0;
+                while k < recursor_data.all_inductives.len()
+                    decreases recursor_data.all_inductives@.len() - k,
+                {
+                    let ind_name = &recursor_data.all_inductives[k];
                     match self.declars.get_index_of(ind_name) {
-                        None => self.with_ctx(|ctx| {
-                            panic!(
-                                "Recursor {:?} references inductive declaration {:?} which does not exist.",
-                                ctx.debug_print(recursor_data.info.name),
-                                ctx.debug_print(*ind_name)
-                            )
-                        }),
+                        None => self.recursor_references_missing(recursor_data.info.name, *ind_name),
                         Some(ind_idx) => {
                             if recursor_idx <= ind_idx {
-                                self.with_ctx(|ctx| {
-                                panic!(
-                                    "Inductive declarations must be exported prior to any derived recursors. ({:?}, {}), ({:?}, {})",
-                                    ctx.debug_print(recursor_data.info.name),
-                                    recursor_idx,
-                                    ctx.debug_print(*ind_name),
-                                    ind_idx
-                                )
-                            })
+                                self.recursor_before_inductive(recursor_data.info.name, recursor_idx, *ind_name, ind_idx)
                             }
                         }
                     }
+                    k += 1;
                 }
             }
         }
     }
+}
 
+} // verus!
+
+impl<'p> ExportFile<'p> {
     /// Check all declarations in this export file using a single thread.
     pub(crate) fn check_all_declars_serial(&self) {
         for declar in self.declars.values() {
@@ -198,28 +309,6 @@ impl<'p> ExportFile<'p> {
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
-    /// Conduct the preliminary checks done on all declarations; a declaration
-    /// must not contain duplicate universe parameters, mut not have free variables,
-    /// and must have an ascribed type that is actually a type (`infer declaration.type` must
-    /// be a sort).
-    // VERUS-REWRITE(dyn-error): the checks run in `check_declar_info_core`
-    // (verified); this wrapper only builds the `Box<dyn Error>`, which Verus
-    // cannot express.
-    // Same checks, same order, same error.
-    pub(crate) fn check_declar_info(&mut self, d: &Declar<'t>) -> Result<(), Box<dyn Error>> {
-        let info = d.info();
-        let is_theorem = matches!(d, Declar::Theorem { .. });
-        let (_inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
-        if !ok {
-            return Err(Box::<dyn Error>::from(format!(
-                "Theorem type for {:?} must be `Prop` (sort 0); found type {:?}",
-                self.ctx.debug_print(info.name),
-                self.ctx.debug_print(sort)
-            )));
-        }
-        Ok(())
-    }
-
     /// Infer a `Const` by retrieving its type from the environment, then substituting
     /// the universe parameters for the ones in the declaration we're checking.
 
@@ -325,6 +414,56 @@ verus! {
 
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Conduct the preliminary checks done on all declarations; a declaration
+    /// must not contain duplicate universe parameters, mut not have free variables,
+    /// and must have an ascribed type that is actually a type (`infer declaration.type` must
+    /// be a sort).
+    ///
+    /// Verified in place: this is `check_declar_info(d).unwrap()`, the form
+    /// every caller used. VERUS-REWRITE(dyn-error): the checks run in
+    /// `check_declar_info_core`; the `Err` the wrapper built and `unwrap`
+    /// panicked on is the same `Box<dyn Error>` and the same `unwrap`, behind
+    /// `declar_info_failure` (Verus cannot express `dyn`). VERUS-REWRITE(tested-closed):
+    /// the declared type is tested closed first (`assert_closed`; the export
+    /// parser does not check it).
+    pub(crate) fn check_declar_info_unwrap(&mut self, d: &Declar<'t>)
+        requires
+            tc_wf(*old(self)),
+            crate::util_model::owns(*(*old(self)).ctx, crate::env::declar_info(*d).uparams),
+            crate::util_model::owns(*(*old(self)).ctx, crate::env::declar_info(*d).ty),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            !crate::expr_model::has_fv(to_model_expr(crate::env::declar_info(*d).ty)),
+            crate::expr_model::nlbv(to_model_expr(crate::env::declar_info(*d).ty)) <= 0,
+            crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*d).uparams)),
+    {
+        let info = d.info();
+        let is_theorem = matches!(d, Declar::Theorem { .. });
+        self.assert_closed(info.ty);
+        let (_inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
+        if !ok {
+            self.declar_info_failure(info.name, sort)
+        }
+    }
+
+    /// The `Err` `check_declar_info` returned for a theorem whose type is not a
+    /// proposition, unwrapped: the same message, the same panic. Claims nothing.
+    #[verifier::external_body]
+    fn declar_info_failure(&self, name: NamePtr<'t>, sort: LevelPtr<'t>) -> ! {
+        let r: Result<(), Box<dyn Error>> = Err(Box::<dyn Error>::from(format!(
+            "Theorem type for {:?} must be `Prop` (sort 0); found type {:?}",
+            self.ctx.debug_print(name),
+            self.ctx.debug_print(sort)
+        )));
+        r.unwrap();
+        unreachable!()
+    }
+
     /// A definition's value check, verified: the value infers to a type that
     /// is convertible to the declared type (in the kernel's judgement).
     #[verifier::exec_allows_no_decreases_clause]

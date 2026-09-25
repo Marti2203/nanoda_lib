@@ -141,6 +141,14 @@ pub assume_specification<'a, K, V, S: core::hash::BuildHasher, Q: ?Sized + core:
         },
 ;
 
+/// Callable, claims nothing: the position of a key, used by the checker only
+/// to order declarations.
+pub assume_specification<K, V, S: core::hash::BuildHasher, Q: ?Sized + core::hash::Hash + indexmap::Equivalent<K>>[ IndexMap::<K, V, S>::get_index_of::<Q> ](
+    m: &IndexMap<K, V, S>,
+    k: &Q,
+) -> Option<usize>
+;
+
 /// The entry at position `i` in insertion order.
 pub assume_specification<K, V, S>[ IndexMap::<K, V, S>::get_index ](m: &IndexMap<K, V, S>, i: usize) -> (result: Option<(&K, &V)>)
     ensures

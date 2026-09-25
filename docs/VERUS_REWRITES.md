@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **174 marked rewrites across 104 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **178 marked rewrites across 104 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -170,13 +170,17 @@ markers are under `index-walk` / `rec-ty-split`).
 
 Verus cannot declare `core::error::Error` for a `dyn` type: an
 `external_trait_specification` for it fails the trait-conflict check on its
-`Debug`/`Display` supertraits. `check_declar_info` keeps its original
-signature as an unverified wrapper that only formats the error; its checks run
-in `check_declar_info_core`, which returns the sort and an `ok` flag.
+`Debug`/`Display` supertraits. Every caller of `check_declar_info` did
+`.unwrap()` on its result, so that is what is verified:
+`check_declar_info_unwrap` runs the checks (`check_declar_info_core`, after
+testing the declared type closed) and, for a theorem whose type is not a
+proposition, hands off to the claim-free `declar_info_failure`, which builds the
+same `Box<dyn Error>` and unwraps it -- the same message, the same panic. The
+`Result`-returning wrapper is gone.
 
 | function | file |
 |---|---|
-| `check_declar_info` | `src/tc.rs` |
+| `check_declar_info_unwrap` | `src/tc.rs` |
 
 ## 2. Rewrites needing a Verus language feature
 
@@ -317,6 +321,7 @@ needed a different shape.
 | `restore_recursors` | `src/inductive.rs` | `for rec_name in base_rec_names.iter().copied()` → the `loop` over `next()` it desugars to, the set's iterator and its copy bound to locals so the proof can name what is left of the set; `for .. in map.keys().copied()` → the scan by position (`get_index`) |
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the universe-arity test `subst_expr_levels` panics on, made one frame earlier (as `infer_const`) |
 | `check_inductive_declar` | `src/inductive.rs` | `tc.check_declar_info(d).unwrap()` → its verdict part: the declared type tested closed (`assert_closed`), then `check_declar_info_core` (an inductive is not a theorem, so `ok` is always true and the `Err` arm cannot fire). The `any` over the block's names (same `is_recursive` calls, same early stop) and every `for` over a slice, `Vec` or map → scans by index; `for r in recursors.clone()` clones each element in turn; `specialize_nested`'s index of the block's first type is tested one frame earlier (the kernel panics there on an empty block) |
+| `check_declar` | `src/tc.rs` | each `with_tc_and_declar(info, |tc| ..)` / `with_ctx(|ctx| ..)` inlined (a fresh `LeanDag` + `TcCtx`, `ctx_env` limited by the name, `TypeChecker::new` with the declaration); the recursor arm's formatted rejections behind claim-free `recursor_*` helpers (the same `with_ctx` + `panic!`); its `for` over the recursor's inductives a scan by index |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
@@ -373,6 +378,7 @@ still a rejection — but each is an improvement.
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq`, `restore_and_check` | `src/inductive.rs` | every pair handed to `assert_def_eq`, and the constructed rule value / imported type substituted into, TESTED closed first (`assert_closed`), as in `check_restored_recursor1` |
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the imported recursor's universe parameters are TESTED to be distinct parameters (`no_dupes_all_params`, the test `check_declar_info` makes of every declaration it checks) before `subst_expr_levels` substitutes for them. Never fails on a well-formed export |
 | `check_inductive_declar` | `src/inductive.rs` | the mutual-block limit `start + size` panics on overflow; the same check, explicit |
+| `check_declar_info_unwrap`, `check_declar` | `src/tc.rs` | every declaration's type (and a definition's value) is TESTED closed before it is checked; the export parser checks neither. Never fails on a well-formed export |
 | `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
 
 ---

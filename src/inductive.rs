@@ -862,6 +862,8 @@ pub open spec fn declar_export_tagged<'a>(a: nat, d: Declar<'a>) -> bool {
             &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::export_tagged(a, #[trigger] r.rec_rules@[k].ctor_name)
             &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::export_tagged(a, #[trigger] r.rec_rules@[k].val)
         },
+        Declar::Definition { val, .. } | Declar::Theorem { val, .. } | Declar::Opaque { val, .. } =>
+            crate::util_model::export_tagged(a, val),
         _ => true,
     }
 }
@@ -1177,11 +1179,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
     /// is the environment it builds (`env_model::ctx_env` / `ctx_env_ext`, the
     /// same `new_env` / `Env::new_w_temp_ext`) and `TypeChecker::new` on the same
     /// context, then the closure's body. Same calls, same order.
-    /// VERUS-REWRITE(core-call): `tc.check_declar_info(d).unwrap()` is its
-    /// verdict part: the declared type TESTED closed (`assert_closed`), then
-    /// `check_declar_info_core` (an inductive is not a theorem, so its `ok` is
-    /// always true and the `Err` arm cannot fire); the wrapper's two shadow
-    /// observations are not made for inductive declarations.
+    /// `tc.check_declar_info(d).unwrap()` is `check_declar_info_unwrap(d)`.
     /// VERUS-REWRITE(index-walk): the `any` over the block's names (the same
     /// calls to `is_recursive`, stopping at the first true), and every `for`
     /// over a slice, `Vec` or map, are the scans by index they stand for;
@@ -1332,9 +1330,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 }
                 assert(crate::env_model::inductive_data_owned(*tc.env, *ind));
             }
-            tc.assert_closed(d.info().ty);
-            let (_, _, ok) = tc.check_declar_info_core(d.info(), false);
-            assert!(ok);
+            tc.check_declar_info_unwrap(d);
             tc.collect_unmodified_mutuals(ind)
         };
         assert!(unmodified_tys_ctors.len() > 0);
