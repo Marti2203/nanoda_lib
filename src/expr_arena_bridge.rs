@@ -943,6 +943,9 @@ pub open spec fn node_cache_ok<'t>(e: Expr<'t>) -> bool {
             to_model_of_expr(e),
         ) && has_fvars == has_fv(to_model_of_expr(e)),
         Expr::Var { dbj_idx, .. } => dbj_idx < u16::MAX,
+        // a level local's level is below the counter's ceiling
+        // (`mk_dbj_level` requires it), so `level + 1` does not overflow
+        Expr::Local { id: FVarId::DbjLevel(level), .. } => level < u16::MAX,
         _ => true,
     }
 }
@@ -1298,30 +1301,6 @@ pub fn expr_as_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 // It states the SERIAL (`dbj_serial(expr_id(result)) == Some(old counter)`)
 // and the counter's increment, which is what relates abstraction by level
 // (`abstr_levels`) to abstraction by identity (`abstr_full`).
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
-    ctx: &mut TcCtx<'t, 'p>,
-    binder_name: NamePtr<'t>,
-    binder_style: BinderStyle,
-    binder_type: ExprPtr<'t>,
-) -> (result: ExprPtr<'t>) where 'p: 't
-    requires
-        crate::util_model::owns(*old(ctx), binder_name),
-        crate::util_model::owns(*old(ctx), binder_type),
-        old(ctx).dbj_level_counter < u16::MAX,
-        // a local's type is closed, as `alloc_expr` requires of every local
-        // it stores
-        nlbv(to_model(binder_type)) == 0,
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        is_local_shape(result),
-        local_binder_type_of(result) == binder_type,
-        to_model(result) == ExprSpec::Free(expr_id(result)),
-        dbj_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result)) == Some(old(ctx).dbj_level_counter),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter + 1,
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
-
 /// Was a claim-free `assume_specification` -- `TcCtx` was `external_body`, so
 /// a wrapper round a field read could not even say which field. Transparent, it
 /// says so and proves it.
@@ -1341,20 +1320,6 @@ pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result:
 /// Still assumed rather than verified. Its body is three lines, but they are
 /// awkward ones: a `debug_assert_eq!` (same `AssertKind` wall as `assert_eq!`),
 /// a `panic!` arm that formats via `debug_print`, and the decrement itself.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::replace_dbj_level ](
-    ctx: &mut TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-) -> (result: ()) where 'p: 't
-    requires
-        crate::util_model::owns(*old(ctx), e),
-        old(ctx).dbj_level_counter > 0,
-    ensures
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter - 1,
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
-
-
 /// `expr.rs::bool_to_expr`'s result identity: `Const(bool_true_id, [])`
 /// or `Const(bool_false_id, [])`, whichever `b` selects -- `bool_true_id`/
 /// `bool_false_id` are uninterpreted NAME ids (same "just an identity,

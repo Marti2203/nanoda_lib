@@ -802,10 +802,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// already stored, forego the allocation and return a pointer to the previously inserted
     /// element. Checks the longer-lived storage first.
     ///
-    /// Verified: the pointer denotes the node given, whose fields its payload
-    /// projections read. Locals are refused (`mk_dbj_level`,
-    /// `remake_dbj_level` and `mk_unique` number them; `unique_serial_injective`
-    /// rests on nothing else storing one). VERUS-REWRITE(arena-tokens): as in
+    /// Verified: the pointer's stored node is the one given, so it denotes it
+    /// (a `Local`, `Free` of the pointer) and its payload projections are its
+    /// fields. A `Unique` local is refused: `mk_unique` numbers those, and
+    /// `unique_serial_injective` rests on nothing else storing one.
+    /// VERUS-REWRITE(arena-tokens): as in
     /// `alloc_name`. VERUS-REWRITE(stored-child-check): children in this
     /// context's own tier are TESTED to be already stored, as in `alloc_name`.
     pub fn alloc_expr(&mut self, e: Expr<'t>) -> (result: ExprPtr<'t>)
@@ -813,10 +814,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::ctx_ok(*old(self)),
             crate::expr_arena_bridge::expr_children_owned(*old(self), e),
             crate::expr_arena_bridge::node_cache_ok(e),
-            !(e is Local),
+            e matches Expr::Local { id, .. } ==> id is DbjLevel,
         ensures
             crate::util_model::owns(*final(self), result),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model_of_expr(e),
+            crate::expr_arena_bridge::expr_node_at(result) == Some(e),
+            !(e is Local) ==> crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model_of_expr(e),
+            e is Local ==> crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(result)),
             e matches Expr::Const { name, levels, .. } ==> crate::expr_arena_bridge::const_name_of(result) == name
                 && crate::expr_arena_bridge::const_levels_of(result) == levels,
             e matches Expr::NatLit { ptr, .. } ==> crate::expr_arena_bridge::nat_lit_ptr_of(result) == ptr,
@@ -882,6 +885,76 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             proof { crate::expr_arena_bridge::to_model_at(r); }
             r
         }
+    }
+
+    /// Construct a free variable expression representing a deBruijn level, and
+    /// increment the context's counter.
+    ///
+    /// Verified in place: a `DbjLevel` local at the counter's level, whose
+    /// stored node has the binder type given.
+    pub fn mk_dbj_level(
+        &mut self,
+        binder_name: NamePtr<'t>,
+        binder_style: BinderStyle,
+        binder_type: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), binder_name),
+            crate::util_model::owns(*old(self), binder_type),
+            old(self).dbj_level_counter < u16::MAX,
+            crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(binder_type)) == 0,
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::expr_arena_bridge::is_local_shape(result),
+            crate::expr_arena_bridge::local_binder_type_of(result) == binder_type,
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(result)),
+            crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*final(self)), crate::expr_arena_bridge::expr_id(result)) == Some(old(self).dbj_level_counter),
+            final(self).dbj_level_counter == old(self).dbj_level_counter + 1,
+            final(self).expr_cache == old(self).expr_cache,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let level = self.dbj_level_counter;
+        self.dbj_level_counter += 1;
+        let id = FVarId::DbjLevel(level);
+        let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
+        // VERUS-REWRITE(local-closed-check): a local's type must be closed
+        // (`alloc_expr` requires it of every local it stores).
+        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
+        let r = self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash });
+        proof { crate::expr_arena_bridge::serials_at(crate::util_model::arena_ids(*self), r); }
+        r
+    }
+
+    /// "replace" a free variable when closing a binder, decrementing the deBruijn level
+    /// counter, so that level can be reused as appropriate.
+    ///
+    /// Verified in place: closing a binder lowers the counter by one.
+    ///
+    /// VERUS-REWRITE(formatted-panic): the `panic!` formats `debug_print`
+    /// output; the same panic sits behind the claim-free
+    /// `replace_dbj_level_not_local`.
+    pub(crate) fn replace_dbj_level(&mut self, e: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), e),
+            old(self).dbj_level_counter > 0,
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter - 1,
+            final(self).expr_cache == old(self).expr_cache,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        match self.read_expr(e) {
+            Expr::Local { id: FVarId::DbjLevel(level), .. } => {
+                debug_assert_eq!(level + 1, self.dbj_level_counter);
+                self.dbj_level_counter -= 1;
+            }
+            _ => self.replace_dbj_level_not_local(e),
+        }
+    }
+
+    /// `replace_dbj_level`'s panic, formatted as it formats it. Claims nothing.
+    #[verifier::external_body]
+    fn replace_dbj_level_not_local(&self, e: ExprPtr<'t>) -> ! {
+        panic!("replace_dbj_level didn't get a Local, got {:?}", self.debug_print(e))
     }
 
     /// Level zero. Verified: position 0 of the export file's levels is zero.
@@ -1174,23 +1247,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.mk_string_lit(string_ptr)
     }
 
-    /// Construct a free variable expression representing a deBruijn level, and
-    /// increment the context's counter.
-    pub fn mk_dbj_level(
-        &mut self,
-        binder_name: NamePtr<'t>,
-        binder_style: BinderStyle,
-        binder_type: ExprPtr<'t>,
-    ) -> ExprPtr<'t> {
-        let level = self.dbj_level_counter;
-        self.dbj_level_counter += 1;
-        let id = FVarId::DbjLevel(level);
-        let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
-        // VERUS-REWRITE(local-closed-check): a local's type must be closed
-        // (`alloc_expr` requires it of every local it stores).
-        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
-        self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
-    }
 
     /// Construct a free variable expression representing a deBruijn level, reusing
     /// a particular level counter, and without incrementing the context's counter for
@@ -1234,17 +1290,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
     }
 
-    /// "replace" a free variable when closing a binder, decrementing the deBruijn level
-    /// counter, so that level can be reused as appropriate.
-    pub(crate) fn replace_dbj_level(&mut self, e: ExprPtr<'t>) {
-        match self.read_expr(e) {
-            Expr::Local { id: FVarId::DbjLevel(level), .. } => {
-                debug_assert_eq!(level + 1, self.dbj_level_counter);
-                self.dbj_level_counter -= 1;
-            }
-            _ => panic!("replace_dbj_level didn't get a Local, got {:?}", self.debug_print(e)),
-        }
-    }
 }
 
 ::vstd::prelude::verus! {

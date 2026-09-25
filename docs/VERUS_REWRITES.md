@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **196 marked rewrites across 117 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **197 marked rewrites across 118 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -259,7 +259,7 @@ pointer ... the dereference is implicit"): Verus does not model the implicit
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` (`assert!(!std::ptr::eq(..))`) | `src/inductive.rs` |
 | `restore_and_check` | `src/inductive.rs` |
 
-### Formatted panic messages and `&A == &B` — 2 rewrites
+### Formatted panic messages and `&A == &B` — 3 rewrites
 
 `ck_recursor_names_simple`: the mismatch `panic!` formats `debug_print` output,
 which Verus cannot process, so the same `panic!` sits behind the claim-free
@@ -271,6 +271,7 @@ applies (`&A`'s forwarding `eq` carries none).
 | function | file |
 |---|---|
 | `ck_recursor_names_simple` | `src/inductive.rs` |
+| `replace_dbj_level` (the not-a-local `panic!`, behind `replace_dbj_level_not_local`) | `src/util.rs` |
 
 ### A local named `old` — 2 rewrites
 

@@ -663,6 +663,14 @@ pub assume_specification<
         hseq(*final(state)) == hseq(*old(state)).push(binder_style_word(*x)),
 ;
 
+/// CLAIM-FREE: `FVarId`'s derived `Hash`, callable so `mk_dbj_level` can
+/// compute its node's hash; no proof reads a local's hash.
+pub assume_specification<H: core::hash::Hasher>[ <crate::expr::FVarId as core::hash::Hash>::hash::<H> ](
+    x: &crate::expr::FVarId,
+    state: &mut H,
+)
+;
+
 pub assume_specification<H: core::hash::Hasher>[ <bool as core::hash::Hash>::hash::<H> ](
     x: &bool,
     state: &mut H,
