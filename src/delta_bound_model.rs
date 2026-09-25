@@ -1765,34 +1765,83 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
     let ghost em = to_model_of_env(*env);
     let ghost dty = to_model_of_declar_ty(*env);
     let ghost lc = arena_lctx(crate::env_model::env_arena_ids(*env));
-    // Reduce only when both sides are closed. Under a binder the bodies carry
-    // a loose bvar and cannot be whnf'd, but they can still be compared
-    // structurally -- which is what lets this recurse into `Bind`.
+    // The kernel's order: `def_eq` compares the no-unfolding reducts
+    // (`whnf_core`) and unfolds definitions only when that fails. Reducing
+    // both sides fully first normalizes terms the kernel never unfolds --
+    // on Init's UTF-8 lemmas, recursions over `2^n` that never finish.
+    // Only closed terms reduce; under a binder the bodies carry a loose
+    // bvar and are compared structurally.
     let closed = ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0;
-    let wx = if closed {
-        verified_whnf_free(ctx, env, memo, x)
-    } else {
-        x
-    };
-    let wy = if closed {
-        verified_whnf_free(ctx, env, memo, y)
-    } else {
-        y
-    };
-    proof {
-        env_model_nofv_sub(*env);
-        if closed {
-            pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(wx));
-            pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
-            defeq_of_pstep_star(em, to_model(x), to_model(wx));
-            defeq_of_pstep_star(em, to_model(y), to_model(wy));
-            deq_p_any_of_defeq(dty, em, lc, false, to_model(x), to_model(wx));
-            deq_p_any_of_defeq(dty, em, lc, false, to_model(y), to_model(wy));
-        } else {
+    if !closed {
+        proof {
             deq_p_any_refl(dty, em, lc, false, to_model(x));
             deq_p_any_refl(dty, em, lc, false, to_model(y));
         }
+        return verified_join_deep_at(ctx, env, memo, x, y, x, y, opens);
     }
+    let nx = verified_whnf_no_unfolding_free(ctx, env, memo, x, true);
+    let ny = verified_whnf_no_unfolding_free(ctx, env, memo, y, true);
+    proof {
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(nx));
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(ny));
+        defeq_of_pstep_star(em, to_model(x), to_model(nx));
+        defeq_of_pstep_star(em, to_model(y), to_model(ny));
+        deq_p_any_of_defeq(dty, em, lc, false, to_model(x), to_model(nx));
+        deq_p_any_of_defeq(dty, em, lc, false, to_model(y), to_model(ny));
+    }
+    if verified_join_deep_at(ctx, env, memo, x, y, nx, ny, opens) {
+        return true;
+    }
+    let wx = verified_whnf_free(ctx, env, memo, x);
+    let wy = verified_whnf_free(ctx, env, memo, y);
+    if expr_ptr_eq(wx, nx) && expr_ptr_eq(wy, ny) {
+        return false;
+    }
+    proof {
+        env_model_nofv_sub(*env);
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(x), to_model(wx));
+        pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
+        defeq_of_pstep_star(em, to_model(x), to_model(wx));
+        defeq_of_pstep_star(em, to_model(y), to_model(wy));
+        deq_p_any_of_defeq(dty, em, lc, false, to_model(x), to_model(wx));
+        deq_p_any_of_defeq(dty, em, lc, false, to_model(y), to_model(wy));
+    }
+    verified_join_deep_at(ctx, env, memo, x, y, wx, wy, opens)
+}
+
+/// The structural part of `verified_whnf_join_deep`, on reducts `wx`, `wy`
+/// of `x`, `y`: pointer equality, binder and spine congruence, sorts, and
+/// the proof-irrelevance leaf.
+#[verifier::exec_allows_no_decreases_clause]
+fn verified_join_deep_at<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    wx: ExprPtr<'t>,
+    wy: ExprPtr<'t>,
+    opens: u32,
+) -> (result: bool)
+    requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), wx),
+        crate::util_model::owns(*old(ctx), wy),
+        memo.wf(),
+        memo.spec_env() == *env,
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(x), to_model(wx)),
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(y), to_model(wy)),
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
+        result ==> deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(x), to_model(y)),
+{
+    let ghost em = to_model_of_env(*env);
+    let ghost dty = to_model_of_declar_ty(*env);
+    let ghost lc = arena_lctx(crate::env_model::env_arena_ids(*env));
     if expr_ptr_eq(wx, wy) {
         proof {
             deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
@@ -1935,8 +1984,6 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
             crate::util_model::owns_all(*ctx, ax@),
             crate::util_model::owns_all(*ctx, ay@),
             crate::env_model::env_matches(*env, *old(ctx)),
-            crate::util_model::owns(*old(ctx), x),
-            crate::util_model::owns(*old(ctx), y),
             ctx.dbj_level_counter == old(ctx).dbj_level_counter,
             crate::util_model::same_arenas(*old(ctx), *ctx),
             memo.wf(),
@@ -7199,8 +7246,8 @@ pub fn verified_conv_inner_p<'t, 'p: 't, 'x>(
     // congruence on unreduced terms first and reduced only as a last resort.
     if !both_rigid && ctx.num_loose_bvars(x) == 0 && ctx.num_loose_bvars(y) == 0 {
         let ghost cmn = env_model_nofv(*env);
-        let nx = verified_whnf_no_unfolding_free(ctx, env, memo, x);
-        let ny = verified_whnf_no_unfolding_free(ctx, env, memo, y);
+        let nx = verified_whnf_no_unfolding_free(ctx, env, memo, x, true);
+        let ny = verified_whnf_no_unfolding_free(ctx, env, memo, y, true);
         if !(expr_ptr_eq(nx, x) && expr_ptr_eq(ny, y)) {
             proof {
                 env_model_nofv_sub(*env);

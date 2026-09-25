@@ -764,6 +764,7 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
     env: &Env<'x, 't>,
     memo: &mut WhnfMemo<'x, 't>,
     e: ExprPtr<'t>,
+    cheap_proj: bool,
 ) -> (result: Option<ExprPtr<'t>>)
     requires
         crate::env_model::env_matches(*env, *old(ctx)),
@@ -801,7 +802,13 @@ pub fn verified_proj_delta_step_free<'t, 'p: 't, 'x>(
         assert(nlbv(to_model(head)) <= 0);
         assert(nlbv(to_model(structure)) <= 0);
     }
-    let s2 = verified_whnf_free(ctx, env, memo, structure);
+    // the kernel's `cheap_proj`: `def_eq` reduces a projection's structure
+    // without unfolding definitions, `whnf` reduces it fully
+    let s2 = if cheap_proj {
+        verified_whnf_no_unfolding_free(ctx, env, memo, structure, true)
+    } else {
+        verified_whnf_free(ctx, env, memo, structure)
+    };
     let (fun, cargs) = ctx.unfold_apps(s2);
     let fun_el = ctx.read_expr(fun);
     let (name, _levels) = match ctx.try_const_info(fun) {
@@ -857,6 +864,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
     env: &Env<'x, 't>,
     memo: &mut WhnfMemo<'x, 't>,
     e: ExprPtr<'t>,
+    cheap_proj: bool,
 ) -> (result: ExprPtr<'t>)
     requires
         crate::env_model::env_matches(*env, *old(ctx)),
@@ -926,7 +934,7 @@ pub fn verified_whnf_no_unfolding_free<'t, 'p: 't, 'x>(
             None => {},
         }
         // --- projection iota (delta on the structure, as `reduce_proj` does) ---
-        match verified_proj_delta_step_free(ctx, env, memo, cur) {
+        match verified_proj_delta_step_free(ctx, env, memo, cur, cheap_proj) {
             Some(r) => {
                 if !expr_ptr_eq(r, cur) {
                     proof {
@@ -1038,7 +1046,7 @@ pub fn verified_whnf_free_uncached<'t, 'p: 't, 'x>(
             nlbv(to_model(cur)) <= 0,
             pstep_star(cm, to_model(e), to_model(cur)),
     {
-        let w = verified_whnf_no_unfolding_free(ctx, env, memo, cur);
+        let w = verified_whnf_no_unfolding_free(ctx, env, memo, cur, false);
         proof {
             pstep_star_trans(cm, to_model(e), to_model(cur), to_model(w));
         }
