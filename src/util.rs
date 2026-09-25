@@ -517,6 +517,21 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 ::vstd::prelude::verus! {
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place, body unchanged: a two-component name, owned.
+    pub fn str2(&mut self, s1: &'static str, s2: &'static str) -> (result: NamePtr<'t>)
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let s1 = self.alloc_string(CowStr::Borrowed(s1));
+        let s2 = self.alloc_string(CowStr::Borrowed(s2));
+        let n = self.anonymous();
+        let n = self.str(n, s1);
+        self.str(n, s2)
+    }
+
     /// Verified in place, body unchanged: a context over `export_file` and
     /// `tdag`, its level counter at zero and its caches empty.
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> (result: Self)
@@ -715,13 +730,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.str(anon, s)
     }
 
-    pub fn str2(&mut self, s1: &'static str, s2: &'static str) -> NamePtr<'t> {
-        let s1 = self.alloc_string(CowStr::Borrowed(s1));
-        let s2 = self.alloc_string(CowStr::Borrowed(s2));
-        let n = self.anonymous();
-        let n = self.str(n, s1);
-        self.str(n, s2)
-    }
 
     pub fn zero(&self) -> LevelPtr<'t> {
         self.export_file.dag.zero()

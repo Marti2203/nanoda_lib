@@ -2972,7 +2972,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// open with `get_local_params`, or hands on as the block's, is TESTED
     /// closed (no locals, no loose de Bruijn indices). The export parser does
     /// not check it; a well-formed declaration always passes.
-    fn assert_closed(&self, e: ExprPtr<'t>)
+    pub(crate) fn assert_closed(&self, e: ExprPtr<'t>)
         requires
             crate::tc::tc_owns(*self, e),
         ensures

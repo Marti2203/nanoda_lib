@@ -74,67 +74,128 @@ macro_rules! pi_telescope {
     }
 }
 
+verus! {
+
+broadcast use crate::util::ptr_eta;
+
+/// The panics `check_eq` / `check_quot` raise with a formatted message, the
+/// same `panic!`s (Verus does not process their `format!` arguments). Claim
+/// nothing.
+#[verifier::external_body]
+fn eq_malformed<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, declar: &Declar<'p>) -> ! {
+    panic!("cannot add Quot; improperly formed `Eq` type := {:?} ", ctx.debug_print(declar.info().name))
+}
+
+#[verifier::external_body]
+fn eq_uparam_count(n: usize) -> ! {
+    panic!("Bad `Eq` type; inductive `Eq` is expected to have 1 uparam, found {}", n)
+}
+
+#[verifier::external_body]
+fn eq_ctor_count(n: usize) -> ! {
+    panic!("cannot add Quot; `Eq` type improperly formed; expected one constructor, found {}", n)
+}
+
+#[verifier::external_body]
+fn invalid_quot<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, declar: &Declar<'p>) -> ! {
+    panic!("invalid quotient declaration {:?}", ctx.debug_print(declar.info().name))
+}
+
 /// The `Quot` declarations rely on `Eq` being defined as it is in
 /// the prelude, so a prereq for checking the `Quot` declarations is asserting
 /// that a propery constructed `Eq` and `Eq.refl`
-// VERUS-REWRITE(quot-split): the two expected types are built by the verified
-// `eq_expected_type` / `eq_refl_expected_type` (the same constructions); the
-// lookups and the comparisons stay here.
-pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>) {
+///
+/// Verified in place.
+///
+/// VERUS-REWRITE(quot-split): the two expected types are built by the verified
+/// `eq_expected_type` / `eq_refl_expected_type` (the same constructions); the
+/// lookups and the comparisons stay here. VERUS-REWRITE(env-wrapper): the
+/// environment is `env_model::ctx_env` (literally `new_env`, with the trusted
+/// fact that it matches the context). VERUS-REWRITE(slice-pattern): the
+/// `match .. .as_ref() { &[x] => .., owise => .. }` tests are the length test
+/// and index they stand for. VERUS-REWRITE(panic-wrapper): the formatted
+/// panics are the same calls behind `eq_malformed` / `eq_uparam_count` /
+/// `eq_ctor_count`. VERUS-REWRITE(tested-closed): both sides of each
+/// `assert_def_eq` are tested closed (`assert_closed`) first.
+#[verifier::exec_allows_no_decreases_clause]
+pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>)
+    requires
+        old(ctx).dbj_level_counter == 0,
+        crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)),
+    ensures
+        final(ctx).dbj_level_counter == 0,
+        crate::expr_arena_bridge::dsubst_cache_sound(*final(ctx)),
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+{
     let name = ctx.str1("Eq");
     let cname = ctx.str2("Eq", "refl");
     let alpha_name = ctx.str1("α");
     let a_name = ctx.str1("a");
     let prop = ctx.prop();
-    let env = ctx.export_file.new_env(EnvLimit::ByName(declar.info().name));
+    let env = crate::env_model::ctx_env(ctx, EnvLimit::ByName(declar.info().name));
     match env.get_inductive(&name).cloned() {
         // The `Eq` declaration offered up by the export file;
         Some(InductiveData { info, num_params, all_ctor_names, .. }) => {
             let eq_const = ctx.mk_const(name, info.uparams);
             assert_eq!(ctx.read_levels(info.uparams).len(), 1);
             assert_eq!(num_params, 2);
-            let u = match ctx.read_levels(info.uparams).as_ref() {
-                &[u] => u,
-                owise => panic!("Bad `Eq` type; inductive `Eq` is expected to have 1 uparam, found {}", owise.len()),
-            };
+            let rl = ctx.read_levels(info.uparams);
+            let u = if rl.len() == 1 { rl[0] } else { eq_uparam_count(rl.len()) };
             let expected = eq_expected_type(ctx, u, alpha_name, prop);
             let mut tc = TypeChecker::new(ctx, &env, Some(info));
+            tc.assert_closed(info.ty);
+            tc.assert_closed(expected);
+            proof {
+                crate::inductive::level_free_in_scope(tc, info.ty);
+                crate::inductive::level_free_in_scope(tc, expected);
+            }
             tc.assert_def_eq(info.ty, expected);
-            match all_ctor_names.as_ref() {
-                &[ctor_name] => {
-                    assert_eq!(cname, ctor_name);
-                    match env.get_constructor(&ctor_name) {
-                        Some(ConstructorData { info, .. }) => {
-                            let uparam = match ctx.read_levels(info.uparams).as_ref() {
-                                &[uparam] => uparam,
-                                _ => panic!(),
-                            };
-                            let expected = eq_refl_expected_type(ctx, eq_const, uparam, alpha_name, a_name);
-                            let mut tc = TypeChecker::new(ctx, &env, Some(*info));
-                            tc.assert_def_eq(info.ty, expected);
+            let cn = all_ctor_names.as_ref();
+            if cn.len() == 1 {
+                let ctor_name = cn[0];
+                assert_eq!(cname, ctor_name);
+                match env.get_constructor(&ctor_name) {
+                    Some(ConstructorData { info, .. }) => {
+                        let rl2 = ctx.read_levels(info.uparams);
+                        let uparam = if rl2.len() == 1 { rl2[0] } else { panic!() };
+                        let expected = eq_refl_expected_type(ctx, eq_const, uparam, alpha_name, a_name);
+                        let mut tc = TypeChecker::new(ctx, &env, Some(*info));
+                        tc.assert_closed(info.ty);
+                        tc.assert_closed(expected);
+                        proof {
+                            crate::inductive::level_free_in_scope(tc, info.ty);
+                            crate::inductive::level_free_in_scope(tc, expected);
                         }
-                        None => panic!(
-                            "cannot add Quot; constructor `Eq.refl` was expected, but not found in the environment"
-                        ),
+                        tc.assert_def_eq(info.ty, expected);
                     }
+                    None => panic!(
+                        "cannot add Quot; constructor `Eq.refl` was expected, but not found in the environment"
+                    ),
                 }
-                owise => panic!(
-                    "cannot add Quot; `Eq` type improperly formed; expected one constructor, found {}",
-                    owise.len()
-                ),
+            } else {
+                eq_ctor_count(cn.len())
             }
         }
-        None => panic!("cannot add Quot; improperly formed `Eq` type := {:?} ", ctx.debug_print(declar.info().name)),
+        None => eq_malformed(ctx, declar),
     }
 }
 
+/// Verified in place.
+///
+/// VERUS-REWRITE(quot-split): the expected types are built by the verified
+/// `quot_expected_type` (the same constructions, in the same order); this shell
+/// keeps the name lookups, the choice of declaration, the `Eq` prerequisite
+/// and the environment each comparison runs in. VERUS-REWRITE(env-wrapper),
+/// VERUS-REWRITE(panic-wrapper), VERUS-REWRITE(tested-closed): as in
+/// `check_eq` (the declared type and the expected one are tested closed).
 #[allow(non_snake_case)]
-// VERUS-REWRITE(quot-split): the expected types are built by the verified
-// `quot_expected_type` (the same constructions, in the same order); this shell
-// keeps what the core cannot state -- the name lookups, the choice of
-// declaration, the `Eq` prerequisite and the environment each comparison runs
-// in. The comparisons are `assert_def_eq`, verified with its claim.
-pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>) {
+#[verifier::exec_allows_no_decreases_clause]
+pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>)
+    requires
+        old(ctx).dbj_level_counter == 0,
+        crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)),
+        crate::inductive::declar_export_tagged(crate::util_model::arena_ids(*old(ctx)).1, *declar),
+{
     let which: u8 = if declar.info().name == ctx.str1("Quot") {
         0
     } else if declar.info().name == ctx.str2("Quot", "mk") {
@@ -144,7 +205,7 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     } else if declar.info().name == ctx.str2("Quot", "ind") {
         3
     } else {
-        panic!("invalid quotient declaration {:?}", ctx.debug_print(declar.info().name))
+        invalid_quot(ctx, declar)
     };
     if which == 2 {
         // `Eq` matching expectations is a prerequisite for checking `Quot.lift`.
@@ -164,6 +225,10 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
         quot_mk: ctx.export_file.name_cache.quot_mk().unwrap(),
         eq: ctx.str1("Eq"),
     };
+    proof {
+        crate::inductive::export_tagged_owned(*ctx, names.quot);
+        crate::inductive::export_tagged_owned(*ctx, names.quot_mk);
+    }
     let expected = quot_expected_type(ctx, which, &names);
     let limit = if which == 0 {
         names.quot
@@ -172,14 +237,22 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     } else {
         declar.info().name
     };
-    let env = ctx.export_file.new_env(EnvLimit::ByName(limit));
+    let env = crate::env_model::ctx_env(ctx, EnvLimit::ByName(limit));
+    proof {
+        let i = crate::env::declar_info(*declar);
+        crate::inductive::export_tagged_owned(*ctx, i.name);
+        crate::inductive::export_tagged_owned(*ctx, i.uparams);
+        crate::inductive::export_tagged_owned(*ctx, i.ty);
+    }
     let mut tc = TypeChecker::new(ctx, &env, Some(*declar.info()));
+    tc.assert_closed(declar.info().ty);
+    tc.assert_closed(expected);
+    proof {
+        crate::inductive::level_free_in_scope(tc, crate::env::declar_info(*declar).ty);
+        crate::inductive::level_free_in_scope(tc, expected);
+    }
     tc.assert_def_eq(declar.info().ty, expected);
 }
-
-verus! {
-
-broadcast use crate::util::ptr_eta;
 
 /// The names `check_quot` builds its expected types from.
 pub struct QuotNames<'t> {
@@ -324,6 +397,7 @@ pub fn eq_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, u: LevelPtr<'t>, al
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)) ==> crate::expr_arena_bridge::dsubst_cache_sound(*final(ctx)),
         to_model(result) == qb(ExprSpec::Sort(crate::level_arena_bridge::to_model(u)), rel_ty()),
 {
     let uparam = ctx.mk_sort(u);
@@ -356,6 +430,7 @@ pub fn eq_refl_expected_type<'t, 'p: 't>(
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)) ==> crate::expr_arena_bridge::dsubst_cache_sound(*final(ctx)),
         to_model(result) == qb(
             ExprSpec::Sort(crate::level_arena_bridge::to_model(u)),
             qb(qv(0), qa(qa(qa(to_model(eq_const), qv(1)), qv(0)), qv(0))),
@@ -395,6 +470,7 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)) ==> crate::expr_arena_bridge::dsubst_cache_sound(*final(ctx)),
         to_model(result) == quot_expected_ty(which, *names),
 {
     let n = names;
