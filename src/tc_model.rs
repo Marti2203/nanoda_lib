@@ -3765,6 +3765,42 @@ pub proof fn types_to_app_lift(
 {
     let hh = choose|hh: nat| #[trigger] deq(denv, aty2, aty, hh);
     deq_p_of_deq(dty, denv, lctx, io, aty2, aty, hh);
+    types_to_app_lift_p(dty, denv, lctx, io, f, a, ft, aty, bt, fuel, aty2)
+}
+
+/// The application rule from a reduction to the binder and a typed
+/// agreement of the argument's type -- the rule's own premise, so proof
+/// irrelevance is admitted there.
+pub proof fn types_to_app_lift_p(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    f: ExprSpec,
+    a: ExprSpec,
+    ft: ExprSpec,
+    aty: ExprSpec,
+    bt: ExprSpec,
+    fuel: nat,
+    aty2: ExprSpec,
+) -> (f2: nat)
+    requires
+        types_to(dty, denv, lctx, io, f, ft, fuel),
+        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        types_to(dty, denv, lctx, io, a, aty2, fuel),
+        deq_p_any(dty, denv, lctx, io, aty2, aty),
+    ensures
+        f2 >= fuel,
+        types_to(
+            dty,
+            denv,
+            lctx, io,
+            ExprSpec::App(Box::new(f), Box::new(a)),
+            subst_full(bt, seq![a], 0),
+            f2,
+        ),
+{
+    let hh = choose|hh: nat| #[trigger] deq_p(dty, denv, lctx, io, aty2, aty, hh);
     let f2: nat = (if fuel >= hh { fuel } else { hh }) + 1;
     types_to_mono(dty, denv, lctx, io, f, ft, fuel, f2);
     types_to_mono(dty, denv, lctx, io, a, aty2, fuel, f2);
@@ -7323,6 +7359,45 @@ pub proof fn deq_p_any_bind_fresh(
         ExprSpec::Bind(Box::new(t2), Box::new(b2)),
         hm + 1,
     ));
+}
+
+/// `deq_p_any` congruence along a spine, argument by argument.
+pub proof fn deq_p_any_spine_congr_args(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    h1: ExprSpec,
+    h2: ExprSpec,
+    a1: Seq<ExprSpec>,
+    a2: Seq<ExprSpec>,
+)
+    requires
+        deq_p_any(dty, env, lctx, io, h1, h2),
+        a1.len() == a2.len(),
+        forall|i: int| 0 <= i < a1.len() ==> deq_p_any(dty, env, lctx, io, #[trigger] a1[i], a2[i]),
+    ensures
+        deq_p_any(dty, env, lctx, io, spine_app(h1, a1), spine_app(h2, a2)),
+    decreases a1.len(),
+{
+    if a1.len() == 0 {
+        assert(spine_app(h1, a1) == h1);
+        assert(spine_app(h2, a2) == h2);
+    } else {
+        let n = a1.len() - 1;
+        let p1 = a1.subrange(0, n);
+        let p2 = a2.subrange(0, n);
+        assert forall|i: int| 0 <= i < p1.len() implies deq_p_any(dty, env, lctx, io, #[trigger] p1[i], p2[i]) by {
+            assert(p1[i] == a1[i]);
+            assert(p2[i] == a2[i]);
+        }
+        deq_p_any_spine_congr_args(dty, env, lctx, io, h1, h2, p1, p2);
+        assert(p1.push(a1[n]) =~= a1);
+        assert(p2.push(a2[n]) =~= a2);
+        spine_app_compose_last(h1, p1, a1[n]);
+        spine_app_compose_last(h2, p2, a2[n]);
+        deq_p_any_app_congr(dty, env, lctx, io, spine_app(h1, p1), spine_app(h2, p2), a1[n], a2[n]);
+    }
 }
 
 /// `deq_p_any` congruence along a spine of unchanged arguments (2026-09-08,

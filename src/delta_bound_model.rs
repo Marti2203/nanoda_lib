@@ -172,7 +172,7 @@ use crate::tc_model::{
     deq_p_any_refl, deq_p_any_spine_update, deq_p_any_symm, deq_p_any_trans, eta_struct_expand, eta_struct_marker,
     eta_struct_pair, infer_shadow_claim, infer_types_to, irrel_marker, is_proof_type_m, nat_found_claim,
     proj_field_type, proj_field_type_field_step, proj_field_type_final, proj_field_type_param_step, proof_irrel_pair,
-    proof_type_marker, deq_p_mono, deq_p_refl, deq_p_of_deq, deq, struct_type_of, struct_type_of_u, unit_like_type_u, struct_type_of_lift, unit_like_type_of_u, struct_type_of_mono, deq_p_of_pstep_star, types_to, types_to_app, types_to_app_lift, types_to_const, types_to_free, types_to_lambda,
+    proof_type_marker, deq_p_mono, deq_p_refl, deq_p_of_deq, deq, struct_type_of, struct_type_of_u, unit_like_type_u, struct_type_of_lift, unit_like_type_of_u, struct_type_of_mono, deq_p_of_pstep_star, types_to, types_to_app, types_to_app_lift, types_to_app_lift_p, deq_p_any_spine_congr_args, types_to_const, types_to_free, types_to_lambda,
     types_to_let, types_to_mono, types_to_nat_lit, types_to_pi, types_to_proj, types_to_sort, types_to_string_lit,
     unit_like_head, unit_like_type, unit_like_type_m, unit_marker, unit_pair,
 };
@@ -1539,19 +1539,23 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(
         crate::util_model::owns(*old(ctx), b2),
         memo.wf(),
         memo.spec_env() == *env,
-        deq_any(to_model_of_env(*env), to_model(t1), to_model(t2)),
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(t1), to_model(t2)),
     ensures
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
-        result ==> deq_any(
+        result ==> deq_p_any(
+            to_model_of_declar_ty(*env),
             to_model_of_env(*env),
+            arena_lctx(crate::env_model::env_arena_ids(*env)), false,
             ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(b1))),
             ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(b2))),
         ),
 {
     let ghost em = to_model_of_env(*env);
+    let ghost dty = to_model_of_declar_ty(*env);
+    let ghost lc = arena_lctx(crate::env_model::env_arena_ids(*env));
     // `verified_inst` needs `depth <= 60000`; `verified_size` both computes
     // the size and declines above that ceiling, and depth is bounded by size.
     let _sb1 = match verified_size(ctx, b1, 100000) {
@@ -1590,8 +1594,8 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(
                     assert(sm =~= seq![ExprSpec::Free(kk)]);
                     assert(to_model(ib1) == inst_free(to_model(b1), kk));
                     assert(to_model(ib2) == inst_free(to_model(b2), kk));
-                    deq_any_bind_fresh(
-                        em,
+                    deq_p_any_bind_fresh(
+                        dty, em, lc, false,
                         to_model(t1),
                         to_model(t2),
                         to_model(b1),
@@ -1605,6 +1609,135 @@ pub fn verified_join_bind_fresh<'t, 'p: 't, 'x>(
     }
     ctx.replace_dbj_level(local);
     ok
+}
+
+/// The join's proof-irrelevance leaf (the kernel's `proof_irrel_eq`): two
+/// proofs of propositions the join itself relates. The same route as
+/// `verified_proof_irrel_shadow`, but comparing the propositions with the
+/// join instead of the typed conversion, so the inference group never enters
+/// the conversion family and neither needs the other's termination measure.
+#[verifier::exec_allows_no_decreases_clause]
+pub fn verified_join_irrel<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    opens: u32,
+) -> (result: bool)
+    requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), x),
+        crate::util_model::owns(*old(ctx), y),
+        memo.wf(),
+        memo.spec_env() == *env,
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
+        result ==> deq_p_any(
+            to_model_of_declar_ty(*env),
+            to_model_of_env(*env),
+            arena_lctx(crate::env_model::env_arena_ids(*env)), false,
+            to_model(x),
+            to_model(y),
+        ),
+{
+    if ctx.num_loose_bvars(x) != 0 || ctx.num_loose_bvars(y) != 0 {
+        return false;
+    }
+    let xt = match verified_infer_shadow(ctx, env, memo, x) {
+        Some(v) => v,
+        None => return false,
+    };
+    let yt = match verified_infer_shadow(ctx, env, memo, y) {
+        Some(v) => v,
+        None => return false,
+    };
+    let xtt = match verified_infer_shadow(ctx, env, memo, xt) {
+        Some(v) => v,
+        None => return false,
+    };
+    let ytt = match verified_infer_shadow(ctx, env, memo, yt) {
+        Some(v) => v,
+        None => return false,
+    };
+    if ctx.num_loose_bvars(xtt) != 0 || ctx.num_loose_bvars(ytt) != 0 {
+        return false;
+    }
+    if !matches!(verified_is_prop_capped(ctx, env, memo, xtt, 100), Some(true)) {
+        return false;
+    }
+    if !matches!(verified_is_prop_capped(ctx, env, memo, ytt, 100), Some(true)) {
+        return false;
+    }
+    if !verified_whnf_join_deep(ctx, env, memo, xt, yt, opens) {
+        return false;
+    }
+    proof {
+        let fx = choose|f: nat| #[trigger] infer_types_to(*env, x, xt, f);
+        let fy = choose|f: nat| #[trigger] infer_types_to(*env, y, yt, f);
+        let fxt = choose|f: nat| #[trigger] infer_types_to(*env, xt, xtt, f);
+        let fyt = choose|f: nat| #[trigger] infer_types_to(*env, yt, ytt, f);
+        assert(infer_types_to(*env, xt, xtt, fxt) && is_prop_type_claim(*env, xtt));
+        assert(is_proof_type_claim(*env, xt));
+        assert(infer_types_to(*env, yt, ytt, fyt) && is_prop_type_claim(*env, ytt));
+        assert(is_proof_type_claim(*env, yt));
+        assert(infer_types_to(*env, x, xt, fx) && infer_types_to(*env, y, yt, fy));
+        assert(proof_irrel_shadow_claim(*env, x, y));
+        let hi = proof_irrel_pair_of_shadow_claim(*env, x, y);
+        deq_p_any_of_irrel(
+            to_model_of_declar_ty(*env),
+            to_model_of_env(*env),
+            arena_lctx(crate::env_model::env_arena_ids(*env)), false,
+            to_model(x),
+            to_model(y),
+            hi,
+        );
+    }
+    true
+}
+
+/// `verified_join_irrel` on the whnf forms, carried back to the originals.
+#[verifier::exec_allows_no_decreases_clause]
+fn join_irrel_leaf<'t, 'p: 't, 'x>(
+    ctx: &mut TcCtx<'t, 'p>,
+    env: &Env<'x, 't>,
+    memo: &mut WhnfMemo<'x, 't>,
+    x: ExprPtr<'t>,
+    y: ExprPtr<'t>,
+    wx: ExprPtr<'t>,
+    wy: ExprPtr<'t>,
+    opens: u32,
+) -> (result: bool)
+    requires
+        crate::env_model::env_matches(*env, *old(ctx)),
+        crate::util_model::owns(*old(ctx), wx),
+        crate::util_model::owns(*old(ctx), wy),
+        memo.wf(),
+        memo.spec_env() == *env,
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(x), to_model(wx)),
+        deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(y), to_model(wy)),
+    ensures
+        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        final(memo).wf(),
+        final(memo).spec_env() == *env,
+        result ==> deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(x), to_model(y)),
+{
+    if !verified_join_irrel(ctx, env, memo, wx, wy, opens) {
+        return false;
+    }
+    proof {
+        let dty = to_model_of_declar_ty(*env);
+        let em = to_model_of_env(*env);
+        let lc = arena_lctx(crate::env_model::env_arena_ids(*env));
+        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
+    }
+    true
 }
 
 #[verifier::exec_allows_no_decreases_clause]
@@ -1627,9 +1760,11 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         final(memo).wf(),
         final(memo).spec_env() == *env,
-        result ==> deq_any(to_model_of_env(*env), to_model(x), to_model(y)),
+        result ==> deq_p_any(to_model_of_declar_ty(*env), to_model_of_env(*env), arena_lctx(crate::env_model::env_arena_ids(*env)), false, to_model(x), to_model(y)),
 {
     let ghost em = to_model_of_env(*env);
+    let ghost dty = to_model_of_declar_ty(*env);
+    let ghost lc = arena_lctx(crate::env_model::env_arena_ids(*env));
     // Reduce only when both sides are closed. Under a binder the bodies carry
     // a loose bvar and cannot be whnf'd, but they can still be compared
     // structurally -- which is what lets this recurse into `Bind`.
@@ -1651,17 +1786,17 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
             pstep_star_env_weaken(env_model_nofv(*env), em, to_model(y), to_model(wy));
             defeq_of_pstep_star(em, to_model(x), to_model(wx));
             defeq_of_pstep_star(em, to_model(y), to_model(wy));
-            deq_any_of_defeq(em, to_model(x), to_model(wx));
-            deq_any_of_defeq(em, to_model(y), to_model(wy));
+            deq_p_any_of_defeq(dty, em, lc, false, to_model(x), to_model(wx));
+            deq_p_any_of_defeq(dty, em, lc, false, to_model(y), to_model(wy));
         } else {
-            deq_any_refl(em, to_model(x));
-            deq_any_refl(em, to_model(y));
+            deq_p_any_refl(dty, em, lc, false, to_model(x));
+            deq_p_any_refl(dty, em, lc, false, to_model(y));
         }
     }
     if expr_ptr_eq(wx, wy) {
         proof {
-            deq_any_symm(em, to_model(y), to_model(wy));
-            deq_any_trans(em, to_model(x), to_model(wx), to_model(y));
+            deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+            deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(y));
         }
         return true;
     }
@@ -1676,16 +1811,16 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
                 // succeeds whenever no reduction is needed underneath
                 if verified_whnf_join_deep(ctx, env, memo, b1, b2, opens) {
                     proof {
-                        deq_any_bind_congr(
-                            em,
+                        deq_p_any_bind_congr(
+                            dty, em, lc, false,
                             to_model(t1),
                             to_model(t2),
                             to_model(b1),
                             to_model(b2),
                         );
-                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                        deq_any_symm(em, to_model(y), to_model(wy));
-                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+                        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
                     }
                     return true;
                 }
@@ -1704,9 +1839,9 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
                     opens - 1,
                 ) {
                     proof {
-                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                        deq_any_symm(em, to_model(y), to_model(wy));
-                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+                        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
                     }
                     return true;
                 }
@@ -1722,16 +1857,16 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
                 // succeeds whenever no reduction is needed underneath
                 if verified_whnf_join_deep(ctx, env, memo, b1, b2, opens) {
                     proof {
-                        deq_any_bind_congr(
-                            em,
+                        deq_p_any_bind_congr(
+                            dty, em, lc, false,
                             to_model(t1),
                             to_model(t2),
                             to_model(b1),
                             to_model(b2),
                         );
-                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                        deq_any_symm(em, to_model(y), to_model(wy));
-                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+                        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
                     }
                     return true;
                 }
@@ -1750,9 +1885,9 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
                     opens - 1,
                 ) {
                     proof {
-                        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-                        deq_any_symm(em, to_model(y), to_model(wy));
-                        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+                        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+                        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
                     }
                     return true;
                 }
@@ -1770,10 +1905,10 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
                  #[trigger]
                     interp(level_to_model(lx), rho) == interp(level_to_model(ly), rho));
             assert(deq_leaf(to_model(wx), to_model(wy)));
-            deq_any_of_leaf(em, to_model(wx), to_model(wy));
-            deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-            deq_any_symm(em, to_model(y), to_model(wy));
-            deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+            deq_p_any_of_leaf(dty, em, lc, false, to_model(wx), to_model(wy));
+            deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+            deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+            deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
         }
         return true;
     }
@@ -1784,10 +1919,10 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
         // of these neither head has a VALUE in the environment -- only 35 of
         // 4000 had one on either side. There is no delta step available
         // here, so a lazy-delta retry at this point would recover nothing.
-        return false;
+        return join_irrel_leaf(ctx, env, memo, x, y, wx, wy, opens);
     }
-    // NB: no closedness gate here. Neither `deq_any_spine_congr` nor
-    // `deq_any_bind_congr` requires closed terms -- the gate and the `nlbv`
+    // NB: no closedness gate here. Neither `deq_p_any_spine_congr_args` nor
+    // `deq_p_any_bind_congr` requires closed terms -- the gate and the `nlbv`
     // invariants below it were left over from when this whole function
     // demanded closedness, and they were making every spine under a binder
     // decline for no reason.
@@ -1807,13 +1942,19 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
             memo.wf(),
             memo.spec_env() == *env,
             em == to_model_of_env(*env),
+            dty == to_model_of_declar_ty(*env),
+            crate::util_model::owns(*ctx, wx),
+            crate::util_model::owns(*ctx, wy),
+            deq_p_any(dty, em, lc, false, to_model(x), to_model(wx)),
+            deq_p_any(dty, em, lc, false, to_model(y), to_model(wy)),
+            lc == arena_lctx(crate::env_model::env_arena_ids(*env)),
             ax@.len() == ay@.len(),
             i <= ax@.len(),
             axm == Seq::new(ax@.len(), |q: int| to_model(ax@[q])),
             aym == Seq::new(ay@.len(), |q: int| to_model(ay@[q])),
             to_model(wx) == spine_app(to_model(hx), axm),
             to_model(wy) == spine_app(to_model(hy), aym),
-            forall|q: int| 0 <= q < i ==> deq_any(em, #[trigger] axm[q], aym[q]),
+            forall|q: int| 0 <= q < i ==> deq_p_any(dty, em, lc, false, #[trigger] axm[q], aym[q]),
         decreases ax.len() - i,
     {
         proof {
@@ -1821,18 +1962,18 @@ pub fn verified_whnf_join_deep<'t, 'p: 't, 'x>(
             assert(aym[i as int] == to_model(ay@[i as int]));
         }
         if !verified_whnf_join_deep(ctx, env, memo, ax[i], ay[i], opens) {
-            return false;
+            return join_irrel_leaf(ctx, env, memo, x, y, wx, wy, opens);
         }
         i = i + 1;
     }
     proof {
         assert(to_model(hx) == to_model(hy));
-        deq_any_refl(em, to_model(hx));
-        deq_any_spine_congr(em, to_model(hx), to_model(hy), axm, aym);
-        assert(deq_any(em, to_model(wx), to_model(wy)));
-        deq_any_trans(em, to_model(x), to_model(wx), to_model(wy));
-        deq_any_symm(em, to_model(y), to_model(wy));
-        deq_any_trans(em, to_model(x), to_model(wy), to_model(y));
+        deq_p_any_refl(dty, em, lc, false, to_model(hx));
+        deq_p_any_spine_congr_args(dty, em, lc, false, to_model(hx), to_model(hy), axm, aym);
+        assert(deq_p_any(dty, em, lc, false, to_model(wx), to_model(wy)));
+        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wx), to_model(wy));
+        deq_p_any_symm(dty, em, lc, false, to_model(y), to_model(wy));
+        deq_p_any_trans(dty, em, lc, false, to_model(x), to_model(wy), to_model(y));
     }
     true
 }
@@ -2477,6 +2618,9 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                 arg_check_fail_note(ctx, a_ty, aty);
                 return None;
             }
+            proof {
+                assert(crate::util_model::arena_ids(*ctx) == crate::env_model::env_arena_ids(*env));
+            }
             let ls: &[ExprPtr<'t>] = &[a];
             let instd = match verified_inst(ctx, bt, ls, 0, 100000) {
                 Some(v) => v,
@@ -2524,7 +2668,7 @@ pub fn verified_infer_free<'t, 'p: 't, 'x>(
                     fa,
                     hm,
                 );
-                let hn = types_to_app_lift(
+                let hn = types_to_app_lift_p(
                     to_model_of_declar_ty(*env),
                     to_model_of_env(*env),
                     arena_lctx(crate::util_model::arena_ids(*ctx)), false,
