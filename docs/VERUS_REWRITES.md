@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **131 marked rewrites across 87 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **141 marked rewrites across 95 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -221,6 +221,18 @@ Verus does not currently support closures capturing a mutable reference
 Each is spelled as the `match`/index walk the adapter desugars to. This is the
 one blocker left in the 46-function `def_eq` cycle that is not an `.unwrap()`.
 
+### A borrow passed as a raw pointer — 2 rewrites
+
+`debug_assert!(!std::ptr::eq(old, new))` is rejected ("dereferencing a
+pointer ... the dereference is implicit"): Verus does not model the implicit
+`&T` to `*const T` coercion. The same call sits behind the claim-free
+`env_model::same_object` (`#[verifier::external_body]`, no contract).
+
+| function | file |
+|---|---|
+| `assert_nonnested_tys_def_eq` | `src/inductive.rs` |
+| `assert_nonnested_ctors_def_eq` | `src/inductive.rs` |
+
 ### An exit proof inside a `while let` — 2 rewrites
 
 `unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`;
@@ -265,6 +277,8 @@ needed a different shape.
 | `mk_minors`, `mk_rec_rules`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` | `for x in v.iter()` / `.iter().copied()` → the same front-to-back scan by index, so the invariant can say which element produced each output (and, in `mk_rec_rules`, where the constructor's minor sits in the flattened list); `handle_rec_ctor_args_rec_rule` also binds the iterators handed to `foldl_apps` to locals, and uses `flatten_minors` |
 | `specialize_nested`, `specialize_nested_aux` | `src/inductive.rs` | the `for` loops (over the block's headers, over a clone of header `i`'s constructors, and `for (n, e) in map.iter()` over the specialized-type table) → scans by index / by position (`get_index`); the clone of header `i` is bound to a local (a temporary in a `for` iterator is rejected); `get_mut(i)` + `mem::replace(&mut old.ctors, ..)` → `set(i, ..)` of the same header with the new constructors (`i` is in range, so the kernel's `None => panic!` arm cannot fire); the iterator handed to `abstr_pis` bound to a local |
 | `replace_if_nested` | `src/inductive.rs` | `.iter().find(..)` over the specialized-type table → the scan by position it stands for; the two `for`s over the container's `Arc` name lists → scans by index; iterators handed to `foldl_apps`/`abstr_pis` bound to locals; the container's and each constructor's `(uparams, ty)` read through `env_model::get_declar_info_ty` (the same `info`, carrying the claim that the uparams are `Param`s; the `get_inductive`/`get_constructor` reads and their `?` rejections stay); the universe-arity test `subst_expr_levels` panics on made one frame earlier, as in `infer_const` |
+| `replace_f` | `src/inductive.rs` | the iterators handed to `foldl_apps` (`.iter().copied()`, `.skip(np)`) bound to locals so the proof can name their elements |
+| `mk_specialized_rec_to_unspecialized_map`, `restore_recursor1` | `src/inductive.rs` | `for x in arc.iter().copied().skip(n)` / `for rule in arc.iter().copied()` → the scans by index they stand for |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
@@ -317,6 +331,7 @@ still a rejection — but each is an improvement.
 | `mk_rec_rule1` | `src/inductive.rs` | `pi_telescope_size(ctor.ty) as usize - np` panics on underflow; the same check, explicit, on the size bound to `tele`. Never fires on a constructor `check_ctor` accepted |
 | `assert_closed`, `specialize_nested`, `specialize_nested_aux` | `src/inductive.rs` | the types the inductive checker opens with `get_local_params` (the block's first type, each constructor type before specialization) and every type and constructor type it hands on (the final loop, which tested `!has_fvars` only) are TESTED closed -- no locals and no loose de Bruijn indices -- through the new helper `assert_closed`. The export parser checks neither; the verified steps after it require `level_free`. Never fails on a well-formed declaration |
 | `replace_if_nested` | `src/inductive.rs` | a nested container's type and its constructors' types are tested free of locals before `subst_expr_levels` (which requires it), as in `infer_proj`. Never fails on a well-formed export |
+| `restore_e`, `check_restored_recursor1`, `check_restored_ctor1`, `assert_nonnested_tys_def_eq`, `assert_nonnested_ctors_def_eq` | `src/inductive.rs` | the terms restored from, and every pair handed to `assert_def_eq`, are TESTED closed first (`assert_closed`): opening a recursor's parameters with fresh locals needs it, and it is what puts both sides of the comparison in scope. The export's declarations and the temporary environment's are closed when well formed |
 | `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
 
 ---

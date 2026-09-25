@@ -768,13 +768,88 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::can_be_struct ](
 ) -> (result: bool) where 'a: 'x
 ;
 
-/// Callable, claims nothing: the inductive checker only tests whether a
-/// generated name is already taken.
+/// A declaration's pointers belong to `env`'s arenas (the per-kind
+/// predicates above, and `info_owned` for the kinds without extra names).
+pub open spec fn declar_owned<'x, 'a>(env: Env<'x, 'a>, d: Declar<'a>) -> bool {
+    match d {
+        Declar::Inductive(i) => inductive_data_owned(env, i),
+        Declar::Constructor(c) => constructor_data_owned(env, c),
+        Declar::Recursor(r) => recursor_data_owned(env, r),
+        Declar::Axiom { info } | Declar::Quot { info } | Declar::Opaque { info, .. }
+        | Declar::Theorem { info, .. } | Declar::Definition { info, .. } => info_owned(env, info),
+    }
+}
+
+/// Same terms as `get_inductive`: what the environment returns is owned.
 pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_old_declar ](
     env: &'b Env<'x, 'a>,
     n: &NamePtr<'a>,
 ) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> declar_owned(*env, *d),
 ;
+
+/// Same terms as `get_inductive`.
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_temp_declar ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
+    ensures
+        result matches Some(d) ==> declar_owned(*env, *d),
+;
+
+/// Derived `Clone`s: every field is `Copy` or an `Arc` (whose clone is the
+/// same allocation), so the copy is the original.
+pub assume_specification<'a>[ <crate::env::ConstructorData<'a> as Clone>::clone ](
+    d: &crate::env::ConstructorData<'a>,
+) -> (r: crate::env::ConstructorData<'a>)
+    ensures
+        r == *d,
+;
+
+pub assume_specification<'a>[ <crate::env::RecursorData<'a> as Clone>::clone ](
+    d: &crate::env::RecursorData<'a>,
+) -> (r: crate::env::RecursorData<'a>)
+    ensures
+        r == *d,
+;
+
+/// Callable, claim nothing: consistency checks between a declaration and its
+/// counterpart, whose results only decide an `assert!`. (Each compares name
+/// sets through `HashSet` `collect`, which vstd does not specify.)
+pub assume_specification<'a>[ crate::env::InductiveData::<'a>::aux_data_ck ](
+    d: &crate::env::InductiveData<'a>,
+    temp: &crate::env::InductiveData<'a>,
+) -> bool
+;
+
+pub assume_specification<'a>[ crate::env::ConstructorData::<'a>::aux_data_ck ](
+    d: &crate::env::ConstructorData<'a>,
+    other: &crate::env::ConstructorData<'a>,
+) -> bool
+;
+
+pub assume_specification<'a>[ crate::env::RecursorData::<'a>::aux_data_ck ](
+    d: &crate::env::RecursorData<'a>,
+    other: &crate::env::RecursorData<'a>,
+) -> bool
+;
+
+/// Callable, claim nothing: structural `==` on declarations and rules, used
+/// only inside `assert!`s.
+pub assume_specification<'a>[ <Declar<'a> as PartialEq>::eq ](a: &Declar<'a>, b: &Declar<'a>) -> bool
+;
+
+pub assume_specification<'a>[ <RecRule<'a> as PartialEq>::eq ](a: &RecRule<'a>, b: &RecRule<'a>) -> bool
+;
+
+/// `std::ptr::eq` on two borrows: the sanity checks that a declaration and
+/// its counterpart are different objects. Verus cannot pass a borrow as a raw
+/// pointer, so the same call sits behind this claim-free wrapper.
+#[verifier::external_body]
+pub fn same_object<T>(a: &T, b: &T) -> bool {
+    std::ptr::eq(a, b)
+}
 
 /// The derived `Clone`: every field is `Copy` or an `Arc` (whose clone is the
 /// same allocation), so the copy is the original.

@@ -281,40 +281,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
 
-    // Assert that the inductive types being added to the extension which
-    // are also in the export file are definitionally equal.
-    fn assert_nonnested_tys_def_eq(&mut self, base_ind: &InductiveData<'t>, st: &InductiveCheckState<'t>) {
-        assert!(!st.is_nested());
-        for name in base_ind.all_ind_names.iter() {
-            match (self.env.get_old_declar(name), self.env.get_temp_declar(name)) {
-                (Some(Declar::Inductive(old)), Some(Declar::Inductive(new))) => {
-                    assert!(old.aux_data_ck(new));
-                    debug_assert!(!std::ptr::eq(old, new));
-                    self.tc_cache.clear();
-                    self.assert_def_eq(old.info.ty, new.info.ty);
-                }
-                _ => panic!(),
-            }
-        }
-    }
-
-    fn assert_nonnested_ctors_def_eq(&mut self, st: &InductiveCheckState<'t>) {
-        assert!(!st.is_nested());
-        for inductive in st.all_inductives_incl_specialized.iter() {
-            for ctor in inductive.ctors.iter() {
-                match (self.env.get_old_declar(&ctor.name), self.env.get_temp_declar(&ctor.name)) {
-                    (Some(Declar::Constructor(old)), Some(Declar::Constructor(new))) => {
-                        assert!(old.aux_data_ck(new));
-                        debug_assert!(!std::ptr::eq(old, new));
-                        self.tc_cache.clear();
-                        self.assert_def_eq(old.info.ty, new.info.ty);
-                    }
-                    _ => panic!(),
-                }
-            }
-        }
-    }
-
     fn assert_nonnested_rec_rule_def_eq(
         &mut self,
         st: &InductiveCheckState<'t>,
@@ -360,301 +326,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
 
-    /// Return an ordered map, mapping the specialized recursor names to the
-    /// unspecialized recursor names. For example:
-    ///
-    /// ```ignore
-    /// specialized_rec_name_to_unspecialized_rec_name := [
-    ///     _nested.Array_1.rec                  |-> Lean.Elab.Term.Do.Code.rec_1
-    ///     _nested.List_2.rec                   |-> Lean.Elab.Term.Do.Code.rec_2
-    ///     _nested.Lean.Elab.Term.Do.Alt_3.rec  |-> Lean.Elab.Term.Do.Code.rec_3
-    /// ]
-    /// ```
-    fn mk_specialized_rec_to_unspecialized_map(
-        &mut self,
-        base_mutuals: &[IndTyHeader<'t>],
-    ) -> FxIndexMap<NamePtr<'t>, NamePtr<'t>> {
-        // The unmodified name of the "main" type being checked, e.g. `Lean.Syntax`
-        let main_ind_ty_name = base_mutuals.get(0).map(|zth| zth.name).unwrap();
-        let mut specialized_rec_names_to_unspecialized_rec_names = crate::util::new_fx_index_map();
-        let rec_str = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
-
-        // The MODIFIED version looked up in the new environment. The modification would
-        // just be additions to `all_ind_names`, which now contains the `_nested.Array`
-        // specialized type names.
-        let InductiveData { all_ind_names, .. } = self.env.get_inductive(&main_ind_ty_name).unwrap();
-        // The modified inductive with the specialized names added must have more elements
-        // than the unmodified type's list of names.
-        assert!(all_ind_names.len() > base_mutuals.len());
-        // For every NEW NESTED elem (new, because we skip `n_types`, skipping all of the base mutuals.)
-        // For each modified e.g. `_nested..` name
-        for ind_name in all_ind_names.iter().copied().skip(base_mutuals.len()) {
-            let specialized_rec_name = self.ctx.str(ind_name, rec_str);
-            let unspecialized_rec_name = self.ctx.str(main_ind_ty_name, rec_str);
-            let unspecialized_rec_name = self.ctx.append_index_after(
-                unspecialized_rec_name,
-                (specialized_rec_names_to_unspecialized_rec_names.len() + 1) as u64,
-            );
-            specialized_rec_names_to_unspecialized_rec_names.insert(specialized_rec_name, unspecialized_rec_name);
-        }
-        specialized_rec_names_to_unspecialized_rec_names
-    }
-
-    /// From `X.mk`, return the un-specialized version of that type, and the
-    /// parent inductive name for the constructor
-    ///
-    /// This looks up the constructor *in the new environment*, so the parent ind name
-    /// might be modified, or it might not be. E.g. you might get `Lean.Syntax`, or
-    /// you might get `_nested.Array_1`
-    fn get_nested_if_aux_ctor(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        c: NamePtr<'t>,
-    ) -> Option<(ExprPtr<'t>, NamePtr<'t>)> {
-        // `inductive_name`
-        let ConstructorData { inductive_name, .. } = self.env.get_constructor(&c)?;
-        let unspecialized_ty = st.nested_to_unspecialized_ty_nofvars.get(inductive_name).copied()?;
-        Some((unspecialized_ty, *inductive_name))
-    }
-
-    /// If `c` is `_nested_Array_1.mk`, return just `Array.mk`,
-    ///
-    /// This is only used in restoring recursor rules, since those hold the constructor name.
-    fn restore_ctor_name(&mut self, st: &InductiveCheckState<'t>, ctor_name: NamePtr<'t>) -> NamePtr<'t> {
-        // from `_nested_Array_1.mk`, retrieve `(Array Lean.Syntax, _nested.Array_1)`
-        let (unspecialized_ty, base_ind_name) = self.get_nested_if_aux_ctor(st, ctor_name).unwrap();
-        // Now get just `Const(Array, [])`
-        let unspecialized_f = self.ctx.unfold_apps_fun(unspecialized_ty);
-        // Get just the name for `Array`
-        let (unspecialized_ty_name, ..) = self.ctx.try_const_info(unspecialized_f).unwrap();
-        // Replace ctor_name[specialized_name |-> unspecialized_name]
-        // e.g. `_nested.Array_1.mk |-> Array.mk`
-        self.ctx.replace_pfx(ctor_name, base_ind_name, unspecialized_ty_name)
-    }
-
-    fn restore_replace(
-        &mut self,
-        e: ExprPtr<'t>,
-        local_params: &[ExprPtr<'t>],
-        st: &InductiveCheckState<'t>,
-        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-    ) -> ExprPtr<'t> {
-        match self.replace_f(e, local_params, st, specialized_rec_names_to_unspecialized_rec_names) {
-            Some(out) => out,
-            None => match self.ctx.read_expr(e) {
-                Var { .. } | Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => e,
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.restore_replace(
-                        binder_type,
-                        local_params,
-                        st,
-                        specialized_rec_names_to_unspecialized_rec_names,
-                    );
-                    let body =
-                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    self.ctx.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.restore_replace(
-                        binder_type,
-                        local_params,
-                        st,
-                        specialized_rec_names_to_unspecialized_rec_names,
-                    );
-                    let body =
-                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    self.ctx.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.restore_replace(
-                        binder_type,
-                        local_params,
-                        st,
-                        specialized_rec_names_to_unspecialized_rec_names,
-                    );
-                    let val =
-                        self.restore_replace(val, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    let body =
-                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    self.ctx.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.restore_replace(
-                        structure,
-                        local_params,
-                        st,
-                        specialized_rec_names_to_unspecialized_rec_names,
-                    );
-                    self.ctx.mk_proj(ty_name, idx, structure)
-                }
-                App { fun, arg, .. } => {
-                    let fun =
-                        self.restore_replace(fun, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    let arg =
-                        self.restore_replace(arg, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
-                    self.ctx.mk_app(fun, arg)
-                }
-            },
-        }
-    }
-
-    /// Traverse an expression replacing one of three appearances:\
-    /// 1. `_nested.Array_N`     |-> `Array T`\
-    /// 2. `_nested.Array_N.mk`  |-> `Array.mk`\
-    /// 3. `_nested.Array_N.rec` |-> `BaseType.rec_N`\
-    ///
-    /// Gets a map of the specialized recursors tot he "permanent" recursors:
-    ///
-    /// (_nested.Array_1.rec, Lean.Syntax.rec_1)\
-    /// (_nested.List_2.rec, Lean.Syntax.rec_2)
-    fn replace_f(
-        &mut self,
-        e: ExprPtr<'t>,
-        local_params: &[ExprPtr<'t>],
-        st: &InductiveCheckState<'t>,
-        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-    ) -> Option<ExprPtr<'t>> {
-        // If it's a recursor application, update the recursor.
-        // e.g.
-        // replacing(1) const _nested.Lean.PersistentArrayNode_2.rec with Lean.Elab.InfoTree.rec_2
-        // replacing(1) const _nested.List_6.rec with Lean.Elab.InfoTree.rec_6
-        if let Const { name, levels, .. } = self.ctx.read_expr(e) {
-            // If e was `Const(_nested.Array_1.rec)`, return `Const(Lean.Syntax.rec_1)`
-            if let Some(rec_name) = specialized_rec_names_to_unspecialized_rec_names.get(&name) {
-                return Some(self.ctx.mk_const(*rec_name, levels));
-            }
-        }
-        let (_, c_name, _, e_args) = self.ctx.unfold_const_apps(e)?;
-        // If it's an application of e.g. `_nested_Array1`, update
-        // Replace one of the specialized types with the un-specialized version:
-        // e.g.
-        //
-        // replacing(2) const _nested.Lean.PersistentArrayNode_2 with Lean.PersistentArrayNode.{0} Lean.Elab.InfoTree
-        // replacing(2) const _nested.List_6 with List.{0} (Lean.PersistentArrayNode.{0} Lean.Elab.InfoTree)
-        //
-        // aux2nested elem := (_nested.Array_1, (Array.[0] Lean.Syntax.[]))
-        // aux2nested elem := (_nested.List_2, (List.[0] Lean.Syntax.[]))
-        if let Some(nested) = st.nested_to_unspecialized_ty_nofvars.get(&c_name) {
-            debug_assert!(e_args.len() >= st.num_params as usize);
-            let inner = self.ctx.inst(*nested, local_params);
-            let outer = self.ctx.foldl_apps(inner, e_args.iter().copied().skip(st.num_params as usize));
-            return Some(outer);
-        }
-        let (nested_no_inst, aux_i_name) = self.get_nested_if_aux_ctor(st, c_name)?;
-
-        debug_assert!(e_args.len() >= st.num_params as usize);
-        let nested_inst = self.ctx.inst(nested_no_inst, local_params);
-        let (nested_f, i_args) = self.ctx.unfold_apps(nested_inst);
-        // Replace one of the nested constructor applications with a regular ctor application.
-        //
-        // replacing(3) c := _nested.Array_3.mk, auxI_name := _nested.Array_3, I_c := Array, c' := Array.mk.{0}
-        // replacing(3) c := _nested.List_4.nil, auxI_name := _nested.List_4, I_c := List, c' := List.nil.{0}
-        match self.ctx.read_expr(nested_f) {
-            Const { name: i_name, levels, .. } => {
-                let cprime_name = self.ctx.replace_pfx(c_name, aux_i_name, i_name);
-                let cprime = self.ctx.mk_const(cprime_name, levels);
-                let inner = self.ctx.foldl_apps(cprime, i_args.iter().copied());
-                let outer = self.ctx.foldl_apps(inner, e_args.iter().copied().skip(st.num_params as usize));
-                Some(outer)
-            }
-            _ => panic!("Should be const"),
-        }
-    }
-
-    /// Restore a single expression (can be a type or value)
-    fn restore_e(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        mut e: ExprPtr<'t>,
-        nested_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-    ) -> ExprPtr<'t> {
-        let is_pi = matches!(self.ctx.read_expr(e), Pi { .. });
-        let mut locals = Vec::new();
-        for _ in 0..st.local_params.len() {
-            match self.ctx.read_expr(e) {
-                // Also match on Lambda for restoring recursor rules.
-                Pi { binder_name, binder_style, binder_type, body, .. }
-                | Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                    e = self.ctx.inst(body, &[local]);
-                    locals.push(local);
-                }
-                _ => panic!(),
-            }
-        }
-        let e = self.restore_replace(e, locals.as_slice(), st, nested_rec_name_to_rec_name);
-        let out = if is_pi {
-            self.ctx.abstr_pi_telescope(locals.as_slice(), e)
-        } else {
-            self.ctx.abstr_lambda_telescope(locals.as_slice(), e)
-        };
-        out
-    }
-
-    fn restore_recursor1(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        // The list of names in the mutual block, NOT including
-        // the temporary nested declarations.
-        all_ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
-        // This map holds the specialized nested elements' recursor names;
-        // e.g. `_nested.Array_1.rec |-> Lean.Syntax.rec_1`,
-        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-        // `rec_name` This can be either an old/base inductive rec name, or a fresh/specialized name
-        // Either `Syntax.rec`, or `_nested.Array_N.rec`
-        rec_name: NamePtr<'t>,
-    ) -> RecursorData<'t> {
-        // resolve e.g. `_nested.Array_1.rec` to `Lean.Syntax.rec_1`
-        let resolved_rec_name =
-            specialized_rec_names_to_unspecialized_rec_names.get(&rec_name).copied().unwrap_or(rec_name);
-        // The new environment's recursor for this type; e.g. the recursor
-        // that's in the environment for _nested.Array_1.rec
-        let new_env_rec @ RecursorData { .. } = self.env.get_recursor(&rec_name).cloned().unwrap();
-        let restored_ty = self.restore_e(st, new_env_rec.info.ty, specialized_rec_names_to_unspecialized_rec_names);
-        let mut rules = Vec::new();
-        for rule in new_env_rec.rec_rules.iter().copied() {
-            let val = self.restore_e(st, rule.val, specialized_rec_names_to_unspecialized_rec_names);
-            let ctor_name =
-                if rec_name == resolved_rec_name { rule.ctor_name } else { self.restore_ctor_name(st, rule.ctor_name) };
-            rules.push(RecRule { ctor_name, val, ..rule })
-        }
-        RecursorData {
-            info: DeclarInfo { name: resolved_rec_name, ty: restored_ty, ..new_env_rec.info },
-            all_inductives: all_ind_names_no_specialized.clone(),
-            rec_rules: Arc::from(rules),
-            ..new_env_rec
-        }
-    }
-
-    fn check_restored_recursor1(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        // The list of names in the mutual block, NOT including
-        // the temporary nested declarations.
-        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
-        nested_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-        rec_name: NamePtr<'t>,
-    ) {
-        let restored = self.restore_recursor1(st, ind_names_no_specialized, nested_rec_name_to_rec_name, rec_name);
-        let resolved_rec_name = nested_rec_name_to_rec_name.get(&rec_name).copied().unwrap_or(rec_name);
-        match self.env.get_old_declar(&resolved_rec_name) {
-            Some(Declar::Recursor(original @ RecursorData { .. })) => {
-                assert!(original.aux_data_ck(&restored));
-                self.tc_cache.clear();
-                self.assert_def_eq(original.info.ty, restored.info.ty);
-                // have to do the rec rules as well.
-                assert_eq!(original.rec_rules.len(), restored.rec_rules.len());
-                for i in 0..original.rec_rules.len() {
-                    let old = original.rec_rules[i];
-                    let new = restored.rec_rules[i];
-                    assert_eq!(old.ctor_name, new.ctor_name);
-                    self.tc_cache.clear();
-                    self.assert_def_eq(old.val, new.val);
-                }
-            }
-            _ => {}
-        }
-    }
 
     fn restore_recursors(
         &mut self,
@@ -681,19 +352,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn check_restored_ctor1(
-        &mut self,
-        st: &InductiveCheckState<'t>,
-        rec_name_map: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
-        old_ctor: &ConstructorData<'t>,
-    ) {
-        let new_ctor @ ConstructorData { .. } = self.env.get_constructor(&old_ctor.info.name).unwrap();
-        assert!(old_ctor.aux_data_ck(&new_ctor));
-        let new_ty = self.restore_e(st, new_ctor.info.ty, rec_name_map);
-        self.tc_cache.clear();
-        self.assert_def_eq(old_ctor.info.ty, new_ty);
-    }
-
     fn restore_and_check(
         &mut self,
         st: &InductiveCheckState<'t>,
@@ -709,7 +367,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ) {
                 (Some(Declar::Inductive(old)), Some(Declar::Inductive(new))) => {
                     assert!(old.aux_data_ck(new));
-                    debug_assert!(!std::ptr::eq(old, new));
+                    debug_assert!(!crate::env_model::same_object(old, new));
                     self.tc_cache.clear();
                     self.assert_def_eq(old.info.ty, new.info.ty);
                 }
@@ -1394,6 +1052,28 @@ pub(crate) open spec fn ctors_level_free<'t, 'p>(c: TcCtx<'t, 'p>, st: Inductive
     forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
         && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
         ==> level_free(c, #[trigger] st.all_inductives_incl_specialized@[i].ctors@[j].ty)
+}
+
+/// A map from pointers to pointers, well formed, keys and values owned by `c`.
+pub(crate) open spec fn ptr_map_owned<'t, 'p, A, B, S>(c: TcCtx<'t, 'p>, m: &indexmap::IndexMap<crate::util::Ptr<A>, crate::util::Ptr<B>, S>) -> bool {
+    &&& crate::indexmap_model::imap_wf(m)
+    &&& forall|k: crate::util::Ptr<A>| #[trigger] crate::indexmap_model::imap_view(m).contains_key(k)
+        ==> crate::util_model::owns(c, k) && crate::util_model::owns(c, crate::indexmap_model::imap_view(m)[k])
+}
+
+/// Looking up an owned key in an owned pointer map meets `get`'s gate, so its
+/// answer is the map's.
+pub(crate) proof fn ptr_map_get<'t, 'p, A, B>(c: TcCtx<'t, 'p>, m: &crate::util::FxIndexMap<crate::util::Ptr<A>, crate::util::Ptr<B>>, k: crate::util::Ptr<A>)
+    requires
+        ptr_map_owned(c, m),
+        crate::util_model::owns(c, k),
+    ensures
+        vstd::std_specs::hash::borrowed_keys_obey_model::<crate::util::Ptr<A>, crate::util::Ptr<A>>(crate::indexmap_model::imap_view(m).dom(), &k),
+        vstd::std_specs::hash::builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>(),
+{
+    broadcast use vstd::std_specs::hash::group_hash_axioms;
+    crate::util_model::build_hasher_default_valid_fx();
+    crate::util_model::ptr_owned_keys(c, crate::indexmap_model::imap_view(m).dom().insert(k));
 }
 
 /// A level-free local's recorded type is closed.
@@ -3455,6 +3135,740 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 c += 1;
             }
             result
+        }
+    }
+
+    /// Verified in place: a constructor of a specialized type, with its
+    /// type's unspecialized form and its parent's name, both owned.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn get_nested_if_aux_ctor(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        c: NamePtr<'t>,
+    ) -> (result: Option<(ExprPtr<'t>, NamePtr<'t>)>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+        ensures
+            *final(self) == *old(self),
+            result matches Some((t, n)) ==> crate::util_model::owns(*(*final(self)).ctx, t)
+                && crate::util_model::owns(*(*final(self)).ctx, n),
+    {
+        // `inductive_name`
+        let ConstructorData { inductive_name, .. } = self.env.get_constructor(&c)?;
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            ptr_map_get(*self.ctx, &st.nested_to_unspecialized_ty_nofvars, *inductive_name);
+        }
+        let unspecialized_ty = st.nested_to_unspecialized_ty_nofvars.get(inductive_name).copied()?;
+        Some((unspecialized_ty, *inductive_name))
+    }
+
+    /// Verified in place: if `c` is `_nested_Array_1.mk`, just `Array.mk`.
+    ///
+    /// This is only used in restoring recursor rules, since those hold the constructor name.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_ctor_name(&mut self, st: &InductiveCheckState<'t>, ctor_name: NamePtr<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, ctor_name),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::util_model::owns(*(*final(self)).ctx, result),
+    {
+        // from `_nested_Array_1.mk`, retrieve `(Array Lean.Syntax, _nested.Array_1)`
+        let (unspecialized_ty, base_ind_name) = self.get_nested_if_aux_ctor(st, ctor_name).unwrap();
+        // Now get just `Const(Array, [])`
+        let unspecialized_f = self.ctx.unfold_apps_fun(unspecialized_ty);
+        // Get just the name for `Array`
+        let (unspecialized_ty_name, ..) = self.ctx.try_const_info(unspecialized_f).unwrap();
+        // Replace ctor_name[specialized_name |-> unspecialized_name]
+        // e.g. `_nested.Array_1.mk |-> Array.mk`
+        self.ctx.replace_pfx(ctor_name, base_ind_name, unspecialized_ty_name)
+    }
+
+    /// Verified in place: `replace_f` at every subterm, outermost first; the
+    /// result is owned.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_replace(
+        &mut self,
+        e: ExprPtr<'t>,
+        local_params: &[ExprPtr<'t>],
+        st: &InductiveCheckState<'t>,
+        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, e),
+            crate::util_model::owns_all(*old(self).ctx, local_params@),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::util_model::owns(*(*final(self)).ctx, result),
+    {
+        match self.replace_f(e, local_params, st, specialized_rec_names_to_unspecialized_rec_names) {
+            Some(out) => out,
+            None => match self.ctx.read_expr(e) {
+                Var { .. } | Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => e,
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.restore_replace(
+                        binder_type,
+                        local_params,
+                        st,
+                        specialized_rec_names_to_unspecialized_rec_names,
+                    );
+                    let body =
+                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    self.ctx.mk_lambda(binder_name, binder_style, binder_type, body)
+                }
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.restore_replace(
+                        binder_type,
+                        local_params,
+                        st,
+                        specialized_rec_names_to_unspecialized_rec_names,
+                    );
+                    let body =
+                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    self.ctx.mk_pi(binder_name, binder_style, binder_type, body)
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    let binder_type = self.restore_replace(
+                        binder_type,
+                        local_params,
+                        st,
+                        specialized_rec_names_to_unspecialized_rec_names,
+                    );
+                    let val =
+                        self.restore_replace(val, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    let body =
+                        self.restore_replace(body, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    self.ctx.mk_let(binder_name, binder_type, val, body, nondep)
+                }
+                Proj { ty_name, idx, structure, .. } => {
+                    let structure = self.restore_replace(
+                        structure,
+                        local_params,
+                        st,
+                        specialized_rec_names_to_unspecialized_rec_names,
+                    );
+                    self.ctx.mk_proj(ty_name, idx, structure)
+                }
+                App { fun, arg, .. } => {
+                    let fun =
+                        self.restore_replace(fun, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    let arg =
+                        self.restore_replace(arg, local_params, st, specialized_rec_names_to_unspecialized_rec_names);
+                    self.ctx.mk_app(fun, arg)
+                }
+            },
+        }
+    }
+
+    /// Traverse an expression replacing one of three appearances:\
+    /// 1. `_nested.Array_N`     |-> `Array T`\
+    /// 2. `_nested.Array_N.mk`  |-> `Array.mk`\
+    /// 3. `_nested.Array_N.rec` |-> `BaseType.rec_N`\
+    ///
+    /// Gets a map of the specialized recursors tot he "permanent" recursors:
+    ///
+    /// (_nested.Array_1.rec, Lean.Syntax.rec_1)\
+    /// (_nested.List_2.rec, Lean.Syntax.rec_2)
+    ///
+    /// Verified in place: the replacement is owned.
+    ///
+    /// VERUS-REWRITE(named-temp): the iterators handed to `foldl_apps` are
+    /// bound to locals so the proof can name their elements; the two
+    /// `debug_assert!`s are kept as they are.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn replace_f(
+        &mut self,
+        e: ExprPtr<'t>,
+        local_params: &[ExprPtr<'t>],
+        st: &InductiveCheckState<'t>,
+        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+    ) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, e),
+            crate::util_model::owns_all(*old(self).ctx, local_params@),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
+    {
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::iter::copied_postcondition,
+                vstd::std_specs::iter::skip_postcondition;
+        }
+        // If it's a recursor application, update the recursor.
+        // e.g.
+        // replacing(1) const _nested.Lean.PersistentArrayNode_2.rec with Lean.Elab.InfoTree.rec_2
+        // replacing(1) const _nested.List_6.rec with Lean.Elab.InfoTree.rec_6
+        if let Const { name, levels, .. } = self.ctx.read_expr(e) {
+            proof {
+                ptr_map_get(*self.ctx, specialized_rec_names_to_unspecialized_rec_names, name);
+            }
+            // If e was `Const(_nested.Array_1.rec)`, return `Const(Lean.Syntax.rec_1)`
+            if let Some(rec_name) = specialized_rec_names_to_unspecialized_rec_names.get(&name) {
+                return Some(self.ctx.mk_const(*rec_name, levels));
+            }
+        }
+        let (_, c_name, _, e_args) = self.ctx.unfold_const_apps(e)?;
+        // If it's an application of e.g. `_nested_Array1`, update
+        // Replace one of the specialized types with the un-specialized version:
+        // e.g.
+        //
+        // replacing(2) const _nested.Lean.PersistentArrayNode_2 with Lean.PersistentArrayNode.{0} Lean.Elab.InfoTree
+        // replacing(2) const _nested.List_6 with List.{0} (Lean.PersistentArrayNode.{0} Lean.Elab.InfoTree)
+        //
+        // aux2nested elem := (_nested.Array_1, (Array.[0] Lean.Syntax.[]))
+        // aux2nested elem := (_nested.List_2, (List.[0] Lean.Syntax.[]))
+        proof {
+            ptr_map_get(*self.ctx, &st.nested_to_unspecialized_ty_nofvars, c_name);
+        }
+        if let Some(nested) = st.nested_to_unspecialized_ty_nofvars.get(&c_name) {
+            debug_assert!(e_args.len() >= st.num_params as usize);
+            let inner = self.ctx.inst(*nested, local_params);
+            let skip_it = e_args.iter().copied().skip(st.num_params as usize);
+            proof {
+                assert forall|i: int| 0 <= i < vstd::std_specs::iter::IteratorSpec::remaining(&skip_it).len()
+                    implies crate::util_model::owns(*self.ctx, #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&skip_it)[i]) by {
+                    assert(vstd::std_specs::iter::IteratorSpec::remaining(&skip_it)[i] == e_args@[i + st.num_params as int]);
+                }
+            }
+            let outer = self.ctx.foldl_apps(inner, skip_it);
+            return Some(outer);
+        }
+        let (nested_no_inst, aux_i_name) = self.get_nested_if_aux_ctor(st, c_name)?;
+
+        debug_assert!(e_args.len() >= st.num_params as usize);
+        let nested_inst = self.ctx.inst(nested_no_inst, local_params);
+        let (nested_f, i_args) = self.ctx.unfold_apps(nested_inst);
+        // Replace one of the nested constructor applications with a regular ctor application.
+        //
+        // replacing(3) c := _nested.Array_3.mk, auxI_name := _nested.Array_3, I_c := Array, c' := Array.mk.{0}
+        // replacing(3) c := _nested.List_4.nil, auxI_name := _nested.List_4, I_c := List, c' := List.nil.{0}
+        match self.ctx.read_expr(nested_f) {
+            Const { name: i_name, levels, .. } => {
+                let cprime_name = self.ctx.replace_pfx(c_name, aux_i_name, i_name);
+                let cprime = self.ctx.mk_const(cprime_name, levels);
+                let i_it = i_args.iter().copied();
+                proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&i_it) =~= i_args@); }
+                let inner = self.ctx.foldl_apps(cprime, i_it);
+                let skip_it = e_args.iter().copied().skip(st.num_params as usize);
+                proof {
+                    assert forall|i: int| 0 <= i < vstd::std_specs::iter::IteratorSpec::remaining(&skip_it).len()
+                        implies crate::util_model::owns(*self.ctx, #[trigger] vstd::std_specs::iter::IteratorSpec::remaining(&skip_it)[i]) by {
+                        assert(vstd::std_specs::iter::IteratorSpec::remaining(&skip_it)[i] == e_args@[i + st.num_params as int]);
+                    }
+                }
+                let outer = self.ctx.foldl_apps(inner, skip_it);
+                Some(outer)
+            }
+            _ => panic!("Should be const"),
+        }
+    }
+
+    /// Restore a single expression (can be a type or value). Verified in
+    /// place: the result is owned.
+    ///
+    /// VERUS-REWRITE(tested-closed): `e` is tested closed first
+    /// (`assert_closed`); opening its parameters with fresh locals needs it,
+    /// and a well-formed recursor type, rule or constructor type is closed.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_e(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        mut e: ExprPtr<'t>,
+        nested_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            crate::util_model::owns(*old(self).ctx, e),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, nested_rec_name_to_rec_name),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::util_model::owns(*(*final(self)).ctx, result),
+    {
+        self.assert_closed(e);
+        let is_pi = matches!(self.ctx.read_expr(e), Pi { .. });
+        let mut locals = Vec::new();
+        for _ in 0..st.local_params.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                level_free(*self.ctx, e),
+                forall|i: int| 0 <= i < locals@.len() ==> level_free_local(*self.ctx, #[trigger] locals@[i]),
+        {
+            match self.ctx.read_expr(e) {
+                // Also match on Lambda for restoring recursor rules.
+                Pi { binder_name, binder_style, binder_type, body, .. }
+                | Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                    proof {
+                        assert(level_free(*self.ctx, binder_type));
+                        crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                    }
+                    e = self.ctx.inst(body, &[local]);
+                    proof {
+                        let aids = crate::util_model::arena_ids(*self.ctx);
+                        assert([local]@ =~= seq![local]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                        crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                        crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                    }
+                    let ghost l0 = locals@;
+                    locals.push(local);
+                    proof {
+                        assert forall|i: int| 0 <= i < locals@.len() implies level_free_local(*self.ctx, #[trigger] locals@[i]) by {
+                            if i < l0.len() { assert(locals@[i] == l0[i]); }
+                        }
+                    }
+                }
+                _ => panic!(),
+            }
+        }
+        proof {
+            assert forall|i: int| 0 <= i < locals@.len() implies crate::util_model::owns(*self.ctx, #[trigger] locals@[i]) by {
+                assert(level_free_local(*self.ctx, locals@[i]));
+            }
+        }
+        let e = self.restore_replace(e, locals.as_slice(), st, nested_rec_name_to_rec_name);
+        proof {
+            assert(forall|i: int| #![trigger locals@[i]] 0 <= i < locals@.len() ==> level_free_local(*self.ctx, locals@[i]));
+        }
+        let out = if is_pi {
+            self.ctx.abstr_pi_telescope(locals.as_slice(), e)
+        } else {
+            self.ctx.abstr_lambda_telescope(locals.as_slice(), e)
+        };
+        out
+    }
+
+    /// Return an ordered map, mapping the specialized recursor names to the
+    /// unspecialized recursor names. For example:
+    ///
+    /// ```ignore
+    /// specialized_rec_name_to_unspecialized_rec_name := [
+    ///     _nested.Array_1.rec                  |-> Lean.Elab.Term.Do.Code.rec_1
+    ///     _nested.List_2.rec                   |-> Lean.Elab.Term.Do.Code.rec_2
+    ///     _nested.Lean.Elab.Term.Do.Alt_3.rec  |-> Lean.Elab.Term.Do.Code.rec_3
+    /// ]
+    /// ```
+    ///
+    /// Verified in place: an owned name-to-name map.
+    ///
+    /// VERUS-REWRITE(index-walk): `for ind_name in all_ind_names.iter().copied().skip(n)`
+    /// is the scan by index from `n` it stands for.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_specialized_rec_to_unspecialized_map(
+        &mut self,
+        base_mutuals: &[IndTyHeader<'t>],
+    ) -> (result: FxIndexMap<NamePtr<'t>, NamePtr<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            headers_owned(*old(self).ctx, base_mutuals@),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            ptr_map_owned(*(*final(self)).ctx, &result),
+    {
+        // The unmodified name of the "main" type being checked, e.g. `Lean.Syntax`
+        let main_ind_ty_name = base_mutuals.get(0).map(|zth: &IndTyHeader<'t>| -> (r: NamePtr<'t>) ensures r == zth.name { zth.name }).unwrap();
+        proof {
+            let h0 = base_mutuals@[0];
+            assert(crate::util_model::owns(*self.ctx, h0.name));
+        }
+        let mut specialized_rec_names_to_unspecialized_rec_names = crate::util::new_fx_index_map();
+        let rec_str = self.ctx.alloc_string(std::borrow::Cow::Borrowed("rec"));
+
+        // The MODIFIED version looked up in the new environment. The modification would
+        // just be additions to `all_ind_names`, which now contains the `_nested.Array`
+        // specialized type names.
+        let InductiveData { all_ind_names, .. } = self.env.get_inductive(&main_ind_ty_name).unwrap();
+        // The modified inductive with the specialized names added must have more elements
+        // than the unmodified type's list of names.
+        assert!(all_ind_names.len() > base_mutuals.len());
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+        }
+        // For every NEW NESTED elem (new, because we skip `n_types`, skipping all of the base mutuals.)
+        // For each modified e.g. `_nested..` name
+        let mut k: usize = base_mutuals.len();
+        while k < all_ind_names.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                base_mutuals@.len() <= k <= all_ind_names@.len(),
+                crate::indexmap_model::imap_keys(&specialized_rec_names_to_unspecialized_rec_names).len() <= k - base_mutuals@.len(),
+                forall|b: int| 0 <= b < all_ind_names@.len() ==> crate::env_model::env_owns(*self.env, #[trigger] all_ind_names@[b]),
+                crate::util_model::owns(*self.ctx, main_ind_ty_name),
+                crate::util_model::owns(*self.ctx, rec_str),
+                ptr_map_owned(*self.ctx, &specialized_rec_names_to_unspecialized_rec_names),
+            decreases all_ind_names@.len() - k,
+        {
+            let ind_name = all_ind_names[k];
+            proof { assert(crate::env_model::env_owns(*self.env, all_ind_names@[k as int])); }
+            let specialized_rec_name = self.ctx.str(ind_name, rec_str);
+            let unspecialized_rec_name = self.ctx.str(main_ind_ty_name, rec_str);
+            let unspecialized_rec_name = self.ctx.append_index_after(
+                unspecialized_rec_name,
+                (specialized_rec_names_to_unspecialized_rec_names.len() + 1) as u64,
+            );
+            proof {
+                crate::util_model::build_hasher_default_valid_fx();
+                crate::util_model::ptr_owned_keys(*self.ctx,
+                    crate::indexmap_model::imap_view(&specialized_rec_names_to_unspecialized_rec_names).dom().insert(specialized_rec_name));
+                let m = &specialized_rec_names_to_unspecialized_rec_names;
+                crate::indexmap_model::insert_imap_wf(crate::indexmap_model::imap_keys(m), crate::indexmap_model::imap_view(m),
+                    specialized_rec_name, unspecialized_rec_name);
+            }
+            specialized_rec_names_to_unspecialized_rec_names.insert(specialized_rec_name, unspecialized_rec_name);
+            k += 1;
+        }
+        specialized_rec_names_to_unspecialized_rec_names
+    }
+
+    /// Verified in place: the recursor of the temporary environment for
+    /// `rec_name`, restored to the block's own names; everything owned.
+    ///
+    /// VERUS-REWRITE(index-walk): `for rule in new_env_rec.rec_rules.iter().copied()`
+    /// is the scan by index it stands for.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn restore_recursor1(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        // The list of names in the mutual block, NOT including
+        // the temporary nested declarations.
+        all_ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
+        // This map holds the specialized nested elements' recursor names;
+        // e.g. `_nested.Array_1.rec |-> Lean.Syntax.rec_1`,
+        specialized_rec_names_to_unspecialized_rec_names: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+        // `rec_name` This can be either an old/base inductive rec name, or a fresh/specialized name
+        // Either `Syntax.rec`, or `_nested.Array_N.rec`
+        rec_name: NamePtr<'t>,
+    ) -> (result: RecursorData<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            crate::util_model::owns(*old(self).ctx, rec_name),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::util_model::owns(*(*final(self)).ctx, result.info.ty),
+            forall|k: int| 0 <= k < result.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] result.rec_rules@[k].val),
+            forall|k: int| 0 <= k < result.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] result.rec_rules@[k].ctor_name),
+    {
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            ptr_map_get(*self.ctx, specialized_rec_names_to_unspecialized_rec_names, rec_name);
+        }
+        // resolve e.g. `_nested.Array_1.rec` to `Lean.Syntax.rec_1`
+        let resolved_rec_name =
+            specialized_rec_names_to_unspecialized_rec_names.get(&rec_name).copied().unwrap_or(rec_name);
+        // The new environment's recursor for this type; e.g. the recursor
+        // that's in the environment for _nested.Array_1.rec
+        let new_env_rec @ RecursorData { .. } = self.env.get_recursor(&rec_name).cloned().unwrap();
+        let restored_ty = self.restore_e(st, new_env_rec.info.ty, specialized_rec_names_to_unspecialized_rec_names);
+        let mut rules: Vec<RecRule<'t>> = Vec::new();
+        let mut k: usize = 0;
+        while k < new_env_rec.rec_rules.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                crate::env_model::recursor_data_owned(*self.env, new_env_rec),
+                crate::util_model::owns(*self.ctx, rec_name),
+                crate::util_model::owns(*self.ctx, restored_ty),
+                ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
+                ptr_map_owned(*self.ctx, specialized_rec_names_to_unspecialized_rec_names),
+                k <= new_env_rec.rec_rules@.len(),
+                rules@.len() == k,
+                forall|b: int| 0 <= b < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[b].val),
+                forall|b: int| 0 <= b < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[b].ctor_name),
+            decreases new_env_rec.rec_rules@.len() - k,
+        {
+            let rule = new_env_rec.rec_rules[k];
+            proof {
+                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k as int].val));
+                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k as int].ctor_name));
+            }
+            let val = self.restore_e(st, rule.val, specialized_rec_names_to_unspecialized_rec_names);
+            let ctor_name =
+                if rec_name == resolved_rec_name { rule.ctor_name } else { self.restore_ctor_name(st, rule.ctor_name) };
+            let ghost r0 = rules@;
+            rules.push(RecRule { ctor_name, val, ..rule });
+            proof {
+                assert forall|b: int| 0 <= b < rules@.len() implies crate::util_model::owns(*self.ctx, #[trigger] rules@[b].val) by {
+                    if b < r0.len() { assert(rules@[b] == r0[b]); }
+                }
+                assert forall|b: int| 0 <= b < rules@.len() implies crate::util_model::owns(*self.ctx, #[trigger] rules@[b].ctor_name) by {
+                    if b < r0.len() { assert(rules@[b] == r0[b]); }
+                }
+            }
+            k += 1;
+        }
+        RecursorData {
+            info: DeclarInfo { name: resolved_rec_name, ty: restored_ty, ..new_env_rec.info },
+            all_inductives: all_ind_names_no_specialized.clone(),
+            rec_rules: Arc::from(rules),
+            ..new_env_rec
+        }
+    }
+
+    /// Verified in place: the restored recursor is checked against the one
+    /// the export file declares, if any.
+    ///
+    /// VERUS-REWRITE(tested-closed): each pair handed to `assert_def_eq` is
+    /// tested closed first (`assert_closed`), which is what puts both in
+    /// scope; a well-formed recursor's type and rules are closed.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn check_restored_recursor1(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        // The list of names in the mutual block, NOT including
+        // the temporary nested declarations.
+        ind_names_no_specialized: &Arc<[NamePtr<'t>]>,
+        nested_rec_name_to_rec_name: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+        rec_name: NamePtr<'t>,
+    )
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            crate::util_model::owns(*old(self).ctx, rec_name),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, nested_rec_name_to_rec_name),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        let restored = self.restore_recursor1(st, ind_names_no_specialized, nested_rec_name_to_rec_name, rec_name);
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            ptr_map_get(*self.ctx, nested_rec_name_to_rec_name, rec_name);
+        }
+        let resolved_rec_name = nested_rec_name_to_rec_name.get(&rec_name).copied().unwrap_or(rec_name);
+        match self.env.get_old_declar(&resolved_rec_name) {
+            Some(Declar::Recursor(original @ RecursorData { .. })) => {
+                assert!(original.aux_data_ck(&restored));
+                self.tc_cache.clear();
+                self.assert_closed(original.info.ty);
+                self.assert_closed(restored.info.ty);
+                proof {
+                    level_free_in_scope(*self, original.info.ty);
+                    level_free_in_scope(*self, restored.info.ty);
+                }
+                self.assert_def_eq(original.info.ty, restored.info.ty);
+                // have to do the rec rules as well.
+                assert_eq!(original.rec_rules.len(), restored.rec_rules.len());
+                for i in 0..original.rec_rules.len()
+                    invariant
+                        crate::tc::tc_wf(*self),
+                        self.env == old(self).env,
+                        self.ctx.dbj_level_counter == 0,
+                        crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                        self.live == old(self).live,
+                        crate::env_model::recursor_data_owned(*self.env, *original),
+                        original.rec_rules@.len() == restored.rec_rules@.len(),
+                        forall|k: int| 0 <= k < restored.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] restored.rec_rules@[k].val),
+                {
+                    let old = original.rec_rules[i];
+                    let new = restored.rec_rules[i];
+                    assert_eq!(old.ctor_name, new.ctor_name);
+                    self.tc_cache.clear();
+                    proof {
+                        assert(crate::env_model::env_owns(*self.env, original.rec_rules@[i as int].val));
+                        assert(crate::util_model::owns(*self.ctx, restored.rec_rules@[i as int].val));
+                    }
+                    self.assert_closed(old.val);
+                    self.assert_closed(new.val);
+                    proof {
+                        level_free_in_scope(*self, old.val);
+                        level_free_in_scope(*self, new.val);
+                    }
+                    self.assert_def_eq(old.val, new.val);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Verified in place: a constructor of the block, restored from the
+    /// temporary environment, is checked against the export file's.
+    ///
+    /// VERUS-REWRITE(tested-closed): both types handed to `assert_def_eq` are
+    /// tested closed first, as in `check_restored_recursor1`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn check_restored_ctor1(
+        &mut self,
+        st: &InductiveCheckState<'t>,
+        rec_name_map: &FxIndexMap<NamePtr<'t>, NamePtr<'t>>,
+        old_ctor: &ConstructorData<'t>,
+    )
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            crate::env_model::constructor_data_owned(*old(self).env, *old_ctor),
+            ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
+            ptr_map_owned(*old(self).ctx, rec_name_map),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        let new_ctor @ ConstructorData { .. } = self.env.get_constructor(&old_ctor.info.name).unwrap();
+        assert!(old_ctor.aux_data_ck(&new_ctor));
+        let new_ty = self.restore_e(st, new_ctor.info.ty, rec_name_map);
+        self.tc_cache.clear();
+        self.assert_closed(old_ctor.info.ty);
+        self.assert_closed(new_ty);
+        proof {
+            level_free_in_scope(*self, old_ctor.info.ty);
+            level_free_in_scope(*self, new_ty);
+        }
+        self.assert_def_eq(old_ctor.info.ty, new_ty);
+    }
+
+    // Assert that the inductive types being added to the extension which
+    // are also in the export file are definitionally equal.
+    //
+    // Verified in place. VERUS-REWRITE(tested-closed): both types handed to
+    // `assert_def_eq` are tested closed first, as in `check_restored_recursor1`;
+    // VERUS-REWRITE(ptr-eq-wrapper): `std::ptr::eq(old, new)` is the same call
+    // behind `env_model::same_object` (Verus cannot pass a borrow as a raw
+    // pointer).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn assert_nonnested_tys_def_eq(&mut self, base_ind: &InductiveData<'t>, st: &InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::env_model::inductive_data_owned(*old(self).env, *base_ind),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        assert!(!st.is_nested());
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+        }
+        for name in it: base_ind.all_ind_names.iter()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+        {
+            match (self.env.get_old_declar(name), self.env.get_temp_declar(name)) {
+                (Some(Declar::Inductive(old)), Some(Declar::Inductive(new))) => {
+                    assert!(old.aux_data_ck(new));
+                    debug_assert!(!crate::env_model::same_object(old, new));
+                    self.tc_cache.clear();
+                    self.assert_closed(old.info.ty);
+                    self.assert_closed(new.info.ty);
+                    proof {
+                        level_free_in_scope(*self, old.info.ty);
+                        level_free_in_scope(*self, new.info.ty);
+                    }
+                    self.assert_def_eq(old.info.ty, new.info.ty);
+                }
+                _ => panic!(),
+            }
+        }
+    }
+
+    /// Verified in place. VERUS-REWRITE(tested-closed): both types handed to
+    /// `assert_def_eq` are tested closed first, as in `check_restored_recursor1`;
+    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn assert_nonnested_ctors_def_eq(&mut self, st: &InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+    {
+        assert!(!st.is_nested());
+        for inductive in it: st.all_inductives_incl_specialized.iter()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+        {
+            for ctor in it2: inductive.ctors.iter()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    self.env == old(self).env,
+                    self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.live == old(self).live,
+            {
+                match (self.env.get_old_declar(&ctor.name), self.env.get_temp_declar(&ctor.name)) {
+                    (Some(Declar::Constructor(old)), Some(Declar::Constructor(new))) => {
+                        assert!(old.aux_data_ck(new));
+                        debug_assert!(!crate::env_model::same_object(old, new));
+                        self.tc_cache.clear();
+                        self.assert_closed(old.info.ty);
+                        self.assert_closed(new.info.ty);
+                        proof {
+                            level_free_in_scope(*self, old.info.ty);
+                            level_free_in_scope(*self, new.info.ty);
+                        }
+                        self.assert_def_eq(old.info.ty, new.info.ty);
+                    }
+                    _ => panic!(),
+                }
+            }
         }
     }
 
