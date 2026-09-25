@@ -512,7 +512,8 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str1 ](
     ensures
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),        // names only: the expression caches are untouched
+        final(ctx).expr_cache == old(ctx).expr_cache,
 ;
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
@@ -543,7 +544,8 @@ pub assume_specification<'x, 't: 'x, 'p: 't>[ TcCtx::<'t, 'p>::append_index_afte
         crate::util_model::owns(*final(ctx), result),
         name_id(result) == append_index_after_id(crate::util_model::arena_ids(*final(ctx)), n, idx),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
+        crate::util_model::same_arenas(*old(ctx), *final(ctx)),        // names only: the expression caches are untouched
+        final(ctx).expr_cache == old(ctx).expr_cache,
 ;
 
 #[verifier::external_body]

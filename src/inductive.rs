@@ -883,157 +883,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert!(self.is_valid_ind_app(st, parent_ind_name, ctor_type_cursor))
     }
 
-    // Test large elimination for an inductive that we know is...
-    // 1. An inductive predicate (is in `Prop`)
-    // 1. Not a mutual inductive
-    // 3. Has exactly one constructor.
-    //
-    // This kind of inductive prop is okay for large elimination IFF every
-    // non-prop ctor arg is a param or index of the inductive type.
-    //
-    // Example: This inductive prop is okay for large elimination, because `n` is an index.
-    //```
-    // inductive MyTypeLarge (A : Type) : Nat → Prop
-    // | mk (n : Nat) : MyTypeLarge A n
-    // ```
-    //
-    // This type is not okay for large elimination, because `m` is neither a parameter nor an index.
-    //```
-    // inductive MyTypeSmall (A : Type) : Nat → Prop
-    // | mk (m : Nat) (n : Nat) : MyTypeSmall A n
-    //```
-    fn large_elim_test_aux(&mut self, mut ctor_type_cursor: ExprPtr<'t>, mut rem_params: usize) -> bool {
-        self.tc_cache.clear();
-        let mut non_prop_ctor_telescope_elems = Vec::new();
-        loop {
-            match self.ctx.read_expr(ctor_type_cursor) {
-                Pi { binder_name, binder_style, binder_type, body, .. } if rem_params != 0 => {
-                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                    ctor_type_cursor = self.ctx.inst(body, &[local]);
-                    rem_params -= 1;
-                }
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                    ctor_type_cursor = self.ctx.inst(body, &[local]);
-                    let binder_type_level = self.ensure_infers_as_sort(binder_type);
-                    // If the binder type is NOT in sort 0, add it to the list
-                    // of constructor args that need to be checked
-                    if !self.ctx.is_zero(binder_type_level) {
-                        non_prop_ctor_telescope_elems.push(local);
-                    }
-                }
-                _ => break,
-            }
-        }
 
-        let (_, ind_ty_params_and_indices) = self.ctx.unfold_apps(ctor_type_cursor);
 
-        // Check whether `non_prop_ctor_telescope_elems` is a subset of
-        // `ind_ty params ++ ind_ty indices`
-        //
-        // if the list of non-prop constructor args is NOT a subset of
-        // the exprs being applied to the inductive (which is params + indices)
-        // then we can say that this type only eliminates into Prop/Sort 0
-        non_prop_ctor_telescope_elems.iter().all(|arg| ind_ty_params_and_indices.contains(arg))
-    }
 
-    fn large_elim_test(&mut self, st: &InductiveCheckState<'t>) -> bool {
-        if st.is_nonzero.unwrap() {
-            // If our inductive is in `Type <n>`, it's large eliminating
-            return true;
-        }
-
-        match st.all_inductives_incl_specialized.as_slice() {
-            [] => panic!("inductive declaration with no types declared"),
-            [ind_ty] => {
-                match ind_ty.ctors.as_slice() {
-                    // This type is an empty prop (has no constructors)
-                    [] => true,
-                    // At this point, we know that we're dealing with an inductive that...
-                    // 1. is not a mutual inductive (ind_types = 1)
-                    // 2. is an inductive proposition (because its result sort is Prop/0)
-                    // 3. has one and only one constructor
-                    [ctor] => self.large_elim_test_aux(ctor.ty, st.local_params.len()),
-                    // More than one constructor; no large elimination.
-                    _ => false,
-                }
-            }
-            _ => false,
-        }
-    }
-
-    /// Shadow-only (NANODA_SHADOW=1): run the certified elimination-level
-    /// test (`inductive_model::verified_large_elim_ok`) on the same inductive
-    /// block the original `large_elim_test` is about to decide, and count
-    /// whether the two agree. Never affects a verdict; the original decision
-    /// below is untouched.
-    fn shadow_check_elim_level(&mut self, st: &InductiveCheckState<'t>) {
-        if !crate::tc::route_stats::shadow_enabled() {
-            return;
-        }
-        crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_TOTAL);
-        let is_nonzero = match st.is_nonzero {
-            Some(b) => b,
-            None => return,
-        };
-        let n_ind = st.all_inductives_incl_specialized.len();
-        let (n_ctors, only_ctor_ty) = if n_ind == 1 {
-            let ctors = &st.all_inductives_incl_specialized[0].ctors;
-            (ctors.len(), if ctors.len() == 1 { Some(ctors[0].ty) } else { None })
-        } else {
-            (0, None)
-        };
-        if let Some(ty) = only_ctor_ty {
-            if self.ctx.num_loose_bvars(ty) != 0 {
-                return;
-            }
-        }
-        let mut memo = crate::tc_model::WhnfMemo::new(self.env);
-        // the composed decision, so what is certified is not just the test's
-        // boolean but the elimination universe it leads to: fresh when large-
-        // eliminating, exactly `Prop` when not.
-        let verified = crate::inductive_model::verified_mk_elim_level(
-            self.ctx,
-            self.env,
-            &mut memo,
-            is_nonzero,
-            n_ind,
-            n_ctors,
-            only_ctor_ty,
-            st.local_params.len(),
-            st.uparams,
-            256,
-        );
-        let kernel = self.large_elim_test(st);
-        match verified {
-            Some((_, _, v)) if v == kernel => crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_CERT),
-            Some(_) => crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_ELIM_DISAGREE),
-            None => {}
-        }
-    }
-
-    fn mk_elim_level(&mut self, st: &mut InductiveCheckState<'t>) {
-        self.shadow_check_elim_level(st);
-        if self.large_elim_test(st) {
-            let elim_level = self.gen_elim_level(st);
-            let elim_level = self.ctx.param(elim_level);
-            // Extra work since you want the new thing at the front of the vector (in position 0)
-            let rec_levels = {
-                let mut base = vec![elim_level];
-                for l in self.ctx.read_levels(st.uparams).iter().copied() {
-                    base.push(l)
-                }
-                self.ctx.alloc_levels(Arc::from(base))
-            };
-            st.rec_uparams = Some(rec_levels);
-            st.elim_level = Some(elim_level);
-        } else {
-            // If this is not a large eliminating type, the elim level can only be zero,
-            // and the only uparams for the recursor are those of the inductive spec.
-            st.elim_level = Some(self.ctx.zero());
-            st.rec_uparams = Some(st.uparams);
-        };
-    }
 
     fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> ExprPtr<'t> {
         let elim_sort = self.ctx.mk_sort(st.elim_level.unwrap());
@@ -2092,7 +1944,422 @@ pub assume_specification<'a>[ <IndTyHeader<'a> as Clone>::clone ](h: &IndTyHeade
         r.ty == h.ty,
 ;
 
+
+/// A constructor type walked syntactically by `large_elim_test_aux`: the
+/// cursors, each one's binder type and body, the local it was opened with, the
+/// sort of each non-parameter binder type, and the result type's spine.
+pub struct ElimCert {
+    pub cursors: Seq<ExprSpec>,
+    pub bts: Seq<ExprSpec>,
+    pub bodies: Seq<ExprSpec>,
+    pub locals: Seq<u32>,
+    pub sorts: Seq<LevelSpec>,
+    pub head: ExprSpec,
+    pub args: Seq<ExprSpec>,
+}
+
+/// The walk, and the large-elimination rule on it: every non-parameter field
+/// is either a proof (its type's sort is `Prop` under every assignment) or one
+/// of the result type's arguments -- a parameter or an index.
+pub open spec fn elim_cert_ok<'x, 't>(env: crate::env::Env<'x, 't>, ty: ExprSpec, np: nat, c: ElimCert) -> bool {
+    &&& c.cursors.len() == c.locals.len() + 1
+    &&& c.bts.len() == c.locals.len()
+    &&& c.bodies.len() == c.locals.len()
+    &&& c.sorts.len() == c.locals.len()
+    &&& c.cursors[0] == ty
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+        && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
+    &&& forall|k: int| np <= k < c.locals.len() ==> crate::tc::kinfer_claim(env, c.bts[k], ExprSpec::Sort(#[trigger] c.sorts[k]))
+    &&& c.cursors.last() == crate::beta_model::spine_app(c.head, c.args)
+    &&& forall|k: int| np <= k < c.locals.len() ==> (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(c.sorts[k], rho) == 0)
+        || c.args.contains(ExprSpec::Free(#[trigger] c.locals[k]))
+}
+
+pub open spec fn large_elim_aux_ok<'x, 't>(env: crate::env::Env<'x, 't>, ty: ExprSpec, np: nat) -> bool {
+    exists|c: ElimCert| #[trigger] elim_cert_ok(env, ty, np, c)
+}
+
+
+/// The large-elimination decision's rule: a block in a non-`Prop` sort, or a
+/// single inductive with no constructors, or one whose only constructor
+/// satisfies `large_elim_aux_ok` (every non-parameter field a proof or an
+/// index).
+pub(crate) open spec fn large_elim_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>) -> bool {
+    ||| st.is_nonzero == Some(true)
+    ||| st.all_inductives_incl_specialized@.len() == 1 && st.all_inductives_incl_specialized@[0].ctors@.len() == 0
+    ||| st.all_inductives_incl_specialized@.len() == 1 && st.all_inductives_incl_specialized@[0].ctors@.len() == 1
+        && large_elim_aux_ok(env, crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[0].ty),
+            st.local_params@.len() as nat)
+}
+
+/// The block's single constructor type, when the test would look at it, is
+/// level free.
+pub(crate) open spec fn elim_ctor_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
+    st.all_inductives_incl_specialized@.len() == 1 && st.all_inductives_incl_specialized@[0].ctors@.len() == 1
+        ==> level_free(c, st.all_inductives_incl_specialized@[0].ctors@[0].ty)
+}
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Verified in place: on `true` the block satisfies `large_elim_ok`.
+    ///
+    /// VERUS-REWRITE(slice-pattern): the two `match ... .as_slice() { [] => ..,
+    /// [x] => .., _ => .. }` are the length tests and index they stand for (slice
+    /// patterns are unsupported). Same cases, same order, same panic.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn large_elim_test(&mut self, st: &InductiveCheckState<'t>) -> (result: bool)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            st.is_nonzero is Some,
+            elim_ctor_ok(*old(self).ctx, *st),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result ==> large_elim_ok(*old(self).env, *st),
+    {
+        if st.is_nonzero.unwrap() {
+            // If our inductive is in `Type <n>`, it's large eliminating
+            return true;
+        }
+
+        let n = st.all_inductives_incl_specialized.len();
+        if n == 0 {
+            panic!("inductive declaration with no types declared")
+        } else if n == 1 {
+            let ind_ty = &st.all_inductives_incl_specialized[0];
+            let nc = ind_ty.ctors.len();
+            if nc == 0 {
+                // This type is an empty prop (has no constructors)
+                true
+            } else if nc == 1 {
+                // At this point, we know that we're dealing with an inductive that...
+                // 1. is not a mutual inductive (ind_types = 1)
+                // 2. is an inductive proposition (because its result sort is Prop/0)
+                // 3. has one and only one constructor
+                self.large_elim_test_aux(ind_ty.ctors[0].ty, st.local_params.len())
+            } else {
+                // More than one constructor; no large elimination.
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Verified in place: a large-eliminating block gets a fresh elimination
+    /// universe (none of the inductive's own) prepended to its universes, and
+    /// only when the rule allows it; otherwise the elimination level is `Prop`
+    /// and the recursor's universes are the inductive's.
+    ///
+    /// VERUS-REWRITE(alloc-levels): `alloc_levels(Arc::from(base))` ->
+    /// `alloc_levels_slice(base.as_slice())`, the same hash-consed allocation
+    /// probed by slice (the `Arc` form has no specification); and the
+    /// `read_levels` result is bound to a local before the loop (a temporary in a
+    /// `for`'s iterator expression is dropped too early).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_elim_level(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            old(st).is_nonzero is Some,
+            elim_ctor_ok(*old(self).ctx, *old(st)),
+            crate::inductive_model::st_owned(*old(self).ctx, *old(st)),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            *final(st) == (InductiveCheckState { elim_level: final(st).elim_level, rec_uparams: final(st).rec_uparams, ..*old(st) }),
+            final(st).elim_level is Some,
+            final(st).rec_uparams is Some,
+            crate::util_model::owns(*(*final(self)).ctx, final(st).elim_level->0),
+            crate::util_model::owns(*(*final(self)).ctx, final(st).rec_uparams->0),
+            crate::level_arena_bridge::to_model(final(st).elim_level->0) == LevelSpec::Zero
+                ==> final(st).rec_uparams->0 == old(st).uparams,
+            crate::level_arena_bridge::to_model(final(st).elim_level->0) != LevelSpec::Zero ==> {
+                &&& large_elim_ok(*old(self).env, *old(st))
+                &&& crate::level_arena_bridge::to_model(final(st).elim_level->0) is Param
+                &&& !to_model_of_levels(old(st).uparams).contains(crate::level_arena_bridge::to_model(final(st).elim_level->0))
+                &&& to_model_of_levels(final(st).rec_uparams->0)
+                    == seq![crate::level_arena_bridge::to_model(final(st).elim_level->0)] + to_model_of_levels(old(st).uparams)
+            },
+    {
+        if self.large_elim_test(st) {
+            let elim_level = self.gen_elim_level(st);
+            let elim_level = self.ctx.param(elim_level);
+            let ghost mut gbase: Seq<LevelPtr<'t>> = Seq::empty();
+            let ghost mut gls: Seq<LevelPtr<'t>> = Seq::empty();
+            // Extra work since you want the new thing at the front of the vector (in position 0)
+            let rec_levels = {
+                let mut base = vec![elim_level];
+                let ls = self.ctx.read_levels(st.uparams);
+                for l in it: ls.iter().copied()
+                    invariant
+                        base@.len() == it.index() + 1,
+                        base@[0] == elim_level,
+                        it.seq() == ls@,
+                        forall|k: int| 0 <= k < it.index() ==> #[trigger] base@[k + 1] == ls@[k],
+                        crate::util_model::owns_all(*self.ctx, ls@),
+                        crate::util_model::owns(*self.ctx, elim_level),
+                {
+                    base.push(l)
+                }
+                proof {
+                    assert forall|k: int| 0 <= k < base@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(*self.ctx), #[trigger] base@[k]) by {
+                        if k > 0 { assert(base@[(k - 1) + 1] == ls@[k - 1]); }
+                    }
+                    gbase = base@;
+                    gls = ls@;
+                    assert(gbase.len() == gls.len() + 1 && gbase[0] == elim_level);
+                    assert forall|k: int| 0 <= k < gls.len() implies #[trigger] gbase[k + 1] == gls[k] by {}
+                    assert(forall|i: int| 0 <= i < gls.len() ==> #[trigger] crate::level_arena_bridge::to_model(gls[i]) == to_model_of_levels(st.uparams)[i]);
+                }
+                self.ctx.alloc_levels_slice(base.as_slice())
+            };
+            proof {
+                let want = seq![crate::level_arena_bridge::to_model(elim_level)] + to_model_of_levels(st.uparams);
+                assert forall|k: int| 0 <= k < to_model_of_levels(rec_levels).len() implies
+                    #[trigger] to_model_of_levels(rec_levels)[k] == want[k] by {
+                    if k > 0 {
+                        assert(gbase[(k - 1) + 1] == gls[k - 1]);
+                    }
+                }
+                assert(to_model_of_levels(rec_levels) =~= want);
+                assert(crate::level_arena_bridge::to_model(elim_level) is Param);
+                assert(!to_model_of_levels(st.uparams).contains(crate::level_arena_bridge::to_model(elim_level)));
+            }
+            st.rec_uparams = Some(rec_levels);
+            st.elim_level = Some(elim_level);
+        } else {
+            // If this is not a large eliminating type, the elim level can only be zero,
+            // and the only uparams for the recursor are those of the inductive spec.
+            st.elim_level = Some(self.ctx.zero());
+            st.rec_uparams = Some(st.uparams);
+        };
+    }
+
+    // Test large elimination for an inductive that we know is...
+    // 1. An inductive predicate (is in `Prop`)
+    // 1. Not a mutual inductive
+    // 3. Has exactly one constructor.
+    //
+    // This kind of inductive prop is okay for large elimination IFF every
+    // non-prop ctor arg is a param or index of the inductive type.
+    //
+    // Example: This inductive prop is okay for large elimination, because `n` is an index.
+    //```
+    // inductive MyTypeLarge (A : Type) : Nat → Prop
+    // | mk (n : Nat) : MyTypeLarge A n
+    // ```
+    //
+    // This type is not okay for large elimination, because `m` is neither a parameter nor an index.
+    //```
+    // inductive MyTypeSmall (A : Type) : Nat → Prop
+    // | mk (m : Nat) (n : Nat) : MyTypeSmall A n
+    //```
+    //
+    // Verified in place, body unchanged: on `true` the constructor satisfies
+    // the large-elimination rule (`large_elim_aux_ok`).
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    //
+    // VERUS-REWRITE(entry-params): parameters `mut ctor_type_cursor, mut
+    // rem_params` -> `ctor_type_in, rem_params_in` with `let mut` copies; the
+    // claim is about the entry values, which a mutated parameter cannot name.
+    fn large_elim_test_aux(&mut self, ctor_type_in: ExprPtr<'t>, rem_params_in: usize) -> (result: bool)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, ctor_type_in),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result ==> large_elim_aux_ok(*old(self).env, crate::expr_arena_bridge::to_model(ctor_type_in), rem_params_in as nat),
+    {
+        let mut ctor_type_cursor = ctor_type_in;
+        let mut rem_params = rem_params_in;
+        let ghost env = *self.env;
+        let ghost ty0 = crate::expr_arena_bridge::to_model(ctor_type_cursor);
+        let ghost np0 = rem_params as nat;
+        self.tc_cache.clear();
+        let mut non_prop_ctor_telescope_elems = Vec::new();
+        let ghost mut cs: Seq<ExprSpec> = seq![ty0];
+        let ghost mut bts: Seq<ExprSpec> = Seq::empty();
+        let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
+        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut lptrs: Seq<ExprPtr<'t>> = Seq::empty();
+        let ghost mut sorts: Seq<LevelSpec> = Seq::empty();
+        loop
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                env == *self.env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                level_free(*self.ctx, ctor_type_cursor),
+                cs.len() == locs.len() + 1,
+                bts.len() == locs.len(),
+                bodies.len() == locs.len(),
+                sorts.len() == locs.len(),
+                lptrs.len() == locs.len(),
+                cs[0] == ty0,
+                cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
+                rem_params as nat == if locs.len() <= np0 { (np0 - locs.len()) as nat } else { 0nat },
+                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                    && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
+                forall|k: int| 0 <= k < locs.len() ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(lptrs[k])
+                    && crate::util_model::owns(*self.ctx, lptrs[k])
+                    && crate::expr_arena_bridge::to_model(lptrs[k]) == ExprSpec::Free(locs[k]),
+                forall|k: int| np0 <= k < locs.len() ==> crate::tc::kinfer_claim(env, bts[k], ExprSpec::Sort(#[trigger] sorts[k])),
+                forall|k: int| np0 <= k < locs.len() ==> (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0)
+                    || non_prop_ctor_telescope_elems@.contains(#[trigger] lptrs[k]),
+                forall|j: int| 0 <= j < non_prop_ctor_telescope_elems@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] non_prop_ctor_telescope_elems@[j]),
+        {
+            // VERUS-REWRITE(guard-in-body): the `if rem_params != 0` match guard
+            // is the `if` at the top of the one `Pi` arm; with the guard, the
+            // loop's facts do not survive to the `break`. Same test, same order.
+            match self.ctx.read_expr(ctor_type_cursor) {
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    if rem_params != 0 {
+                        let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                        proof {
+                            assert(level_free(*self.ctx, binder_type));
+                            crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                        }
+                        ctor_type_cursor = self.ctx.inst(body, &[local]);
+                        proof {
+                            let aids = crate::util_model::arena_ids(*self.ctx);
+                            assert([local]@ =~= seq![local]);
+                            assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                            crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                            crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                            let lid = crate::expr_arena_bridge::expr_id(local);
+                            bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                            bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                            cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                            locs = locs.push(lid);
+                            lptrs = lptrs.push(local);
+                            sorts = sorts.push(LevelSpec::Zero);
+                        }
+                        rem_params -= 1;
+                    } else {
+                            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                            proof {
+                                assert(level_free(*self.ctx, binder_type));
+                                crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                            }
+                            ctor_type_cursor = self.ctx.inst(body, &[local]);
+                            proof {
+                                let aids = crate::util_model::arena_ids(*self.ctx);
+                                assert([local]@ =~= seq![local]);
+                                assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                                crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                                crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                                level_free_in_scope(*self, binder_type);
+                            }
+                            let binder_type_level = self.ensure_infers_as_sort(binder_type);
+                            // If the binder type is NOT in sort 0, add it to the list
+                            // of constructor args that need to be checked
+                            let ghost elems0 = non_prop_ctor_telescope_elems@;
+                            let z = self.ctx.is_zero(binder_type_level);
+                            if !z {
+                                non_prop_ctor_telescope_elems.push(local);
+                            }
+                            proof {
+                                let lid = crate::expr_arena_bridge::expr_id(local);
+                                bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                                bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                                cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                                locs = locs.push(lid);
+                                lptrs = lptrs.push(local);
+                                sorts = sorts.push(crate::level_arena_bridge::to_model(binder_type_level));
+                                assert forall|k: int| np0 <= k < locs.len() implies (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0)
+                                    || non_prop_ctor_telescope_elems@.contains(#[trigger] lptrs[k]) by {
+                                    if k < locs.len() - 1 {
+                                        if !(forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0) {
+                                            let j = choose|j: int| 0 <= j < elems0.len() && elems0[j] == lptrs[k];
+                                            assert(non_prop_ctor_telescope_elems@[j] == lptrs[k]);
+                                        }
+                                    } else if !z {
+                                        assert(non_prop_ctor_telescope_elems@.last() == lptrs[k]);
+                                    }
+                                }
+                            }
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        let (_, ind_ty_params_and_indices) = self.ctx.unfold_apps(ctor_type_cursor);
+
+        // Check whether `non_prop_ctor_telescope_elems` is a subset of
+        // `ind_ty params ++ ind_ty indices`
+        //
+        // if the list of non-prop constructor args is NOT a subset of
+        // the exprs being applied to the inductive (which is params + indices)
+        // then we can say that this type only eliminates into Prop/Sort 0
+        // VERUS-REWRITE(named-temp): the iterator and the test's result are bound
+        // to `it` and `r` so the proof can name what `all` saw and build the
+        // large-elimination certificate before returning. Same calls.
+        let mut it = non_prop_ctor_telescope_elems.iter();
+        let ghost it0 = it;
+        let r = it.all(|arg: &ExprPtr<'t>| -> (b: bool)
+            ensures b == (exists|j: int| 0 <= j < ind_ty_params_and_indices@.len()
+                && crate::util_model::ptr_raw(ind_ty_params_and_indices@[j]) == crate::util_model::ptr_raw(*arg))
+            {
+                let r = ind_ty_params_and_indices.contains(arg);
+                proof {
+                    assert(<ExprPtr<'t> as vstd::std_specs::cmp::PartialEqSpec<ExprPtr<'t>>>::obeys_eq_spec());
+                    if r {
+                        let i = choose|i: int| 0 <= i < ind_ty_params_and_indices@.len()
+                            && #[trigger] <ExprPtr<'t> as vstd::std_specs::cmp::PartialEqSpec<ExprPtr<'t>>>::eq_spec(&ind_ty_params_and_indices@[i], arg);
+                        assert(crate::util_model::ptr_raw(ind_ty_params_and_indices@[i]) == crate::util_model::ptr_raw(*arg));
+                    } else {
+                        assert forall|j: int| 0 <= j < ind_ty_params_and_indices@.len() implies
+                            crate::util_model::ptr_raw(#[trigger] ind_ty_params_and_indices@[j]) != crate::util_model::ptr_raw(*arg) by {
+                            assert(!<ExprPtr<'t> as vstd::std_specs::cmp::PartialEqSpec<ExprPtr<'t>>>::eq_spec(&ind_ty_params_and_indices@[j], arg));
+                        }
+                    }
+                }
+                r
+            });
+        proof {
+            if r {
+                let am = crate::expr_arena_bridge::ptr_models(ind_ty_params_and_indices@);
+                assert(crate::util_model::owns_all(*self.ctx, ind_ty_params_and_indices@));
+                assert(exists|h: ExprSpec| cs.last() == crate::beta_model::spine_app(h, am));
+                let h = choose|h: ExprSpec| cs.last() == crate::beta_model::spine_app(h, am);
+                let c = ElimCert { cursors: cs, bts, bodies, locals: locs, sorts, head: h, args: am };
+                assert forall|k: int| np0 <= k < locs.len() implies (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(c.sorts[k], rho) == 0)
+                    || c.args.contains(ExprSpec::Free(#[trigger] c.locals[k])) by {
+                    if !(forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0) {
+                        let j = choose|j: int| 0 <= j < non_prop_ctor_telescope_elems@.len() && non_prop_ctor_telescope_elems@[j] == lptrs[k];
+                        assert(vstd::std_specs::iter::IteratorSpec::remaining(&it0)[j] == &non_prop_ctor_telescope_elems@[j]);
+                        assert(exists|m: int| 0 <= m < ind_ty_params_and_indices@.len()
+                            && crate::util_model::ptr_raw(ind_ty_params_and_indices@[m]) == crate::util_model::ptr_raw(non_prop_ctor_telescope_elems@[j]));
+                        let m = choose|m: int| 0 <= m < ind_ty_params_and_indices@.len()
+                            && crate::util_model::ptr_raw(ind_ty_params_and_indices@[m]) == crate::util_model::ptr_raw(non_prop_ctor_telescope_elems@[j]);
+                        assert(crate::util_model::owns_in(crate::util_model::arena_ids(*self.ctx), ind_ty_params_and_indices@[m]));
+                        crate::util_model::owned_raw_eq(*self.ctx, ind_ty_params_and_indices@[m], lptrs[k]);
+                        assert(am[m] == crate::expr_arena_bridge::to_model(ind_ty_params_and_indices@[m]));
+                        assert(c.args[m] == ExprSpec::Free(locs[k]));
+                    }
+                }
+                assert(elim_cert_ok(env, ty0, np0, c));
+            }
+        }
+        r
+    }
+
     /// This starts by receiving the "full" `InductiveType` specification from the export
     /// file for the actual declaration being checked. It *ALSO* gets the NestedInductiveState,
     /// since the process of checking these also has to deal with the new types created
@@ -2109,6 +2376,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ind_st_ok(*old(self).ctx, *old(st)),
             old(st).local_indices@.len() == 0,
             old(st).tele@.len() == 0,
+            old(st).is_nonzero is None,
         ensures
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -2122,6 +2390,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).tele@.len() == final(st).all_inductives_incl_specialized@.len(),
             final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).block_codom is Some,
             walks_ok(*old(self).env, *final(st), final(st).tele@.len() as int),
+            final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).is_nonzero is Some,
+            final(st).is_nonzero == Some(true) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(
+                crate::level_arena_bridge::to_model(final(st).block_codom->0), rho) >= 1,
     {
         let nbefore = st.all_inductives_incl_specialized.len();
         for i in 0..st.all_inductives_incl_specialized.len()
@@ -2139,6 +2410,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
                 walks_ok(*old(self).env, *st, i as int),
+                i > 0 ==> st.is_nonzero is Some,
+                i == 0 ==> st.is_nonzero is None,
+                i > 0 && st.is_nonzero == Some(true) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(
+                    crate::level_arena_bridge::to_model(st.block_codom->0), rho) >= 1,
         {
             let ghost st0 = *st;
             if i == 0 {
@@ -2198,6 +2473,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).block_codom matches Some(l) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
                 == crate::level_model::interp(crate::level_arena_bridge::to_model(l), rho),
             final(st).block_codom is Some,
+            final(st).is_nonzero is Some,
+            final(st).is_nonzero == Some(true) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(
+                crate::level_arena_bridge::to_model(final(st).block_codom->0), rho) >= 1,
     {
         self.tc_cache.clear();
         let (ind_name, mut ind_ty_cursor) = st.all_inductives_incl_specialized.get(0).map(
@@ -2400,6 +2678,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ind_walk_ok(*old(self).env, final(st).tele@.last(), ind.ty,
                 final(st).local_params@, final(st).local_indices@.last()@),
             final(st).block_codom == old(st).block_codom,
+            final(st).is_nonzero == old(st).is_nonzero,
             forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
                 == crate::level_model::interp(crate::level_arena_bridge::to_model(final(st).block_codom->0), rho),
     {
@@ -2605,6 +2884,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             crate::inductive_model::st_owned(*(*old(self)).ctx, *st),
         ensures
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            (*final(self)).live == (*old(self)).live,
             crate::util_model::owns(*(*final(self)).ctx, result),
             !(exists|i: int|
                 0 <= i < to_model_of_levels(st.uparams).len() && #[trigger] to_model_of_levels(
@@ -2631,6 +2914,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::owns(*self.ctx, p),
                 crate::util_model::owns(*self.ctx, st.uparams),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                self.live == old(self).live,
         {
             let candidate = self.ctx.append_index_after(p, i);
             let hit = self.ctx.contains_param(st.uparams, candidate);

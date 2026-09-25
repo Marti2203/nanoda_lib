@@ -490,9 +490,6 @@ pub mod route_stats {
     pub static SHADOW_REC_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_REC_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_REC_DISAGREE: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_ELIM_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_ELIM_CERT: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_ELIM_DISAGREE: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_SORT_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_SORT_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECNAMES_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -565,7 +562,7 @@ pub fn report() -> String {
             let ishare = if it > 0 { 100.0 * ic as f64 / it as f64 } else { 0.0 };
             let (ct, cc) = (g(&SHADOW_CTOR_TOTAL), g(&SHADOW_CTOR_CERT));
             let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | declaration types are sorts (theorems: Prop): {} of {} | recursor name sets: {} of {} | elimination level: {} of {} agree, {} disagree | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_ELIM_CERT), g(&SHADOW_ELIM_TOTAL), g(&SHADOW_ELIM_DISAGREE), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | declaration types are sorts (theorems: Prop): {} of {} | recursor name sets: {} of {} | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &infer_exit_report() + &format!(
@@ -846,6 +843,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), e),
         ensures
             crate::util_model::owns(*(*final(self)).ctx, result),
+            // `e` is a type: it infers to a sort
+            kinfer_claim(*old(self).env, to_model_expr(e), ExprSpec::Sort(to_model_level(result))),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -853,7 +852,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
     {
         let infd = self.infer(e, Check);
-        self.ensure_sort(infd)
+        proof {
+            scope_pres_in_scope(*self, e, infd);
+        }
+        let r = self.ensure_sort(infd);
+        proof {
+            kinfer_claim_conv(*old(self).env, to_model_expr(e), to_model_expr(infd), ExprSpec::Sort(to_model_level(r)));
+        }
+        r
     }
 
     #[verifier::exec_allows_no_decreases_clause]
@@ -6818,6 +6824,20 @@ pub open spec fn kinfer_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec
 
 pub open spec fn ktc_marker(T: ExprSpec, f: nat) -> bool {
     true
+}
+
+/// A type can be moved along conversion.
+pub proof fn kinfer_claim_conv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, t2: ExprSpec)
+    requires
+        kinfer_claim(env, e, t),
+        kconv(env, t, t2),
+    ensures
+        kinfer_claim(env, e, t2),
+{
+    let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f)
+        && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, t);
+    kconv_trans(env, T, t, t2);
+    assert(ktc_marker(T, f));
 }
 
 /// An exact derivation is a claim.

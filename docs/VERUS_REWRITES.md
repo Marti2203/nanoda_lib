@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **82 marked rewrites across 59 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **87 marked rewrites across 62 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -17,7 +17,16 @@ Current: **82 marked rewrites across 59 functions** (counted by `scripts/rewrite
 These are not decisions. Each exists because something is missing upstream, and
 each would revert if that were supplied.
 
-### Match guards with mutation in the arm — 0 rewrites, CLOSED (fork `8f4061822`)
+### Match guards with mutation in the arm — 1 rewrite (reopened 2026-09-25)
+
+`large_elim_test_aux` (`src/inductive.rs`): a guarded arm inside a `loop`
+(`Pi { .. } if rem_params != 0 => ..`) loses the loop invariant at the `_ =>
+break` arm, although the same facts hold at the loop head. It looks like the
+same resolution gap as below, surfacing at a `break` instead of a postcondition;
+it needs a minimal repro and a fork fix. The guard is the `if` at the top of the
+arm meanwhile.
+
+Earlier history:
 
 Seven functions had their match guards moved into the arm body, recorded as
 "a guarded arm whose body calls `&mut self` makes the postcondition
@@ -111,10 +120,11 @@ counted under the `&mut self` heading above, not here).
 `mk_majors` keeps its rewrite regardless: it also has an unguarded index worth
 guarding.
 
-### An unspecified `alloc` variant — 1 rewrite
+### An unspecified `alloc` variant — 2 rewrites
 
 `subst_levels` (`src/level.rs`), which also has a closure capturing
-`&mut self`.
+`&mut self`; `mk_elim_level` (`src/inductive.rs`), `alloc_levels(Arc::from(base))`
+→ `alloc_levels_slice(base.as_slice())`, the same hash-consed allocation.
 
 ---
 
@@ -142,13 +152,14 @@ in `check_declar_info_core`, which returns the sort and an `ok` flag.
 
 ## 2. Rewrites needing a Verus language feature
 
-### Slice patterns — 3 rewrites
+### Slice patterns — 4 rewrites
 
 | function | file |
 |---|---|
 | `abstr_pi_telescope` | `src/expr.rs` |
 | `abstr_lambda_telescope` | `src/expr.rs` |
 | `init_k_target` | `src/inductive.rs` |
+| `large_elim_test` | `src/inductive.rs` |
 
 Unsupported outright, confirmed on current upstream:
 
@@ -215,6 +226,7 @@ needed a different shape.
 | `get_rec_rule` | `src/tc.rs` | `for r in rec_rules.iter().copied()` → the same front-to-back scan by index, so the invariant can say no earlier rule matched (the contract names the FIRST matching rule, which is the model's `find_rule`) |
 | `get_applied_def` | `src/tc.rs` | the two `get_declar` lookups → `env_model::get_declar_hint`, which is literally that match and carries the name claim |
 | `def_eq` | `src/tc.rs` | the two `c_bool_true()` results in the `Bool.true` shortcut are bound to locals where they are called, and the `&&` becomes a nested `if` (same calls, same order, same short-circuit), so the proof can name the pointer each comparison matched |
+| `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
