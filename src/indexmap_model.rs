@@ -12,7 +12,7 @@
 //! `keys_obey_model` for the keys involved and `builds_valid_hashers` for the
 //! hasher. Lookups by a borrowed key reuse vstd's `contains_borrowed_key` /
 //! `maps_borrowed_key_to_value`, whose `Q = Key` case vstd already axiomatizes.
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -21,7 +21,7 @@ verus! {
 #[cfg(verus_only)]
 use vstd::std_specs::hash::{
     builds_valid_hashers, keys_obey_model, borrowed_keys_obey_model, contains_borrowed_key,
-    maps_borrowed_key_to_value,
+    maps_borrowed_key_to_value, set_contains_borrowed_key,
 };
 
 /// The map's contents.
@@ -179,6 +179,80 @@ pub assume_specification<K, V, S>[ IndexMap::<K, V, S>::get_index ](m: &IndexMap
         },
 ;
 
+
+// ---------------------------------------------------------------------
+// `IndexSet`: the arenas' storage. The model is the keys in insertion
+// order; a key's position is its pointer's index.
+// ---------------------------------------------------------------------
+
+/// Registered opaque: nothing reads inside it but these specifications.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExIndexSet<
+    #[verifier::reject_recursive_types]
+    K,
+    #[verifier::reject_recursive_types]
+    S,
+>(IndexSet<K, S>);
+
+/// The set's elements, in insertion order.
+pub uninterp spec fn iset_keys<K, S>(s: &IndexSet<K, S>) -> Seq<K>;
+
+pub assume_specification<K, S>[ IndexSet::<K, S>::with_hasher ](hash_builder: S) -> (s: IndexSet<K, S>)
+    ensures
+        iset_keys(&s) == Seq::<K>::empty(),
+;
+
+pub assume_specification<K, S>[ IndexSet::<K, S>::len ](s: &IndexSet<K, S>) -> (len: usize)
+    ensures
+        len == iset_keys(s).len(),
+;
+
+/// The element at position `i`.
+pub assume_specification<K, S>[ IndexSet::<K, S>::get_index ](s: &IndexSet<K, S>, i: usize) -> (result: Option<&K>)
+    ensures
+        match result {
+            Some(k) => i < iset_keys(s).len() && *k == iset_keys(s)[i as int],
+            None => i >= iset_keys(s).len(),
+        },
+;
+
+/// `insert_full` leaves a present element where it is and appends a new one;
+/// the position returned is the element's either way.
+pub assume_specification<K: core::hash::Hash + Eq, S: core::hash::BuildHasher>[ IndexSet::<K, S>::insert_full ](
+    s: &mut IndexSet<K, S>,
+    k: K,
+) -> (result: (usize, bool))
+    ensures
+        keys_obey_model::<K>(iset_keys(old(s)).to_set().insert(k)) && builds_valid_hashers::<S>() ==> {
+            if iset_keys(old(s)).contains(k) {
+                &&& iset_keys(final(s)) == iset_keys(old(s))
+                &&& !result.1
+                &&& result.0 < iset_keys(old(s)).len()
+                &&& iset_keys(old(s))[result.0 as int] == k
+            } else {
+                &&& iset_keys(final(s)) == iset_keys(old(s)).push(k)
+                &&& result.1
+                &&& result.0 == iset_keys(old(s)).len()
+            }
+        },
+    no_unwind
+;
+
+/// The position of an element equal to the one asked for.
+pub assume_specification<K, S: core::hash::BuildHasher, Q: ?Sized + core::hash::Hash + indexmap::Equivalent<K>>[ IndexSet::<K, S>::get_index_of::<Q> ](
+    s: &IndexSet<K, S>,
+    k: &Q,
+) -> (result: Option<usize>)
+    ensures
+        borrowed_keys_obey_model::<K, Q>(iset_keys(s).to_set(), k) && builds_valid_hashers::<S>() ==> match result {
+            // the stored element is the one asked for
+            Some(i) => i < iset_keys(s).len() && set_contains_borrowed_key(Set::<K>::empty().insert(iset_keys(s)[i as int]), k),
+            None => !set_contains_borrowed_key(iset_keys(s).to_set(), k),
+        },
+;
+
 } // verus!
 
 verus! {
@@ -193,5 +267,27 @@ fn imap_insert_then_get(m: &mut IndexMap<u64, u64, core::hash::BuildHasherDefaul
     let _ = m.insert(3, 4);
     let g = m.get(&3);
     assert(g == Some(&4u64));
+}
+}
+
+verus! {
+/// The set specifications are strong enough to use: an inserted element is
+/// found at the position `insert_full` reports, and a repeat insert does not
+/// move it. (Changing an asserted value makes this fail.)
+#[allow(dead_code)]
+fn iset_insert_then_find(s: &mut IndexSet<u64, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>)
+    requires iset_keys(old(s)).len() == 0, vstd::std_specs::hash::obeys_key_model::<u64>(),
+{
+    proof { crate::util_model::build_hasher_default_valid_fx(); }
+    broadcast use vstd::std_specs::hash::group_hash_axioms;
+    let (i, new) = s.insert_full(7);
+    assert(new && i == 0);
+    assert(iset_keys(s)[0] == 7u64);
+    let (j, new2) = s.insert_full(7);
+    assert(!new2 && j == 0);
+    let g = s.get_index(0);
+    assert(g == Some(&7u64));
+    let f = s.get_index_of(&7u64);
+    assert(f == Some(0usize));
 }
 }
