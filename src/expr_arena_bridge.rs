@@ -571,6 +571,27 @@ pub uninterp spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16>;
 /// different serials are therefore different locals.
 pub uninterp spec fn unique_serial(aids: (nat, nat), id: u32) -> Option<u32>;
 
+/// The serial a `Unique` fvar id carries (`None` for a level local).
+pub open spec fn fvar_unique_serial(id: FVarId) -> Option<u32> {
+    match id {
+        FVarId::DbjLevel(_) => None,
+        FVarId::Unique(k) => Some(k),
+    }
+}
+
+/// `mk_unique` is the only constructor of a `Unique` fvar id and allocates each
+/// counter value once per context (the counter is checked, and never goes
+/// back -- `same_arenas`), so a serial names one local.
+#[verifier::external_body]
+pub proof fn unique_serial_injective(aids: (nat, nat), x: u32, y: u32)
+    requires
+        unique_serial(aids, x) is Some,
+        unique_serial(aids, x) == unique_serial(aids, y),
+    ensures
+        x == y,
+{
+}
+
 /// The memo caches are sound: every entry maps its key to a pointer denoting
 /// exactly what the key's function computes. `subst_aux`'s `return cached`
 /// branch is correct precisely when this holds, and its `insert` branch is what
@@ -749,6 +770,8 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_expr ](
         // payload clauses above: on `read_expr` there is no `(ptr, e)` pair to
         // get wrong.
         result matches Expr::Local { id, .. } ==> dbj_serial(crate::util_model::arena_ids(*ctx), expr_id(ptr)) == fvar_dbj_serial(id),
+        // and the unique serial, for the same reason
+        result matches Expr::Local { id, .. } ==> unique_serial(crate::util_model::arena_ids(*ctx), expr_id(ptr)) == fvar_unique_serial(id),
 ;
 
 // Contradiction detector, run and removed: a `proof fn` taking `ptr` and `e`,

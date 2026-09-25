@@ -34,7 +34,7 @@ for f in glob.glob('src/*.rs'):
         if m:
             allfns.add(m.group(1))
             if any(a <= i <= b for a, b in sp): known.add(m.group(1))
-    for m in re.finditer(r'assume_specification.*?\[[^\]]*?::(\w+)\]', src):
+    for m in re.finditer(r'assume_specification.*?\[[^\]]*?::(\w+)\s*\]', src):
         known.add(m.group(1))
 
 target = sys.argv[1] if len(sys.argv) > 1 else 'src/inductive.rs'

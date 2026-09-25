@@ -118,3 +118,28 @@ compares pointers but cannot construct one or change its index or tag; only
 Specifications read a pointer through `raw_of` / `arena_of`, and the broadcast
 lemma `ptr_eta` (every pointer is `ptr_of(raw_of(p), arena_of(p))`) gives the
 extensionality that hidden fields would otherwise lose.
+
+## Unique locals (2026-09-25)
+
+`mk_unique`'s locals are in scope now (`expr_model::unique_deep`): a unique is
+admitted when its type is closed and mentions only uniques created before it,
+well founded by its serial. Uniques do not depend on the live set or the level
+counter; like constants, they are global to their context.
+
+What this rests on:
+
+- `unique_serial(aids, id)`: the counter value a unique was created with.
+  `mk_unique` states it for the new local, and `read_expr`/`read_expr_pair`
+  report it for any local read (`fvar_unique_serial`), as they already did for
+  `dbj_serial`.
+- `unique_serial_injective` (assumed): one serial names one local. `mk_unique`
+  is the only constructor of a `Unique` fvar id, its counter increment is
+  checked (it wrapped before), and `same_arenas` says the counter never
+  decreases.
+- The counter's value is private to `util.rs` (`UniqueCounter`), so no code
+  elsewhere can build a counter or move one back. **Residual hazard:** verified
+  code could still `std::mem::swap` the counters of two live contexts, after
+  which one context would reissue serials it had already used and the
+  injectivity axiom would be refutable there. Nothing does this, and it would
+  have to be written deliberately; closing it fully needs the counter to carry
+  its context's arena ids as a ghost tag.

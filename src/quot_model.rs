@@ -59,9 +59,10 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
         // the counter goes up by one (overflow panics), and the new local
         // carries the old value as its serial
-        final(ctx).unique_counter == old(ctx).unique_counter + 1,
+        crate::util::unique_count(*final(ctx)) == crate::util::unique_count(*old(ctx)) + 1,
         crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result))
-            == Some(old(ctx).unique_counter),
+            == Some(crate::util::unique_count(*old(ctx))),
+        crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result)) is None,
         final(ctx).expr_cache == old(ctx).expr_cache,
 ;
 

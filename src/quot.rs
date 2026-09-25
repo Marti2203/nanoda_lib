@@ -363,9 +363,9 @@ pub fn eq_refl_expected_type<'t, 'p: 't>(
 {
     let ghost aids = crate::util_model::arena_ids(*ctx);
     let uparam_sort = ctx.mk_sort(u);
-    let ghost k_alpha = ctx.unique_counter;
+    let ghost k_alpha = crate::util::unique_count(*ctx);
     let alpha = ctx.mk_unique(alpha_name, Implicit, uparam_sort);
-    let ghost k_a = ctx.unique_counter;
+    let ghost k_a = crate::util::unique_count(*ctx);
     let a = ctx.mk_unique(a_name, Default, alpha);
 
     let app = app!(in ctx; eq_const, alpha, a, a);
@@ -414,10 +414,10 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
     }
 
     // local for `{A : Sort u}`
-    let ghost k_a = ctx.unique_counter;
+    let ghost k_a = crate::util::unique_count(*ctx);
     let A = ctx.mk_unique(n.a_big, Implicit, sort_u);
     // local for `{B : Sort v}`
-    let ghost k_bb = ctx.unique_counter;
+    let ghost k_bb = crate::util::unique_count(*ctx);
     let B = ctx.mk_unique(n.b_big, Implicit, sort_v);
     let A_A_Prop = arrow!(in ctx; A, A, prop);
     let A_B = arrow!(in ctx; A, B);
@@ -425,16 +425,16 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
         reveal_with_fuel(crate::expr_model::nlbv, 3);
     }
     // local for `(r : A -> A -> Prop)`
-    let ghost k_r = ctx.unique_counter;
+    let ghost k_r = crate::util::unique_count(*ctx);
     let r = ctx.mk_unique(n.r, Default, A_A_Prop);
     // local for `(f : A -> B)`
-    let ghost k_f = ctx.unique_counter;
+    let ghost k_f = crate::util::unique_count(*ctx);
     let f = ctx.mk_unique(n.f, Default, A_B);
     // local for `(a1 : A)`
-    let ghost k_a1 = ctx.unique_counter;
+    let ghost k_a1 = crate::util::unique_count(*ctx);
     let a = ctx.mk_unique(n.a, Default, A);
     // local for `(b : A)`
-    let ghost k_b1 = ctx.unique_counter;
+    let ghost k_b1 = crate::util::unique_count(*ctx);
     let b = ctx.mk_unique(n.b, Default, A);
     let ghost (ia, ibb, ir, i_f, ia1, ib1) = (expr_id(A), expr_id(B), expr_id(r), expr_id(f), expr_id(a), expr_id(b));
     proof {
@@ -542,11 +542,11 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
             reveal_with_fuel(crate::expr_model::nlbv, 4);
         }
 
-        let ghost k_bl = ctx.unique_counter;
+        let ghost k_bl = crate::util::unique_count(*ctx);
         let B_local = ctx.mk_unique(n.b_big, Implicit, quot_A_r_prop);
 
         // (q : @Quot A r)
-        let ghost k_q = ctx.unique_counter;
+        let ghost k_q = crate::util::unique_count(*ctx);
         let q_local = ctx.mk_unique(n.q, Default, quot_A_r);
 
         // @Quot.mk A r a

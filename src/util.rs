@@ -60,6 +60,26 @@ pub struct Ptr<A> {
     arena: Ghost<nat>,
 }
 
+/// `TcCtx`'s unique-local counter. The value is private, so code outside this
+/// module can neither build a counter nor move one back; `mk_unique` is the
+/// only writer.
+pub struct UniqueCounter {
+    n: u32,
+}
+
+impl UniqueCounter {
+    /// The counter's value.
+    pub closed spec fn value(self) -> u32 {
+        self.n
+    }
+}
+
+/// A context's unique-local counter value: a function of the counter field
+/// alone, so any update that leaves the field alone leaves the count alone.
+pub open spec fn unique_count<'t, 'p>(c: TcCtx<'t, 'p>) -> u32 {
+    c.unique_counter.value()
+}
+
 /// The packed index (marker bit + position).
 pub closed spec fn raw_of<A>(p: Ptr<A>) -> u32 {
     p.raw
@@ -446,7 +466,9 @@ pub struct TcCtx<'t, 'p> {
     pub dbj_level_counter: u16,
     /// Monotonically increasing counter for unique free variables. Any two free variables created
     /// with the `mk_unique` constructor are unique within their `(ExportFile, TcCtx)` pair.
-    pub unique_counter: u32,
+    /// Its value is private to `util.rs` (`UniqueCounter`), so only `mk_unique`
+    /// moves it: a reset would let two locals share a serial.
+    pub unique_counter: UniqueCounter,
     /// A cache for instantiation, free variable abstraction, and level substitution
     pub expr_cache: ExprCache<'t>,
     pub eager_mode: bool,
@@ -484,7 +506,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             export_file,
             dag: tdag,
             dbj_level_counter: 0u16,
-            unique_counter: 0u32,
+            unique_counter: UniqueCounter { n: 0u32 },
             expr_cache: ExprCache::new(),
             eager_mode: false,
         }
@@ -736,11 +758,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_style: BinderStyle,
         binder_type: ExprPtr<'t>,
     ) -> ExprPtr<'t> {
-        let unique_id = self.unique_counter;
+        let unique_id = self.unique_counter.n;
         // VERUS-REWRITE(unique-counter-overflow): `+= 1` wraps in a release
         // build, after which two locals could share an id; overflow is a
-        // rejection now.
-        self.unique_counter = match self.unique_counter.checked_add(1) {
+        // rejection now. The counter is a private-valued `UniqueCounter`.
+        self.unique_counter.n = match self.unique_counter.n.checked_add(1) {
             Some(n) => n,
             None => panic!("unique local counter overflow"),
         };
@@ -1779,6 +1801,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             result.1 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*self), 
                 crate::expr_arena_bridge::expr_id(x),
             ) == crate::expr_arena_bridge::fvar_dbj_serial(id),
+            result.0 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*self), 
+                crate::expr_arena_bridge::expr_id(a),
+            ) == crate::expr_arena_bridge::fvar_unique_serial(id),
+            result.1 matches Expr::Local { id, .. } ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*self), 
+                crate::expr_arena_bridge::expr_id(x),
+            ) == crate::expr_arena_bridge::fvar_unique_serial(id),
     {
         (self.read_expr(a), self.read_expr(x))
     }

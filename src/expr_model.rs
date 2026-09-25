@@ -545,8 +545,9 @@ pub open spec fn serial_below(aids: (nat, nat), id: u32, c: u16) -> bool {
 /// hash-conses: a level reopened with a different type is a different node,
 /// and `in_scope` admits only the live one (`TypeChecker::live`).
 ///
-/// Unique locals (`dbj_serial` = None) are out of scope: only the inductive
-/// checker makes them, outside the verified cycle.
+/// Unique locals (`dbj_serial` = None) are in scope when they are well
+/// founded (`unique_deep`): not tied to a level or to the live set, they are
+/// global to the context, like constants.
 pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16) -> bool
     decreases c, e,
 {
@@ -554,7 +555,7 @@ pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
         ExprSpec::Free(id) => match crate::expr_arena_bridge::dbj_serial(aids, id) {
             Some(s) => s < c && S.contains(id) && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
                 && dbj_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S, s),
-            None => false,
+            None => unique_deep(aids, id),
         },
         ExprSpec::App(f, a) => dbj_deep_in(aids, *f, S, c) && dbj_deep_in(aids, *a, S, c),
         ExprSpec::Bind(t, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *b, S, c),
@@ -565,6 +566,70 @@ pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
         ),
         ExprSpec::Proj(_, st) => dbj_deep_in(aids, *st, S, c),
         _ => true,
+    }
+}
+
+/// A `Unique` local (`mk_unique`) is in scope when its type is closed and
+/// mentions only uniques created before it -- well founded by the serial.
+pub open spec fn unique_deep(aids: (nat, nat), id: u32) -> bool {
+    match crate::expr_arena_bridge::unique_serial(aids, id) {
+        Some(k) => crate::expr_arena_bridge::dbj_serial(aids, id) is None
+            && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
+            && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], k as nat),
+        None => false,
+    }
+}
+
+/// Every local in `e` is a unique with serial below `k`, recursively.
+pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, k: nat) -> bool
+    decreases k, e,
+{
+    match e {
+        ExprSpec::Free(id) => match crate::expr_arena_bridge::unique_serial(aids, id) {
+            Some(j) => (j as nat) < k && crate::expr_arena_bridge::dbj_serial(aids, id) is None
+                && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
+                && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], j as nat),
+            None => false,
+        },
+        ExprSpec::App(f, a) => unique_ty_deep(aids, *f, k) && unique_ty_deep(aids, *a, k),
+        ExprSpec::Bind(t, b) => unique_ty_deep(aids, *t, k) && unique_ty_deep(aids, *b, k),
+        ExprSpec::Let(t, v, b) => unique_ty_deep(aids, *t, k) && unique_ty_deep(aids, *v, k)
+            && unique_ty_deep(aids, *b, k),
+        ExprSpec::Proj(_, st) => unique_ty_deep(aids, *st, k),
+        _ => true,
+    }
+}
+
+/// Only earlier uniques: in scope at any depth, in any live set.
+pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, k: nat, S: ISet<u32>, c: u16)
+    requires
+        unique_ty_deep(aids, e, k),
+    ensures
+        dbj_deep_in(aids, e, S, c),
+    decreases k, e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            let j = crate::expr_arena_bridge::unique_serial(aids, id).unwrap();
+            unique_ty_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], j as nat, S, c);
+        },
+        ExprSpec::App(f, a) => {
+            unique_ty_deep_in(aids, *f, k, S, c);
+            unique_ty_deep_in(aids, *a, k, S, c);
+        },
+        ExprSpec::Bind(t, b) => {
+            unique_ty_deep_in(aids, *t, k, S, c);
+            unique_ty_deep_in(aids, *b, k, S, c);
+        },
+        ExprSpec::Let(t, v, b) => {
+            unique_ty_deep_in(aids, *t, k, S, c);
+            unique_ty_deep_in(aids, *v, k, S, c);
+            unique_ty_deep_in(aids, *b, k, S, c);
+        },
+        ExprSpec::Proj(_, st) => {
+            unique_ty_deep_in(aids, *st, k, S, c);
+        },
+        _ => {},
     }
 }
 
@@ -1727,7 +1792,15 @@ pub proof fn abstr_levels_eq_abstr_full_in(
                         find_from_end_first_match(ids, id, pos);
                     }
                 },
-                None => {},
+                None => {
+                    // a unique: every abstracted id is a level local
+                    assert forall|j: int| 0 <= j < ids.len() implies ids[j] != id by {
+                        assert(crate::expr_arena_bridge::dbj_serial(aids, ids[j]) == Some(
+                            (start_pos + j) as u16,
+                        ));
+                    }
+                    find_from_end_no_match(ids, id);
+                },
             }
         },
         ExprSpec::App(f, a) => {
