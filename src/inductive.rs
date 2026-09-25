@@ -581,6 +581,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
             crate::inductive_model::st_owned(*old(self), *st),
+            levels_all_param(st.uparams),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -608,6 +609,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::util_model::arena_ids(*self) == ids,
                 forall|k: int| 0 <= k < all_ind_names@.len() ==> crate::util_model::owns_in(ids, #[trigger] all_ind_names@[k]),
                 crate::env_model::declar_map_owned_in(ids, &env_extension),
+                levels_all_param(st.uparams),
             decreases st.all_inductives_incl_specialized@.len() - idx,
         {
             let inductive = &st.all_inductives_incl_specialized[idx];
@@ -655,6 +657,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             crate::inductive_model::st_owned(*old(self), *nest_st),
             crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*old(self)), &env_ext),
+            levels_all_param(nest_st.uparams),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -671,6 +674,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.expr_cache == old(self).expr_cache,
                 crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*self), &env_ext),
                 i <= nest_st.all_inductives_incl_specialized@.len(),
+                levels_all_param(nest_st.uparams),
             decreases nest_st.all_inductives_incl_specialized@.len() - i,
         {
             let inductive = &nest_st.all_inductives_incl_specialized[i];
@@ -685,6 +689,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     i < nest_st.all_inductives_incl_specialized@.len(),
                     *inductive == nest_st.all_inductives_incl_specialized@[i as int],
                     idx <= inductive.ctors@.len(),
+                    levels_all_param(nest_st.uparams),
                 decreases inductive.ctors@.len() - idx,
             {
                 let ctor = inductive.ctors[idx];
@@ -918,6 +923,7 @@ pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
     &&& forall|k: NamePtr<'p>| #[trigger] crate::indexmap_model::imap_view(&ef.declars).contains_key(k)
         ==> crate::util_model::export_tagged(a, k)
             && declar_export_tagged(a, crate::indexmap_model::imap_view(&ef.declars)[k])
+            && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(&ef.declars)[k])
 }
 
 /// The parser's mutual-block table is keyed by the export file's own names.
@@ -1038,11 +1044,13 @@ pub proof fn imap_owned_insert<'a>(ids: (nat, nat), m: &DeclarMap<'a>, k: NamePt
         crate::env_model::declar_map_owned_in(ids, m),
         crate::util_model::owns_in(ids, k),
         crate::env_model::declar_owned_in(ids, d),
+        crate::env_model::declar_params_ok(d),
     ensures
         vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(crate::indexmap_model::imap_view(m).dom().insert(k)),
         vstd::std_specs::hash::builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>(),
         forall|x: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(m).insert(k, d).contains_key(x)
-            ==> crate::util_model::owns_in(ids, x) && crate::env_model::declar_owned_in(ids, crate::indexmap_model::imap_view(m).insert(k, d)[x]),
+            ==> crate::util_model::owns_in(ids, x) && crate::env_model::declar_owned_in(ids, crate::indexmap_model::imap_view(m).insert(k, d)[x])
+                && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(m).insert(k, d)[x]),
 {
     crate::util_model::build_hasher_default_valid_fx();
     crate::util_model::owned_in_keys_obey_model(ids, crate::indexmap_model::imap_view(m).dom().insert(k));
@@ -1532,6 +1540,23 @@ impl<'t, 'p: 't> ExportFile<'p> {
             tc.mk_recursors(&st)
         };
 
+        proof {
+            // the recursor's universe parameters are parameters: the
+            // block's own (distinct parameters, `check_declar_info_core`),
+            // possibly behind a fresh one (`mk_elim_level`)
+            let ups = crate::level_arena_bridge::to_model_of_levels(st.uparams);
+            assert(st.uparams == ind.info.uparams);
+            assert(crate::level_arena_bridge::distinct_params(ups));
+            let ru = st.rec_uparams->0;
+            if crate::level_arena_bridge::to_model(st.elim_level->0) != LevelSpec::Zero {
+                let rm = to_model_of_levels(ru);
+                assert forall|j: int| 0 <= j < rm.len() implies #[trigger] rm[j] is Param by {
+                    if j > 0 { assert(rm[j] == ups[j - 1]); }
+                }
+            }
+            assert(levels_all_param(ru));
+        }
+
         // The last temporary environment extension, which also includes the recursors.
         let recursor_extension = {
             let mut out = ctor_extension;
@@ -1540,11 +1565,14 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 invariant
                     crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(ctx), &out),
                     forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), #[trigger] recursors@[a]),
+                    forall|a: int| 0 <= a < recursors@.len() ==> crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0,
+                    levels_all_param(st.rec_uparams->0),
                 decreases recursors@.len() - i,
             {
                 let r = recursors[i].clone();
                 proof {
                     assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), recursors@[i as int]));
+                    assert(crate::env::declar_info(recursors@[i as int]).uparams == st.rec_uparams->0);
                     assert(crate::util_model::owns_in(crate::util_model::arena_ids(ctx), crate::env::declar_info(r).name));
                     imap_owned_insert(crate::util_model::arena_ids(ctx), &out, crate::env::declar_info(r).name, r);
                 }
@@ -1557,22 +1585,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
         {
             let env = crate::env_model::ctx_env_ext(&ctx, &recursor_extension, env_limit);
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
-            proof {
-                // the recursor's universe parameters are parameters: the
-                // block's own (distinct parameters, `check_declar_info_core`),
-                // possibly behind a fresh one (`mk_elim_level`)
-                let ups = crate::level_arena_bridge::to_model_of_levels(st.uparams);
-                assert(st.uparams == ind.info.uparams);
-                assert(crate::level_arena_bridge::distinct_params(ups));
-                let ru = st.rec_uparams->0;
-                if crate::level_arena_bridge::to_model(st.elim_level->0) != LevelSpec::Zero {
-                    let rm = to_model_of_levels(ru);
-                    assert forall|j: int| 0 <= j < rm.len() implies #[trigger] rm[j] is Param by {
-                        if j > 0 { assert(rm[j] == ups[j - 1]); }
-                    }
-                }
-                assert(levels_all_param(ru));
-            }
             proof {
                 broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
                 assert(declar_export_tagged(a, Declar::Inductive(*ind)));
@@ -2752,6 +2764,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] rec_rules@[k].ctor_name),
         ensures
             crate::env_model::declar_owned_in(crate::util_model::arena_ids(*(*final(self)).ctx), result),
+            crate::env::declar_info(result).uparams == st.rec_uparams->0,
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2872,6 +2885,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             result@.len() == st.all_inductives_incl_specialized@.len(),
             forall|i: int| 0 <= i < result@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*(*final(self)).ctx), #[trigger] result@[i]),
+            forall|i: int| 0 <= i < result@.len() ==> crate::env::declar_info(#[trigger] result@[i]).uparams == st.rec_uparams->0,
             forall|i: int| 0 <= i < result@.len() ==> match #[trigger] result@[i] {
                 Declar::Recursor(r) => {
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
@@ -2923,6 +2937,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
                 forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]),
+                forall|a: int| 0 <= a < recursors@.len() ==> crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0,
                 forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
@@ -2971,6 +2986,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             recursors.push(recursor);
             proof {
                 assert forall|a: int| 0 <= a < recursors@.len() implies crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]) by {
+                    if a < r0.len() { assert(recursors@[a] == r0[a]); }
+                }
+                assert forall|a: int| 0 <= a < recursors@.len() implies crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0 by {
                     if a < r0.len() { assert(recursors@[a] == r0[a]); }
                 }
                 assert forall|a: int| 0 <= a < recursors@.len() implies match #[trigger] recursors@[a] {

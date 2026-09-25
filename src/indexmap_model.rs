@@ -159,12 +159,15 @@ pub assume_specification<'a, K, V, S: core::hash::BuildHasher, Q: ?Sized + core:
 ) -> (result: Option<(usize, &'a K, &'a V)>)
     ensures
         borrowed_keys_obey_model::<K, Q>(imap_view(m).dom(), k) && builds_valid_hashers::<S>() ==> match result {
-            Some((i, kk, v)) => maps_borrowed_key_to_value(imap_view(m), k, *v),
+            Some((i, kk, v)) => maps_borrowed_key_to_value(imap_view(m), k, *v)
+                // the stored key is the one asked for
+                && contains_borrowed_key(Map::<K, ()>::empty().insert(*kk, ()), k),
             None => !contains_borrowed_key(imap_view(m), k),
         },
-        // The returned key and value are a stored entry.
-        keys_obey_model::<K>(imap_view(m).dom()) ==> (result matches Some((i, kk, v)) ==>
-            imap_view(m).contains_key(*kk) && imap_view(m)[*kk] == *v),
+        // The returned key and value are a stored entry, at that position.
+        keys_obey_model::<K>(imap_view(m).dom()) && imap_wf(m) ==> (result matches Some((i, kk, v)) ==>
+            imap_view(m).contains_key(*kk) && imap_view(m)[*kk] == *v
+            && i < imap_keys(m).len() && imap_keys(m)[i as int] == *kk),
 ;
 
 /// The entry at position `i` in insertion order.

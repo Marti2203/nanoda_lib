@@ -289,6 +289,43 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         self.ids@
     }
 
+    /// The temporary extension's contents (empty if there is none).
+    pub closed spec fn temp_view(self) -> Map<NamePtr<'a>, Declar<'a>> {
+        match self.temp_declars {
+            Some(t) => crate::indexmap_model::imap_view(t),
+            None => Map::empty(),
+        }
+    }
+
+    /// The persistent map's contents and keys, and how many keys are visible.
+    pub closed spec fn old_view(self) -> Map<NamePtr<'a>, Declar<'a>> {
+        crate::indexmap_model::imap_view(self.declars)
+    }
+
+    pub closed spec fn old_keys(self) -> Seq<NamePtr<'a>> {
+        crate::indexmap_model::imap_keys(self.declars)
+    }
+
+    pub closed spec fn visible(self) -> int {
+        self.cutoff as int
+    }
+
+    /// The declaration a name id resolves to: the temporary extension's, if
+    /// it has one under that id, else the persistent map's below the cutoff.
+    /// What `get_declar` returns for an owned name (`get_declar`'s ensures).
+    pub closed spec fn find(self, id: u64) -> Option<Declar<'a>> {
+        let t = self.temp_view();
+        let keys = self.old_keys();
+        if exists|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id {
+            Some(t[choose|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id])
+        } else if exists|i: int| 0 <= i < keys.len() && i < self.cutoff && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id {
+            let i = choose|i: int| 0 <= i < keys.len() && i < self.cutoff && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id;
+            Some(self.old_view()[keys[i]])
+        } else {
+            None
+        }
+    }
+
     /// Every declaration the environment holds belongs to its arenas.
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
@@ -343,11 +380,55 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// is the `match` it stands for. Same lookups, same order.
     pub fn get_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
         ensures
-            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d)
+                && crate::env_model::declar_params_ok(*d),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> match result {
+                Some(d) => self.find(crate::level_arena_bridge::name_id(*n)) == Some(*d),
+                None => self.find(crate::level_arena_bridge::name_id(*n)) is None,
+            },
     {
+        proof { use_type_invariant(self); }
+        let ghost id = crate::level_arena_bridge::name_id(*n);
+        let ghost t = self.temp_view();
+        let ghost keys = self.old_keys();
         match self.get_temp_declar(n) {
-            Some(d) => Some(d),
-            None => self.get_old_declar(n),
+            Some(d) => {
+                proof {
+                    if crate::util_model::owns_in(self.arena_ids(), *n) {
+                        assert(t.contains_key(*n) && crate::level_arena_bridge::name_id(*n) == id);
+                        let k = choose|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id;
+                        crate::util_model::owned_raw_eq_in(self.arena_ids(), k, *n);
+                    }
+                }
+                Some(d)
+            }
+            None => {
+                let r = self.get_old_declar(n);
+                proof {
+                    if crate::util_model::owns_in(self.arena_ids(), *n) {
+                        assert forall|k: NamePtr<'a>| #[trigger] t.contains_key(k) implies crate::level_arena_bridge::name_id(k) != id by {
+                            crate::util_model::owned_raw_eq_in(self.arena_ids(), k, *n);
+                        }
+                        match r {
+                            Some(d) => {
+                                let i0 = choose|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n
+                                    && self.old_view()[keys[i]] == *d;
+                                assert(crate::level_arena_bridge::name_id(keys[i0]) == id);
+                                let i = choose|i: int| 0 <= i < keys.len() && i < self.cutoff && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id;
+                                assert(keys.to_set().contains(keys[i]));
+                                crate::util_model::owned_raw_eq_in(self.arena_ids(), keys[i], *n);
+                            }
+                            None => {
+                                assert forall|i: int| 0 <= i < keys.len() && i < self.cutoff implies crate::level_arena_bridge::name_id(#[trigger] keys[i]) != id by {
+                                    assert(keys.to_set().contains(keys[i]));
+                                    crate::util_model::owned_raw_eq_in(self.arena_ids(), keys[i], *n);
+                                }
+                            }
+                        }
+                    }
+                }
+                r
+            }
         }
     }
 
@@ -358,7 +439,15 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// it stands for.
     pub fn get_temp_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
         ensures
-            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d)
+                && crate::env_model::declar_params_ok(*d),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> {
+                let t = self.temp_view();
+                match result {
+                    Some(d) => t.contains_key(*n) && t[*n] == *d,
+                    None => !t.contains_key(*n),
+                }
+            },
     {
         proof {
             use_type_invariant(self);
@@ -366,7 +455,12 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         match self.temp_declars {
             Some(ext) => {
                 proof {
+                    broadcast use vstd::std_specs::hash::group_hash_axioms;
+                    crate::util_model::build_hasher_default_valid_fx();
                     crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(ext).dom());
+                    if crate::util_model::owns_in(self.arena_ids(), *n) {
+                        crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(ext).dom().insert(*n));
+                    }
                 }
                 ext.get(n)
             }
@@ -378,14 +472,33 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// the persistent set of declarations. Verified: what it returns is owned.
     pub fn get_old_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
         ensures
-            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d)
+                && crate::env_model::declar_params_ok(*d),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> {
+                let keys = self.old_keys();
+                match result {
+                    Some(d) => exists|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n
+                        && self.old_view()[keys[i]] == *d,
+                    None => !(exists|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n),
+                }
+            },
     {
         proof {
             use_type_invariant(self);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
             crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(self.declars).dom());
+            if crate::util_model::owns_in(self.arena_ids(), *n) {
+                crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(self.declars).dom().insert(*n));
+            }
         }
         let (idx, _, v) = self.declars.get_full(n)?;
         if idx < self.cutoff {
+            proof {
+                if crate::util_model::owns_in(self.arena_ids(), *n) {
+                    assert(self.old_keys()[idx as int] == *n);
+                }
+            }
             Some(v)
         } else {
             None

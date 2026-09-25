@@ -278,11 +278,19 @@ pub open spec fn declar_owned_in<'a>(ids: (nat, nat), d: Declar<'a>) -> bool {
     }
 }
 
-/// A declaration map every entry of which belongs to `ids`.
+/// A declaration's universe parameters are parameters.
+pub open spec fn declar_params_ok<'a>(d: Declar<'a>) -> bool {
+    forall|j: int| 0 <= j < to_model_of_levels(crate::env::declar_info(d).uparams).len()
+        ==> #[trigger] to_model_of_levels(crate::env::declar_info(d).uparams)[j] is Param
+}
+
+/// A declaration map every entry of which belongs to `ids`, with universe
+/// parameters that are parameters.
 pub open spec fn declar_map_owned_in<'a>(ids: (nat, nat), m: &crate::env::DeclarMap<'a>) -> bool {
     &&& crate::indexmap_model::imap_wf(m)
     &&& forall|k: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(m).contains_key(k)
         ==> crate::util_model::owns_in(ids, k) && declar_owned_in(ids, crate::indexmap_model::imap_view(m)[k])
+            && declar_params_ok(crate::indexmap_model::imap_view(m)[k])
 }
 
 /// A declaration header's pointers belong to `env`'s arenas.
