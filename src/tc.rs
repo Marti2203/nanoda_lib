@@ -482,8 +482,6 @@ pub mod route_stats {
     pub static SHADOW_INFER_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_INFER_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_INFER_UNEQUAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_CTOR_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_CTOR_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECRULE_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECRULE_CERT: AtomicU64 = AtomicU64::new(0);
     pub static SHADOW_RECRULE_DISAGREE: AtomicU64 = AtomicU64::new(0);
@@ -560,9 +558,7 @@ pub fn report() -> String {
         }) + &(if shadow_enabled() {
             let (it, ic, iu) = (g(&SHADOW_INFER_TOTAL), g(&SHADOW_INFER_CERT), g(&SHADOW_INFER_UNEQUAL));
             let ishare = if it > 0 { 100.0 * ic as f64 / it as f64 } else { 0.0 };
-            let (ct, cc) = (g(&SHADOW_CTOR_TOTAL), g(&SHADOW_CTOR_CERT));
-            let cshare = if ct > 0 { 100.0 * cc as f64 / ct as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\nshadow constructor checks: {} of {} certified ({:.1}%) | declaration types are sorts (theorems: Prop): {} of {} | recursor name sets: {} of {} | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, cc, ct, cshare, g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
+            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\ndeclaration types are sorts (theorems: Prop): {} of {} | recursor name sets: {} of {} | recursor types: {} of {} agree, {} disagree | recursor rules: {} of {} agree, {} disagree\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&SHADOW_RECNAMES_CERT), g(&SHADOW_RECNAMES_TOTAL), g(&SHADOW_REC_CERT), g(&SHADOW_REC_TOTAL), g(&SHADOW_REC_DISAGREE), g(&SHADOW_RECRULE_CERT), g(&SHADOW_RECRULE_TOTAL), g(&SHADOW_RECRULE_DISAGREE), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
                 ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
                 ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
         } else { String::new() }) + &infer_exit_report() + &format!(
@@ -5402,46 +5398,6 @@ mod routed_tests {
                 crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100),
                 Some(true),
                 "the whnf-join boundary must follow BOTH beta steps"
-            );
-        });
-    }
-
-    /// Vacuity guard for the constructor-check certifier: the positivity walk
-    /// must REJECT a non-positive occurrence (`Pi (x : Bad), Sort 0` as a
-    /// constructor-argument type of `Bad`) and ACCEPT a positive one
-    /// (`Pi (x : Sort 0), Bad`, ending at the inductive itself).
-    #[test]
-    fn certified_positivity_rejects_negative_occurrence() {
-        let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
-        let config: crate::util::Config = serde_json::from_str("{}").unwrap();
-        let (export, _) = crate::parser::parse_export_file(BufReader::new(meta.as_bytes()), config).unwrap();
-        export.with_tc(crate::env::EnvLimit::PpUnlimited, |tc| {
-            let z = tc.ctx.zero();
-            let anon = tc.ctx.anonymous();
-            let bad_name = tc.ctx.str1("Bad");
-            let ls = tc.ctx.alloc_levels_slice(&[]);
-            let bad = tc.ctx.mk_const(bad_name, ls);
-            let sort0 = tc.ctx.mk_sort(z);
-            let x = tc.ctx.str1("x");
-            let negative = tc.ctx.mk_pi(x, crate::expr::BinderStyle::Default, bad, sort0);
-            let positive = tc.ctx.mk_pi(x, crate::expr::BinderStyle::Default, sort0, bad);
-            let consts = [bad];
-            let arities = [0usize];
-            let _ = anon;
-            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-            assert_eq!(
-                crate::delta_bound_model::verified_positive_arg(
-                    tc.ctx, tc.env, &mut memo, &consts, &arities, negative, 8
-                ),
-                None,
-                "a negative occurrence must not certify"
-            );
-            assert_eq!(
-                crate::delta_bound_model::verified_positive_arg(
-                    tc.ctx, tc.env, &mut memo, &consts, &arities, positive, 8
-                ),
-                Some(true),
-                "a positive argument type must certify"
             );
         });
     }
