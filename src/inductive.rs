@@ -5385,11 +5385,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
                 crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
                 crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                let (bts0, locs0) = (bts, locs);
                 bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                 bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
                 locs = locs.push(crate::expr_arena_bridge::expr_id(local));
                 sorts = sorts.push(crate::level_arena_bridge::to_model(s));
                 cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                assert forall|k: int| 0 <= k < st.local_params@.len() implies #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+                    && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))) by {
+                    assert(locs[k] == locs0[k]);
+                    assert(bts[k] == bts0[k]);
+                }
             }
         }
         // The end of the constructor has to be of the form `parentIndConst params* indices*`
@@ -5638,7 +5644,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.live == old(self).live,
                         self.tc_cache == old(self).tc_cache,
                         self.ctx.expr_cache.dsubst_cache == old(self).ctx.expr_cache.dsubst_cache,
-                        self.shadow_memo == old(self).shadow_memo,
                         self.declar_info == old(self).declar_info,
                         lhs@.len() == rhs@.len(),
                         crate::util_model::owns_all(*self.ctx, lhs@),
@@ -5674,7 +5679,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live == old(self).live,
                 self.tc_cache == old(self).tc_cache,
                 self.ctx.expr_cache.dsubst_cache == old(self).ctx.expr_cache.dsubst_cache,
-                self.shadow_memo == old(self).shadow_memo,
                 self.declar_info == old(self).declar_info,
                 st.local_params@.len() <= k <= ctor_apps@.len(),
                 crate::util_model::owns_all(*self.ctx, ctor_apps@),

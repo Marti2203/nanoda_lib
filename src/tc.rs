@@ -67,14 +67,6 @@ pub struct TypeChecker<'x, 't, 'p> {
     /// of different struct fields are exclusive, but it can't analyze what fields of a given
     /// field's type are being exclusively borrowed.
     pub env: &'x Env<'x, 't>,
-    /// Shadow-only (`NANODA_SHADOW=1`): the certified whnf's memo, whose
-    /// entries are certificates carrying their own reduction claim. Same
-    /// lifetime as `tc_cache`, for the same reason -- weak head normal forms
-    /// depend on the environment. Never read by the verdict path.
-    pub shadow_memo: crate::tc_model::WhnfMemo<'x, 't>,
-    /// diagnostics: the uncertified-event count when the current `def_eq`
-    /// call was entered
-    pub shadow_root_entry: u64,
     /// The caches for things like inference, reduction, and equality checking.
     pub tc_cache: TcCache<'t>,
     /// If this type checker is being used to check a simple declaration, this field will
@@ -101,13 +93,11 @@ impl<'p> ExportFile<'p> {
             // VERUS-REWRITE(closure-body): the value check (`infer`, then
             // `assert_def_eq` against the declared type) runs in the verified
             // `check_declar_value`; a closure body cannot carry a contract. Same
-            // calls, same order; the shadow's observation-only certification
-            // of the inferred type now runs after the comparison.
+            // calls, same order.
             Definition { val, .. } | Theorem { val, .. } | Opaque { val, .. } => {
                 self.with_tc_and_declar(*d.info(), |tc| {
                     tc.check_declar_info(d).unwrap();
-                    let inferred_type = tc.check_declar_value(*val, d.info().ty);
-                    tc.shadow_infer(*val, inferred_type);
+                    tc.check_declar_value(*val, d.info().ty);
                 })
             }
             Constructor(ctor_data) => {
@@ -207,362 +197,6 @@ impl<'p> ExportFile<'p> {
     }
 }
 
-/// Route-attribution counters for `TypeChecker::def_eq` (diagnostics only;
-/// read by `nanoda_bin` when `NANODA_ROUTE_STATS` is set). Which route
-/// CONFIRMED each call: the verified core, the verified delta route, the
-/// verified whnf-join route, or the legacy (unverified) path -- plus the
-/// legacy refutations, which no verified route covers today.
-pub mod route_stats {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    pub static QUICK: AtomicU64 = AtomicU64::new(0);
-    pub static CORE: AtomicU64 = AtomicU64::new(0);
-    pub static DELTA: AtomicU64 = AtomicU64::new(0);
-    pub static WHNF_JOIN: AtomicU64 = AtomicU64::new(0);
-    pub static CONV: AtomicU64 = AtomicU64::new(0);
-    /// Which leaf/rule confirmed inside `verified_conv` (0 sort, 1 const,
-    /// 2 app, 3 bind, 4 proj, 5 delta-round, 6 whnf-join), counting every
-    /// recursive confirmation, not just top-level ones.
-    pub static CONV_LEAF: [AtomicU64; 64] = [const { AtomicU64::new(0) }; 64];
-    thread_local! {
-        /// Diagnostic: the last conversion-leaf code recorded, so the
-        /// uncertified-pair print can say where the route gave up.
-        pub static LAST_LEAF: std::cell::Cell<u8> = const { std::cell::Cell::new(255) };
-    }
-    pub fn clear_last_leaf() {
-        LAST_LEAF.with(|c| c.set(255));
-    }
-    pub static INFER_EXIT: [AtomicU64; 32] = [const { AtomicU64::new(0) }; 32];
-    pub fn infer_exit(kind: u8) {
-        if (kind as usize) < 32 {
-            INFER_EXIT[kind as usize].fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    pub fn infer_exit_report() -> String {
-        let v: Vec<String> = (0..32)
-            .filter(|i| INFER_EXIT[*i].load(Ordering::Relaxed) > 0)
-            .map(|i| format!("{}:{}", i, INFER_EXIT[i].load(Ordering::Relaxed)))
-            .collect();
-        format!("\ninfer declines (1 lam inst | 2 lam body | 3 lam nlbv | 4 pi | 5 let | 6 proj | 8 dispatch | 9 size | 10 size gate | 11 loose bvars | 12/13 fuel arith | 14 infer said no): {}", v.join(" "))
-    }
-    pub fn conv_leaf(kind: u8) {
-        LAST_LEAF.with(|c| c.set(kind));
-        if (kind as usize) < 64 {
-            CONV_LEAF[kind as usize].fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    thread_local! {
-        /// Pairs `verified_conv` already gave up on, for THIS checker (cleared
-        /// in `TypeChecker::new`; checkers run one per thread). A hit only ever
-        /// prunes work (the route answers `None`), so this cannot affect what
-        /// gets confirmed, only how fast it fails.
-        static CONV_FAIL: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u32), (u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
-    }
-    // Remembers the HIGHEST budget a pair failed at (2026-09-05): a failure
-    // at budget B implies failure at any budget <= B (the route is monotone
-    // in its budget), so a low-budget failure (e.g. inside the spine-wise
-    // congruence loop) never poisons a later, higher-budget attempt, while a
-    // top-budget failure still short-circuits every retry.
-    /// Diagnostics only (NANODA_MEMO_STATS=1): how often the certified whnf is
-    /// called on a (term, cap) pair it has already been called on in this
-    /// checker -- i.e. how much a memo would save.
-    pub static WHNF_CALLS: AtomicU64 = AtomicU64::new(0);
-    pub static WHNF_REPEATS: AtomicU64 = AtomicU64::new(0);
-    thread_local! {
-        static WHNF_SEEN: std::cell::RefCell<rustc_hash::FxHashSet<(u32, u32)>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    pub static INFER_CALLS: AtomicU64 = AtomicU64::new(0);
-    pub static INFER_REPEATS: AtomicU64 = AtomicU64::new(0);
-    thread_local! {
-        static INFER_SEEN: std::cell::RefCell<rustc_hash::FxHashSet<u32>> = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    pub fn infer_seen_note(e: u32) {
-        INFER_CALLS.fetch_add(1, Ordering::Relaxed);
-        INFER_SEEN.with(|m| {
-            if !m.borrow_mut().insert(e) {
-                INFER_REPEATS.fetch_add(1, Ordering::Relaxed);
-            }
-        });
-    }
-    pub fn whnf_seen_note(e: u32, k: u32) {
-        WHNF_CALLS.fetch_add(1, Ordering::Relaxed);
-        WHNF_SEEN.with(|m| {
-            if !m.borrow_mut().insert((e, k)) {
-                WHNF_REPEATS.fetch_add(1, Ordering::Relaxed);
-            }
-        });
-    }
-    /// How many times a pair may be RETRIED after a recorded failure before
-    /// the cache starts pruning it. One attempt is not always enough: the
-    /// certifier's state grows as it runs (the whnf, inference and conversion
-    /// memos fill in), so a pair that failed early can succeed later, and the
-    /// cache was holding those back. Measured 2026-09-12 on
-    /// Init.Data.BitVec.Lemmas.
-    /// 0 reproduces the original one-and-done behaviour; measured, larger
-    /// values cost time on Init.Data.BitVec.Lemmas (3 -> 378s from 216s) and
-    /// certify nothing extra.
-    pub fn conv_retries() -> u32 {
-        0
-    }
-    pub fn conv_fail_seen(a: u32, b: u32, budget: u32) -> bool {
-        CONV_FAIL.with(|c| {
-            let mut m = c.borrow_mut();
-            match m.get_mut(&(a, b)) {
-                Some((bud, tries)) if *bud >= budget => {
-                    if *tries < conv_retries() {
-                        *tries += 1;
-                        false
-                    } else {
-                        true
-                    }
-                }
-                _ => false,
-            }
-        })
-    }
-    pub fn conv_fail_note(a: u32, b: u32, budget: u32) {
-        CONV_FAIL.with(|c| {
-            let mut m = c.borrow_mut();
-            let e = m.entry((a, b)).or_insert((0, 0));
-            if budget > e.0 {
-                e.0 = budget;
-            }
-        });
-    }
-
-    /// Opt-in conv trace (`NANODA_CONV_TRACE=1`): one line per conv stage
-    /// outcome; `tag` 0 enter, 1 loose-bvar give-up, 2 delta-round continue,
-    /// 3 delta-round exhausted/none, 4 retry reducts differ, 5 final None.
-    pub fn conv_trace(tag: u8, x: u32, y: u32, budget: u32) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *ON.get_or_init(|| std::env::var_os("NANODA_CONV_TRACE").is_some()) {
-            eprintln!("CONVTRACE tag={} budget={} x={:#x} y={:#x}", tag, budget, x, y);
-        }
-    }
-    /// Diagnostic knob (`NANODA_UNCERTIFIED=N`): print the first N pairs the
-    /// original checker accepted and no verified route could confirm, so the
-    /// residual gap can be read instead of guessed at.
-    pub static UNCERTIFIED_SHOWN: AtomicU64 = AtomicU64::new(0);
-    pub fn print_uncert<'t, 'p>(
-        ctx: &crate::util::TcCtx<'t, 'p>,
-        x: crate::util::ExprPtr<'t>,
-        y: crate::util::ExprPtr<'t>,
-    ) {
-        let cap = knob("NANODA_UNCERTIFIED", 0) as u64;
-        if cap > 0 && UNCERTIFIED_SHOWN.fetch_add(1, Ordering::Relaxed) < cap {
-            let branch = LEGACY_BRANCH.with(|c| c.get());
-            let leaf = LAST_LEAF.with(|c| c.get());
-            eprintln!("UNCERTIFIED branch={} last-leaf={}\n  x = {:?}\n  y = {:?}", branch, leaf, ctx.debug_print(x), ctx.debug_print(y));
-        }
-    }
-
-    pub static CONVFAIL_SHOWN: AtomicU64 = AtomicU64::new(0);
-    pub fn conv_fail_print_budget() -> bool {
-        let cap = knob("NANODA_CONV_FAIL_PRINT", 0) as u64;
-        cap > 0 && CONVFAIL_SHOWN.fetch_add(1, Ordering::Relaxed) < cap
-    }
-
-    thread_local! {
-        /// Which branch of the original `def_eq` decided the pair, so an
-        /// uncertified pair can name the kernel rule the certifier is
-        /// missing. Diagnostics only.
-        static LEGACY_BRANCH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
-    }
-    /// Counts uncertified events, so a `def_eq` call can tell whether any
-    /// nested call below it also failed to certify. A pair with no
-    /// uncertified descendant is a ROOT failure: the kernel decided it by a
-    /// rule the certifier cannot reproduce, rather than inheriting the
-    /// failure from a sub-comparison.
-    pub static UNCERT_EVENTS: AtomicU64 = AtomicU64::new(0);
-    pub fn uncert_events() -> u64 {
-        UNCERT_EVENTS.load(Ordering::Relaxed)
-    }
-
-    /// The route histogram and the uncertified counter, reached through
-    /// functions rather than inline, so `shadow_check` itself can be VERIFIED
-    /// -- Verus does not know `static`s, and these were the only reason it
-    /// could not be. Both are ours, not nanoda's, so this costs no register
-    /// entry.
-    pub fn route_hit(which: usize) {
-        if which < 6 {
-            ROUTE_HIT[which].fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    pub fn bump_uncert_events() {
-        UNCERT_EVENTS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// The three named shadow counters, likewise reached through functions so
-    /// `pair_certified` and `shadow_check` can be verified.
-    pub fn bump_proof_irrel() {
-        bump(&SHADOW_PROOF_IRREL);
-    }
-    pub fn bump_shadow_certified() {
-        bump(&SHADOW_CERTIFIED);
-    }
-    pub fn bump_shadow_disagree() {
-        bump(&SHADOW_DISAGREE);
-    }
-    pub fn bump_quick() {
-        bump(&QUICK);
-    }
-    pub fn bump_legacy_true() {
-        bump(&LEGACY_TRUE);
-    }
-    pub fn bump_legacy_false() {
-        bump(&LEGACY_FALSE);
-    }
-
-    pub fn legacy_branch(tag: u8) {
-        if shadow_enabled() {
-            LEGACY_BRANCH.with(|c| c.set(tag));
-        }
-    }
-    /// Every uncertified event, split by the unverified branch that decided it
-    /// and by whether it is a ROOT (no nested `def_eq` below it also failed).
-    /// Counted for all of them, not just the ones the print budget reaches, so
-    /// the breakdown is a census rather than a first-N sample.
-    pub static UNCERT_BY_BRANCH: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
-    pub static UNCERT_ROOT_BY_BRANCH: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
-    pub fn note_uncert(is_root: bool) {
-        let t = LEGACY_BRANCH.with(|c| c.get()) as usize;
-        if t < 16 {
-            UNCERT_BY_BRANCH[t].fetch_add(1, Ordering::Relaxed);
-            if is_root {
-                UNCERT_ROOT_BY_BRANCH[t].fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-    pub fn uncert_breakdown() -> String {
-        let mut out = String::from("uncertified by kernel branch (roots in parens):");
-        for t in 0..16usize {
-            let n = UNCERT_BY_BRANCH[t].load(Ordering::Relaxed);
-            if n == 0 {
-                continue;
-            }
-            let r = UNCERT_ROOT_BY_BRANCH[t].load(Ordering::Relaxed);
-            let name = match t as u8 {
-                2 => "bool_true",
-                3 => "quick2",
-                4 => "proof_irrel",
-                5 => "lazy_delta",
-                6 => "const/local/proj leaf",
-                7 => "whnf-retry recursion",
-                8 => "def_eq_app",
-                9 => "eta",
-                10 => "eta_struct",
-                11 => "string_lit",
-                12 => "unit",
-                13 => "all failed",
-                _ => "?",
-            };
-            out.push_str(&format!(" {} {}({})", name, n, r));
-        }
-        out
-    }
-
-    pub fn conv_fail_clear() {
-        CONV_FAIL.with(|c| c.borrow_mut().clear());
-    }
-    /// Set NANODA_NO_CONV to skip the conversion route (A/B measurement).
-    /// Experiment knobs (env-var overrides of the routed-def_eq caps; the
-    /// defaults are the committed production values). Read once.
-    pub fn knob(name: &'static str, default: u32) -> u32 {
-        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
-    }
-    /// Conversion search budget. 60 rather than 20: measured 2026-09-12 on
-    /// Init.Data.BitVec.Lemmas, 20 leaves 81 pairs uncertified and 60 leaves
-    /// 76, at the same runtime (215s either way). It plateaus there -- 200
-    /// also leaves 76 -- so the rest is not a budget limit.
-    pub fn conv_budget() -> u32 {
-        60
-    }
-    pub static SHADOW_CERTIFIED: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_INFER_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_INFER_CERT: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_INFER_UNEQUAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_SORT_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static SHADOW_SORT_CERT: AtomicU64 = AtomicU64::new(0);
-    /// Which route certified each pair (index = `pair_certified`'s verdict):
-    /// 1 core, 2 lazy delta, 3 whnf join, 4 conversion, 5 proof irrelevance.
-    pub static ROUTE_HIT: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
-    pub static SHADOW_DISAGREE: AtomicU64 = AtomicU64::new(0);
-    pub fn shadow_enabled() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NANODA_SHADOW").is_some())
-    }
-    pub static LEGACY_TRUE: AtomicU64 = AtomicU64::new(0);
-    pub static LEGACY_FALSE: AtomicU64 = AtomicU64::new(0);
-    // Legacy sub-branches (which unverified rule decided the call). The
-    // first group only ever confirms; LAZY_DELTA / WHNF_RETRY decide either
-    // way; EXHAUSTED only refutes. WHNF_RETRY recurses into `def_eq`, so its
-    // inner call is counted again by whichever route decides it.
-    pub static CERT_OK: AtomicU64 = AtomicU64::new(0);
-    pub static CERT_NONE: AtomicU64 = AtomicU64::new(0);
-    pub static NONQUICK_WITHOUT_CERT: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_BOOL_TRUE: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_QUICK2_TRUE: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_QUICK2_FALSE: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_PROOF_IRREL: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_LAZY_DELTA: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_CONST: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_LOCAL: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_PROJ: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_WHNF_RETRY: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_APP: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_ETA: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_ETA_STRUCT: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_STRING: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_UNIT: AtomicU64 = AtomicU64::new(0);
-    pub static LEG_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
-    #[inline]
-    ::vstd::prelude::verus! {
-
-broadcast use crate::util::ptr_eta;
-
-/// Verified, not assumed: vstd specifies `AtomicU64::fetch_add`.
-pub fn bump(c: &AtomicU64) {
-    c.fetch_add(1, Ordering::Relaxed);
-}
-
-} // verus!
-pub fn report() -> String {
-        let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        let (q, lt, lf) = (g(&QUICK), g(&LEGACY_TRUE), g(&LEGACY_FALSE));
-        let total = q + lt + lf;
-        let cert = g(&SHADOW_CERTIFIED);
-        let dis = g(&SHADOW_DISAGREE);
-        let share = if lt > 0 { 100.0 * cert as f64 / lt as f64 } else { 0.0 };
-        format!(
-            "def_eq (original checker decides): total {} | quick {} | non-quick true {} | non-quick false {}",
-            total, q, lt, lf,
-        ) + &(if shadow_enabled() {
-            format!(
-                // Two decimals and an explicit shortfall count: with one
-                // decimal, 7258 of 7261 printed as "100.0%", which reads as
-                // "nothing left" when three pairs are still uncertified.
-                "\nshadow certification: {} of {} non-quick confirmations carry a verified certificate ({:.2}%, {} NOT certified) | of which proof-irrelevance certificates {} | disagreements {}",
-                cert, lt, share, lt.saturating_sub(cert), g(&SHADOW_PROOF_IRREL), dis,
-            )
-        } else {
-            String::from("\nshadow certification: off (set NANODA_SHADOW=1)")
-        }) + &(if shadow_enabled() {
-            let (it, ic, iu) = (g(&SHADOW_INFER_TOTAL), g(&SHADOW_INFER_CERT), g(&SHADOW_INFER_UNEQUAL));
-            let ishare = if it > 0 { 100.0 * ic as f64 / it as f64 } else { 0.0 };
-            format!("\nshadow inference: {} of {} top-level inferences certified ({:.1}%) | verified type not shown equal {}\ndeclaration types are sorts (theorems: Prop): {} of {}\nwhnf calls {} of which repeats {} | infer calls {} of which repeats {}\nroutes that certified: core {} | lazy-delta {} | whnf-join {} | conversion {} | proof-irrel {} | none {}", ic, it, ishare, iu, g(&SHADOW_SORT_CERT), g(&SHADOW_SORT_TOTAL), g(&WHNF_CALLS), g(&WHNF_REPEATS), g(&INFER_CALLS), g(&INFER_REPEATS),
-                ROUTE_HIT[1].load(Ordering::Relaxed), ROUTE_HIT[2].load(Ordering::Relaxed), ROUTE_HIT[3].load(Ordering::Relaxed),
-                ROUTE_HIT[4].load(Ordering::Relaxed), ROUTE_HIT[5].load(Ordering::Relaxed), ROUTE_HIT[0].load(Ordering::Relaxed))
-        } else { String::new() }) + &infer_exit_report() + &format!(
-            "\nconv leaves (shadow, all recursion levels): sort {} | const {} | app {} | bind {} | proj {} | delta-round {} | whnf-join {} | gave up on loose bvars {} | bind-fresh {} | nat-lit {} | whnf-retry {}",
-            CONV_LEAF[0].load(Ordering::Relaxed), CONV_LEAF[1].load(Ordering::Relaxed), CONV_LEAF[2].load(Ordering::Relaxed), CONV_LEAF[3].load(Ordering::Relaxed),
-            CONV_LEAF[4].load(Ordering::Relaxed), CONV_LEAF[5].load(Ordering::Relaxed), CONV_LEAF[6].load(Ordering::Relaxed), CONV_LEAF[7].load(Ordering::Relaxed), CONV_LEAF[8].load(Ordering::Relaxed), CONV_LEAF[9].load(Ordering::Relaxed), CONV_LEAF[10].load(Ordering::Relaxed)) + &{
-            let extra: Vec<String> = (11..64).filter(|i| CONV_LEAF[*i].load(Ordering::Relaxed) > 0).map(|i| format!("{}:{}", i, CONV_LEAF[i].load(Ordering::Relaxed))).collect();
-            format!("\nconv leaf codes >= 11 (11 irrel leaf, 12 eta, 13 K-like, 14 deq_p whnf; 20-33 irrel-shadow exits; 40-55 rec-producer exits): {}", extra.join(" "))
-        } + &format!("\n{}", uncert_breakdown())
-    }
-}
-
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Conduct the preliminary checks done on all declarations; a declaration
     /// must not contain duplicate universe parameters, mut not have free variables,
@@ -570,14 +204,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// be a sort).
     // VERUS-REWRITE(dyn-error): the checks run in `check_declar_info_core`
     // (verified); this wrapper only builds the `Box<dyn Error>`, which Verus
-    // cannot express, and runs the shadow's observation-only certification.
+    // cannot express.
     // Same checks, same order, same error.
     pub(crate) fn check_declar_info(&mut self, d: &Declar<'t>) -> Result<(), Box<dyn Error>> {
         let info = d.info();
         let is_theorem = matches!(d, Declar::Theorem { .. });
-        let (inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
-        self.shadow_infer(info.ty, inferred_type);
-        self.shadow_ensure_sort(info.ty, is_theorem);
+        let (_inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
         if !ok {
             return Err(Box::<dyn Error>::from(format!(
                 "Theorem type for {:?} must be `Prop` (sort 0); found type {:?}",
@@ -687,58 +319,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         out
     }
 
-    /// SHADOW certification of a top-level INFERENCE (diagnostics only):
-    /// the verified inference re-derives a type for `e`; the kernel's
-    /// answer `kernel_ty` counts as certified when a verified equality route
-    /// confirms the two types. Counts: attempted / certified / verified type
-    /// produced but not shown equal (informative, not an alarm: the equality
-    /// routes are incomplete).
-    /// Shadow-only: certify that a declaration type's (certified) type reduces
-    /// to a sort, and for theorems to `Prop` (`check_declar_info`'s
-    /// `ensure_sort` / `is_zero`). Never affects a verdict.
-    pub(crate) fn shadow_ensure_sort(&mut self, ty: ExprPtr<'t>, must_be_prop: bool) {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::bump(&route_stats::SHADOW_SORT_TOTAL);
-        let vty = match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, ty) {
-            Some(v) => v,
-            None => return,
-        };
-        if self.ctx.num_loose_bvars(vty) != 0 {
-            return;
-        }
-        if must_be_prop {
-            if crate::delta_bound_model::verified_is_prop_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 100)
-                == Some(true)
-            {
-                route_stats::bump(&route_stats::SHADOW_SORT_CERT);
-            }
-        } else if crate::delta_bound_model::verified_sort_of_capped(self.ctx, self.env, &mut self.shadow_memo, vty, 32)
-            .is_some()
-        {
-            route_stats::bump(&route_stats::SHADOW_SORT_CERT);
-        }
-    }
-
-    pub(crate) fn shadow_infer(&mut self, e: ExprPtr<'t>, kernel_ty: ExprPtr<'t>) {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::bump(&route_stats::SHADOW_INFER_TOTAL);
-        match crate::delta_bound_model::verified_infer_shadow(self.ctx, self.env, &mut self.shadow_memo, e) {
-            Some(vty) => {
-                if std::ptr::eq(vty.raw_bits() as *const u8, kernel_ty.raw_bits() as *const u8)
-                    || self.pair_certified(vty, kernel_ty) != 0
-                {
-                    route_stats::bump(&route_stats::SHADOW_INFER_CERT);
-                } else {
-                    route_stats::bump(&route_stats::SHADOW_INFER_UNEQUAL);
-                }
-            }
-            None => {}
-        }
-    }
 }
 
 verus! {
@@ -3974,12 +3554,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert!(self.def_eq(u, v))
     }
 
-    /// The ORIGINAL nanoda_lib decision procedure, verbatim (restored
-    /// 2026-09-05): the legacy checker alone decides every verdict. The
-    /// verified routes never influence the result; with `NANODA_SHADOW=1`
-    /// they run AFTER the verdict on the same pair, purely to CERTIFY it
-    /// (`route_stats::shadow_check`), and any disagreement -- a verified
-    /// confirmation the original code rejected -- is counted as an alarm.
+    /// The original nanoda_lib decision procedure, verified in place: a `true`
+    /// verdict carries `def_eq_claim`.
     #[verifier::spinoff_prover]
     #[verifier::exec_allows_no_decreases_clause]
     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
@@ -3998,9 +3574,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
-        let entry_uncert = route_stats::uncert_events();
         if let Some(easy) = self.def_eq_quick_check(x, y) {
-            route_stats::bump_quick();
             return easy
         }
         // Upstream's negative memo. VALIDATED 2026-09-16 by differential test:
@@ -4014,12 +3588,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let defeq_fail_cache_key = (x, y, self.ctx.eager_mode);
         if self.tc_cache.defeq_fail_cache.contains(&defeq_fail_cache_key) {
-            // Certify the cached rejection too. Upstream's negative memo
-            // returns here without consulting anything, so left alone it
-            // would hide precisely the mistake it could make: a pair that IS
-            // convertible, wrongly remembered as a failure. A verified
-            // confirmation of a pair this cache rejects is the alarm.
-            self.shadow_check_rooted(x, y, false, entry_uncert);
             return false
         }
         let x_n = self.whnf_no_unfolding_cheap_proj(x);
@@ -4046,9 +3614,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(def_eq_claim(*old(self).env, to_model_expr(x_n), to_model_expr(y_n)));
                         def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
                     }
-                    route_stats::legacy_branch(2);
-                    route_stats::bump_legacy_true();
-                    self.shadow_check(x, y, true);
                     return true
                 }
             }
@@ -4059,24 +3624,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(x_n), to_model_expr(y), to_model_expr(y_n));
                 }
             }
-            route_stats::legacy_branch(3);
-            if easy {
-                route_stats::bump_legacy_true()
-            } else {
-                route_stats::bump_legacy_false()
-            }
-            self.shadow_check(x, y, easy);
             return easy
         }
         // Every `true` below is a claim about `(xo, yo)`, the whnf'd inputs.
         let ghost (xo, yo) = (x_n, y_n);
         let result = if self.proof_irrel_eq(x_n, y_n) {
-            route_stats::legacy_branch(4);
             true
         } else {
             match self.lazy_delta_step(x_n, y_n) {
                 FoundEqResult(short) => {
-                    route_stats::legacy_branch(5);
                     short
                 },
                 Exhausted(x_n, y_n) => {
@@ -4086,7 +3642,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         proof {
                             def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                         }
-                        route_stats::legacy_branch(6);
                         true
                     } else {
                         let (xn0, yn0) = (x_n, y_n);
@@ -4103,43 +3658,36 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                     def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                                 }
                             }
-                            route_stats::legacy_branch(7);
                             r
                         } else if self.def_eq_app(x_n, y_n) {
                             proof {
                                 def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                             }
-                            route_stats::legacy_branch(8);
                             true
                         } else if self.try_eta_expansion(x_n, y_n) {
                             proof {
                                 def_eq_claim_via(*old(self).env, to_model_expr(xe), to_model_expr(x_n), to_model_expr(ye), to_model_expr(y_n));
                                 def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                             }
-                            route_stats::legacy_branch(9);
                             true
                         } else if self.try_eta_struct(x_n, y_n) {
                             proof {
                                 def_eq_claim_via(*old(self).env, to_model_expr(xe), to_model_expr(x_n), to_model_expr(ye), to_model_expr(y_n));
                                 def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                             }
-                            route_stats::legacy_branch(10);
                             true
                         } else if self.try_string_lit_expansion(x_n, y_n) {
                             proof {
                                 def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                             }
-                            route_stats::legacy_branch(11);
                             true
                         } else if matches!(self.def_eq_unit(x_n, y_n), Some(true)) {
                             proof {
                                 def_eq_claim_via(*old(self).env, to_model_expr(xe), to_model_expr(x_n), to_model_expr(ye), to_model_expr(y_n));
                                 def_eq_claim_via(*old(self).env, to_model_expr(xo), to_model_expr(xe), to_model_expr(yo), to_model_expr(ye));
                             }
-                            route_stats::legacy_branch(12);
                             true
                         } else {
-                            route_stats::legacy_branch(13);
                             false
                         }
                     }
@@ -4150,13 +3698,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 def_eq_claim_via(*old(self).env, to_model_expr(x), to_model_expr(xo), to_model_expr(y), to_model_expr(yo));
             }
-            route_stats::bump_legacy_true();
             self.cache_eq(x, y);
         } else {
-            route_stats::bump_legacy_false();
             self.tc_cache.defeq_fail_cache.insert(defeq_fail_cache_key);
         }
-        self.shadow_check_rooted(x, y, result, entry_uncert);
         result
     }
 
@@ -5395,15 +4940,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 mod routed_tests {
     use std::io::BufReader;
 
-    /// End-to-end smoke test exercising the verified route in `def_eq`:
     /// `Const(anon, [0])` vs `Const(anon, [max 0 0])` are distinct
     /// pointers with interp-equal level lists -- a pair the quick check
-    /// CANNOT answer (not ptr-equal, not cached, not sorts, not binders),
-    /// so the routed verified core is the first responder
-    /// (`verified_def_eq_const` via level antisymmetry). The legacy
-    /// pipeline would also answer eventually (its own `def_eq_const`
-    /// sits several stages later), so this asserts behavior plus route
-    /// placement, not exclusive attribution.
+    /// cannot answer (not ptr-equal, not cached, not sorts, not binders).
+    /// `def_eq_const` decides it by level antisymmetry; `def_eq` itself would
+    /// first infer the constants' types, and these are not declared.
     #[test]
     fn routed_def_eq_confirms_const_level_equality() {
         let meta = r#"{"meta":{"lean":{"version":"","githash":""},"exporter":{"name":"","version":""},"format":{"version":"3.1.0"}}}"#;
@@ -5421,11 +4962,7 @@ mod routed_tests {
             // The original checker decides `def_eq` (an undeclared constant has
             // no type to infer, so the legacy path is not exercised here); the
             // verified core is what the shadow certifier would run on this pair.
-            assert_eq!(
-                crate::tc_model::verified_def_eq_checked(tc.ctx, c1, c2),
-                Some(true),
-                "consts with interp-equal levels must be confirmed by the verified core"
-            );
+            assert!(tc.def_eq_const(c1, c2), "consts with interp-equal levels must be def_eq");
         });
     }
 
@@ -5454,12 +4991,6 @@ mod routed_tests {
             let redex = tc.ctx.mk_app(outer_lam, prop);
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "two beta steps must be def_eq to the reduct");
-            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-            assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100),
-                Some(true),
-                "the whnf-join boundary must follow BOTH beta steps"
-            );
         });
     }
 
@@ -5503,12 +5034,6 @@ mod routed_tests {
         assert!(tc.def_eq(c_foo, prop), "Const(foo) with foo := Sort 0 must be def_eq to Sort 0 via the delta route");
         // Direct attribution: the verified boundary itself confirms the
         // pair (so the routed `true` above did not need the legacy path).
-        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-        assert_eq!(
-            crate::delta_bound_model::verified_lazy_delta_capped(tc.ctx, tc.env, &mut memo, c_foo, prop, 100),
-            Some(true),
-            "the delta boundary must confirm Const(foo) == Sort 0 on its own"
-        );
     }
 
     /// End-to-end smoke test for the verified WHNF-JOIN route: the beta
@@ -5535,12 +5060,6 @@ mod routed_tests {
             let redex = tc.ctx.mk_app(lam, prop);
             assert_ne!(redex, prop, "distinct pointers required to exercise the route");
             assert!(tc.def_eq(redex, prop), "a beta redex must be def_eq to its reduct via the whnf-join route");
-            let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-            assert_eq!(
-                crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, redex, prop, 100),
-                Some(true),
-                "the whnf-join boundary must confirm the beta redex on its own"
-            );
         });
     }
 
@@ -5585,12 +5104,6 @@ mod routed_tests {
         let applied = tc.ctx.mk_app(c_foo, prop);
         assert_ne!(applied, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(applied, prop), "(Const foo) (Sort 0) with foo := (fun _ => Var 0) must be def_eq to Sort 0");
-        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-        assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, applied, prop, 100),
-            Some(true),
-            "the whnf-join boundary must confirm the delta-then-beta pair on its own"
-        );
     }
 
     /// STRUCTURE-PROJECTION exercise of the whnf-join route (proj-iota
@@ -5635,12 +5148,6 @@ mod routed_tests {
         let proj = tc.ctx.mk_proj(s_name, 1, mk_ab);
         assert_ne!(proj, prop, "distinct pointers required to exercise the route");
         assert!(tc.def_eq(proj, prop), "Proj(S, 1, S.mk (Sort 1) (Sort 0)) must be def_eq to Sort 0 via the iota rule");
-        let mut memo = crate::tc_model::WhnfMemo::new(tc.env);
-        assert_eq!(
-            crate::delta_bound_model::verified_defeq_whnf_capped(tc.ctx, tc.env, &mut memo, proj, prop, 100),
-            Some(true),
-            "the whnf-join boundary must confirm the projection pair on its own"
-        );
     }
 }
 
@@ -5661,57 +5168,6 @@ use vstd::prelude::*;
 
 verus! {
 
-// Two of the three cycle-reachable diagnostics have to be assumed, and for
-// different reasons: `legacy_branch`'s body goes through a thread-local and a
-// closure, and `uncert_events` reads a `static`, which Verus does not know.
-// Both CLAIM-FREE -- they say only that the call is well-formed, because the
-// counters are never read by verified code. `bump` is VERIFIED instead: it
-// takes its atomic as a parameter, and vstd specifies `AtomicU64::fetch_add`.
-pub assume_specification[ route_stats::uncert_events ]() -> (result: u64)
-;
-
-pub assume_specification[ route_stats::route_hit ](which: usize)
-;
-
-pub assume_specification<'t, 'p>[ route_stats::print_uncert ](ctx: &crate::util::TcCtx<'t, 'p>, x: crate::util::ExprPtr<'t>, y: crate::util::ExprPtr<'t>)
-;
-
-pub assume_specification[ route_stats::bump_uncert_events ]()
-;
-
-pub assume_specification[ route_stats::shadow_enabled ]() -> (result: bool)
-;
-
-pub assume_specification[ route_stats::clear_last_leaf ]()
-;
-
-pub assume_specification[ route_stats::note_uncert ](is_root: bool)
-;
-
-pub assume_specification[ route_stats::conv_budget ]() -> (result: u32)
-;
-
-pub assume_specification[ route_stats::bump_proof_irrel ]()
-;
-
-pub assume_specification[ route_stats::bump_shadow_certified ]()
-;
-
-pub assume_specification[ route_stats::bump_shadow_disagree ]()
-;
-
-pub assume_specification[ route_stats::conv_fail_clear ]()
-;
-
-pub assume_specification[ route_stats::bump_quick ]()
-;
-
-pub assume_specification[ route_stats::bump_legacy_true ]()
-;
-
-pub assume_specification[ route_stats::bump_legacy_false ]()
-;
-
 // Accessors the cycle reaches and nothing else needs yet. CLAIM-FREE: the
 // cycle's contracts at this stage are the `tc_wf` frame only, so its callees
 // need to be callable, not to promise anything. Each gets a real contract when
@@ -5728,9 +5184,6 @@ pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_recursor ](
 ) -> (result: Option<&'b crate::env::RecursorData<'a>>) where 'a: 'x
     ensures
         result matches Some(d) ==> crate::env_model::recursor_data_owned(*env, *d),
-;
-
-pub assume_specification[ route_stats::legacy_branch ](tag: u8)
 ;
 
 /// TRANSPARENT, like `ExExpr`/`ExLevel`. `infer_sort` reads `self.ctx` and
@@ -8985,13 +8438,6 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
             && tc_owns(tc, p.0) && tc_owns(tc, p.1)
     // the declaration being checked belongs to the checker's arenas
     &&& (tc.declar_info matches Some(d) ==> tc_owns(tc, d.name) && tc_owns(tc, d.uparams) && tc_owns(tc, d.ty))
-    // The shadow memo is a claim-bearing cache as well -- its entries are
-    // certificates carrying their own reduction claim -- so its wellformedness
-    // belongs here beside the other four rather than in every signature that
-    // reaches a verified route.
-    &&& tc.shadow_memo.wf()
-    &&& tc.shadow_memo.spec_env()
-        == *tc.env
     // The level-substitution cache's soundness. Same kind of fact as the four
     // above -- a cache whose entries carry a claim -- and it belongs here for
     // the same reason: `infer_const` and both `subst_*_levels` take it as a
@@ -9061,8 +8507,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// The ensures is what the cycle rests on: a FRESH checker satisfies
     /// `tc_wf`. Every clause holds vacuously because `TcCache::new` starts the
-    /// four claim-bearing caches empty, and `WhnfMemo::new` gives the memo its
-    /// `wf()` and `spec_env()` directly.
+    /// four claim-bearing caches empty.
     pub fn new(
         dag: &'x mut TcCtx<'t, 'p>,
         env: &'x Env<'x, 't>,
@@ -9083,142 +8528,13 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             *final(dag) == *final(result.ctx),
     {
         assert!(dag.dbj_level_counter == 0, "TypeChecker::new: de Bruijn level counter must start at zero");
-        route_stats::conv_fail_clear();
-        let shadow_memo = crate::tc_model::WhnfMemo::new(env);
-        let shadow_root_entry = 0u64;
         Self {
             ctx: dag,
             env,
             tc_cache: TcCache::new(),
             declar_info,
-            shadow_memo,
-            shadow_root_entry,
             live: Ghost(Seq::empty()),
         }
-    }
-
-    /// SHADOW certification (diagnostics only, `NANODA_SHADOW=1`): run the
-    /// verified routes on the pair the original code just decided and count
-    /// (a) verdicts they certify (a machine-checked `deq_any`/`defeq`
-    /// claim over the environment model) and (b) disagreements (a verified
-    /// confirmation of a pair the original code rejected -- never expected;
-    /// would mean either an unsound bridge axiom or a legacy incompleteness).
-    /// Never touches `tc_cache`, so the verdict path is unaffected.
-    /// Does some verified route certify `x == y`? (0 = none; 1..5 = the
-    /// route: core, delta, join, conv, proof-irrelevance.)
-    fn pair_certified(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: u8)
-        requires
-            crate::util_model::owns(*(*old(self)).ctx, x),
-            crate::util_model::owns(*(*old(self)).ctx, y),
-            tc_wf(*old(self)),
-        ensures
-            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
-            tc_wf(*final(self)),
-            (*final(self)).env == (*old(self)).env,
-            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
-            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
-            (*final(self)).live == (*old(self)).live,
-    {
-        // Same five routes in the same order, short-circuiting the same way;
-        // the early returns become a `which` so that every exit passes through
-        // the cache drop below.
-        let which =
-            if matches!(crate::tc_model::verified_def_eq_checked(self.ctx, x, y), Some(true)) {
-            1
-        } else if matches!(crate::delta_bound_model::verified_lazy_delta_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) {
-            2
-        } else if matches!(crate::delta_bound_model::verified_defeq_whnf_capped(self.ctx, self.env, &mut self.shadow_memo, x, y, 100), Some(true)) {
-            3
-        } else if matches!(crate::delta_bound_model::verified_conv_p(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
-            4
-        } else if matches!(crate::delta_bound_model::verified_proof_irrel_shadow(self.ctx, self.env, &mut self.shadow_memo, x, y, 100, route_stats::conv_budget()), Some(true)) {
-            route_stats::bump_proof_irrel();
-            5
-        } else {
-            0
-        };
-
-        // The shadow shares its `TcCtx` with the verdict path, and these five
-        // routes do not say what they leave in the level-substitution cache.
-        // Dropping it is the conservative reading of that silence, not a
-        // workaround for it: an entry this function cannot vouch for is an
-        // entry the kernel must not later trust. It also re-establishes
-        // `dsubst_cache_sound` vacuously, the same way `subst_expr_levels`
-        // clears its scratch cache to establish its own invariant.
-        //
-        // The cost is a cold cache, and only under `NANODA_SHADOW=1`.
-        self.ctx.expr_cache.dsubst_cache.clear();
-        proof {
-            assert(self.ctx.expr_cache.dsubst_cache@ =~= vstd::map::Map::empty());
-        }
-        which
-    }
-
-    fn shadow_check(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool)
-        requires
-            crate::util_model::owns(*(*old(self)).ctx, x),
-            crate::util_model::owns(*(*old(self)).ctx, y),
-            tc_wf(*old(self)),
-        ensures
-            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
-            tc_wf(*final(self)),
-            (*final(self)).env == (*old(self)).env,
-            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
-            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
-            (*final(self)).live == (*old(self)).live,
-    {
-        if !route_stats::shadow_enabled() {
-            return;
-        }
-        route_stats::clear_last_leaf();
-        let which = self.pair_certified(x, y);
-        route_stats::route_hit(which as usize);
-        if which == 0 && verdict {
-            route_stats::bump_uncert_events();
-            route_stats::print_uncert(self.ctx, x, y);
-            // `+ 1` on a u64 that Verus will not assume is bounded; the
-            // checked form is equivalent everywhere the original does not
-            // overflow. Shadow code, so no register entry.
-            route_stats::note_uncert(
-                route_stats::uncert_events().checked_sub(1) == Some(self.shadow_root_entry),
-            );
-        }
-        // The forensic dumps that used to sit here (171 lines for uncertified
-        // pairs, 19 for disagreements) were investigation scaffolding: they
-        // printed reduct shapes, recursor major premises and per-leaf counters
-        // to work out WHY a pair had not been certified. That investigation is
-        // done -- coverage is 99.7-99.8% across the measured corpora with zero
-        // disagreements -- and they carried 21 of the cycle's 24 closures plus
-        // every `eprintln!`, which is most of what kept `shadow_check` out of
-        // `verus!`. Every SIGNAL is still here: the route histogram, the
-        // uncertified count, and the disagreement counter below, which is the
-        // one that actually caught a soundness bug. If a disagreement ever
-        // fires again, the counter says so and git has the forensics.
-
-        if which != 0 {
-            if verdict {
-                route_stats::bump_shadow_certified();
-            } else {
-                route_stats::bump_shadow_disagree();
-            }
-        }
-    }
-
-    fn shadow_check_rooted(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, verdict: bool, entry: u64)
-        requires
-            crate::util_model::owns(*(*old(self)).ctx, x),
-            crate::util_model::owns(*(*old(self)).ctx, y),
-            tc_wf(*old(self)),
-        ensures
-            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
-            tc_wf(*final(self)),
-            (*final(self)).env == (*old(self)).env,
-            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
-            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
-            (*final(self)).live == (*old(self)).live,
-    {
-        self.shadow_root_entry = entry;
-        self.shadow_check(x, y, verdict);
     }
 
     /// `infer`'s tail, `Check` branch. Note there is deliberately no

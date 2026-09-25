@@ -27,15 +27,11 @@ use crate::beta_model::spine_app;
 #[cfg(verus_only)]
 use crate::beta_model::subst_full_nlbv_bound;
 #[cfg(verus_only)]
-use crate::beta_model::{
-    max_var_below, max_var_below_mono, nlbv_bound_implies_max_var_below, subst_full_depth_bound_n,
-    subst_full_nlbv_bound_n,
-};
+use crate::beta_model::{max_var_below, max_var_below_mono, nlbv_bound_implies_max_var_below, subst_full_depth_bound_n, subst_full_nlbv_bound_n};
 #[cfg(verus_only)]
 use crate::beta_model::{spine_app_bounds, spine_app_depth_decompose};
 #[cfg(verus_only)]
 use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv};
-use crate::delta_bound_model::{verified_infer_shadow, verified_sort_of_capped};
 use crate::env::{Declar, Env, RecRule};
 use crate::env::{DeclarInfo, RecursorData};
 #[cfg(verus_only)]
@@ -53,15 +49,9 @@ use crate::expr_arena_bridge::verified_inst;
 use crate::expr_arena_bridge::verified_size;
 use crate::expr_arena_bridge::verified_subst_expr_levels;
 #[cfg(verus_only)]
-use crate::expr_arena_bridge::{
-    const_id, const_levels_of, const_levels_vec, const_name_of, is_const_shape, is_const_shape_model, to_model,
-};
-use crate::expr_arena_bridge::{
-    expr_as_app, expr_as_lambda, expr_as_let, expr_as_pi, expr_as_proj, expr_is_bind_shape, expr_is_const_shape,
-};
-use crate::expr_arena_bridge::{
-    expr_ptr_eq, verified_abstr_lambda_telescope, verified_abstr_pi_telescope, verified_foldl_apps,
-};
+use crate::expr_arena_bridge::{const_id, const_levels_of, const_levels_vec, const_name_of, is_const_shape, is_const_shape_model, to_model};
+use crate::expr_arena_bridge::{expr_as_app, expr_as_lambda, expr_as_let, expr_as_pi, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_abstr_lambda_telescope, verified_abstr_pi_telescope, verified_foldl_apps};
 #[cfg(verus_only)]
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
@@ -90,8 +80,7 @@ use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_b
 use crate::quot_model::local_type;
 #[cfg(verus_only)]
 use crate::tc_model::rec_rule_val_of;
-use crate::tc_model::verified_def_eq;
-use crate::tc_model::{rec_rule_ctor_name, rec_rule_ctor_telescope_size_wo_params, rec_rule_val, WhnfMemo};
+use crate::tc_model::{WhnfMemo};
 use crate::util::{ExprPtr, LevelPtr, LevelsPtr, NamePtr, TcCtx};
 #[allow(unused_imports)]
 use vstd::prelude::*;
@@ -272,216 +261,8 @@ pub fn name_in_slice<'t>(target_names: &[NamePtr<'t>], name: NamePtr<'t>) -> (re
     false
 }
 
-/// Real-arena mirror of `expr.rs::find_const` (`expr.rs:719-724`), scoped as
-/// `contains_const_named` documents above. Fuel-based like every other
-/// pointer-recursive bridge in this crate (no built-in Verus decreases
-/// measure for arbitrary arena-pointer recursion).
-pub fn verified_find_const_named<'t, 'p: 't>(
-    ctx: &TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-    target_names: &[NamePtr<'t>],
-    fuel: u32,
-) -> (result: Option<bool>)
-    requires
-        crate::util_model::owns(*ctx, e),
-        crate::util_model::owns_all(*ctx, target_names@),
-    ensures
-        match result {
-            Some(r) => r == contains_const_named(
-                to_model(e),
-                Seq::new(target_names@.len(), |i: int| name_id(target_names@[i])),
-            ),
-            None => true,
-        },
-    decreases fuel,
-{
-    if fuel == 0 {
-        return None;
-    }
-    let fuel1 = fuel - 1;
-    let el = ctx.read_expr(e);
-    if expr_is_const_shape(&el) {
-        assert(matches!(to_model(e), ExprSpec::Const(_, _)));
-        if let Some((name, _levels)) = ctx.try_const_info(e) {
-            assert(is_const_shape(e) && const_name_of(e) == name);
-            proof {
-                is_const_shape_model(e);
-            }
-            assert(to_model(e) == ExprSpec::Const(const_id(e), const_levels_vec(e)));
-            return Some(name_in_slice(target_names, name));
-        }
-        return None;
-    }
-    assert(!matches!(to_model(e), ExprSpec::Const(_, _)));
-    if let Some((fun, arg)) = expr_as_app(&el) {
-        assert(to_model(e) == ExprSpec::App(Box::new(to_model(fun)), Box::new(to_model(arg))));
-        return match (
-            verified_find_const_named(ctx, fun, target_names, fuel1),
-            verified_find_const_named(ctx, arg, target_names, fuel1),
-        ) {
-            (Some(rf), Some(ra)) => Some(rf || ra),
-            _ => None,
-        };
-    }
-    if expr_is_bind_shape(&el) {
-        assert(matches!(to_model(e), ExprSpec::Bind(_, _)));
-        if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_pi(&el) {
-            assert(to_model(e) == ExprSpec::Bind(
-                Box::new(to_model(binder_type)),
-                Box::new(to_model(body)),
-            ));
-            return match (
-                verified_find_const_named(ctx, binder_type, target_names, fuel1),
-                verified_find_const_named(ctx, body, target_names, fuel1),
-            ) {
-                (Some(rt), Some(rb)) => Some(rt || rb),
-                _ => None,
-            };
-        }
-        if let Some((_binder_name, _binder_style, binder_type, body)) = expr_as_lambda(&el) {
-            assert(to_model(e) == ExprSpec::Bind(
-                Box::new(to_model(binder_type)),
-                Box::new(to_model(body)),
-            ));
-            return match (
-                verified_find_const_named(ctx, binder_type, target_names, fuel1),
-                verified_find_const_named(ctx, body, target_names, fuel1),
-            ) {
-                (Some(rt), Some(rb)) => Some(rt || rb),
-                _ => None,
-            };
-        }
-        return None;
-    }
-    assert(!matches!(to_model(e), ExprSpec::Bind(_, _)));
-    if let Some((_binder_name, binder_type, val, body, _nondep)) = expr_as_let(&el) {
-        assert(to_model(e) == ExprSpec::Let(
-            Box::new(to_model(binder_type)),
-            Box::new(to_model(val)),
-            Box::new(to_model(body)),
-        ));
-        return match (
-            verified_find_const_named(ctx, binder_type, target_names, fuel1),
-            verified_find_const_named(ctx, val, target_names, fuel1),
-            verified_find_const_named(ctx, body, target_names, fuel1),
-        ) {
-            (Some(rt), Some(rv), Some(rb)) => Some(rt || rv || rb),
-            _ => None,
-        };
-    }
-    if let Some((_ty_name, p_idx, structure)) = expr_as_proj(&el) {
-        assert(to_model(e) == ExprSpec::Proj(p_idx, Box::new(to_model(structure))));
-        return verified_find_const_named(ctx, structure, target_names, fuel1);
-    }
-    assert(!matches!(to_model(e), ExprSpec::App(_, _)));
-    assert(!matches!(to_model(e), ExprSpec::Let(_, _, _)));
-    assert(!matches!(to_model(e), ExprSpec::Proj(_, _)));
-    assert(contains_const_named(
-        to_model(e),
-        Seq::new(target_names@.len(), |i: int| name_id(target_names@[i])),
-    ) == false);
-    Some(false)
-}
 
-/// `has_ind_occ`'s (`inductive.rs:841-850`) own predicate: unlike `is_
-/// recursive`'s closure (checks membership in a `NamePtr` slice directly),
-/// this one checks membership against the NAMES of a slice of `ExprPtr`s
-/// that are each expected to be `Const`-shaped (the real closure panics
-/// otherwise -- `haystack` is always `Const`-shaped in every real caller).
-/// Extracts those names up front into an owned `Vec<NamePtr>`, then
-/// delegates directly to `verified_find_const_named` -- honestly returns
-/// `None` if some `haystack` element ISN'T `Const`-shaped, rather than
-/// mirroring the real function's panic.
-pub fn verified_extract_const_names<'t, 'p: 't>(
-    ctx: &TcCtx<'t, 'p>,
-    haystack: &[ExprPtr<'t>],
-) -> (result: Option<Vec<NamePtr<'t>>>)
-    requires
-        crate::util_model::owns_all(*ctx, haystack@),
-    ensures
-        result matches Some(names) ==> crate::util_model::owns_all(*ctx, names@),
-        match result {
-            Some(names) => names@.len() == haystack@.len() && forall|i: int|
-                0 <= i < haystack@.len() ==> {
-                    &&& #[trigger] is_const_shape(haystack@[i])
-                    &&& name_id(names@[i]) == const_id(haystack@[i])
-                },
-            None => true,
-        },
-{
-    let mut result: Vec<NamePtr<'t>> = Vec::new();
-    let mut i: usize = 0;
-    while i < haystack.len()
-        invariant
-            crate::util_model::owns_all(*ctx, haystack@),
-            crate::util_model::owns_all(*ctx, result@),
-            i <= haystack.len(),
-            result@.len() == i,
-            forall|j: int|
-                0 <= j < i ==> {
-                    &&& #[trigger] is_const_shape(haystack@[j])
-                    &&& name_id(result@[j]) == const_id(haystack@[j])
-                },
-        decreases haystack.len() - i,
-    {
-        let el = ctx.read_expr(haystack[i]);
-        if let Some((name, _levels)) = ctx.try_const_info(haystack[i]) {
-            assert(is_const_shape(haystack@[i as int]) && const_name_of(haystack@[i as int])
-                == name);
-            proof {
-                is_const_shape_model(haystack@[i as int]);
-            }
-            assert(const_id(haystack@[i as int]) == name_id(name));
-            result.push(name);
-        } else {
-            return None;
-        }
-        i += 1;
-    }
-    Some(result)
-}
 
-/// Real-arena mirror of `has_ind_occ` (`inductive.rs:841-850`): does `e`
-/// contain a `Const` whose name matches one of `haystack`'s (each expected
-/// `Const`-shaped) own names?
-pub fn verified_has_ind_occ<'t, 'p: 't>(
-    ctx: &TcCtx<'t, 'p>,
-    e: ExprPtr<'t>,
-    haystack: &[ExprPtr<'t>],
-    fuel: u32,
-) -> (result: Option<bool>)
-    requires
-        crate::util_model::owns(*ctx, e),
-        crate::util_model::owns_all(*ctx, haystack@),
-    ensures
-        match result {
-            Some(r) => r == contains_const_named(
-                to_model(e),
-                Seq::new(haystack@.len(), |i: int| const_id(haystack@[i])),
-            ),
-            None => true,
-        },
-{
-    match verified_extract_const_names(ctx, haystack) {
-        Some(names) => {
-            assert(names@.len() == haystack@.len());
-            let ghost mapped_names: Seq<u64> = Seq::new(names@.len(), |i: int| name_id(names@[i]));
-            let ghost mapped_haystack: Seq<u64> = Seq::new(
-                haystack@.len(),
-                |i: int| const_id(haystack@[i]),
-            );
-            assert(mapped_names =~= mapped_haystack) by {
-                assert forall|i: int| 0 <= i < names@.len() implies #[trigger] mapped_names[i]
-                    == mapped_haystack[i] by {
-                    assert(is_const_shape(haystack@[i]));
-                    assert(name_id(names@[i]) == const_id(haystack@[i]));
-                }
-            }
-            verified_find_const_named(ctx, e, &names, fuel)
-        },
-        None => None,
-    }
-}
 
 /// Model of `expr.rs::pi_telescope_size` (`expr.rs:751-758`): the number of
 /// leading `Pi` binders. Conflates `Pi`/`Lambda` the same way `pi_telescope_
@@ -555,92 +336,6 @@ pub proof fn spine_app_telescope_size(base: ExprSpec, args: Seq<ExprSpec>)
     }
 }
 
-/// Real-arena mirror of `gen_elim_level`'s (`inductive.rs:997-1012`)
-/// search loop: tries `append_index_after(p, i)` for `i = 1, 2, ...`
-/// until one isn't already a `Param` name in `uparams`. Genuinely,
-/// PROVABLY terminates -- not fuel-capped, no `None`/incompleteness case
-/// at all. `gen_elim_level_collision_bound` (`name_arena_bridge.rs`)
-/// gives `k <= L` (`L = uparams`'s own count of `Param` slots) whenever
-/// the first `k` tries all collided; each loop iteration extends the
-/// "collided so far" invariant by one and immediately re-applies that
-/// lemma, so if the search ever reached `i == L + 2` while EVERY try
-/// from `1` to `L + 1` had collided, the lemma at `k = L + 1` would give
-/// `L + 1 <= L` -- an outright arithmetic absurdity. The loop therefore
-/// cannot run past `i = L + 1`, which is exactly the caller-visible
-/// `decreases` measure below.
-pub fn verified_gen_elim_level_search<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>,
-    p: NamePtr<'t>,
-    uparams: LevelsPtr<'t>,
-    i: u64,
-) -> (result: NamePtr<'t>)
-    requires
-        crate::util_model::owns(*old(ctx), p),
-        crate::util_model::owns(*old(ctx), uparams),
-        1 <= i,
-        i as nat <= to_model_of_levels(uparams).len() + 1,
-        to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
-        forall|i2: int|
-            #![trigger append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)]
-            1 <= i2 < i ==> exists|j: int|
-                0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j]
-                    == LevelSpec::Param(append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        // FRESHNESS: what the search exists to guarantee -- the name it
-        // returns is not already a universe parameter of the inductive.
-        forall|j: int|
-            !(0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(
-                uparams,
-            )[j] == LevelSpec::Param(name_id(result))),
-    decreases (to_model_of_levels(uparams).len() + 1 - i as nat),
-{
-    let candidate = ctx.append_index_after(p, i);
-    if ctx.contains_param(uparams, candidate) {
-        assert(name_id(candidate) == append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i));
-        assert forall|i2: int|
-            #![trigger append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)]
-            1 <= i2 <= i as int implies exists|j: int|
-            0 <= j < to_model_of_levels(uparams).len() && to_model_of_levels(uparams)[j]
-                == LevelSpec::Param(append_index_after_id(crate::util_model::arena_ids(*old(ctx)), p, i2 as u64)) by {}
-        proof {
-            gen_elim_level_collision_bound(crate::util_model::arena_ids(*old(ctx)), p, to_model_of_levels(uparams), i as nat);
-        }
-        verified_gen_elim_level_search(ctx, p, uparams, i + 1)
-    } else {
-        candidate
-    }
-}
 
-/// Real-arena mirror of `gen_elim_level` (`inductive.rs:997-1012`)
-/// itself: the `"u"`-not-taken fast path, else the provably-terminating
-/// search above.
-pub fn verified_gen_elim_level<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>,
-    uparams: LevelsPtr<'t>,
-) -> (result: NamePtr<'t>)
-    requires
-        crate::util_model::owns(*old(ctx), uparams),
-        to_model_of_levels(uparams).len() + 1 <= u64::MAX as nat,
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        // FRESHNESS, carried up from the search: the elimination universe
-        // this mints collides with none of the inductive's own parameters,
-        // which is the entire reason `gen_elim_level` exists.
-        forall|j: int|
-            !(0 <= j < to_model_of_levels(uparams).len() && #[trigger] to_model_of_levels(
-                uparams,
-            )[j] == LevelSpec::Param(name_id(result))),
-{
-    let p = ctx.str1("u");
-    if !ctx.contains_param(uparams, p) {
-        return p;
-    }
-    verified_gen_elim_level_search(ctx, p, uparams, 1)
-}
 
 } // verus!
