@@ -1323,6 +1323,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// case of a COMPOSITE kernel function proven from other kernel
     /// functions rather than assumed outright.
     pub(crate) fn prop(&mut self) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,

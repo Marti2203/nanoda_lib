@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **190 marked rewrites across 114 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **193 marked rewrites across 116 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -351,6 +351,8 @@ needed a different shape.
 | `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls, and are themselves verified in place: the environment through `env_model::ctx_env` (`new_env` with option A's trusted match), `match .. .as_ref() { &[x] => .. }` as the length test and index it stands for, formatted panics behind claim-free helpers (`eq_malformed`, `eq_uparam_count`, `eq_ctor_count`, `invalid_quot`), and both sides of each `assert_def_eq` tested closed (`assert_closed`) |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 | `ExportFile` (field `ind_name_to_recursor_names`) | `src/util.rs` | `pub` → `pub(crate)` (nothing outside the crate reads it). Verus refuses a type invariant on a struct whose fields are all public outside the crate, and `ExportFile` now carries one: its name cache's arena is its dag's (docs/ARENA_STORAGE.md, stage 2) |
+| `alloc_level` | `src/util.rs` | as `alloc_name`: `insert_full` → `arena_insert`, `Ptr::from` → `Ptr::from_in` (ghost arguments) |
+| `LeanDag::zero` (`zero`) | `src/util.rs` | `Ptr::from` → `Ptr::from_in`, as in `alloc_name` |
 | `alloc_name` | `src/util.rs` | `insert_full` → `arena_insert` (pins the appended position of the arena's history) and `Ptr::from` → `Ptr::from_in` (takes the arena); both extra arguments are ghost, erased at run time |
 | `LeanDag::anonymous` (`anonymous`) | `src/util.rs` | `Ptr::from` → `Ptr::from_in`, as in `alloc_name` |
 | `TcCtx::new` | `src/util.rs` | a ghost block (erased at run time) marks the context's fresh dag as a checker's dag serving the context's export file, which `ctx_ok` (part of `owns`) records |
@@ -393,6 +395,7 @@ still a rejection — but each is an improvement.
 | `leq_core` | `src/level.rs` | `diff - 1` / `diff + 1` in the `Succ` arms panic on `isize` overflow (overflow checks are on); the same checks are made explicit, which is what replaced the arena axiom bounding `leq_measure` (refutable by allocating ~500M nested levels) |
 | `NAME`/`LEVEL` hash constants | `src/name.rs`, `src/level.rs` | `STR_HASH`, `NUM_HASH`, `SUCC_HASH`, `MAX_HASH`, `IMAX_HASH`, `PARAM_HASH` widened from `pub(crate)` to `pub` (visibility only): the public `alloc_name`/`alloc_level` specifications name them in their canonical-hash precondition |
 | `RecursorData::major_idx` | `src/env.rs` | the `u16` sum `num_params + num_motives + num_minors + num_indices` panics on overflow (overflow checks are on); the same check, explicit, on the sum computed in `u32`. This is what let the recursors map be DEFINED from the environment's contents (its `major_idx` field is the sum), retiring the claim-free `major_idx` specification |
+| `alloc_level` | `src/util.rs` | a child in the context's own tier is TESTED to be already stored before a level is appended, as in `alloc_name`; never fires |
 | `alloc_name` | `src/util.rs` | a prefix in the context's own tier is TESTED to be already stored (`idx < len`) before a name is appended (`panic!` otherwise). Every pointer the checker holds came from an earlier allocation, so it never fires; it is what lets the appended node's children be placed before it, which the arena history's denotation needs |
 | `pi_telescope_size` | `src/expr.rs` | `size += 1` on a `u16` panics on overflow (overflow checks are on); the check is explicit, which replaced the `depth <= 60000` precondition no caller could discharge. Nothing the original accepted is rejected |
 | `mk_ctors_env_ext` | `src/inductive.rs` | `pi_telescope_size(ctor.ty) - num_params` panics on `u16` underflow; the same check, explicit. Never fires on a constructor `check_ctor` accepted |

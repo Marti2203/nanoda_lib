@@ -59,4 +59,6 @@ IndexMap's), and a key-model fact per node type.
 1. (done) `arena_hist`, `ArenaTok`, `arena_pin`, `arena_insert`; `LeanDag` in
    `verus!` with tokens and the invariant; `dag_arena` defined.
 2. (done) The export file's name-cache tag is its dag's id: `ExportFile` carries it as a type invariant; public contracts read the tag through the closed `ExportFile::arena`, and `export_ok` and its siblings are closed (unfolded by `export_ok_facts`).
-3. Names. 4. Levels. 5. Expressions. 6. Strings and bignums.
+3. (done) Names: `to_model_name` defined; `read_name`, `alloc_name`, `anonymous` verified.
+4. (done) Levels: `to_model` defined; `read_level`, `alloc_level`, `zero` verified. The level-SEQUENCE arena (`read_levels`, `alloc_levels_slice`) waits on a vstd rule for looking up an `Arc<[T]>` by `&[T]`.
+5. Expressions. 6. Strings and bignums.

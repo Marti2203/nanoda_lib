@@ -70,13 +70,144 @@ pub struct ExLevel<'a>(Level<'a>);
 #[verifier::external_type_specification]
 pub struct ExName<'a>(Name<'a>);
 
-/// What a `LevelPtr` denotes in our `LevelSpec` model. Uninterpreted: we
-/// don't compute this from the arena's actual storage (that would require
-/// formalizing `IndexSet`'s hash-consing and an acyclicity invariant on the
-/// arena — future work); instead the axioms below, attached to the real
-/// constructor/reader functions, are the trusted contract we assume the
-/// arena satisfies.
-pub uninterp spec fn to_model<'a>(ptr: LevelPtr<'a>) -> LevelSpec;
+/// What a `LevelPtr` denotes in our `LevelSpec` model: the level its arena's
+/// history holds at its index (`arena_history.rs`), children read the same
+/// way, recursing on (tier, index) as `to_model_name` does. A node whose
+/// children are misplaced (which no stored node is, `level_node_ok`) denotes
+/// `Zero`. Closed; `to_model_at` states the unfolding.
+pub closed spec fn to_model<'a>(ptr: LevelPtr<'a>) -> LevelSpec
+    decreases
+            (if ptr_is_tc(ptr) {
+                1int
+            } else {
+                0int
+            }),
+            ptr_index(ptr),
+{
+    let h = crate::arena_history::arena_hist::<Level<'a>>(crate::util::arena_of(ptr));
+    let i = ptr_index(ptr);
+    let tc = ptr_is_tc(ptr);
+    if i >= h.len() {
+        LevelSpec::Zero
+    } else {
+        match h[i as int] {
+            Level::Zero => LevelSpec::Zero,
+            Level::Param(n, _) => LevelSpec::Param(name_id(n)),
+            Level::Succ(p, _) => if child_ok(p, tc, i) {
+                LevelSpec::Succ(Box::new(to_model(p)))
+            } else {
+                LevelSpec::Zero
+            },
+            Level::Max(a, b, _) => if child_ok(a, tc, i) && child_ok(b, tc, i) {
+                LevelSpec::Max(Box::new(to_model(a)), Box::new(to_model(b)))
+            } else {
+                LevelSpec::Zero
+            },
+            Level::IMax(a, b, _) => if child_ok(a, tc, i) && child_ok(b, tc, i) {
+                LevelSpec::IMax(Box::new(to_model(a)), Box::new(to_model(b)))
+            } else {
+                LevelSpec::Zero
+            },
+        }
+    }
+}
+
+/// A stored level's children are placed for the denotation's recursion.
+pub open spec fn level_children_below2<'a>(l: Level<'a>, tc: bool, i: nat) -> bool {
+    match l {
+        Level::Succ(p, _) => child_ok(p, tc, i),
+        Level::Max(a, b, _) | Level::IMax(a, b, _) => child_ok(a, tc, i) && child_ok(b, tc, i),
+        _ => true,
+    }
+}
+
+/// A pointer denotes what its arena's history holds at its index, read
+/// structurally, when that node's children are placed as stored nodes' are.
+pub proof fn to_model_at<'a>(p: LevelPtr<'a>)
+    ensures
+        ({
+            let h = crate::arena_history::arena_hist::<Level<'a>>(crate::util::arena_of(p));
+            ptr_index(p) < h.len() && level_children_below2(h[ptr_index(p) as int], ptr_is_tc(p), ptr_index(p))
+                ==> to_model(p) == to_model_of_level(h[ptr_index(p) as int])
+        }),
+{
+}
+
+/// A stored level node is well formed at position `i` of a dag of tier `tc`
+/// with arena `id` and export partner `partner` (see `name_node_ok`).
+pub open spec fn level_node_ok<'a>(l: Level<'a>, i: nat, tc: bool, id: nat, partner: nat) -> bool {
+    let ids = (id, partner);
+    &&& level_children_below2(l, tc, i)
+    &&& match l {
+        Level::Zero => true,
+        Level::Succ(p, _) => crate::util_model::owns_in(ids, p) && (!tc ==> !crate::util_model::ptr_is_tc(p)),
+        Level::Max(a, b, _) | Level::IMax(a, b, _) => crate::util_model::owns_in(ids, a) && crate::util_model::owns_in(ids, b)
+            && (!tc ==> !crate::util_model::ptr_is_tc(a) && !crate::util_model::ptr_is_tc(b)),
+        Level::Param(n, _) => crate::util_model::owns_in(ids, n) && (!tc ==> !crate::util_model::ptr_is_tc(n)),
+    }
+    &&& level_hash_ok(l)
+}
+
+/// Runtime `==` on levels: the derived comparison (pointers by `raw`).
+pub open spec fn level_raw_eq<'a>(a: Level<'a>, b: Level<'a>) -> bool {
+    match (a, b) {
+        (Level::Zero, Level::Zero) => true,
+        (Level::Succ(p1, h1), Level::Succ(p2, h2)) => crate::util_model::ptr_raw(p1) == crate::util_model::ptr_raw(p2) && h1 == h2,
+        (Level::Max(a1, b1, h1), Level::Max(a2, b2, h2)) => crate::util_model::ptr_raw(a1) == crate::util_model::ptr_raw(a2)
+            && crate::util_model::ptr_raw(b1) == crate::util_model::ptr_raw(b2) && h1 == h2,
+        (Level::IMax(a1, b1, h1), Level::IMax(a2, b2, h2)) => crate::util_model::ptr_raw(a1) == crate::util_model::ptr_raw(a2)
+            && crate::util_model::ptr_raw(b1) == crate::util_model::ptr_raw(b2) && h1 == h2,
+        (Level::Param(n1, h1), Level::Param(n2, h2)) => crate::util_model::ptr_raw(n1) == crate::util_model::ptr_raw(n2) && h1 == h2,
+        _ => false,
+    }
+}
+
+/// THE HASH-TABLE KEY MODEL FOR LEVELS (see `name_keys_obey_model`):
+/// `Level`'s `==` is derived, its `Hash` writes the stored hash, and it is
+/// `Copy`.
+#[verifier::external_body]
+pub proof fn level_keys_obey_model<'a>(s: Set<Level<'a>>)
+    requires
+        forall|a: Level<'a>, b: Level<'a>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && level_raw_eq(a, b) ==> a == b,
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Level<'a>>(s),
+{
+}
+
+/// A level's pointers belong to the arena pair `ids`.
+pub open spec fn level_parts_owned_in<'a>(ids: (nat, nat), l: Level<'a>) -> bool {
+    match l {
+        Level::Zero => true,
+        Level::Succ(p, _) => crate::util_model::owns_in(ids, p),
+        Level::Max(a, b, _) | Level::IMax(a, b, _) => crate::util_model::owns_in(ids, a) && crate::util_model::owns_in(ids, b),
+        Level::Param(n, _) => crate::util_model::owns_in(ids, n),
+    }
+}
+
+/// Levels whose pointers belong to one arena pair obey the key model.
+pub proof fn owned_levels_keys_obey_model<'a>(ids: (nat, nat), s: Set<Level<'a>>)
+    requires
+        forall|l: Level<'a>| #[trigger] s.contains(l) ==> level_parts_owned_in(ids, l),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Level<'a>>(s),
+{
+    assert forall|a: Level<'a>, b: Level<'a>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && level_raw_eq(a, b) implies a == b by {
+        match (a, b) {
+            (Level::Succ(p1, _), Level::Succ(p2, _)) => crate::util_model::owned_raw_eq_in(ids, p1, p2),
+            (Level::Max(a1, b1, _), Level::Max(a2, b2, _)) | (Level::IMax(a1, b1, _), Level::IMax(a2, b2, _)) => {
+                crate::util_model::owned_raw_eq_in(ids, a1, a2);
+                crate::util_model::owned_raw_eq_in(ids, b1, b2);
+            },
+            (Level::Param(n1, _), Level::Param(n2, _)) => crate::util_model::owned_raw_eq_in(ids, n1, n2),
+            _ => {},
+        }
+    }
+    level_keys_obey_model(s);
+}
 
 
 /// Ditto for what a `NamePtr` denotes as a raw id, standing in for Lean
@@ -217,9 +348,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
-/// THE storage primitive for levels -- the analogue of `alloc_expr`'s, and
-/// justified the same way by `level_model_at_append` above. The constructor
-/// contracts below are derived from it rather than assumed.
 /// The canonical hash of a level node (see `name_hash_ok`): what makes the
 /// level arena's hash-consing (`level_ptr_eq_iff_same_model_param`) hold.
 pub open spec fn level_hash_ok<'t>(l: Level<'t>) -> bool {
@@ -239,29 +367,6 @@ pub open spec fn level_hash_ok<'t>(l: Level<'t>) -> bool {
         ),
     }
 }
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_level ](
-    ctx: &mut TcCtx<'t, 'p>,
-    l: Level<'t>,
-) -> (result: LevelPtr<'t>) where 'p: 't
-    requires
-        level_children_owned(*old(ctx), l),
-        level_hash_ok(l),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        to_model(result) == to_model_of_level(l),
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::zero ](ctx: &TcCtx<'t, 'p>) -> (result: LevelPtr<
-    't,
->) where 'p: 't
-    ensures
-        crate::util_model::owns(*ctx, result),
-        to_model(result) == LevelSpec::Zero,
-;
 
 /// What a *shallow* `Level` value (as returned by `read_level`, before
 /// following any of its child pointers) denotes.
@@ -513,17 +618,6 @@ pub open spec fn level_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, l: crate::level:
         crate::level::Level::Param(n, _) => crate::util_model::owns(c, n),
     }
 }
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_level ](
-    ctx: &TcCtx<'t, 'p>,
-    ptr: LevelPtr<'t>,
-) -> (result: Level<'t>) where 'p: 't
-    requires
-        crate::util_model::owns(*ctx, ptr),
-    ensures
-        level_children_owned(*ctx, result),
-        to_model_of_level(result) == to_model(ptr),
-;
 
 #[allow(dead_code)]
 pub fn level_as_param<'t>(l: &Level<'t>) -> (result: Option<NamePtr<'t>>)
