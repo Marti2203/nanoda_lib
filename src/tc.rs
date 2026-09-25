@@ -98,12 +98,16 @@ impl<'p> ExportFile<'p> {
             Axiom { .. } => self.with_tc_and_declar(*d.info(), |tc| tc.check_declar_info(d).unwrap()),
             Inductive(..) => self.check_inductive_declar(d),
             Quot { .. } => self.with_ctx(|ctx| crate::quot::check_quot(ctx, d)),
+            // VERUS-REWRITE(closure-body): the value check (`infer`, then
+            // `assert_def_eq` against the declared type) runs in the verified
+            // `check_declar_value`; a closure body cannot carry a contract. Same
+            // calls, same order; the shadow's observation-only certification
+            // of the inferred type now runs after the comparison.
             Definition { val, .. } | Theorem { val, .. } | Opaque { val, .. } => {
                 self.with_tc_and_declar(*d.info(), |tc| {
                     tc.check_declar_info(d).unwrap();
-                    let inferred_type = tc.infer(*val, crate::tc::InferFlag::Check);
+                    let inferred_type = tc.check_declar_value(*val, d.info().ty);
                     tc.shadow_infer(*val, inferred_type);
-                    tc.assert_def_eq(inferred_type, d.info().ty);
                 })
             }
             Constructor(ctor_data) => {
@@ -762,6 +766,36 @@ verus! {
 
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// A definition's value check, verified: the value infers to a type that
+    /// is convertible to the declared type (in the kernel's judgement).
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn check_declar_value(&mut self, val: ExprPtr<'t>, ty: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, val),
+            crate::util_model::owns(*(*old(self)).ctx, ty),
+            tc_wf(*old(self)),
+            in_scope(*old(self), val),
+            crate::expr_model::nlbv(to_model_expr(ty)) <= 0,
+            !crate::expr_model::has_fv(to_model_expr(ty)),
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            kinfer_claim(*old(self).env, to_model_expr(val), to_model_expr(result)),
+            def_eq_claim(*old(self).env, to_model_expr(result), to_model_expr(ty)),
+    {
+        let inferred_type = self.infer(val, Check);
+        proof {
+            scope_pres_in_scope(*self, val, inferred_type);
+            no_fv_in_scope(*self, ty);
+        }
+        self.assert_def_eq(inferred_type, ty);
+        inferred_type
+    }
+
     /// The checks of `check_declar_info`, verified: on success the declared
     /// type infers to a type that reduces to a sort, and for a theorem that
     /// sort is `Prop`. `ok` is false exactly on the theorem-not-`Prop` error.

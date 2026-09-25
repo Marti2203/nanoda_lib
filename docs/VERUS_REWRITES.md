@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **76 marked rewrites across 54 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **77 marked rewrites across 55 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -159,7 +159,7 @@ rust_to_vir_expr.rs:  PatKind::Slice(..) => unsupported_err!(pat.span, "slice pa
 Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 #2959 — is a different feature and does not help here.)
 
-### Closures capturing `&mut self` — 3 rewrites
+### Closures capturing `&mut self` — 7 rewrites
 
 | function | file |
 |---|---|
@@ -169,6 +169,7 @@ Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 | `abstr_aux` (`.map` only) | `src/expr.rs` |
 | `def_eq_app` | `src/tc.rs` |
 | `args_def_eq_rev` | `src/tc.rs` |
+| `check_declar` (the value check, lifted into the verified `check_declar_value`) | `src/tc.rs` |
 
 Rejected outright, and the message is explicit:
 
