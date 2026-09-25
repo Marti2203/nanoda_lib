@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **75 marked rewrites across 53 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **76 marked rewrites across 54 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -127,6 +127,18 @@ Binding the call to a local first is behaviour-identical.
 | function | file |
 |---|---|
 | `no_dupes_all_params` | `src/level.rs` |
+
+### `Box<dyn Error>` — 1 rewrite
+
+Verus cannot declare `core::error::Error` for a `dyn` type: an
+`external_trait_specification` for it fails the trait-conflict check on its
+`Debug`/`Display` supertraits. `check_declar_info` keeps its original
+signature as an unverified wrapper that only formats the error; its checks run
+in `check_declar_info_core`, which returns the sort and an `ok` flag.
+
+| function | file |
+|---|---|
+| `check_declar_info` | `src/tc.rs` |
 
 ## 2. Rewrites needing a Verus language feature
 
