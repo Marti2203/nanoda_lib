@@ -1469,9 +1469,18 @@ impl<'t> TcCache<'t> {
     }
 }
 
-} // verus!
+
 impl<'t> TcCache<'t> {
-    pub(crate) fn clear(&mut self) {
+    /// Verified in place, body unchanged: every cache empty, so `tc_wf`'s
+    /// cache clauses hold vacuously afterwards.
+    pub(crate) fn clear(&mut self)
+        ensures
+            final(self).infer_cache_check@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            final(self).infer_cache_no_check@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            final(self).whnf_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            final(self).whnf_no_unfolding_cache@ == vstd::map::Map::<ExprPtr<'t>, ExprPtr<'t>>::empty(),
+            final(self).eq_cache@ == vstd::set::Set::<SortedPair<'t>>::empty(),
+    {
         self.infer_cache_check.clear();
         self.infer_cache_no_check.clear();
         self.whnf_cache.clear();
@@ -1482,6 +1491,8 @@ impl<'t> TcCache<'t> {
         self.strong_cache.clear();
     }
 }
+
+} // verus!
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {

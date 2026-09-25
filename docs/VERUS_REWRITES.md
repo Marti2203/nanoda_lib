@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **80 marked rewrites across 57 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **82 marked rewrites across 59 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -238,6 +238,7 @@ still a rejection — but each is an improvement.
 |---|---|---|
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so) |
 | `reduce_proj` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
+| `check_inductive_spec_0th`, `check_inductive_specs_mutual1` | `src/inductive.rs` | the binder walk's `i += 1` on a `usize` that nothing bounds (the walk runs until the cursor stops being a `Pi`); overflow is a rejection (`checked_add`). Cannot fire on a real term |
 | `mk_unique` | `src/util.rs` | `self.unique_counter += 1` on a `u32`, which WRAPS in a release build: after 2^32 locals two different locals would share an id, which unlike the others here could make distinct locals compare equal. Overflow is a rejection now (`checked_add`) |
 | `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's |
 | `to_ctor_when_k` | `src/tc.rs` | K-like replacement additionally tests that the major premise's type is a proposition (`is_prop`) — the kernel relies on K-like recursors existing only for `Prop` inductives, which is what makes the swap a proof-irrelevance step; never fails on a well-formed environment, costs one inference when K fires |

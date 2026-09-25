@@ -286,6 +286,9 @@ pub(crate) struct InductiveCheckState<'a> {
     pub majors: Vec<ExprPtr<'a>>,
     pub motives: Vec<ExprPtr<'a>>,
     pub minors: Vec<Vec<ExprPtr<'a>>>,
+    /// Ghost: one certificate per inductive type checked by
+    /// `check_inductive_specs`, recording the binder walk it did.
+    pub tele: vstd::prelude::Ghost<vstd::seq::Seq<TeleCert>>,
 }
 
 impl<'a> InductiveCheckState<'a> {
@@ -314,6 +317,7 @@ impl<'a> InductiveCheckState<'a> {
             majors: Vec::new(),
             motives: Vec::new(),
             minors: Vec::new(),
+            tele: vstd::prelude::Ghost::assume_new(),
         }
     }
     fn is_nested(&self) -> bool {
@@ -439,115 +443,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         (param_locals, e)
-    }
-
-    /// Check the 0th element of the list of inductive types; this one is different
-    /// than the mutuals, because we need to determine the target for the block codom
-    /// and some other stuff.
-    fn check_inductive_spec_0th(&mut self, uparams: LevelsPtr<'t>, st: &mut InductiveCheckState<'t>) {
-        self.tc_cache.clear();
-        let (ind_name, mut ind_ty_cursor) = st.all_inductives_incl_specialized.get(0).map(|x| (x.name, x.ty)).unwrap();
-        ind_ty_cursor = self.whnf(ind_ty_cursor);
-        let mut indices_locals = Vec::new();
-        let mut i = 0;
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor) {
-            if i < st.local_params.len() {
-                let local_ = st.local_params[i];
-                match self.ctx.read_expr(local_) {
-                    Local { binder_type: t2, .. } => {
-                        self.tc_cache.clear();
-                        self.assert_def_eq(binder_type, t2);
-                    }
-                    _ => panic!(),
-                }
-                ind_ty_cursor = self.ctx.inst(body, &[st.local_params[i]]);
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
-            } else {
-                let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                ind_ty_cursor = self.ctx.inst(body, &[local_]);
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
-                indices_locals.push(local_)
-            }
-            i += 1;
-        }
-        let block_codom = self.ensure_sort(ind_ty_cursor);
-        let is_nonzero = self.ctx.is_nonzero(block_codom);
-        let is_zero = self.ctx.is_zero(block_codom);
-        let ind_const = self.ctx.mk_const(ind_name, uparams);
-
-        st.local_indices.push(indices_locals);
-        st.block_codom = Some(block_codom);
-        st.is_zero = Some(is_zero);
-        st.is_nonzero = Some(is_nonzero);
-        st.ind_consts.push(ind_const);
-    }
-
-    /// Check the rest of the types in a mutual block, ensuring they agree with the base type.
-    fn check_inductive_specs_mutual1(&mut self, st: &mut InductiveCheckState<'t>, ind: IndTyHeader<'t>) {
-        self.tc_cache.clear();
-        let mut ind_ty_cursor = self.whnf(ind.ty);
-        let mut indices_locals = Vec::new();
-        let mut i = 0;
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor) {
-            if i < st.local_params.len() {
-                ind_ty_cursor = self.ctx.inst(body, &[st.local_params[i]]);
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
-            } else {
-                let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                ind_ty_cursor = self.ctx.inst(body, &[local_]);
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
-                indices_locals.push(local_)
-            }
-            i += 1;
-        }
-        let codom_level = self.ensure_sort(ind_ty_cursor);
-        assert!(self.ctx.eq_antisymm(codom_level, st.block_codom.unwrap()));
-        st.local_indices.push(indices_locals);
-        st.ind_consts.push(self.ctx.mk_const(ind.name, st.uparams));
-    }
-
-    /// This starts by receiving the "full" `InductiveType` specification from the export
-    /// file for the actual declaration being checked. It *ALSO* gets the NestedInductiveState,
-    /// since the process of checking these also has to deal with the new types created
-    /// during the nest procedure.
-    fn check_inductive_specs(&mut self, st: &mut InductiveCheckState<'t>) {
-        let nbefore = st.all_inductives_incl_specialized.len();
-        for i in 0..st.all_inductives_incl_specialized.len() {
-            if i == 0 {
-                self.check_inductive_spec_0th(st.uparams, st);
-                assert_eq!(st.local_indices.len(), 1);
-            } else {
-                assert_eq!(st.local_indices.len(), i);
-                self.check_inductive_specs_mutual1(st, st.all_inductives_incl_specialized[i].clone());
-            }
-        }
-        assert_eq!(st.all_inductives_incl_specialized.len(), nbefore);
-        assert_eq!(st.all_inductives_incl_specialized.len(), st.local_indices.len());
-        self.shadow_check_inductive_specs(st);
-    }
-
-    /// Shadow-only (NANODA_SHADOW=1): certify each block member's type shape
-    /// (`delta_bound_model::verified_ind_ty_ok`) on the inputs the original
-    /// checks just accepted. Never affects a verdict.
-    fn shadow_check_inductive_specs(&mut self, st: &InductiveCheckState<'t>) {
-        if !crate::tc::route_stats::shadow_enabled() {
-            return;
-        }
-        let codom = match st.block_codom {
-            Some(c) => c,
-            None => return,
-        };
-        for i in 0..st.all_inductives_incl_specialized.len() {
-            crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_TOTAL);
-            let ty = st.all_inductives_incl_specialized[i].ty;
-            let nb = st.local_params.len() + st.local_indices[i].len();
-            let mut memo = crate::tc_model::WhnfMemo::new(self.env);
-            if crate::delta_bound_model::verified_ind_ty_ok(self.ctx, self.env, &mut memo, nb, codom, ty, 64)
-                == Some(true)
-            {
-                crate::tc::route_stats::bump(&crate::tc::route_stats::SHADOW_INDTY_CERT);
-            }
-        }
     }
 
     fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> Option<InductiveData<'t>> {
@@ -1988,8 +1883,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 // ===========================================================================
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model_of_levels;
-#[cfg(verus_only)]
+#[allow(unused_imports)]
 use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
+use crate::expr_model::ExprSpec;
 use vstd::prelude::*;
 
 verus! {
@@ -2041,7 +1938,619 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
     true
 }
 
+
+/// A kernel binder walk, recorded: the cursors visited, the `Pi` each one
+/// reduced to (binder type and body), the local each was opened with, and the
+/// sort the last one reduced to.
+pub struct TeleCert {
+    pub cursors: Seq<ExprSpec>,
+    pub bts: Seq<ExprSpec>,
+    pub bodies: Seq<ExprSpec>,
+    pub locals: Seq<u32>,
+    pub sort: LevelSpec,
+}
+
+/// The walk is sound in the kernel's judgement: each cursor converts to its
+/// `Pi`, the next cursor is that body opened with the step's local, and the
+/// last converts to the sort.
+pub open spec fn tele_ok<'x, 't>(env: crate::env::Env<'x, 't>, c: TeleCert) -> bool {
+    &&& c.cursors.len() == c.locals.len() + 1
+    &&& c.bts.len() == c.locals.len()
+    &&& c.bodies.len() == c.locals.len()
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> crate::tc::kconv(env, c.cursors[k],
+        ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k])))
+        && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
+    &&& crate::tc::kconv(env, c.cursors.last(), ExprSpec::Sort(c.sort))
+}
+
+pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<u32> {
+    Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
+}
+
+/// `ty` walked over `params` then `indices`: the certificate `check_inductive_specs`
+/// records for one inductive type.
+pub open spec fn ind_walk_ok<'x, 't>(
+    env: crate::env::Env<'x, 't>,
+    c: TeleCert,
+    ty: ExprPtr<'t>,
+    params: Seq<ExprPtr<'t>>,
+    indices: Seq<ExprPtr<'t>>,
+) -> bool {
+    &&& tele_ok(env, c)
+    &&& c.cursors[0] == crate::expr_arena_bridge::to_model(ty)
+    &&& c.locals == if c.locals.len() <= params.len() {
+        local_ids(params.subrange(0, c.locals.len() as int))
+    } else {
+        local_ids(params) + local_ids(indices)
+    }
+    &&& c.locals.len() <= params.len() ==> indices.len() == 0
+}
+
+/// A pointer to a closed term with no level locals: in scope at any depth.
+pub open spec fn level_free<'t, 'p>(c: TcCtx<'t, 'p>, e: ExprPtr<'t>) -> bool {
+    &&& crate::util_model::owns(c, e)
+    &&& crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) <= 0
+    &&& crate::expr_model::dbj_deep_in(crate::util_model::arena_ids(c), crate::expr_arena_bridge::to_model(e), vstd::iset::ISet::empty(), 0)
+}
+
+/// A unique local made by the inductive checker, level free.
+pub open spec fn level_free_local<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>) -> bool {
+    &&& level_free(c, l)
+    &&& crate::expr_arena_bridge::to_model(l) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(l))
+    &&& crate::expr_arena_bridge::is_local_shape(l)
+}
+
+/// What the inductive checker's state holds, as far as the spec walks need it.
+pub(crate) open spec fn ind_st_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
+    &&& crate::util_model::owns(c, st.uparams)
+    &&& forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(c, #[trigger] st.local_params@[i])
+    &&& forall|j: int| 0 <= j < st.all_inductives_incl_specialized@.len()
+        ==> level_free(c, (#[trigger] st.all_inductives_incl_specialized@[j]).ty)
+            && crate::util_model::owns(c, st.all_inductives_incl_specialized@[j].name)
+    &&& forall|i: int, j: int| 0 <= i < st.local_indices@.len() && 0 <= j < st.local_indices@[i]@.len()
+        ==> level_free_local(c, #[trigger] st.local_indices@[i]@[j])
+    &&& forall|i: int| 0 <= i < st.ind_consts@.len() ==> crate::util_model::owns(c, #[trigger] st.ind_consts@[i])
+    &&& st.block_codom matches Some(l) ==> crate::util_model::owns(c, l)
+}
+
+/// Level-free is in scope for any checker at level 0.
+pub proof fn level_free_in_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: ExprPtr<'t>)
+    requires
+        level_free(*tc.ctx, e),
+        crate::env_model::env_matches(*tc.env, *tc.ctx),
+    ensures
+        crate::tc::in_scope(tc, e),
+{
+    let aids = crate::util_model::arena_ids(*tc.ctx);
+    crate::expr_model::dbj_deep_in_weaken(aids, crate::expr_arena_bridge::to_model(e), vstd::iset::ISet::empty(), 0,
+        crate::tc::live_set(tc), tc.ctx.dbj_level_counter);
+}
+
+/// A level-free term stays level free under whatever `scope_pres`s it.
+pub proof fn level_free_pres<'t, 'p>(c: TcCtx<'t, 'p>, e: ExprPtr<'t>, r: ExprPtr<'t>)
+    requires
+        level_free(c, e),
+        crate::util_model::owns(c, r),
+        crate::tc::scope_pres(crate::util_model::arena_ids(c), crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::to_model(r)),
+    ensures
+        level_free(c, r),
+{
+    assert(crate::expr_model::dbj_deep_in(crate::util_model::arena_ids(c), crate::expr_arena_bridge::to_model(e), vstd::iset::ISet::empty(), 0));
+}
+
+
+/// A level-free local's type is level free: the local is a well-founded
+/// unique, so its type's locals are too.
+pub proof fn local_type_level_free<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
+    requires
+        level_free_local(c, l),
+        crate::util_model::owns(c, crate::expr_arena_bridge::local_binder_type_of(l)),
+    ensures
+        level_free(c, crate::expr_arena_bridge::local_binder_type_of(l)),
+{
+    let aids = crate::util_model::arena_ids(c);
+    let id = crate::expr_arena_bridge::expr_id(l);
+    crate::expr_arena_bridge::arena_lctx_local(aids, l);
+    assert(crate::expr_model::dbj_deep_in(aids, ExprSpec::Free(id), vstd::iset::ISet::empty(), 0));
+    assert(crate::expr_arena_bridge::dbj_serial(aids, id) is None);
+    let n = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(id), n);
+    crate::expr_model::unique_ty_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], (n - 1) as nat,
+        vstd::iset::ISet::empty(), 0);
+}
+
+
+/// Type `k` of the block was walked, ending in a sort equivalent to the block's.
+pub(crate) open spec fn walk_k_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, k: int) -> bool {
+    &&& ind_walk_ok(env, st.tele@[k], st.all_inductives_incl_specialized@[k].ty, st.local_params@, st.local_indices@[k]@)
+    &&& st.block_codom is Some
+    &&& forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(st.tele@[k].sort, rho)
+        == crate::level_model::interp(crate::level_arena_bridge::to_model(st.block_codom->0), rho)
+}
+
+pub(crate) open spec fn walks_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, n: int) -> bool {
+    forall|k: int| 0 <= k < n ==> #[trigger] walk_k_ok(env, st, k)
+}
+
+/// Entries the step did not touch keep their facts.
+pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: InductiveCheckState<'t>, b: InductiveCheckState<'t>, k: int)
+    requires
+        walk_k_ok(env, a, k),
+        b.tele@[k] == a.tele@[k],
+        b.local_indices@[k] == a.local_indices@[k],
+        b.all_inductives_incl_specialized@ == a.all_inductives_incl_specialized@,
+        b.local_params@ == a.local_params@,
+        b.block_codom == a.block_codom,
+    ensures
+        walk_k_ok(env, b, k),
+{
+}
+
+/// The derived `Clone` of `IndTyHeader` copies its fields.
+pub assume_specification<'a>[ <IndTyHeader<'a> as Clone>::clone ](h: &IndTyHeader<'a>) -> (r: IndTyHeader<'a>)
+    ensures
+        r.name == h.name,
+        r.ty == h.ty,
+;
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// This starts by receiving the "full" `InductiveType` specification from the export
+    /// file for the actual declaration being checked. It *ALSO* gets the NestedInductiveState,
+    /// since the process of checking these also has to deal with the new types created
+    /// during the nest procedure.
+    ///
+    /// Verified in place, body unchanged: every type in the block has its binder
+    /// walk recorded (`ind_walk_ok`), each ending in a sort equivalent to the
+    /// block's. The shadow's shape certifier for this check is retired.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn check_inductive_specs(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            ind_st_ok(*old(self).ctx, *old(st)),
+            old(st).local_indices@.len() == 0,
+            old(st).tele@.len() == 0,
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            ind_st_ok(*(*final(self)).ctx, *final(st)),
+            final(st).all_inductives_incl_specialized@ == old(st).all_inductives_incl_specialized@,
+            final(st).local_params@ == old(st).local_params@,
+            final(st).local_indices@.len() == final(st).all_inductives_incl_specialized@.len(),
+            final(st).tele@.len() == final(st).all_inductives_incl_specialized@.len(),
+            final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).block_codom is Some,
+            walks_ok(*old(self).env, *final(st), final(st).tele@.len() as int),
+    {
+        let nbefore = st.all_inductives_incl_specialized.len();
+        for i in 0..st.all_inductives_incl_specialized.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                ind_st_ok(*self.ctx, *st),
+                st.all_inductives_incl_specialized@ == old(st).all_inductives_incl_specialized@,
+                st.local_params@ == old(st).local_params@,
+                nbefore == st.all_inductives_incl_specialized@.len(),
+                st.local_indices@.len() == i,
+                st.tele@.len() == i,
+                i > 0 ==> st.block_codom is Some,
+                walks_ok(*old(self).env, *st, i as int),
+        {
+            let ghost st0 = *st;
+            if i == 0 {
+                self.check_inductive_spec_0th(st.uparams, st);
+                assert_eq!(st.local_indices.len(), 1);
+            } else {
+                assert_eq!(st.local_indices.len(), i);
+                self.check_inductive_specs_mutual1(st, st.all_inductives_incl_specialized[i].clone());
+            }
+            proof {
+                assert(st.tele@.last() == st.tele@[i as int]);
+                assert(st.local_indices@.last() == st.local_indices@[i as int]);
+                assert(walk_k_ok(*old(self).env, *st, i as int));
+                assert forall|k: int| 0 <= k < i + 1 implies #[trigger] walk_k_ok(*old(self).env, *st, k) by {
+                    if k < i {
+                        assert(walk_k_ok(*old(self).env, st0, k));
+                        walk_k_frame(*old(self).env, st0, *st, k);
+                    }
+                }
+            }
+        }
+        assert_eq!(st.all_inductives_incl_specialized.len(), nbefore);
+        assert_eq!(st.all_inductives_incl_specialized.len(), st.local_indices.len());
+    }
+
+    /// Check the 0th element of the list of inductive types; this one is different
+    /// than the mutuals, because we need to determine the target for the block codom
+    /// and some other stuff.
+    ///
+    /// Verified in place, body unchanged: its binder walk is recorded in
+    /// `st.tele` (`ind_walk_ok`), and the block's sort is the one it ends in.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn check_inductive_spec_0th(&mut self, uparams: LevelsPtr<'t>, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            ind_st_ok(*old(self).ctx, *old(st)),
+            old(st).all_inductives_incl_specialized@.len() >= 1,
+            crate::util_model::owns(*old(self).ctx, uparams),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            ind_st_ok(*(*final(self)).ctx, *final(st)),
+            final(st).all_inductives_incl_specialized@ == old(st).all_inductives_incl_specialized@,
+            final(st).local_params@ == old(st).local_params@,
+            final(st).uparams == old(st).uparams,
+            final(st).local_indices@.len() == old(st).local_indices@.len() + 1,
+            forall|i: int| 0 <= i < old(st).local_indices@.len() ==> #[trigger] final(st).local_indices@[i] == old(st).local_indices@[i],
+            final(st).tele@.len() == old(st).tele@.len() + 1,
+            forall|i: int| 0 <= i < old(st).tele@.len() ==> #[trigger] final(st).tele@[i] == old(st).tele@[i],
+            ind_walk_ok(*old(self).env, final(st).tele@.last(), old(st).all_inductives_incl_specialized@[0].ty,
+                final(st).local_params@, final(st).local_indices@.last()@),
+            final(st).block_codom matches Some(l) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
+                == crate::level_model::interp(crate::level_arena_bridge::to_model(l), rho),
+            final(st).block_codom is Some,
+    {
+        self.tc_cache.clear();
+        let (ind_name, mut ind_ty_cursor) = st.all_inductives_incl_specialized.get(0).map(
+            |x: &IndTyHeader<'t>| -> (r: (NamePtr<'t>, ExprPtr<'t>))
+                ensures r == (x.name, x.ty)
+            { (x.name, x.ty) }
+        ).unwrap();
+        let ghost env = *self.env;
+        let ghost ty0 = ind_ty_cursor;
+        proof {
+            assert(level_free(*self.ctx, ty0));
+            level_free_in_scope(*self, ind_ty_cursor);
+        }
+        ind_ty_cursor = self.whnf(ind_ty_cursor);
+        proof {
+            level_free_pres(*self.ctx, ty0, ind_ty_cursor);
+        }
+        let mut indices_locals = Vec::new();
+        let mut i = 0;
+        let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ty0)];
+        let ghost mut bts: Seq<ExprSpec> = Seq::empty();
+        let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
+        let ghost mut locs: Seq<u32> = Seq::empty();
+        proof {
+            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<u32>::empty());
+        }
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                env == *self.env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                *st == *old(st),
+                ind_st_ok(*self.ctx, *st),
+                level_free(*self.ctx, ind_ty_cursor),
+                forall|k: int| 0 <= k < indices_locals@.len() ==> level_free_local(*self.ctx, #[trigger] indices_locals@[k]),
+                cs.len() == locs.len() + 1,
+                bts.len() == locs.len(),
+                bodies.len() == locs.len(),
+                cs[0] == crate::expr_arena_bridge::to_model(ty0),
+                forall|k: int| 0 <= k < locs.len() ==> crate::tc::kconv(env, cs[k],
+                    ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
+                    && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
+                crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
+                i == locs.len(),
+                locs == if i <= st.local_params@.len() {
+                    local_ids(st.local_params@.subrange(0, i as int))
+                } else {
+                    local_ids(st.local_params@) + local_ids(indices_locals@)
+                },
+                indices_locals@.len() == if i <= st.local_params@.len() { 0 } else { i - st.local_params@.len() },
+        {
+            let ghost cur_m = crate::expr_arena_bridge::to_model(ind_ty_cursor);
+            proof {
+                assert(cur_m == ExprSpec::Bind(Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+                assert(level_free(*self.ctx, binder_type));
+            }
+            if i < st.local_params.len() {
+                proof {
+                    assert(i < st.local_params@.len());
+                    assert(level_free_local(*self.ctx, st.local_params@[i as int]));
+                }
+                let local_ = st.local_params[i];
+                match self.ctx.read_expr(local_) {
+                    Local { binder_type: t2, .. } => {
+                        self.tc_cache.clear();
+                        proof {
+                            local_type_level_free(*self.ctx, local_);
+                            level_free_in_scope(*self, binder_type);
+                            level_free_in_scope(*self, t2);
+                        }
+                        self.assert_def_eq(binder_type, t2);
+                    }
+                    _ => panic!(),
+                }
+                ind_ty_cursor = self.ctx.inst(body, &[st.local_params[i]]);
+                proof {
+                    let aids = crate::util_model::arena_ids(*self.ctx);
+                    assert([local_]@ =~= seq![local_]);
+                    assert(crate::expr_arena_bridge::ptr_models(seq![local_]) =~= seq![crate::expr_arena_bridge::to_model(local_)]);
+                    crate::tc::inst_deep_in(aids, body, seq![local_], vstd::iset::ISet::empty(), 0);
+                    crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_), 0);
+                    assert(level_free(*self.ctx, ind_ty_cursor));
+                    level_free_in_scope(*self, ind_ty_cursor);
+                }
+                let ghost pre = ind_ty_cursor;
+                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                proof {
+                    level_free_pres(*self.ctx, pre, ind_ty_cursor);
+                    let lid = crate::expr_arena_bridge::expr_id(local_);
+                    let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    cs = cs.push(next);
+                    bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                    bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                    locs = locs.push(lid);
+                }
+                proof {
+                    assert(st.local_params@.subrange(0, i as int + 1) =~= st.local_params@.subrange(0, i as int).push(local_));
+                    assert(local_ids(st.local_params@.subrange(0, i as int + 1)) =~= local_ids(st.local_params@.subrange(0, i as int)).push(crate::expr_arena_bridge::expr_id(local_)));
+                    if i + 1 == st.local_params@.len() {
+                        assert(st.local_params@.subrange(0, i as int + 1) =~= st.local_params@);
+                    }
+                }
+            } else {
+                let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                proof {
+                    crate::quot_model::mk_unique_deep(*self.ctx, local_, binder_type);
+                    assert(level_free_local(*self.ctx, local_));
+                }
+                ind_ty_cursor = self.ctx.inst(body, &[local_]);
+                proof {
+                    let aids = crate::util_model::arena_ids(*self.ctx);
+                    assert([local_]@ =~= seq![local_]);
+                    assert(crate::expr_arena_bridge::ptr_models(seq![local_]) =~= seq![crate::expr_arena_bridge::to_model(local_)]);
+                    crate::tc::inst_deep_in(aids, body, seq![local_], vstd::iset::ISet::empty(), 0);
+                    crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_), 0);
+                    assert(level_free(*self.ctx, ind_ty_cursor));
+                    level_free_in_scope(*self, ind_ty_cursor);
+                }
+                let ghost pre = ind_ty_cursor;
+                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                proof {
+                    level_free_pres(*self.ctx, pre, ind_ty_cursor);
+                    let lid = crate::expr_arena_bridge::expr_id(local_);
+                    let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    cs = cs.push(next);
+                    bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                    bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                    locs = locs.push(lid);
+                }
+                let ghost old_idx = indices_locals@;
+                indices_locals.push(local_);
+                proof {
+                    assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
+                    if i == st.local_params@.len() {
+                        assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
+                        assert(local_ids(old_idx) =~= Seq::<u32>::empty());
+                    }
+                }
+            }
+            // VERUS-REWRITE(walk-counter): `i += 1` on a `usize` nothing bounds
+            // (the walk runs until the cursor stops being a `Pi`); overflow is
+            // a rejection.
+            i = match i.checked_add(1) {
+                Some(n) => n,
+                None => panic!("binder walk counter overflow"),
+            };
+        }
+        proof {
+            level_free_in_scope(*self, ind_ty_cursor);
+        }
+        let block_codom = self.ensure_sort(ind_ty_cursor);
+        let is_nonzero = self.ctx.is_nonzero(block_codom);
+        let is_zero = self.ctx.is_zero(block_codom);
+        let ind_const = self.ctx.mk_const(ind_name, uparams);
+
+        let ghost walked = TeleCert { cursors: cs, bts, bodies, locals: locs, sort: crate::level_arena_bridge::to_model(block_codom) };
+        proof {
+            crate::tc::kconv_trans(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor),
+                ExprSpec::Sort(crate::level_arena_bridge::to_model(block_codom)));
+        }
+        st.local_indices.push(indices_locals);
+        st.block_codom = Some(block_codom);
+        st.is_zero = Some(is_zero);
+        st.is_nonzero = Some(is_nonzero);
+        st.ind_consts.push(ind_const);
+        st.tele = Ghost(st.tele@.push(walked));
+    }
+
+    /// Check the rest of the types in a mutual block, ensuring they agree with the base type.
+    ///
+    /// Verified in place, body unchanged: its binder walk is recorded in
+    /// `st.tele` (`ind_walk_ok`), ending in a sort equivalent to the block's.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn check_inductive_specs_mutual1(&mut self, st: &mut InductiveCheckState<'t>, ind: IndTyHeader<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            ind_st_ok(*old(self).ctx, *old(st)),
+            old(st).block_codom is Some,
+            level_free(*old(self).ctx, ind.ty),
+            crate::util_model::owns(*old(self).ctx, ind.name),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            ind_st_ok(*(*final(self)).ctx, *final(st)),
+            final(st).all_inductives_incl_specialized@ == old(st).all_inductives_incl_specialized@,
+            final(st).local_params@ == old(st).local_params@,
+            final(st).uparams == old(st).uparams,
+            final(st).local_indices@.len() == old(st).local_indices@.len() + 1,
+            forall|i: int| 0 <= i < old(st).local_indices@.len() ==> #[trigger] final(st).local_indices@[i] == old(st).local_indices@[i],
+            final(st).tele@.len() == old(st).tele@.len() + 1,
+            forall|i: int| 0 <= i < old(st).tele@.len() ==> #[trigger] final(st).tele@[i] == old(st).tele@[i],
+            ind_walk_ok(*old(self).env, final(st).tele@.last(), ind.ty,
+                final(st).local_params@, final(st).local_indices@.last()@),
+            final(st).block_codom == old(st).block_codom,
+            forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
+                == crate::level_model::interp(crate::level_arena_bridge::to_model(final(st).block_codom->0), rho),
+    {
+        self.tc_cache.clear();
+        let ghost env = *self.env;
+        let ghost ty0 = ind.ty;
+        proof {
+            assert(level_free(*self.ctx, ty0));
+            level_free_in_scope(*self, ind.ty);
+        }
+        let mut ind_ty_cursor = self.whnf(ind.ty);
+        proof {
+            level_free_pres(*self.ctx, ty0, ind_ty_cursor);
+        }
+        let mut indices_locals = Vec::new();
+        let mut i = 0;
+        let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ty0)];
+        let ghost mut bts: Seq<ExprSpec> = Seq::empty();
+        let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
+        let ghost mut locs: Seq<u32> = Seq::empty();
+        proof {
+            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<u32>::empty());
+        }
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                env == *self.env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                *st == *old(st),
+                ind_st_ok(*self.ctx, *st),
+                level_free(*self.ctx, ind_ty_cursor),
+                forall|k: int| 0 <= k < indices_locals@.len() ==> level_free_local(*self.ctx, #[trigger] indices_locals@[k]),
+                cs.len() == locs.len() + 1,
+                bts.len() == locs.len(),
+                bodies.len() == locs.len(),
+                cs[0] == crate::expr_arena_bridge::to_model(ty0),
+                forall|k: int| 0 <= k < locs.len() ==> crate::tc::kconv(env, cs[k],
+                    ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
+                    && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
+                crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
+                i == locs.len(),
+                locs == if i <= st.local_params@.len() {
+                    local_ids(st.local_params@.subrange(0, i as int))
+                } else {
+                    local_ids(st.local_params@) + local_ids(indices_locals@)
+                },
+                indices_locals@.len() == if i <= st.local_params@.len() { 0 } else { i - st.local_params@.len() },
+        {
+            let ghost cur_m = crate::expr_arena_bridge::to_model(ind_ty_cursor);
+            proof {
+                assert(cur_m == ExprSpec::Bind(Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+                assert(level_free(*self.ctx, binder_type));
+            }
+            if i < st.local_params.len() {
+                proof {
+                    assert(i < st.local_params@.len());
+                    assert(level_free_local(*self.ctx, st.local_params@[i as int]));
+                }
+                let ghost local_ = st.local_params@[i as int];
+                ind_ty_cursor = self.ctx.inst(body, &[st.local_params[i]]);
+                proof {
+                    let aids = crate::util_model::arena_ids(*self.ctx);
+                    assert([local_]@ =~= seq![local_]);
+                    assert(crate::expr_arena_bridge::ptr_models(seq![local_]) =~= seq![crate::expr_arena_bridge::to_model(local_)]);
+                    crate::tc::inst_deep_in(aids, body, seq![local_], vstd::iset::ISet::empty(), 0);
+                    crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_), 0);
+                    assert(level_free(*self.ctx, ind_ty_cursor));
+                    level_free_in_scope(*self, ind_ty_cursor);
+                }
+                let ghost pre = ind_ty_cursor;
+                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                proof {
+                    level_free_pres(*self.ctx, pre, ind_ty_cursor);
+                    let lid = crate::expr_arena_bridge::expr_id(local_);
+                    let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    cs = cs.push(next);
+                    bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                    bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                    locs = locs.push(lid);
+                }
+                proof {
+                    assert(st.local_params@.subrange(0, i as int + 1) =~= st.local_params@.subrange(0, i as int).push(local_));
+                    assert(local_ids(st.local_params@.subrange(0, i as int + 1)) =~= local_ids(st.local_params@.subrange(0, i as int)).push(crate::expr_arena_bridge::expr_id(local_)));
+                    if i + 1 == st.local_params@.len() {
+                        assert(st.local_params@.subrange(0, i as int + 1) =~= st.local_params@);
+                    }
+                }
+            } else {
+                let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                proof {
+                    crate::quot_model::mk_unique_deep(*self.ctx, local_, binder_type);
+                    assert(level_free_local(*self.ctx, local_));
+                }
+                ind_ty_cursor = self.ctx.inst(body, &[local_]);
+                proof {
+                    let aids = crate::util_model::arena_ids(*self.ctx);
+                    assert([local_]@ =~= seq![local_]);
+                    assert(crate::expr_arena_bridge::ptr_models(seq![local_]) =~= seq![crate::expr_arena_bridge::to_model(local_)]);
+                    crate::tc::inst_deep_in(aids, body, seq![local_], vstd::iset::ISet::empty(), 0);
+                    crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_), 0);
+                    assert(level_free(*self.ctx, ind_ty_cursor));
+                    level_free_in_scope(*self, ind_ty_cursor);
+                }
+                let ghost pre = ind_ty_cursor;
+                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                proof {
+                    level_free_pres(*self.ctx, pre, ind_ty_cursor);
+                    let lid = crate::expr_arena_bridge::expr_id(local_);
+                    let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    cs = cs.push(next);
+                    bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                    bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                    locs = locs.push(lid);
+                }
+                let ghost old_idx = indices_locals@;
+                indices_locals.push(local_);
+                proof {
+                    assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
+                    if i == st.local_params@.len() {
+                        assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
+                        assert(local_ids(old_idx) =~= Seq::<u32>::empty());
+                    }
+                }
+            }
+            // VERUS-REWRITE(walk-counter): `i += 1` on a `usize` nothing bounds
+            // (the walk runs until the cursor stops being a `Pi`); overflow is
+            // a rejection.
+            i = match i.checked_add(1) {
+                Some(n) => n,
+                None => panic!("binder walk counter overflow"),
+            };
+        }
+        proof {
+            level_free_in_scope(*self, ind_ty_cursor);
+        }
+        let codom_level = self.ensure_sort(ind_ty_cursor);
+        assert!(self.ctx.eq_antisymm(codom_level, st.block_codom.unwrap()));
+
+        let ghost walked = TeleCert { cursors: cs, bts, bodies, locals: locs, sort: crate::level_arena_bridge::to_model(codom_level) };
+        proof {
+            crate::tc::kconv_trans(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor),
+                ExprSpec::Sort(crate::level_arena_bridge::to_model(codom_level)));
+        }
+        st.local_indices.push(indices_locals);
+        st.ind_consts.push(self.ctx.mk_const(ind.name, st.uparams));
+        st.tele = Ghost(st.tele@.push(walked));
+    }
+
     /// VERUS-REWRITE(slice-pattern): the original matches
     /// `match ..ctors.as_slice() { [only_ctor] => .., _ => false }`. Slice
     /// patterns are unsupported outright (register entry 9), so it is the length
