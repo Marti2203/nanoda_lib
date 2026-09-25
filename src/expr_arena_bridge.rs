@@ -2249,6 +2249,19 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
+/// Adapter over the kernel's own `TcCtx::inst`, which is verified in place now
+/// (`expr.rs`). This was a 110-line reimplementation with its own fuel
+/// parameter; what is left is the `Option` shape its twenty-four call sites
+/// expect.
+///
+/// `offset == 0` is now required rather than supported. Every call site passes
+/// a literal `0` -- the general-offset entry point was only ever exercised by
+/// the mirror's own recursion, and the kernel has no such entry point at all
+/// (`inst` fixes the offset at 0 and `inst_aux` is private to `expr.rs`).
+///
+/// The `substs` length check takes the place of a precondition the call sites
+/// could not establish, using the same `None` escape the mirror used for fuel
+/// exhaustion.
 pub fn verified_inst<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
     e: ExprPtr<'t>,
