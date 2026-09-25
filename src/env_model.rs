@@ -768,6 +768,23 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::can_be_struct ](
 ) -> (result: bool) where 'a: 'x
 ;
 
+/// Callable, claims nothing: the inductive checker only tests whether a
+/// generated name is already taken.
+pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_old_declar ](
+    env: &'b Env<'x, 'a>,
+    n: &NamePtr<'a>,
+) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
+;
+
+/// The derived `Clone`: every field is `Copy` or an `Arc` (whose clone is the
+/// same allocation), so the copy is the original.
+pub assume_specification<'a>[ <crate::env::InductiveData<'a> as Clone>::clone ](
+    d: &crate::env::InductiveData<'a>,
+) -> (r: crate::env::InductiveData<'a>)
+    ensures
+        r == *d,
+;
+
 /// A real, finitely-many-declarations `Env` always has SOME maximum size
 /// among its declarations -- a genuine structural fact about any finite
 /// collection of finite terms, not an arbitrary limit imposed on the

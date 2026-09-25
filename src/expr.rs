@@ -442,17 +442,47 @@ pub enum BinderStyle {
     InstanceImplicit,
 }
 
+::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
-    pub(crate) fn inst_forall_params(&mut self, mut e: ExprPtr<'t>, n: usize, all_args: &[ExprPtr<'t>]) -> ExprPtr<'t> {
-        for _ in 0..n {
+    /// Verified in place, body unchanged: peel `n` binders, then instantiate
+    /// them with the first `n` arguments.
+    pub(crate) fn inst_forall_params(&mut self, mut e: ExprPtr<'t>, n: usize, all_args: &[ExprPtr<'t>]) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), e),
+            crate::util_model::owns_all(*old(self), all_args@),
+            n <= all_args@.len(),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        for _ in 0..n
+            invariant
+                crate::util_model::owns(*self, e),
+        {
             if let Pi { body, .. } = self.read_expr(e) {
                 e = body
             } else {
                 panic!()
             }
         }
+        proof {
+            assert forall|i: int| 0 <= i < all_args@.subrange(0, n as int).len()
+                implies crate::util_model::owns(*self, #[trigger] all_args@.subrange(0, n as int)[i]) by {
+                assert(all_args@.subrange(0, n as int)[i] == all_args@[i]);
+            }
+        }
         self.inst(e, &all_args[0..n])
     }
+}
+
+} // verus!
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Instantiate `e` with the substitutions in `substs`
 
@@ -1193,8 +1223,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), e),
             crate::util_model::owns_all(*old(self), ingoing@),
             crate::util_model::owns_all(*old(self), outgoing@),
-            outgoing@.len() < 60000,
-            ingoing@.len() < 60000,
+            outgoing@.len() <= u16::MAX,
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -2130,7 +2159,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             crate::util_model::owns(*old(self), e),
             crate::util_model::owns_all(*old(self), locals@),
-            locals@.len() < 60000,
+            locals@.len() <= u16::MAX,
         ensures
             crate::util_model::owns(*final(self), result),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(
@@ -2178,7 +2207,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), e),
             crate::util_model::owns_all(*old(self), locals@),
             crate::expr_arena_bridge::abstr_cache_sound(*old(self), locals@),
-            locals@.len() < 60000,
+            locals@.len() <= u16::MAX,
         ensures
             crate::util_model::owns(*final(self), result),
             crate::expr_arena_bridge::to_model(result) == crate::expr_model::abstr_full(

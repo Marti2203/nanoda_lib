@@ -165,6 +165,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::name_arena_bridge::to_model_name(incoming),
             ),
             crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         proof {
             crate::name_arena_bridge::to_model_name_injective(*self, n, outgoing);
@@ -208,6 +210,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::name_arena_bridge::to_model_name(n2),
             ),
             crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
         match self.read_name(n2) {
             Anon => n1,

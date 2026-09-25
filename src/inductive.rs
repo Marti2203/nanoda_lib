@@ -243,40 +243,6 @@ pub(crate) struct InductiveCheckState<'a> {
     pub tele: vstd::prelude::Ghost<vstd::seq::Seq<TeleCert>>,
 }
 
-impl<'a> InductiveCheckState<'a> {
-    fn new(
-        info_uparams: LevelsPtr<'a>,
-        num_params: u16,
-        new_tys: Vec<IndTyHeader<'a>>,
-        local_params: Vec<ExprPtr<'a>>,
-    ) -> Self {
-        Self {
-            nested_to_unspecialized_ty_wfvars: crate::util::new_fx_index_map(),
-            nested_to_unspecialized_ty_nofvars: crate::util::new_fx_index_map(),
-            uparams: info_uparams,
-            num_params,
-            all_inductives_incl_specialized: new_tys,
-            next_ngen_idx: 1u64,
-            local_params,
-            local_indices: Vec::new(),
-            block_codom: None,
-            is_zero: None,
-            is_nonzero: None,
-            ind_consts: Vec::new(),
-            rec_uparams: None,
-            elim_level: None,
-            k_target: None,
-            majors: Vec::new(),
-            motives: Vec::new(),
-            minors: Vec::new(),
-            tele: vstd::prelude::Ghost::assume_new(),
-        }
-    }
-    fn is_nested(&self) -> bool {
-        !self.nested_to_unspecialized_ty_nofvars.is_empty()
-    }
-}
-
 /// Fields `pub` so `ExIndTyHeader` can be a TRANSPARENT
 /// `external_type_specification` -- Verus rejects private fields on those.
 /// `init_k_target` reads `.ctors`, so an opaque header would not let the
@@ -298,278 +264,6 @@ pub struct CtorHeader<'a> {
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
-    fn specialize_nested(
-        &mut self,
-        t_from_file: &InductiveData<'t>,
-        unmodified_tys_ctors: Vec<IndTyHeader<'t>>,
-    ) -> InductiveCheckState<'t> {
-        // Free variables for the block's paramters, and the instantiated end
-        // of the telescope for the type being checked (the 0th type).
-        let (local_params, _instd) = self.get_local_params(unmodified_tys_ctors[0].ty, t_from_file.num_params);
-
-        let mut st = InductiveCheckState::new(
-            t_from_file.info.uparams,
-            u16::try_from(local_params.len()).unwrap(),
-            unmodified_tys_ctors,
-            local_params,
-        );
-        // Collect the new `NestedNewType` items constructed from any actually nested inductives.
-        self.specialize_nested_aux(&mut st);
-
-        // No stray free variables.
-        for ind in st.all_inductives_incl_specialized.iter() {
-            assert!(!self.ctx.read_expr(ind.ty).has_fvars());
-            for c in ind.ctors.iter() {
-                assert!(!self.ctx.read_expr(c.ty).has_fvars());
-            }
-        }
-        st
-    }
-
-    /// This function does two important things, and it sort of needs to do them together.
-    ///
-    /// 1. it adds any new specialized inductive types needed to handle nested inductives to the state.
-    /// For example, in the declaration for `Lean.Syntax`, adding `_nested.Array_X` to
-    /// `st.all_inductives_incl_specialized`.
-    ///
-    /// 2. it goes through the constructors of all the inductives, including the newly added specialized
-    /// ones, and finds instances of nested types, replacing them in with instances of the specialized types.
-    /// For example, replacing the occurrence of `Array Syntax` in the `Lean.Syntax.node` constructor
-    /// with `_nested.Array_N`.
-    fn specialize_nested_aux(&mut self, st: &mut InductiveCheckState<'t>) {
-        let mut i = 0usize;
-        // `all_inductives_incl_specialized` begins as just the unmodified `IndTyHeader`
-        // elements.
-        //
-        // Throughout the loop, calls to `replace_all_nested` may expand the list
-        // of inductive type headers with new specialized types if this is a nested
-        // inductive.
-        while i < st.all_inductives_incl_specialized.len() {
-            let mut new_ctors_for_i = Vec::new();
-            for adjusted_ctor in (st.all_inductives_incl_specialized[i].clone()).ctors.iter() {
-                let (ctor_local_params, ctor_type_instd) =
-                    self.get_local_params(adjusted_ctor.ty, u16::try_from(st.local_params.len()).unwrap());
-                let replaced_ctor_wo_params = self.replace_all_nested(ctor_type_instd, st, &ctor_local_params);
-                let replaced_ctor_w_params =
-                    self.ctx.abstr_pis(ctor_local_params.iter().copied(), replaced_ctor_wo_params);
-                assert!(!self.ctx.read_expr(replaced_ctor_w_params).has_fvars());
-                // Push the constructor with the params put back, free variables abstracted,
-                // and ococurrences of nested inductives replaced with specialized types.
-                new_ctors_for_i.push(CtorHeader { name: adjusted_ctor.name, ty: replaced_ctor_w_params });
-            }
-            // update the constructors for the inductive `i` with the replaced constructors.
-            match st.all_inductives_incl_specialized.get_mut(i) {
-                // e.g. replace the base `Syntax.node` with the updated one that replaces `Array`.
-                Some(old) => {
-                    let _ = std::mem::replace(&mut old.ctors, new_ctors_for_i);
-                }
-                None => panic!("inductive type {} is missing", i),
-            }
-            i += 1;
-        }
-
-        st.nested_to_unspecialized_ty_nofvars = {
-            let mut out = crate::util::new_fx_index_map();
-            for (n, e) in st.nested_to_unspecialized_ty_wfvars.iter() {
-                let e = self.ctx.abstr(*e, st.local_params.as_slice());
-                out.insert(*n, e);
-            }
-            out
-        };
-    }
-
-
-    fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> Option<InductiveData<'t>> {
-        if !(matches!(self.ctx.read_expr(e), App { .. })) {
-            return None;
-        }
-        let (_f, name, _levels, args) = self.ctx.unfold_const_apps(e)?;
-        // If this is an application of an inductive, like `Array A`
-        let ind_ty_declar @ InductiveData { num_params, .. } = self.env.get_inductive(&name)?;
-        if (*num_params as usize) > args.len() {
-            return None;
-        }
-        let mut loose_bvars = false;
-        let mut is_nested = false;
-        for i in 0..(*num_params as usize) {
-            let this_param = args[i];
-            if self.ctx.num_loose_bvars(this_param) != 0 {
-                loose_bvars = true;
-            }
-            if self
-                .ctx
-                .find_const(this_param, |n| st.all_inductives_incl_specialized.iter().any(|new_ty| new_ty.name == n))
-            {
-                is_nested = true;
-            }
-        }
-        if !is_nested {
-            return None;
-        }
-        if loose_bvars {
-            panic!("nested types cannot contain locals (loose bvars found)")
-        }
-        Some(ind_ty_declar.clone())
-    }
-
-
-
-    fn mk_unique_name(&mut self, n: NamePtr<'t>, st: &mut InductiveCheckState<'t>) -> NamePtr<'t> {
-        for idx in st.next_ngen_idx..u64::MAX {
-            let tester = self.ctx.append_index_after(n, idx);
-            if !self.env.get_old_declar(&tester).is_some() {
-                st.next_ngen_idx = idx + 1;
-                return tester;
-            }
-        }
-        panic!("Unable to generate unique name, u64 exhausted")
-    }
-
-    /// *THIS METHOD MAY PUSH NEW SPECIALIZED INDUCTIVES TO THE STATE*
-    ///
-    /// `e` is a constructor or part of some constructor for an inductive or specialized inductive
-    /// in this block.
-    ///
-    /// `outgoing_param_locals` are the free variables for the parameters taken
-    /// from the constructor's telescope.
-    ///
-    /// if `e` is a nested occurrence/application, like the `Array Syntax` argument to
-    /// the `Lean.Syntax.node` constructor, replace `Array Syntax` with `_nested.Array_X`.
-    fn replace_if_nested(
-        &mut self,
-        e: ExprPtr<'t>,
-        st: &mut InductiveCheckState<'t>,
-        // If this has been called with the constructor for an unspecialized version of a nested
-        // type, for example called with `Array.mk`, the outgoing_param will be a free variable
-        // of carrier type `A`, which should be replaced with whatever is being nested, like `Lean.Syntax`.
-        outgoing_param_locals: &[ExprPtr<'t>],
-    ) -> Option<ExprPtr<'t>> {
-        // Using the `Lean.Syntax.node` constructor as an example, if `e` is the application of
-        // `Array Lean.Syntax`, this variable will be the base declaration for `Array`.
-        let nested_container_ty = self.is_nested_ind_app(st, e)?;
-        // Get the `Array` from `Array Syntax`
-        let (f, i_name, i_levels, args) = self.ctx.unfold_const_apps(e).unwrap();
-        assert!(nested_container_ty.num_params as usize <= args.len());
-        // Reapply the portion of the unfolded applications that is the parameters.
-        let i_as = self.ctx.foldl_apps(f, args.iter().copied().take(nested_container_ty.num_params as usize));
-        // Application of the type to the swapped out fvar params
-        let i_params = self.ctx.replace_params(i_as, st.local_params.as_slice(), outgoing_param_locals);
-
-        // E.g. `_nested.List_1` |-> `List (Sexpr #(A : Sort(u + 1)))`
-        if let Some((aux_i_name, _)) =
-            st.nested_to_unspecialized_ty_wfvars.iter().find(|(_name, expr)| **expr == i_params)
-        {
-            let f = self.ctx.mk_const(*aux_i_name, st.uparams);
-            let f = self.ctx.foldl_apps(f, outgoing_param_locals.iter().copied());
-            let f =
-                self.ctx.foldl_apps(f, (args[(nested_container_ty.num_params as usize)..args.len()]).iter().copied());
-            Some(f)
-        } else {
-            let mut result: Option<ExprPtr> = None;
-            // `Array`, `List`, and any mutuals in the appropriate block etc.
-            for nested_container_name in nested_container_ty.all_ind_names.iter().copied() {
-                // The inductive declaration for the container type, like `Array`
-                let InductiveData { info: container_ty_info, all_ctor_names: all_nested_container_ctor_names, .. } =
-                    self.env.get_inductive(&nested_container_name)?;
-                // `i_levels` is the set of uparams we actually found in the declaration we're checking,
-                // so the set of uparams in `Lean.Syntax`, as opposed to the uparam declars for `Array`
-                let js = {
-                    let base_const = self.ctx.mk_const(nested_container_name, i_levels);
-                    self.ctx.foldl_apps(base_const, (args[0..nested_container_ty.num_params as usize]).iter().copied())
-                };
-
-                // Example: From `Array`, make `_nested.Array_1`
-                let aux_nested_container_name = {
-                    let nested_pfx = self.ctx.str1("_nested");
-                    let base = self.ctx.concat_name(nested_pfx, nested_container_name);
-                    self.mk_unique_name(base, st)
-                };
-                // Replace the telescope on the auxiliary declaration to match the declaration
-                // we're currently checking. Can also add parameters as needed.
-                let nested_container_aux_type = {
-                    let base = self.ctx.subst_expr_levels(container_ty_info.ty, container_ty_info.uparams, i_levels);
-                    let instd =
-                        self.ctx.inst_forall_params(base, nested_container_ty.num_params as usize, args.as_slice());
-                    let out = self.ctx.abstr_pis(outgoing_param_locals.iter().copied(), instd);
-                    out
-                };
-                let jsprime = self.ctx.replace_params(js, st.local_params.as_slice(), outgoing_param_locals);
-                st.nested_to_unspecialized_ty_wfvars.insert(aux_nested_container_name, jsprime);
-                if nested_container_name == i_name {
-                    let f = self.ctx.mk_const(aux_nested_container_name, st.uparams);
-                    let f = self.ctx.foldl_apps(f, outgoing_param_locals.iter().copied());
-                    let args = &args[nested_container_ty.num_params as usize..args.len()];
-                    let f = self.ctx.foldl_apps(f, args.iter().copied());
-                    result = Some(f);
-                }
-                let mut auxj_ctors = Vec::<CtorHeader>::new();
-                for j_ctor_name in all_nested_container_ctor_names.iter().copied() {
-                    let ConstructorData { info: j_ctor_info, .. } = self.env.get_constructor(&j_ctor_name)?;
-                    // Replace `Array.mk` with `_nested.Array_2.mk`
-                    let auxj_ctor_name =
-                        self.ctx.replace_pfx(j_ctor_name, nested_container_name, aux_nested_container_name);
-                    let auxj_ctor_type = self.ctx.subst_expr_levels(j_ctor_info.ty, j_ctor_info.uparams, i_levels);
-                    let auxj_ctor_type = self.ctx.inst_forall_params(
-                        auxj_ctor_type,
-                        nested_container_ty.num_params as usize,
-                        args.as_slice(),
-                    );
-                    let auxj_ctor_type = self.ctx.abstr_pis(outgoing_param_locals.iter().copied(), auxj_ctor_type);
-                    auxj_ctors.push(CtorHeader { name: auxj_ctor_name, ty: auxj_ctor_type })
-                }
-                st.all_inductives_incl_specialized.push(IndTyHeader {
-                    name: aux_nested_container_name,
-                    ty: nested_container_aux_type,
-                    ctors: auxj_ctors,
-                });
-            }
-            result
-        }
-    }
-
-    fn replace_all_nested(
-        &mut self,
-        e: ExprPtr<'t>,
-        st: &mut InductiveCheckState<'t>,
-        outgoing_params: &Vec<ExprPtr<'t>>,
-    ) -> ExprPtr<'t> {
-        // Try to replace locally before traversing into the lower parts.
-        if let Some(eprime) = self.replace_if_nested(e, st, outgoing_params) {
-            eprime
-        } else {
-            match self.ctx.read_expr(e) {
-                Var { .. } | Sort { .. } | Const { .. } | Local { .. } | NatLit { .. } | StringLit { .. } => e,
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
-                    let body = self.replace_all_nested(body, st, outgoing_params);
-                    self.ctx.mk_pi(binder_name, binder_style, binder_type, body)
-                }
-                Lambda { binder_name, binder_style, binder_type, body, .. } => {
-                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
-                    let body = self.replace_all_nested(body, st, outgoing_params);
-                    self.ctx.mk_lambda(binder_name, binder_style, binder_type, body)
-                }
-                Let { binder_name, binder_type, val, body, nondep, .. } => {
-                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
-                    let val = self.replace_all_nested(val, st, outgoing_params);
-                    let body = self.replace_all_nested(body, st, outgoing_params);
-                    self.ctx.mk_let(binder_name, binder_type, val, body, nondep)
-                }
-                App { fun, arg, .. } => {
-                    let fun = self.replace_all_nested(fun, st, outgoing_params);
-                    let arg = self.replace_all_nested(arg, st, outgoing_params);
-                    self.ctx.mk_app(fun, arg)
-                }
-                Proj { ty_name, idx, structure, .. } => {
-                    let structure = self.replace_all_nested(structure, st, outgoing_params);
-                    self.ctx.mk_proj(ty_name, idx, structure)
-                }
-            }
-        }
-    }
-
-
-
     // For an expression `E` and a list
     // of names `NS`, recursively search through `E` for a `Const { name, levels }`
     // `C`, whose name is ANY of the names in `NS`. If such a `C` exists,
@@ -1243,11 +937,13 @@ pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: Induct
 {
 }
 
-/// The derived `Clone` of `IndTyHeader` copies its fields.
+/// The derived `Clone` of `IndTyHeader` copies its fields; its constructor
+/// list is a `Vec` of `Copy` headers, so the clone holds the same elements.
 pub assume_specification<'a>[ <IndTyHeader<'a> as Clone>::clone ](h: &IndTyHeader<'a>) -> (r: IndTyHeader<'a>)
     ensures
         r.name == h.name,
         r.ty == h.ty,
+        r.ctors@ == h.ctors@,
 ;
 
 
@@ -1598,6 +1294,106 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         env_ext
     }
+}
+
+impl<'a> InductiveCheckState<'a> {
+    /// Verified in place: a fresh state. The ghost certificate list starts
+    /// empty (`Ghost(Seq::empty())`; a ghost value, nothing at runtime).
+    fn new(
+        info_uparams: LevelsPtr<'a>,
+        num_params: u16,
+        new_tys: Vec<IndTyHeader<'a>>,
+        local_params: Vec<ExprPtr<'a>>,
+    ) -> (result: Self)
+        ensures
+            crate::indexmap_model::imap_wf(&result.nested_to_unspecialized_ty_wfvars),
+            crate::indexmap_model::imap_keys(&result.nested_to_unspecialized_ty_wfvars).len() == 0,
+            crate::indexmap_model::imap_wf(&result.nested_to_unspecialized_ty_nofvars),
+            crate::indexmap_model::imap_keys(&result.nested_to_unspecialized_ty_nofvars).len() == 0,
+            result.uparams == info_uparams,
+            result.num_params == num_params,
+            result.all_inductives_incl_specialized@ == new_tys@,
+            result.next_ngen_idx == 1,
+            result.local_params@ == local_params@,
+            result.local_indices@.len() == 0,
+            result.block_codom is None,
+            result.is_zero is None,
+            result.is_nonzero is None,
+            result.ind_consts@.len() == 0,
+            result.rec_uparams is None,
+            result.elim_level is None,
+            result.k_target is None,
+            result.majors@.len() == 0,
+            result.motives@.len() == 0,
+            result.minors@.len() == 0,
+            result.tele@.len() == 0,
+    {
+        Self {
+            nested_to_unspecialized_ty_wfvars: crate::util::new_fx_index_map(),
+            nested_to_unspecialized_ty_nofvars: crate::util::new_fx_index_map(),
+            uparams: info_uparams,
+            num_params,
+            all_inductives_incl_specialized: new_tys,
+            next_ngen_idx: 1u64,
+            local_params,
+            local_indices: Vec::new(),
+            block_codom: None,
+            is_zero: None,
+            is_nonzero: None,
+            ind_consts: Vec::new(),
+            rec_uparams: None,
+            elim_level: None,
+            k_target: None,
+            majors: Vec::new(),
+            motives: Vec::new(),
+            minors: Vec::new(),
+            tele: Ghost(Seq::empty()),
+        }
+    }
+
+    /// Verified in place, body unchanged.
+    fn is_nested(&self) -> (result: bool)
+        ensures
+            result == (crate::indexmap_model::imap_keys(&self.nested_to_unspecialized_ty_nofvars).len() != 0),
+    {
+        !self.nested_to_unspecialized_ty_nofvars.is_empty()
+    }
+}
+
+/// What the nested-specialization pass keeps of the state: everything owned,
+/// the parameter locals well scoped (and few enough to abstract), and the
+/// specialized-type table well formed and owned.
+pub(crate) open spec fn nest_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
+    &&& crate::inductive_model::st_owned(c, st)
+    &&& forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(c, #[trigger] st.local_params@[i])
+    &&& st.local_params@.len() <= u16::MAX
+    &&& crate::indexmap_model::imap_wf(&st.nested_to_unspecialized_ty_wfvars)
+    &&& forall|k: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&st.nested_to_unspecialized_ty_wfvars).contains_key(k)
+        ==> crate::util_model::owns(c, k)
+            && crate::util_model::owns(c, crate::indexmap_model::imap_view(&st.nested_to_unspecialized_ty_wfvars)[k])
+}
+
+/// `level_free` for a checker's context, for `&self` contracts.
+pub open spec fn tc_level_free<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: ExprPtr<'t>) -> bool {
+    level_free(*tc.ctx, e)
+}
+
+/// Every header in `hs`, and its constructors, owned by `c`.
+pub(crate) open spec fn headers_owned<'t, 'p>(c: TcCtx<'t, 'p>, hs: Seq<IndTyHeader<'t>>) -> bool {
+    forall|i: int| 0 <= i < hs.len() ==> {
+        let h = #[trigger] hs[i];
+        &&& crate::util_model::owns(c, h.name)
+        &&& crate::util_model::owns(c, h.ty)
+        &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(c, #[trigger] h.ctors@[j].name)
+        &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(c, #[trigger] h.ctors@[j].ty)
+    }
+}
+
+/// The constructor types of every block inductive are level free.
+pub(crate) open spec fn ctors_level_free<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
+    forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
+        && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+        ==> level_free(c, #[trigger] st.all_inductives_incl_specialized@[i].ctors@[j].ty)
 }
 
 /// A level-free local's recorded type is closed.
@@ -2887,6 +2683,779 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             i += 1;
         }
         recursors
+    }
+
+    /// Verified in place: a fresh `n_<idx>` not already declared in the
+    /// export file, advancing the state's counter past it.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_unique_name(&mut self, n: NamePtr<'t>, st: &mut InductiveCheckState<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self).ctx, n),
+        ensures
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).ctx.expr_cache == (*old(self)).ctx.expr_cache,
+            (*final(self)).live == (*old(self)).live,
+            (*final(self)).tc_cache == (*old(self)).tc_cache,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            *final(st) == (InductiveCheckState { next_ngen_idx: final(st).next_ngen_idx, ..*old(st) }),
+    {
+        for idx in st.next_ngen_idx..u64::MAX
+            invariant
+                crate::util_model::owns(*self.ctx, n),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.ctx.expr_cache == old(self).ctx.expr_cache,
+                self.live == old(self).live,
+                self.tc_cache == old(self).tc_cache,
+                *st == *old(st),
+        {
+            let tester = self.ctx.append_index_after(n, idx);
+            if !self.env.get_old_declar(&tester).is_some() {
+                st.next_ngen_idx = idx + 1;
+                return tester;
+            }
+        }
+        panic!("Unable to generate unique name, u64 exhausted")
+    }
+
+    /// Verified in place: `Some(d)` when `e` applies an inductive `d` of the
+    /// environment to at least its parameters, one of which mentions a type
+    /// of this block (a nested occurrence). `d` comes from the environment,
+    /// so its names are owned.
+    ///
+    /// VERUS-REWRITE(closure-specialised): the closure handed to `find_const`
+    /// (`|n| st.all_inductives_incl_specialized.iter().any(|new_ty| new_ty.name == n)`)
+    /// is `find_const_named` over the block's names (`ind_names`), the same
+    /// test with a contract.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> (result: Option<InductiveData<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, e),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+        ensures
+            *final(self) == *old(self),
+            result matches Some(d) ==> crate::env_model::inductive_data_owned(*(*final(self)).env, d),
+    {
+        if !(matches!(self.ctx.read_expr(e), App { .. })) {
+            return None;
+        }
+        let (_f, name, _levels, args) = self.ctx.unfold_const_apps(e)?;
+        // If this is an application of an inductive, like `Array A`
+        let ind_ty_declar @ InductiveData { num_params, .. } = self.env.get_inductive(&name)?;
+        if (*num_params as usize) > args.len() {
+            return None;
+        }
+        let mut loose_bvars = false;
+        let mut is_nested = false;
+        for i in 0..(*num_params as usize)
+            invariant
+                crate::util_model::owns_all(*self.ctx, args@),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                *num_params as usize <= args@.len(),
+        {
+            let this_param = args[i];
+            if self.ctx.num_loose_bvars(this_param) != 0 {
+                loose_bvars = true;
+            }
+            let names = ind_names(&st.all_inductives_incl_specialized);
+            proof {
+                assert forall|k: int| 0 <= k < names@.len() implies crate::util_model::owns(*self.ctx, #[trigger] names@[k]) by {
+                    assert(names@[k] == st.all_inductives_incl_specialized@[k].name);
+                }
+            }
+            if self.ctx.find_const_named(this_param, names.as_slice()) {
+                is_nested = true;
+            }
+        }
+        if !is_nested {
+            return None;
+        }
+        if loose_bvars {
+            panic!("nested types cannot contain locals (loose bvars found)")
+        }
+        Some(ind_ty_declar.clone())
+    }
+
+    /// VERUS-REWRITE(tested-closed): a type the inductive checker is about to
+    /// open with `get_local_params`, or hands on as the block's, is TESTED
+    /// closed (no locals, no loose de Bruijn indices). The export parser does
+    /// not check it; a well-formed declaration always passes.
+    fn assert_closed(&self, e: ExprPtr<'t>)
+        requires
+            crate::tc::tc_owns(*self, e),
+        ensures
+            tc_level_free(*self, e),
+    {
+        assert!(!self.ctx.has_fvars(e) && self.ctx.num_loose_bvars(e) == 0, "inductive: a type is not closed");
+        proof {
+            crate::expr_model::no_fv_dbj_deep_in(crate::util_model::arena_ids(*self.ctx),
+                crate::expr_arena_bridge::to_model(e), vstd::iset::ISet::empty(), 0);
+        }
+    }
+
+    /// Verified in place: the block's state, with nested occurrences
+    /// specialized. Every type and constructor type it holds is tested closed.
+    ///
+    /// VERUS-REWRITE(tested-closed): the type opened for the parameters, and
+    /// every type and constructor type in the final loop (which tested
+    /// `!has_fvars` only), are tested closed through `assert_closed`;
+    /// VERUS-REWRITE(index-walk): the final loop's two `for`s are scans by index.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn specialize_nested(
+        &mut self,
+        t_from_file: &InductiveData<'t>,
+        unmodified_tys_ctors: Vec<IndTyHeader<'t>>,
+    ) -> (result: InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            crate::env_model::inductive_data_owned(*old(self).env, *t_from_file),
+            unmodified_tys_ctors@.len() > 0,
+            headers_owned(*old(self).ctx, unmodified_tys_ctors@),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            ind_st_ok(*(*final(self)).ctx, result),
+            crate::inductive_model::st_owned(*(*final(self)).ctx, result),
+            ctors_level_free(*(*final(self)).ctx, result),
+            result.local_indices@.len() == 0,
+            result.tele@.len() == 0,
+            result.is_nonzero is None,
+            result.is_zero is None,
+            result.ind_consts@.len() == 0,
+            result.majors@.len() == 0,
+            result.motives@.len() == 0,
+            result.minors@.len() == 0,
+            result.block_codom is None,
+            result.rec_uparams is None,
+            result.elim_level is None,
+            result.k_target is None,
+    {
+        proof {
+            let h0 = unmodified_tys_ctors@[0];
+            assert(crate::util_model::owns(*self.ctx, h0.ty));
+        }
+        self.assert_closed(unmodified_tys_ctors[0].ty);
+        let ghost c0 = *self.ctx;
+        // Free variables for the block's paramters, and the instantiated end
+        // of the telescope for the type being checked (the 0th type).
+        let (local_params, _instd) = self.get_local_params(unmodified_tys_ctors[0].ty, t_from_file.num_params);
+
+        let mut st = InductiveCheckState::new(
+            t_from_file.info.uparams,
+            u16::try_from(local_params.len()).unwrap(),
+            unmodified_tys_ctors,
+            local_params,
+        );
+        proof {
+            assert(crate::indexmap_model::imap_view(&st.nested_to_unspecialized_ty_wfvars).dom() =~= Set::empty()) by {
+                assert(crate::indexmap_model::imap_keys(&st.nested_to_unspecialized_ty_wfvars) =~= Seq::empty());
+            }
+            assert(headers_owned(*self.ctx, st.all_inductives_incl_specialized@)) by {
+                assert forall|i: int| 0 <= i < st.all_inductives_incl_specialized@.len() implies {
+                    let h = #[trigger] st.all_inductives_incl_specialized@[i];
+                    &&& crate::util_model::owns(*self.ctx, h.name)
+                    &&& crate::util_model::owns(*self.ctx, h.ty)
+                    &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[j].name)
+                    &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[j].ty)
+                } by {
+                    assert(st.all_inductives_incl_specialized@[i] == unmodified_tys_ctors@[i]);
+                    let h = unmodified_tys_ctors@[i];
+                    assert(crate::util_model::owns(c0, h.name));
+                    assert forall|j: int| 0 <= j < h.ctors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[j].name)
+                        && crate::util_model::owns(*self.ctx, h.ctors@[j].ty) by {
+                        assert(crate::util_model::owns(c0, h.ctors@[j].name));
+                        assert(crate::util_model::owns(c0, h.ctors@[j].ty));
+                    }
+                }
+            }
+            assert forall|i: int| 0 <= i < st.local_params@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.local_params@[i]) by {
+                assert(level_free_local(*self.ctx, st.local_params@[i]));
+            }
+        }
+        // Collect the new `NestedNewType` items constructed from any actually nested inductives.
+        self.specialize_nested_aux(&mut st);
+
+        // No stray free variables.
+        let mut a: usize = 0;
+        while a < st.all_inductives_incl_specialized.len()
+            invariant
+                nest_ok(*self.ctx, st),
+                a <= st.all_inductives_incl_specialized@.len(),
+                forall|x: int| 0 <= x < a ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
+                forall|x: int, j: int| 0 <= x < a && 0 <= j < st.all_inductives_incl_specialized@[x].ctors@.len()
+                    ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ctors@[j].ty),
+            decreases st.all_inductives_incl_specialized@.len() - a,
+        {
+            let ind = &st.all_inductives_incl_specialized[a];
+            self.assert_closed(ind.ty);
+            let mut b: usize = 0;
+            while b < ind.ctors.len()
+                invariant
+                    nest_ok(*self.ctx, st),
+                    a < st.all_inductives_incl_specialized@.len(),
+                    *ind == st.all_inductives_incl_specialized@[a as int],
+                    b <= ind.ctors@.len(),
+                    forall|x: int| 0 <= x <= a ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
+                    forall|x: int, j: int| 0 <= x < a && 0 <= j < st.all_inductives_incl_specialized@[x].ctors@.len()
+                        ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ctors@[j].ty),
+                    forall|j: int| 0 <= j < b ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a as int].ctors@[j].ty),
+                decreases ind.ctors@.len() - b,
+            {
+                proof {
+                    assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[a as int].ctors@[b as int].ty));
+                }
+                self.assert_closed(ind.ctors[b].ty);
+                b += 1;
+            }
+            a += 1;
+        }
+        st
+    }
+
+    /// Verified in place: specializes every nested occurrence in every
+    /// constructor (appending the specialized types it needs), then records the
+    /// specialized-type table with the parameters abstracted.
+    ///
+    /// VERUS-REWRITE(index-walk): the constructor `for` over a clone of header
+    /// `i` becomes a scan by index over that clone bound to a local (a
+    /// temporary in a `for` iterator is also rejected), and the table rebuild's
+    /// `for (n, e) in map.iter()` a scan by position (`get_index`);
+    /// VERUS-REWRITE(tested-closed): each constructor type is tested closed
+    /// (`assert_closed`) before `get_local_params` opens it;
+    /// VERUS-REWRITE(vec-set): `get_mut(i)` + `mem::replace(&mut old.ctors, ..)`
+    /// is `set(i, ..)` of the same header with the new constructors (`i` is in
+    /// range, so the kernel's `None => panic!` arm cannot fire); VERUS-REWRITE(named-temp):
+    /// the iterator handed to `abstr_pis` is bound to a local.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn specialize_nested_aux(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            nest_ok(*old(self).ctx, *old(st)),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            nest_ok(*(*final(self)).ctx, *final(st)),
+            crate::indexmap_model::imap_wf(&final(st).nested_to_unspecialized_ty_nofvars),
+            forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&final(st).nested_to_unspecialized_ty_nofvars).contains_key(n)
+                ==> crate::util_model::owns(*(*final(self)).ctx, n)
+                    && crate::util_model::owns(*(*final(self)).ctx, crate::indexmap_model::imap_view(&final(st).nested_to_unspecialized_ty_nofvars)[n]),
+            *final(st) == (InductiveCheckState {
+                nested_to_unspecialized_ty_wfvars: final(st).nested_to_unspecialized_ty_wfvars,
+                nested_to_unspecialized_ty_nofvars: final(st).nested_to_unspecialized_ty_nofvars,
+                all_inductives_incl_specialized: final(st).all_inductives_incl_specialized,
+                next_ngen_idx: final(st).next_ngen_idx,
+                ..*old(st)
+            }),
+    {
+        let ghost st0 = *st;
+        let mut i = 0usize;
+        // `all_inductives_incl_specialized` begins as just the unmodified `IndTyHeader`
+        // elements.
+        //
+        // Throughout the loop, calls to `replace_all_nested` may expand the list
+        // of inductive type headers with new specialized types if this is a nested
+        // inductive.
+        while i < st.all_inductives_incl_specialized.len()
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                nest_ok(*self.ctx, *st),
+                *st == (InductiveCheckState {
+                    nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
+                    all_inductives_incl_specialized: st.all_inductives_incl_specialized,
+                    next_ngen_idx: st.next_ngen_idx,
+                    ..st0
+                }),
+        {
+            let mut new_ctors_for_i: Vec<CtorHeader<'t>> = Vec::new();
+            let hdr = st.all_inductives_incl_specialized[i].clone();
+            proof {
+                let h = st.all_inductives_incl_specialized@[i as int];
+                assert(crate::util_model::owns(*self.ctx, h.name));
+                assert forall|b: int| 0 <= b < hdr.ctors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] hdr.ctors@[b].name) by {
+                    assert(hdr.ctors@[b] == h.ctors@[b]);
+                }
+                assert forall|b: int| 0 <= b < hdr.ctors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] hdr.ctors@[b].ty) by {
+                    assert(hdr.ctors@[b] == h.ctors@[b]);
+                }
+            }
+            let mut j: usize = 0;
+            while j < hdr.ctors.len()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    self.env == old(self).env,
+                    self.ctx.dbj_level_counter == 0,
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.live == old(self).live,
+                    nest_ok(*self.ctx, *st),
+                    *st == (InductiveCheckState {
+                        nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
+                        all_inductives_incl_specialized: st.all_inductives_incl_specialized,
+                        next_ngen_idx: st.next_ngen_idx,
+                        ..st0
+                    }),
+                    i < st.all_inductives_incl_specialized@.len(),
+                    forall|b: int| 0 <= b < hdr.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] hdr.ctors@[b].name),
+                    forall|b: int| 0 <= b < hdr.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] hdr.ctors@[b].ty),
+                    j <= hdr.ctors@.len(),
+                    new_ctors_for_i@.len() == j,
+                    forall|b: int| 0 <= b < j ==> crate::util_model::owns(*self.ctx, #[trigger] new_ctors_for_i@[b].name),
+                    forall|b: int| 0 <= b < j ==> crate::util_model::owns(*self.ctx, #[trigger] new_ctors_for_i@[b].ty),
+                decreases hdr.ctors@.len() - j,
+            {
+                let adjusted_ctor = hdr.ctors[j];
+                proof {
+                    assert(crate::util_model::owns(*self.ctx, hdr.ctors@[j as int].ty));
+                    assert(crate::util_model::owns(*self.ctx, hdr.ctors@[j as int].name));
+                }
+                self.assert_closed(adjusted_ctor.ty);
+                let (ctor_local_params, ctor_type_instd) =
+                    self.get_local_params(adjusted_ctor.ty, u16::try_from(st.local_params.len()).unwrap());
+                let replaced_ctor_wo_params = self.replace_all_nested(ctor_type_instd, st, &ctor_local_params);
+                let lp_it = ctor_local_params.iter().copied();
+                proof {
+                    broadcast use vstd::std_specs::iter::copied_postcondition;
+                    assert(vstd::std_specs::iter::IteratorSpec::remaining(&lp_it) =~= ctor_local_params@);
+                    assert(forall|b: int| #![trigger ctor_local_params@[b]] 0 <= b < ctor_local_params@.len() ==> level_free_local(*self.ctx, ctor_local_params@[b]));
+                }
+                let replaced_ctor_w_params =
+                    self.ctx.abstr_pis(lp_it, replaced_ctor_wo_params);
+                assert!(!self.ctx.read_expr(replaced_ctor_w_params).has_fvars());
+                // Push the constructor with the params put back, free variables abstracted,
+                // and ococurrences of nested inductives replaced with specialized types.
+                let ghost n0 = new_ctors_for_i@;
+                new_ctors_for_i.push(CtorHeader { name: adjusted_ctor.name, ty: replaced_ctor_w_params });
+                proof {
+                    assert forall|b: int| 0 <= b < new_ctors_for_i@.len() implies crate::util_model::owns(*self.ctx, #[trigger] new_ctors_for_i@[b].name) by {
+                        if b < n0.len() { assert(new_ctors_for_i@[b] == n0[b]); }
+                    }
+                    assert forall|b: int| 0 <= b < new_ctors_for_i@.len() implies crate::util_model::owns(*self.ctx, #[trigger] new_ctors_for_i@[b].ty) by {
+                        if b < n0.len() { assert(new_ctors_for_i@[b] == n0[b]); }
+                    }
+                }
+                j += 1;
+            }
+            // update the constructors for the inductive `i` with the replaced constructors.
+            // e.g. replace the base `Syntax.node` with the updated one that replaces `Array`.
+            let name = st.all_inductives_incl_specialized[i].name;
+            let ty = st.all_inductives_incl_specialized[i].ty;
+            let ghost a0 = st.all_inductives_incl_specialized@;
+            st.all_inductives_incl_specialized.set(i, IndTyHeader { name, ty, ctors: new_ctors_for_i });
+            proof {
+                assert forall|x: int| 0 <= x < st.all_inductives_incl_specialized@.len() implies {
+                    let h = #[trigger] st.all_inductives_incl_specialized@[x];
+                    &&& crate::util_model::owns(*self.ctx, h.name)
+                    &&& crate::util_model::owns(*self.ctx, h.ty)
+                    &&& forall|b: int| 0 <= b < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[b].name)
+                    &&& forall|b: int| 0 <= b < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[b].ty)
+                } by {
+                    if x != i { assert(st.all_inductives_incl_specialized@[x] == a0[x]); }
+                }
+            }
+            i += 1;
+        }
+
+        st.nested_to_unspecialized_ty_nofvars = {
+            let mut out = crate::util::new_fx_index_map();
+            let mut k: usize = 0;
+            while k < st.nested_to_unspecialized_ty_wfvars.len()
+                invariant
+                    nest_ok(*self.ctx, *st),
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.ctx.dbj_level_counter == 0,
+                    self.env == old(self).env,
+                    self.live == old(self).live,
+                    crate::tc::tc_wf(*self),
+                    crate::indexmap_model::imap_wf(&out),
+                    forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&out).contains_key(n)
+                        ==> crate::util_model::owns(*self.ctx, n) && crate::util_model::owns(*self.ctx, crate::indexmap_model::imap_view(&out)[n]),
+            {
+                let (n, e) = st.nested_to_unspecialized_ty_wfvars.get_index(k).unwrap();
+                proof {
+                    let keys = crate::indexmap_model::imap_keys(&st.nested_to_unspecialized_ty_wfvars);
+                    assert(keys.to_set().contains(keys[k as int]));
+                }
+                let e = self.ctx.abstr(*e, st.local_params.as_slice());
+                proof {
+                    crate::util_model::build_hasher_default_valid_fx();
+                    crate::util_model::ptr_owned_keys(*self.ctx, crate::indexmap_model::imap_view(&out).dom().insert(*n));
+                }
+                out.insert(*n, e);
+                k += 1;
+            }
+            out
+        };
+    }
+
+    /// Verified in place: `replace_if_nested` at every subterm, outermost
+    /// first; the result and the state stay owned.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn replace_all_nested(
+        &mut self,
+        e: ExprPtr<'t>,
+        st: &mut InductiveCheckState<'t>,
+        outgoing_params: &Vec<ExprPtr<'t>>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, e),
+            nest_ok(*old(self).ctx, *old(st)),
+            forall|i: int| 0 <= i < outgoing_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] outgoing_params@[i]),
+            outgoing_params@.len() <= u16::MAX,
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            nest_ok(*(*final(self)).ctx, *final(st)),
+            *final(st) == (InductiveCheckState {
+                nested_to_unspecialized_ty_wfvars: final(st).nested_to_unspecialized_ty_wfvars,
+                all_inductives_incl_specialized: final(st).all_inductives_incl_specialized,
+                next_ngen_idx: final(st).next_ngen_idx,
+                ..*old(st)
+            }),
+            final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+            crate::util_model::owns(*(*final(self)).ctx, result),
+    {
+        // Try to replace locally before traversing into the lower parts.
+        if let Some(eprime) = self.replace_if_nested(e, st, outgoing_params) {
+            eprime
+        } else {
+            match self.ctx.read_expr(e) {
+                Var { .. } | Sort { .. } | Const { .. } | Local { .. } | NatLit { .. } | StringLit { .. } => e,
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
+                    let body = self.replace_all_nested(body, st, outgoing_params);
+                    self.ctx.mk_pi(binder_name, binder_style, binder_type, body)
+                }
+                Lambda { binder_name, binder_style, binder_type, body, .. } => {
+                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
+                    let body = self.replace_all_nested(body, st, outgoing_params);
+                    self.ctx.mk_lambda(binder_name, binder_style, binder_type, body)
+                }
+                Let { binder_name, binder_type, val, body, nondep, .. } => {
+                    let binder_type = self.replace_all_nested(binder_type, st, outgoing_params);
+                    let val = self.replace_all_nested(val, st, outgoing_params);
+                    let body = self.replace_all_nested(body, st, outgoing_params);
+                    self.ctx.mk_let(binder_name, binder_type, val, body, nondep)
+                }
+                App { fun, arg, .. } => {
+                    let fun = self.replace_all_nested(fun, st, outgoing_params);
+                    let arg = self.replace_all_nested(arg, st, outgoing_params);
+                    self.ctx.mk_app(fun, arg)
+                }
+                Proj { ty_name, idx, structure, .. } => {
+                    let structure = self.replace_all_nested(structure, st, outgoing_params);
+                    self.ctx.mk_proj(ty_name, idx, structure)
+                }
+            }
+        }
+    }
+
+    /// Verified in place: if `e` is a nested occurrence (an inductive of the
+    /// environment applied to parameters that mention this block), the
+    /// application of its specialized type -- registering the specialized
+    /// types (and their constructors) the first time a container is met.
+    /// Everything it builds or records is owned.
+    ///
+    /// VERUS-REWRITE(index-walk): `.iter().find(|(_name, expr)| **expr == i_params)`
+    /// over the specialized-type table is the scan by position (`get_index`)
+    /// it stands for, and the two `for` loops over the container's `Arc`
+    /// name lists are scans by index; VERUS-REWRITE(named-temp): the iterators
+    /// handed to `foldl_apps`/`abstr_pis` are bound to locals;
+    /// VERUS-REWRITE(accessor-swap): the container's and each constructor's
+    /// `(uparams, ty)` are read through `env_model::get_declar_info_ty` (the
+    /// same `info`, with the environment's claim that the uparams are
+    /// `Param`s); the `get_inductive`/`get_constructor` reads and their `?`
+    /// rejections stay; VERUS-REWRITE(hoisted-arity-check): the universe arity
+    /// test `subst_expr_levels` panics on is made one frame earlier, as in
+    /// `infer_const`; VERUS-REWRITE(tested-env): the container's and each
+    /// constructor's stored type is tested free of locals before
+    /// `subst_expr_levels`, as in `infer_proj` (never fails on a well-formed
+    /// export).
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn replace_if_nested(
+        &mut self,
+        e: ExprPtr<'t>,
+        st: &mut InductiveCheckState<'t>,
+        // If this has been called with the constructor for an unspecialized version of a nested
+        // type, for example called with `Array.mk`, the outgoing_param will be a free variable
+        // of carrier type `A`, which should be replaced with whatever is being nested, like `Lean.Syntax`.
+        outgoing_param_locals: &[ExprPtr<'t>],
+    ) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, e),
+            nest_ok(*old(self).ctx, *old(st)),
+            forall|i: int| 0 <= i < outgoing_param_locals@.len() ==> level_free_local(*old(self).ctx, #[trigger] outgoing_param_locals@[i]),
+            outgoing_param_locals@.len() <= u16::MAX,
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            nest_ok(*(*final(self)).ctx, *final(st)),
+            *final(st) == (InductiveCheckState {
+                nested_to_unspecialized_ty_wfvars: final(st).nested_to_unspecialized_ty_wfvars,
+                all_inductives_incl_specialized: final(st).all_inductives_incl_specialized,
+                next_ngen_idx: final(st).next_ngen_idx,
+                ..*old(st)
+            }),
+            final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
+    {
+        // Using the `Lean.Syntax.node` constructor as an example, if `e` is the application of
+        // `Array Lean.Syntax`, this variable will be the base declaration for `Array`.
+        let nested_container_ty = self.is_nested_ind_app(st, e)?;
+        // Get the `Array` from `Array Syntax`
+        let (f, i_name, i_levels, args) = self.ctx.unfold_const_apps(e).unwrap();
+        assert!(nested_container_ty.num_params as usize <= args.len());
+        proof {
+            broadcast use vstd::std_specs::iter::copied_postcondition, vstd::std_specs::iter::take_postcondition,
+                vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            assert forall|k: int| 0 <= k < outgoing_param_locals@.len() implies crate::util_model::owns(*self.ctx, #[trigger] outgoing_param_locals@[k]) by {
+                assert(level_free_local(*self.ctx, outgoing_param_locals@[k]));
+            }
+            assert forall|k: int| 0 <= k < st.local_params@.len() implies crate::util_model::owns(*self.ctx, #[trigger] st.local_params@[k]) by {
+                assert(level_free_local(*self.ctx, st.local_params@[k]));
+            }
+        }
+        // Reapply the portion of the unfolded applications that is the parameters.
+        let take_it = args.iter().copied().take(nested_container_ty.num_params as usize);
+        proof {
+            assert(vstd::std_specs::iter::IteratorSpec::remaining(&take_it) =~= args@.subrange(0, nested_container_ty.num_params as int));
+        }
+        let i_as = self.ctx.foldl_apps(f, take_it);
+        // Application of the type to the swapped out fvar params
+        let i_params = self.ctx.replace_params(i_as, st.local_params.as_slice(), outgoing_param_locals);
+
+        // E.g. `_nested.List_1` |-> `List (Sexpr #(A : Sort(u + 1)))`
+        let mut found: Option<NamePtr<'t>> = None;
+        let mut k: usize = 0;
+        while k < st.nested_to_unspecialized_ty_wfvars.len()
+            invariant_except_break
+                found is None,
+            invariant
+                nest_ok(*self.ctx, *st),
+            ensures
+                nest_ok(*self.ctx, *st),
+                found matches Some(n) ==> crate::util_model::owns(*self.ctx, n),
+        {
+            let (name_k, expr_k) = st.nested_to_unspecialized_ty_wfvars.get_index(k).unwrap();
+            if *expr_k == i_params {
+                proof {
+                    let keys = crate::indexmap_model::imap_keys(&st.nested_to_unspecialized_ty_wfvars);
+                    assert(keys.to_set().contains(keys[k as int]));
+                }
+                found = Some(*name_k);
+                break;
+            }
+            k += 1;
+        }
+        if let Some(aux_i_name) = found {
+            let f = self.ctx.mk_const(aux_i_name, st.uparams);
+            let out_it = outgoing_param_locals.iter().copied();
+            proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&out_it) =~= outgoing_param_locals@); }
+            let f = self.ctx.foldl_apps(f, out_it);
+            let rest_it = (args[(nested_container_ty.num_params as usize)..args.len()]).iter().copied();
+            proof {
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&rest_it)
+                    =~= args@.subrange(nested_container_ty.num_params as int, args@.len() as int));
+            }
+            let f =
+                self.ctx.foldl_apps(f, rest_it);
+            Some(f)
+        } else {
+            let mut result: Option<ExprPtr> = None;
+            // `Array`, `List`, and any mutuals in the appropriate block etc.
+            let mut c: usize = 0;
+            while c < nested_container_ty.all_ind_names.len()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    self.env == old(self).env,
+                    self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                    crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                    self.live == old(self).live,
+                    nest_ok(*self.ctx, *st),
+                    *st == (InductiveCheckState {
+                        nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
+                        all_inductives_incl_specialized: st.all_inductives_incl_specialized,
+                        next_ngen_idx: st.next_ngen_idx,
+                        ..*old(st)
+                    }),
+                    crate::env_model::inductive_data_owned(*self.env, nested_container_ty),
+                    st.all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+                    outgoing_param_locals@.len() <= u16::MAX,
+                    crate::util_model::owns_all(*self.ctx, args@),
+                    crate::util_model::owns(*self.ctx, i_levels),
+                    crate::util_model::owns_all(*self.ctx, outgoing_param_locals@),
+                    forall|b: int| 0 <= b < outgoing_param_locals@.len() ==> level_free_local(*self.ctx, #[trigger] outgoing_param_locals@[b]),
+                    nested_container_ty.num_params as usize <= args@.len(),
+                    result matches Some(r) ==> crate::util_model::owns(*self.ctx, r),
+            {
+                let nested_container_name = nested_container_ty.all_ind_names[c];
+                proof {
+                    assert(crate::env_model::env_owns(*self.env, nested_container_ty.all_ind_names@[c as int]));
+                }
+                // The inductive declaration for the container type, like `Array`
+                let InductiveData { all_ctor_names: all_nested_container_ctor_names, .. } =
+                    self.env.get_inductive(&nested_container_name)?;
+                let (container_uparams, container_ty) =
+                    crate::env_model::get_declar_info_ty(self.env, &nested_container_name).unwrap();
+                // `i_levels` is the set of uparams we actually found in the declaration we're checking,
+                // so the set of uparams in `Lean.Syntax`, as opposed to the uparam declars for `Array`
+                let js = {
+                    let base_const = self.ctx.mk_const(nested_container_name, i_levels);
+                    let ps_it = (args[0..nested_container_ty.num_params as usize]).iter().copied();
+                    proof {
+                        assert(vstd::std_specs::iter::IteratorSpec::remaining(&ps_it)
+                            =~= args@.subrange(0, nested_container_ty.num_params as int));
+                    }
+                    self.ctx.foldl_apps(base_const, ps_it)
+                };
+
+                // Example: From `Array`, make `_nested.Array_1`
+                let aux_nested_container_name = {
+                    let nested_pfx = self.ctx.str1("_nested");
+                    let base = self.ctx.concat_name(nested_pfx, nested_container_name);
+                    self.mk_unique_name(base, st)
+                };
+                // Replace the telescope on the auxiliary declaration to match the declaration
+                // we're currently checking. Can also add parameters as needed.
+                let nested_container_aux_type = {
+                    if self.ctx.read_levels(container_uparams).len() != self.ctx.read_levels(i_levels).len() {
+                        return panic!("nested inductive: the container's universe arity does not match its occurrence");
+                    }
+                    assert!(!self.ctx.has_fvars(container_ty), "nested inductive: the container's type is not closed");
+                    let base = self.ctx.subst_expr_levels(container_ty, container_uparams, i_levels);
+                    let instd =
+                        self.ctx.inst_forall_params(base, nested_container_ty.num_params as usize, args.as_slice());
+                    let o_it = outgoing_param_locals.iter().copied();
+                    proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&o_it) =~= outgoing_param_locals@); }
+                    let out = self.ctx.abstr_pis(o_it, instd);
+                    out
+                };
+                let jsprime = self.ctx.replace_params(js, st.local_params.as_slice(), outgoing_param_locals);
+                proof {
+                    crate::util_model::build_hasher_default_valid_fx();
+                    crate::util_model::ptr_owned_keys(*self.ctx,
+                        crate::indexmap_model::imap_view(&st.nested_to_unspecialized_ty_wfvars).dom().insert(aux_nested_container_name));
+                }
+                st.nested_to_unspecialized_ty_wfvars.insert(aux_nested_container_name, jsprime);
+                if nested_container_name == i_name {
+                    let f = self.ctx.mk_const(aux_nested_container_name, st.uparams);
+                    let o_it2 = outgoing_param_locals.iter().copied();
+                    proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&o_it2) =~= outgoing_param_locals@); }
+                    let f = self.ctx.foldl_apps(f, o_it2);
+                    let args = &args[nested_container_ty.num_params as usize..args.len()];
+                    let a_it = args.iter().copied();
+                    proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&a_it) =~= args@); }
+                    let f = self.ctx.foldl_apps(f, a_it);
+                    result = Some(f);
+                }
+                let mut auxj_ctors = Vec::<CtorHeader>::new();
+                let mut d: usize = 0;
+                while d < all_nested_container_ctor_names.len()
+                    invariant
+                        crate::tc::tc_wf(*self),
+                        self.env == old(self).env,
+                        self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                        crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                        self.live == old(self).live,
+                        nest_ok(*self.ctx, *st),
+                        *st == (InductiveCheckState {
+                            nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
+                            all_inductives_incl_specialized: st.all_inductives_incl_specialized,
+                            next_ngen_idx: st.next_ngen_idx,
+                            ..*old(st)
+                        }),
+                        crate::util_model::owns_all(*self.ctx, args@),
+                        crate::util_model::owns(*self.ctx, i_levels),
+                        crate::util_model::owns(*self.ctx, nested_container_name),
+                        crate::util_model::owns(*self.ctx, aux_nested_container_name),
+                        crate::util_model::owns(*self.ctx, nested_container_aux_type),
+                        forall|b: int| 0 <= b < all_nested_container_ctor_names@.len() ==> crate::env_model::env_owns(*self.env, #[trigger] all_nested_container_ctor_names@[b]),
+                        st.all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+                        outgoing_param_locals@.len() <= u16::MAX,
+                        forall|b: int| 0 <= b < outgoing_param_locals@.len() ==> level_free_local(*self.ctx, #[trigger] outgoing_param_locals@[b]),
+                        nested_container_ty.num_params as usize <= args@.len(),
+                        result matches Some(r) ==> crate::util_model::owns(*self.ctx, r),
+                        forall|b: int| 0 <= b < auxj_ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].name),
+                        forall|b: int| 0 <= b < auxj_ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].ty),
+                {
+                    let j_ctor_name = all_nested_container_ctor_names[d];
+                    self.env.get_constructor(&j_ctor_name)?;
+                    let (j_ctor_uparams, j_ctor_ty) = crate::env_model::get_declar_info_ty(self.env, &j_ctor_name).unwrap();
+                    // Replace `Array.mk` with `_nested.Array_2.mk`
+                    let auxj_ctor_name =
+                        self.ctx.replace_pfx(j_ctor_name, nested_container_name, aux_nested_container_name);
+                    if self.ctx.read_levels(j_ctor_uparams).len() != self.ctx.read_levels(i_levels).len() {
+                        return panic!("nested inductive: a container constructor's universe arity does not match its occurrence");
+                    }
+                    assert!(!self.ctx.has_fvars(j_ctor_ty), "nested inductive: a container constructor's type is not closed");
+                    let auxj_ctor_type = self.ctx.subst_expr_levels(j_ctor_ty, j_ctor_uparams, i_levels);
+                    let auxj_ctor_type = self.ctx.inst_forall_params(
+                        auxj_ctor_type,
+                        nested_container_ty.num_params as usize,
+                        args.as_slice(),
+                    );
+                    let o_it3 = outgoing_param_locals.iter().copied();
+                    proof { assert(vstd::std_specs::iter::IteratorSpec::remaining(&o_it3) =~= outgoing_param_locals@); }
+                    let auxj_ctor_type = self.ctx.abstr_pis(o_it3, auxj_ctor_type);
+                    let ghost c0 = auxj_ctors@;
+                    auxj_ctors.push(CtorHeader { name: auxj_ctor_name, ty: auxj_ctor_type });
+                    proof {
+                        assert forall|b: int| 0 <= b < auxj_ctors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].name) by {
+                            if b < c0.len() { assert(auxj_ctors@[b] == c0[b]); }
+                        }
+                        assert forall|b: int| 0 <= b < auxj_ctors@.len() implies crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].ty) by {
+                            if b < c0.len() { assert(auxj_ctors@[b] == c0[b]); }
+                        }
+                    }
+                    d += 1;
+                }
+                let ghost a0 = st.all_inductives_incl_specialized@;
+                st.all_inductives_incl_specialized.push(IndTyHeader {
+                    name: aux_nested_container_name,
+                    ty: nested_container_aux_type,
+                    ctors: auxj_ctors,
+                });
+                proof {
+                    assert forall|x: int| 0 <= x < st.all_inductives_incl_specialized@.len() implies {
+                        let h = #[trigger] st.all_inductives_incl_specialized@[x];
+                        &&& crate::util_model::owns(*self.ctx, h.name)
+                        &&& crate::util_model::owns(*self.ctx, h.ty)
+                        &&& forall|b: int| 0 <= b < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[b].name)
+                        &&& forall|b: int| 0 <= b < h.ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] h.ctors@[b].ty)
+                    } by {
+                        if x < a0.len() { assert(st.all_inductives_incl_specialized@[x] == a0[x]); }
+                    }
+                }
+                c += 1;
+            }
+            result
+        }
     }
 
     /// Verified in place, body unchanged: the constructor's non-parameter
