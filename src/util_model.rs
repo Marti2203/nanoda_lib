@@ -145,40 +145,6 @@ pub proof fn ptr_keys_obey_model<A>(s: Set<Ptr<A>>)
 {
 }
 
-#[verifier::external_body]
-pub proof fn ptr_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16)>)
-    requires
-        forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
-            #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 ==> a == b,
-    ensures
-        keys_obey_model::<(Ptr<A>, u16)>(s),
-{
-}
-
-#[verifier::external_body]
-pub proof fn ptr_u16_u16_keys_obey_model<A>(s: Set<(Ptr<A>, u16, u16)>)
-    requires
-        forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
-            #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 && a.2 == b.2 ==> a == b,
-    ensures
-        keys_obey_model::<(Ptr<A>, u16, u16)>(s),
-{
-}
-
-#[verifier::external_body]
-pub proof fn ptr_triple_keys_obey_model<A, B, C>(s: Set<(Ptr<A>, Ptr<B>, Ptr<C>)>)
-    requires
-        forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
-            #![trigger s.contains(a), s.contains(b)]
-            s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) && crate::util_model::ptr_raw(a.2)
-                == crate::util_model::ptr_raw(b.2) ==> a == b,
-    ensures
-        keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(s),
-{
-}
-
 /// `SortedPair` derives `==`/`Hash` over its two pointers.
 #[verifier::external_body]
 pub proof fn sorted_pair_keys_obey_model<'t>(s: Set<crate::util::SortedPair<'t>>)
@@ -211,12 +177,12 @@ pub proof fn ptr_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set
     ensures
         keys_obey_model::<(Ptr<A>, u16)>(s),
 {
-    assert forall|a: (Ptr<A>, u16), b: (Ptr<A>, u16)|
-        #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 implies a == b by {
-        owned_raw_eq(c, a.0, b.0);
-    }
-    ptr_u16_keys_obey_model(s);
+    broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::set_lib::group_set_lib_default;
+    let sa = s.map(|k: (Ptr<A>, u16)| k.0);
+    let sb = s.map(|k: (Ptr<A>, u16)| k.1);
+    assert forall|k: (Ptr<A>, u16)| #[trigger] s.contains(k) implies sa.contains(k.0) && sb.contains(k.1) by {}
+    ptr_owned_keys(c, sa);
+    vstd::std_specs::hash::axiom_keys_obey_model_pair(s, sa, sb);
 }
 
 pub proof fn ptr_u16_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Set<(Ptr<A>, u16, u16)>)
@@ -225,13 +191,13 @@ pub proof fn ptr_u16_u16_owned_keys<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s:
     ensures
         keys_obey_model::<(Ptr<A>, u16, u16)>(s),
 {
-    assert forall|a: (Ptr<A>, u16, u16), b: (Ptr<A>, u16, u16)|
-        #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && a.1 == b.1 && a.2 == b.2 implies a
-            == b by {
-        owned_raw_eq(c, a.0, b.0);
-    }
-    ptr_u16_u16_keys_obey_model(s);
+    broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::set_lib::group_set_lib_default;
+    let sa = s.map(|k: (Ptr<A>, u16, u16)| k.0);
+    let sb = s.map(|k: (Ptr<A>, u16, u16)| k.1);
+    let sc = s.map(|k: (Ptr<A>, u16, u16)| k.2);
+    assert forall|k: (Ptr<A>, u16, u16)| #[trigger] s.contains(k) implies sa.contains(k.0) && sb.contains(k.1) && sc.contains(k.2) by {}
+    ptr_owned_keys(c, sa);
+    vstd::std_specs::hash::axiom_keys_obey_model_triple(s, sa, sb, sc);
 }
 
 pub proof fn ptr_triple_owned_keys<'t, 'p, A, B, C>(c: crate::util::TcCtx<'t, 'p>, s: Set<(Ptr<A>, Ptr<B>, Ptr<C>)>)
@@ -241,15 +207,15 @@ pub proof fn ptr_triple_owned_keys<'t, 'p, A, B, C>(c: crate::util::TcCtx<'t, 'p
     ensures
         keys_obey_model::<(Ptr<A>, Ptr<B>, Ptr<C>)>(s),
 {
-    assert forall|a: (Ptr<A>, Ptr<B>, Ptr<C>), b: (Ptr<A>, Ptr<B>, Ptr<C>)|
-        #![trigger s.contains(a), s.contains(b)]
-        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a.0) == crate::util_model::ptr_raw(b.0) && crate::util_model::ptr_raw(a.1) == crate::util_model::ptr_raw(b.1) && crate::util_model::ptr_raw(a.2) == crate::util_model::ptr_raw(b.2)
-        implies a == b by {
-        owned_raw_eq(c, a.0, b.0);
-        owned_raw_eq(c, a.1, b.1);
-        owned_raw_eq(c, a.2, b.2);
-    }
-    ptr_triple_keys_obey_model(s);
+    broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::set_lib::group_set_lib_default;
+    let sa = s.map(|k: (Ptr<A>, Ptr<B>, Ptr<C>)| k.0);
+    let sb = s.map(|k: (Ptr<A>, Ptr<B>, Ptr<C>)| k.1);
+    let sc = s.map(|k: (Ptr<A>, Ptr<B>, Ptr<C>)| k.2);
+    assert forall|k: (Ptr<A>, Ptr<B>, Ptr<C>)| #[trigger] s.contains(k) implies sa.contains(k.0) && sb.contains(k.1) && sc.contains(k.2) by {}
+    ptr_owned_keys(c, sa);
+    ptr_owned_keys(c, sb);
+    ptr_owned_keys(c, sc);
+    vstd::std_specs::hash::axiom_keys_obey_model_triple(s, sa, sb, sc);
 }
 
 pub proof fn sorted_pair_owned_keys<'t, 'p>(c: crate::util::TcCtx<'t, 'p>, s: Set<crate::util::SortedPair<'t>>)
