@@ -569,67 +569,139 @@ pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
     }
 }
 
-/// A `Unique` local (`mk_unique`) is in scope when its type is closed and
-/// mentions only uniques created before it -- well founded by the serial.
+/// A `Unique` local (`mk_unique`) is in scope when it is well founded: its
+/// type is closed and mentions only uniques that are, to some finite depth.
 pub open spec fn unique_deep(aids: (nat, nat), id: u32) -> bool {
-    match crate::expr_arena_bridge::unique_serial(aids, id) {
-        Some(k) => crate::expr_arena_bridge::dbj_serial(aids, id) is None
-            && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
-            && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], k as nat),
-        None => false,
-    }
+    exists|n: nat| #[trigger] unique_ty_deep(aids, ExprSpec::Free(id), n)
 }
 
-/// Every local in `e` is a unique with serial below `k`, recursively.
-pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, k: nat) -> bool
-    decreases k, e,
+/// Every local in `e` is a unique whose type is closed and, recursively,
+/// satisfies the same within `n` more steps.
+pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, n: nat) -> bool
+    decreases n, e,
 {
     match e {
-        ExprSpec::Free(id) => match crate::expr_arena_bridge::unique_serial(aids, id) {
-            Some(j) => (j as nat) < k && crate::expr_arena_bridge::dbj_serial(aids, id) is None
-                && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
-                && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], j as nat),
-            None => false,
-        },
-        ExprSpec::App(f, a) => unique_ty_deep(aids, *f, k) && unique_ty_deep(aids, *a, k),
-        ExprSpec::Bind(t, b) => unique_ty_deep(aids, *t, k) && unique_ty_deep(aids, *b, k),
-        ExprSpec::Let(t, v, b) => unique_ty_deep(aids, *t, k) && unique_ty_deep(aids, *v, k)
-            && unique_ty_deep(aids, *b, k),
-        ExprSpec::Proj(_, st) => unique_ty_deep(aids, *st, k),
+        ExprSpec::Free(id) => n > 0 && crate::expr_arena_bridge::unique_serial(aids, id) is Some
+            && crate::expr_arena_bridge::dbj_serial(aids, id) is None
+            && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
+            && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], (n - 1) as nat),
+        ExprSpec::App(f, a) => unique_ty_deep(aids, *f, n) && unique_ty_deep(aids, *a, n),
+        ExprSpec::Bind(t, b) => unique_ty_deep(aids, *t, n) && unique_ty_deep(aids, *b, n),
+        ExprSpec::Let(t, v, b) => unique_ty_deep(aids, *t, n) && unique_ty_deep(aids, *v, n)
+            && unique_ty_deep(aids, *b, n),
+        ExprSpec::Proj(_, st) => unique_ty_deep(aids, *st, n),
         _ => true,
     }
 }
 
-/// Only earlier uniques: in scope at any depth, in any live set.
-pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, k: nat, S: ISet<u32>, c: u16)
+/// Only well-founded uniques: in scope at any depth, in any live set.
+pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, n: nat, S: ISet<u32>, c: u16)
     requires
-        unique_ty_deep(aids, e, k),
+        unique_ty_deep(aids, e, n),
     ensures
         dbj_deep_in(aids, e, S, c),
-    decreases k, e,
+    decreases n, e,
 {
     match e {
         ExprSpec::Free(id) => {
-            let j = crate::expr_arena_bridge::unique_serial(aids, id).unwrap();
-            unique_ty_deep_in(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], j as nat, S, c);
+            assert(unique_ty_deep(aids, ExprSpec::Free(id), n));
+            assert(unique_deep(aids, id));
         },
         ExprSpec::App(f, a) => {
-            unique_ty_deep_in(aids, *f, k, S, c);
-            unique_ty_deep_in(aids, *a, k, S, c);
+            unique_ty_deep_in(aids, *f, n, S, c);
+            unique_ty_deep_in(aids, *a, n, S, c);
         },
         ExprSpec::Bind(t, b) => {
-            unique_ty_deep_in(aids, *t, k, S, c);
-            unique_ty_deep_in(aids, *b, k, S, c);
+            unique_ty_deep_in(aids, *t, n, S, c);
+            unique_ty_deep_in(aids, *b, n, S, c);
         },
         ExprSpec::Let(t, v, b) => {
-            unique_ty_deep_in(aids, *t, k, S, c);
-            unique_ty_deep_in(aids, *v, k, S, c);
-            unique_ty_deep_in(aids, *b, k, S, c);
+            unique_ty_deep_in(aids, *t, n, S, c);
+            unique_ty_deep_in(aids, *v, n, S, c);
+            unique_ty_deep_in(aids, *b, n, S, c);
         },
         ExprSpec::Proj(_, st) => {
-            unique_ty_deep_in(aids, *st, k, S, c);
+            unique_ty_deep_in(aids, *st, n, S, c);
         },
         _ => {},
+    }
+}
+
+/// More fuel still suffices.
+pub proof fn unique_ty_deep_mono(aids: (nat, nat), e: ExprSpec, n: nat, m: nat)
+    requires
+        unique_ty_deep(aids, e, n),
+        n <= m,
+    ensures
+        unique_ty_deep(aids, e, m),
+    decreases n, e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            unique_ty_deep_mono(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], (n - 1) as nat, (m - 1) as nat);
+        },
+        ExprSpec::App(f, a) => {
+            unique_ty_deep_mono(aids, *f, n, m);
+            unique_ty_deep_mono(aids, *a, n, m);
+        },
+        ExprSpec::Bind(t, b) => {
+            unique_ty_deep_mono(aids, *t, n, m);
+            unique_ty_deep_mono(aids, *b, n, m);
+        },
+        ExprSpec::Let(t, v, b) => {
+            unique_ty_deep_mono(aids, *t, n, m);
+            unique_ty_deep_mono(aids, *v, n, m);
+            unique_ty_deep_mono(aids, *b, n, m);
+        },
+        ExprSpec::Proj(_, st) => {
+            unique_ty_deep_mono(aids, *st, n, m);
+        },
+        _ => {},
+    }
+}
+
+/// A term in scope with no level locals (`S` empty, nothing below level 0)
+/// mentions only well-founded uniques, to one common depth.
+pub proof fn unique_fuel(aids: (nat, nat), e: ExprSpec) -> (n: nat)
+    requires
+        dbj_deep_in(aids, e, ISet::empty(), 0),
+    ensures
+        unique_ty_deep(aids, e, n),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            choose|n: nat| #[trigger] unique_ty_deep(aids, ExprSpec::Free(id), n)
+        },
+        ExprSpec::App(f, a) => {
+            let n1 = unique_fuel(aids, *f);
+            let n2 = unique_fuel(aids, *a);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            unique_ty_deep_mono(aids, *f, n1, n);
+            unique_ty_deep_mono(aids, *a, n2, n);
+            n
+        },
+        ExprSpec::Bind(t, b) => {
+            let n1 = unique_fuel(aids, *t);
+            let n2 = unique_fuel(aids, *b);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            unique_ty_deep_mono(aids, *t, n1, n);
+            unique_ty_deep_mono(aids, *b, n2, n);
+            n
+        },
+        ExprSpec::Let(t, v, b) => {
+            let n1 = unique_fuel(aids, *t);
+            let n2 = unique_fuel(aids, *v);
+            let n3 = unique_fuel(aids, *b);
+            let n12 = if n1 >= n2 { n1 } else { n2 };
+            let n = if n12 >= n3 { n12 } else { n3 };
+            unique_ty_deep_mono(aids, *t, n1, n);
+            unique_ty_deep_mono(aids, *v, n2, n);
+            unique_ty_deep_mono(aids, *b, n3, n);
+            n
+        },
+        ExprSpec::Proj(_, st) => unique_fuel(aids, *st),
+        _ => 0,
     }
 }
 

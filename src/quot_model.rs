@@ -76,4 +76,25 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
 // `local_binder_type_of` were two unrelated uninterpreted views of the SAME
 // field, so `local_type` is defined as the other now. The depth ceiling the
 // verified versions carry is real -- see `abstr_pi`'s doc comment.
+/// A unique made with an in-scope, level-free type is in scope: one step
+/// deeper than the uniques its type mentions.
+pub proof fn mk_unique_deep<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>, ty: ExprPtr<'t>)
+    requires
+        crate::util_model::owns(c, l),
+        to_model(l) == ExprSpec::Free(expr_id(l)),
+        local_binder_type_of(l) == ty,
+        crate::expr_model::nlbv(to_model(ty)) == 0,
+        crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(c), expr_id(l)) is Some,
+        crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(c), expr_id(l)) is None,
+        crate::expr_model::dbj_deep_in(crate::util_model::arena_ids(c), to_model(ty), vstd::iset::ISet::empty(), 0),
+    ensures
+        crate::expr_model::unique_deep(crate::util_model::arena_ids(c), expr_id(l)),
+        crate::expr_model::dbj_deep_in(crate::util_model::arena_ids(c), to_model(l), vstd::iset::ISet::empty(), 0),
+{
+    let aids = crate::util_model::arena_ids(c);
+    crate::expr_arena_bridge::arena_lctx_local(aids, l);
+    let n = crate::expr_model::unique_fuel(aids, to_model(ty));
+    assert(crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(expr_id(l)), n + 1));
+}
+
 } // verus!

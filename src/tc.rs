@@ -8898,8 +8898,8 @@ pub proof fn local_type_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, x: crate:
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), id) {
                 crate::expr_model::dbj_deep_in_weaken(crate::env_model::env_arena_ids(*tc.env), t, S, s, S, c);
             } else {
-                let k = crate::expr_arena_bridge::unique_serial(crate::env_model::env_arena_ids(*tc.env), id).unwrap();
-                crate::expr_model::unique_ty_deep_in(crate::env_model::env_arena_ids(*tc.env), t, k as nat, S, c);
+                let n = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(crate::env_model::env_arena_ids(*tc.env), ExprSpec::Free(id), n);
+                crate::expr_model::unique_ty_deep_in(crate::env_model::env_arena_ids(*tc.env), t, (n - 1) as nat, S, c);
             }
         }
     }
@@ -8907,8 +8907,8 @@ pub proof fn local_type_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, x: crate:
     // the local is in scope, so its recorded type is closed
     assert(crate::expr_model::nlbv(t) <= 0);
     if crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), crate::expr_arena_bridge::expr_id(x)) is None {
-        let k = crate::expr_arena_bridge::unique_serial(crate::env_model::env_arena_ids(*tc.env), crate::expr_arena_bridge::expr_id(x)).unwrap();
-        crate::expr_model::unique_ty_deep_in(crate::env_model::env_arena_ids(*tc.env), t, k as nat, live_set(tc), tc.ctx.dbj_level_counter);
+        let n = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(crate::env_model::env_arena_ids(*tc.env), ExprSpec::Free(crate::expr_arena_bridge::expr_id(x)), n);
+        crate::expr_model::unique_ty_deep_in(crate::env_model::env_arena_ids(*tc.env), t, (n - 1) as nat, live_set(tc), tc.ctx.dbj_level_counter);
     }
     assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), t, live_set(tc), tc.ctx.dbj_level_counter));
 }
