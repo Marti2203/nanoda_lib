@@ -292,10 +292,9 @@ pub open spec fn env_matches<'x, 'a, 't, 'p>(env: Env<'x, 'a>, c: crate::util::T
     env_arena_ids(env) == crate::util_model::arena_ids(c)
 }
 
-/// Registered opaquely: only passed through.
+/// Transparent: the inductive checker builds one (`ByIndex`).
 #[allow(dead_code)]
 #[verifier::external_type_specification]
-#[verifier::external_body]
 pub struct ExEnvLimit<'a>(crate::env::EnvLimit<'a>);
 
 /// THE TRUSTED FACT ABOUT FRESH ENVIRONMENTS (option A, chosen 2026-09-25).
@@ -803,6 +802,13 @@ pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_temp_declar ](
 pub assume_specification<'a>[ <crate::env::ConstructorData<'a> as Clone>::clone ](
     d: &crate::env::ConstructorData<'a>,
 ) -> (r: crate::env::ConstructorData<'a>)
+    ensures
+        r == *d,
+;
+
+pub assume_specification<'a>[ <Declar<'a> as Clone>::clone ](
+    d: &Declar<'a>,
+) -> (r: Declar<'a>)
     ensures
         r == *d,
 ;

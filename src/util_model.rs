@@ -503,6 +503,7 @@ pub open spec fn owns_all<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate
 pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::util::TcCtx<'t, 'p>) -> bool {
     &&& arena_ids(a) == arena_ids(b)
     &&& crate::util::unique_count(a) <= crate::util::unique_count(b)
+    &&& a.export_file == b.export_file
 }
 
 /// `FxHashMap`'s hasher factory, registered so `ExprCache`'s fields have a

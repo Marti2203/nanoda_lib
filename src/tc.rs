@@ -757,6 +757,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::expr_model::nlbv(to_model_expr(ty)) <= 0,
             !crate::expr_model::has_fv(to_model_expr(ty)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -786,6 +787,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             crate::expr_model::nlbv(to_model_expr(info.ty)) <= 0,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result.0),
             crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
@@ -830,6 +832,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             // `e` is a type: it infers to a sort
             kinfer_claim(*old(self).env, to_model_expr(e), ExprSpec::Sort(to_model_level(result))),
@@ -857,6 +860,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -885,6 +889,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -914,6 +919,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -938,6 +944,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -965,6 +972,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1008,6 +1016,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ghost mut c: int = np;
                 for i in (*num_params as usize)..args.len()
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         crate::util_model::owns_all(*self.ctx, args@),
                         crate::util_model::owns(*self.ctx, *inductive_name),
                         crate::util_model::owns(*(*old(self)).ctx, x),
@@ -1076,6 +1085,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, x),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1128,6 +1138,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1164,6 +1175,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1199,6 +1211,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -1266,6 +1279,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1415,6 +1429,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1585,6 +1600,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), structure),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1690,6 +1706,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1722,6 +1739,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), structure),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -1848,6 +1866,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for i in 0..(*num_params)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, struct_ty_args@),
                 crate::util_model::owns(*self.ctx, ctor_ty),
                 crate::util_model::owns(*(*old(self)).ctx, _ty_name),
@@ -1949,6 +1968,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for i in 0..idx
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, inductive_info.name),
                 crate::util_model::owns(*self.ctx, ctor_ty),
                 crate::util_model::owns(*(*old(self)).ctx, _ty_name),
@@ -2088,6 +2108,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -2224,6 +2245,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -2300,6 +2322,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while !args.is_empty()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, fun),
                 crate::util_model::owns_all(*self.ctx, args@),
                 crate::util_model::owns_all(*self.ctx, ctx@),
@@ -2468,6 +2491,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -2509,6 +2533,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             e,
         )
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, e),
                 crate::util_model::owns_all(*self.ctx, locals@),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -2653,6 +2678,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Some(local) = locals.pop()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, locals@),
                 crate::util_model::owns(*self.ctx, abstrd),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -2684,6 +2710,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // without this the function's counter frame has nothing to stand on.
 
             ensures
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 locals@.len() == 0,
                 (*self).env == old(self).env,
                 tc_wf(*self),
@@ -2759,6 +2786,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -2790,6 +2818,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(e)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, e),
                 crate::util_model::owns_all(*self.ctx, locals@),
                 crate::util_model::owns_all(*self.ctx, universes@),
@@ -2909,6 +2938,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let (Some(universe), Some(local)) = (universes.pop(), locals.pop())
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, locals@),
                 crate::util_model::owns_all(*self.ctx, universes@),
                 crate::util_model::owns(*self.ctx, infd),
@@ -2967,6 +2997,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::expr_model::nlbv(to_model_expr(body)) <= 1,
             crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(body), live_set(*old(self)), old(self).ctx.dbj_level_counter),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3044,6 +3075,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3070,6 +3102,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, cursor),
                 crate::util_model::owns(*(*old(self)).ctx, e),
                 tc_wf(*self),
@@ -3130,6 +3163,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3148,6 +3182,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3166,6 +3201,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -3258,6 +3294,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let (mut e, mut n_args) = (e_fun, 0usize);
                 loop
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         crate::util_model::owns_all(*self.ctx, args@),
                         crate::util_model::owns(*(*old(self)).ctx, e),
                         tc_wf(*self),
@@ -3273,6 +3310,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // nothing known about `n_args`.
 
                     ensures
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         n_args <= args.len(),
                         crate::beta_model::spine_bind(to_model_expr(e_fun), n_args as nat) == Some(to_model_expr(e)),
                 {
@@ -3455,6 +3493,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3525,6 +3564,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3549,6 +3589,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3577,6 +3618,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, x),
                 crate::util_model::owns(*self.ctx, y),
                 crate::util_model::owns_all(*self.ctx, locals@),
@@ -3607,6 +3649,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // have no bound to discharge.
 
             ensures
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 c0 == old(self).ctx.dbj_level_counter,
@@ -3727,6 +3770,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3762,6 +3806,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3801,6 +3846,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3834,6 +3880,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < args1.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, args1@),
                 crate::util_model::owns_all(*self.ctx, args2@),
                 crate::util_model::owns(*(*old(self)).ctx, x),
@@ -3858,6 +3905,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     to_model_expr(args2@[j]),
                 ),
             ensures
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 tc_wf(*self),
                 (*self).env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3915,6 +3963,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), u),
             in_scope(*old(self), v),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3941,6 +3990,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4118,6 +4168,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), major),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4189,6 +4240,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4251,6 +4303,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             forall|i: int| 0 <= i < args@.len() ==> in_scope(*old(self), #[trigger] args@[i]),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4532,6 +4585,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             forall|i: int| 0 <= i < args@.len() ==> in_scope(*old(self), #[trigger] args@[i]),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4657,6 +4711,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4690,6 +4745,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4760,6 +4816,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::beta_model::spine_head(to_model_expr(y)) is Const,
             crate::beta_model::spine_head(to_model_expr(y))->Const_0 == crate::level_arena_bridge::name_id(y_defname),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4847,6 +4904,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -4876,6 +4934,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4931,6 +4990,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < l_args@.len() ==> in_scope(*old(self), #[trigger] l_args@[i]),
             forall|i: int| 0 <= i < r_args@.len() ==> in_scope(*old(self), #[trigger] r_args@[i]),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4948,6 +5008,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = l_args.len();
         while i > 0
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*(*old(self)).ctx, l_args@),
                 crate::util_model::owns_all(*(*old(self)).ctx, r_args@),
                 tc_wf(*self),
@@ -4989,6 +5050,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x_in),
             in_scope(*old(self), y_in),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches DeltaResult::Exhausted(a, b) ==> crate::util_model::owns(*(*final(self)).ctx, a) && crate::util_model::owns(*(*final(self)).ctx, b),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -5014,6 +5076,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, x),
                 crate::util_model::owns(*self.ctx, y),
                 crate::util_model::owns(*(*old(self)).ctx, x_in),
@@ -5132,6 +5195,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -5155,6 +5219,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -5177,6 +5242,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             in_scope(*old(self), e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result.1),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -5200,6 +5266,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -5239,6 +5306,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -5266,6 +5334,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             in_scope(*old(self), x),
             in_scope(*old(self), y),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -8973,6 +9042,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9009,6 +9079,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_wf(result),
             result.env == env,
+            *result.ctx == *old(dag),
+            *final(dag) == *final(result.ctx),
     {
         assert!(dag.dbj_level_counter == 0, "TypeChecker::new: de Bruijn level counter must start at zero");
         route_stats::conv_fail_clear();
@@ -9040,6 +9112,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9087,6 +9160,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9136,6 +9210,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9165,6 +9240,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(e), to_model_expr(r)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9186,6 +9262,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             kinfer_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
             scope_pres(crate::env_model::env_arena_ids(*(*old(self)).env), to_model_expr(e), to_model_expr(r)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9208,6 +9285,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9238,6 +9316,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9270,6 +9349,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             def_eq_claim(*(*old(self)).env, to_model_expr(x), to_model_expr(y)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -9442,6 +9522,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result == Some(true) ==> exists|l: LevelPtr<'t>, r: LevelPtr<'t>|
                 #![trigger to_model_level(l), to_model_level(r)]
                 to_model_expr(x) == ExprSpec::Sort(to_model_level(l)) && to_model_expr(y)
@@ -9479,6 +9560,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, y),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result ==> crate::expr_arena_bridge::is_const_shape(x)
                 && crate::expr_arena_bridge::is_const_shape(y)
                 && crate::expr_arena_bridge::const_name_of(x)
@@ -9544,6 +9626,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, c_uparams),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -9575,6 +9658,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let mut i: usize = 0;
                     while i < n
                         invariant
+                            mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                             crate::util_model::owns_all(*self.ctx, ls@),
                             crate::util_model::owns(*self.ctx, this_declar_info.uparams),
                             crate::util_model::owns(*(*old(self)).ctx, c_name),
@@ -9635,6 +9719,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -9712,6 +9797,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let np = (*num_params) as usize;
         for i in 0..np
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, out),
                 crate::util_model::owns_all(*self.ctx, args@),
                 crate::util_model::owns(*(*old(self)).ctx, e_type),
@@ -9767,6 +9853,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost pre = am.subrange(0, np as int);
         for j in 0..nf
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, out),
                 crate::util_model::owns(*self.ctx, c_name),
                 crate::util_model::owns(*(*old(self)).ctx, e_type),
@@ -9843,6 +9930,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
@@ -9919,6 +10007,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             tc_wf(*old(self)),
             crate::expr_arena_bridge::dsubst_cache_sound(*old(self).ctx),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
             match result {
                 // The reduction claim needs nothing about `e`: it is one delta
@@ -10083,6 +10172,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some((r0, r1)) ==> crate::util_model::owns(*(*final(self)).ctx, r0),
             result is Some ==> crate::beta_model::spine_head(to_model_expr(e)) is Const,
             // the name returned is the head constant's
@@ -10201,6 +10291,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, l),
             tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             to_model_expr(result) == ExprSpec::Sort(LevelSpec::Succ(Box::new(to_model_level(l)))),
             tc_wf(*final(self)),

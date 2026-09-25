@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **161 marked rewrites across 102 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **168 marked rewrites across 104 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -147,7 +147,7 @@ Binding the call to a local first is behaviour-identical.
 |---|---|
 | `no_dupes_all_params` | `src/level.rs` |
 
-### `flat_map` / `map` + `collect` — 6 rewrites
+### `flat_map` / `map` + `collect` — 8 rewrites
 
 `st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`
 and `hs.iter().map(|x| x.name).collect::<Vec<_>>()`: vstd specifies neither
@@ -159,7 +159,8 @@ same elements, same order.
 
 | function | file |
 |---|---|
-| `flatten_minors`, `ind_names`, `ctor_names` (the definitions) | `src/inductive.rs` |
+| `flatten_minors`, `ind_names`, `ctor_names`, `rec_names_set` (the definitions) | `src/inductive.rs` |
+| `check_inductive_declar` (the recursor-name set through `rec_names_set`) | `src/inductive.rs` |
 | `mk_rec_rules`, `mk_recursors`, `mk_ind_tys_env_ext` | `src/inductive.rs` |
 
 `handle_rec_ctor_args_rec_rule` and `mk_recursor_aux` call them too (their
@@ -197,7 +198,7 @@ rust_to_vir_expr.rs:  PatKind::Slice(..) => unsupported_err!(pat.span, "slice pa
 Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 #2959 — is a different feature and does not help here.)
 
-### Closures capturing `&mut self` — 11 rewrites
+### Closures capturing `&mut self` — 12 rewrites
 
 | function | file |
 |---|---|
@@ -211,6 +212,7 @@ Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 | `has_ind_occ` (the closure given to `find_const` is `find_const_named` over the block constants' names, read out first; `find_const_named` is `find_const_aux`'s traversal and memo with that predicate) | `src/inductive.rs` |
 | `is_nested_ind_app` (the same: its `find_const` closure tests the block's type names, so it is `find_const_named` over `ind_names` of the block) | `src/inductive.rs` |
 | `is_recursive` (its `with_ctx` closure is inlined after the two lines `with_ctx` runs -- a fresh `LeanDag`, a `TcCtx` over it -- and its `return true` returns the same value; the `find_const` closure is `find_const_named` over `all_ind_names`; the `for` over constructor names is the scan by index) | `src/inductive.rs` |
+| `check_inductive_declar` (each `self.with_ctx(|ctx| ..)` is the fresh `LeanDag` and `TcCtx` it builds, then the body; each `ctx.with_tc(limit, |tc| ..)` / `ctx.with_tc_and_env_ext(ext, limit, |tc| ..)` is the environment it builds -- `env_model::ctx_env` / `ctx_env_ext`, i.e. the same `new_env` / `Env::new_w_temp_ext`, trusted to match the context (option A) -- and `TypeChecker::new` on the same context, then the body. Same calls, same order) | `src/inductive.rs` |
 | `has_nested_pfx` (the closure given to `find_e` is `find_nested_pfx_aux`, `find_aux`'s traversal and memo with that predicate; the debug-build `debug_assert_eq!(.., format!(..))` is the same check behind the claim-free `debug_check_nested_pfx`, since Verus does not process `format!`) | `src/expr.rs` |
 
 Rejected outright, and the message is explicit:
@@ -314,6 +316,7 @@ needed a different shape.
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | `for new_rec in recursors` and the rule loop over `old_rec_rules.iter().zip(new_rec_rules.iter())` → the scans by index they stand for (`zip` has no specification) |
 | `restore_recursors` | `src/inductive.rs` | `for rec_name in base_rec_names.iter().copied()` → the `loop` over `next()` it desugars to, the set's iterator and its copy bound to locals so the proof can name what is left of the set; `for .. in map.keys().copied()` → the scan by position (`get_index`) |
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the universe-arity test `subst_expr_levels` panics on, made one frame earlier (as `infer_const`) |
+| `check_inductive_declar` | `src/inductive.rs` | `tc.check_declar_info(d).unwrap()` → its verdict part: the declared type tested closed (`assert_closed`), then `check_declar_info_core` (an inductive is not a theorem, so `ok` is always true and the `Err` arm cannot fire); the wrapper's two shadow observations are not made for inductive declarations. The `any` over the block's names (same `is_recursive` calls, same early stop) and every `for` over a slice, `Vec` or map → scans by index; `for r in recursors.clone()` clones each element in turn; `specialize_nested`'s index of the block's first type is tested one frame earlier (the kernel panics there on an empty block) |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
@@ -369,6 +372,7 @@ still a rejection — but each is an improvement.
 | `restore_e`, `check_restored_recursor1`, `check_restored_ctor1`, `assert_nonnested_tys_def_eq`, `assert_nonnested_ctors_def_eq` | `src/inductive.rs` | the terms restored from, and every pair handed to `assert_def_eq`, are TESTED closed first (`assert_closed`): opening a recursor's parameters with fresh locals needs it, and it is what puts both sides of the comparison in scope. The export's declarations and the temporary environment's are closed when well formed |
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq`, `restore_and_check` | `src/inductive.rs` | every pair handed to `assert_def_eq`, and the constructed rule value / imported type substituted into, TESTED closed first (`assert_closed`), as in `check_restored_recursor1` |
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the imported recursor's universe parameters are TESTED to be distinct parameters (`no_dupes_all_params`, the test `check_declar_info` makes of every declaration it checks) before `subst_expr_levels` substitutes for them. Never fails on a well-formed export |
+| `check_inductive_declar` | `src/inductive.rs` | the mutual-block limit `start + size` panics on overflow; the same check, explicit |
 | `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
 
 ---

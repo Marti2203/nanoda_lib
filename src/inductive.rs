@@ -4,122 +4,6 @@ use crate::tc::{InferFlag, TypeChecker};
 use crate::util::{new_fx_hash_set, ExportFile, ExprPtr, LeanDag, FxHashSet, FxIndexMap, LevelPtr, LevelsPtr, NamePtr, TcCtx};
 use std::sync::Arc;
 
-impl<'t, 'p: 't> ExportFile<'p> {
-    pub(crate) fn check_inductive_declar(&self, d: &Declar<'t>) {
-        let (ind, env_limit) = match d {
-            Declar::Inductive(ind) => {
-                // Assert computed `is_recursive` value matches the export file. Lean considers
-                // all types in a mutual block to be `is_rec: true` if any one of them is recursive.
-                let block_is_recursive = ind.all_ind_names.iter().any(|ind_name| self.is_recursive(ind_name));
-                assert_eq!(ind.is_recursive, block_is_recursive);
-                self.with_ctx(|ctx| {
-                    let nested_pfx = ctx.str1("_nested");
-                    assert!(!ctx.has_nested_pfx(ind.info.ty, nested_pfx));
-                    for ind_name in ind.all_ind_names.iter() {
-                        match self.declars.get(ind_name).unwrap() {
-                            Declar::Inductive(ind_data @ InductiveData { .. }) => {
-                                assert!(!ctx.has_nested_pfx(ind_data.info.ty, nested_pfx))
-                            }
-                            _ => panic!("expected inductive declar"),
-                        }
-                    }
-                    for ctor_name in ind.all_ctor_names.iter() {
-                        match self.declars.get(ctor_name).unwrap() {
-                            Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
-                                assert!(!ctx.has_nested_pfx(ctor_data.info.ty, nested_pfx))
-                            }
-                            _ => panic!("expected constructor"),
-                        }
-                    }
-                });
-
-                let (start, size) = self.mutual_block_sizes.get(&ind.info.name).unwrap();
-                (ind, crate::env::EnvLimit::ByIndex(start + size))
-            }
-            _ => panic!("expected inductive"),
-        };
-        self.with_ctx(|ctx| {
-            // The **unmodified** types and constructors for all of the types in this mutual block.
-            let unmodified_tys_ctors = ctx.with_tc(env_limit, |tc| {
-                tc.check_declar_info(d).unwrap();
-                tc.collect_unmodified_mutuals(ind)
-            });
-
-            // Initialize the big chunk of state used throughout the process of checking
-            // this inductive declaration.
-            let mut st = ctx.with_tc(env_limit, |tc| tc.specialize_nested(ind, unmodified_tys_ctors.clone()));
-
-            // Check the (potentially modified) inductive specs against the base environment.
-            ctx.with_tc(env_limit, |tc| tc.check_inductive_specs(&mut st));
-
-            // The first temporary environment extension, containing any specialized
-            // types to deal with nested inductives.
-            let ind_ty_ext1 = ctx.mk_ind_tys_env_ext(&st);
-
-            // Check the constructors against the environment with the base extension.
-            ctx.with_tc_and_env_ext(&ind_ty_ext1, env_limit, |tc| {
-                for ind in st.all_inductives_incl_specialized.iter() {
-                    for ctor in ind.ctors.iter() {
-                        tc.check_ctor(&st, ind.name, ctor.ty);
-                    }
-                }
-            });
-
-            // The second temporary environment extension, which also includes the constructors.
-            let ctor_extension = ctx.mk_ctors_env_ext(&st, ind_ty_ext1);
-
-            // The constructed recursors and rec rules
-            let recursors = ctx.with_tc_and_env_ext(&ctor_extension, env_limit, |tc| {
-                tc.mk_elim_level(&mut st);
-                tc.init_k_target(&mut st);
-                tc.mk_majors(&mut st);
-                tc.mk_motives(&mut st);
-                tc.mk_minors(&mut st);
-                tc.mk_recursors(&st)
-            });
-
-            // The last temporary environment extension, which also includes the recursors.
-            let recursor_extension = {
-                let mut out = ctor_extension;
-                for r in recursors.clone() {
-                    out.insert(r.info().name, r);
-                }
-                out
-            };
-
-            ctx.with_tc_and_env_ext(&recursor_extension, env_limit, |tc| {
-                if st.is_nested() {
-                    let base_rec_names = tc.ctx.mk_base_rec_names(ind.all_ind_names.as_ref());
-                    let specialized_to_unspecialized_rec_names =
-                        tc.mk_specialized_rec_to_unspecialized_map(&unmodified_tys_ctors);
-                    // Just unions the unspecialized nested recursor names with the base ind type recursor names.
-                    let all_rec_names = {
-                        let mut base = base_rec_names.clone();
-                        for unspecialized_rec_name in specialized_to_unspecialized_rec_names.values().copied() {
-                            base.insert(unspecialized_rec_name);
-                        }
-                        base
-                    };
-                    tc.ctx.ck_recursor_names_simple(&d.info().name, all_rec_names);
-                    tc.restore_and_check(
-                        &st,
-                        &unmodified_tys_ctors,
-                        &ind.all_ind_names,
-                        &base_rec_names,
-                        &specialized_to_unspecialized_rec_names,
-                    );
-                } else {
-                    tc.ctx.ck_recursor_names_simple(&d.info().name, recursors.iter().map(|x| x.info().name).collect());
-                    // Do the definitional equality assertions of new/old here.
-                    tc.assert_nonnested_tys_def_eq(ind, &st);
-                    tc.assert_nonnested_ctors_def_eq(&st);
-                    tc.assert_nonnested_recursors_def_eq(&st, &recursors);
-                }
-            })
-        })
-    }
-}
-
 pub(crate) struct InductiveCheckState<'a> {
     /// Maps the specialized type's fresh name to its "actual"/unspecialized type,
     /// where the unspecialized type retains free variables.
@@ -993,6 +877,12 @@ pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
             && declar_export_tagged(a, crate::indexmap_model::imap_view(&ef.declars)[k])
 }
 
+/// The parser's mutual-block table is keyed by the export file's own names.
+pub open spec fn export_blocks_ok<'p>(ef: ExportFile<'p>) -> bool {
+    forall|k: NamePtr<'p>| #[trigger] ef.mutual_block_sizes@.contains_key(k)
+        ==> crate::util_model::export_tagged(ef.name_cache.arena_id(), k)
+}
+
 /// Export pointers of one arena obey the hash-table key model: equal raw
 /// index, same arena, same pointer.
 pub proof fn export_keys_obey_model<A>(a: nat, s: Set<crate::util::Ptr<A>>)
@@ -1009,10 +899,77 @@ pub proof fn export_keys_obey_model<A>(a: nat, s: Set<crate::util::Ptr<A>>)
     crate::util_model::ptr_keys_obey_model(s);
 }
 
+/// The export file's declaration names, with one more export name, obey the
+/// hash-table key model -- what a `declars.get` needs.
+pub proof fn export_declars_get<'p>(ef: ExportFile<'p>, n: NamePtr<'p>)
+    requires
+        export_ok(ef),
+        crate::util_model::export_tagged(ef.name_cache.arena_id(), n),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<NamePtr<'p>>(crate::indexmap_model::imap_view(&ef.declars).dom().insert(n)),
+{
+    let a = ef.name_cache.arena_id();
+    let s = crate::indexmap_model::imap_view(&ef.declars).dom().insert(n);
+    assert forall|x: NamePtr<'p>| #[trigger] s.contains(x) implies crate::util_model::export_tagged(a, x) by {
+        if x != n {
+            assert(crate::indexmap_model::imap_view(&ef.declars).contains_key(x));
+        }
+    }
+    export_keys_obey_model(a, s);
+}
+
+/// An export inductive's pointers are owned by an environment over a context
+/// over the export file.
+pub proof fn export_ind_env_owned<'x, 't, 'p>(env: crate::env::Env<'x, 't>, c: TcCtx<'t, 'p>, ind: InductiveData<'t>)
+    requires
+        crate::env_model::env_matches(env, c),
+        declar_export_tagged(crate::util_model::arena_ids(c).1, Declar::Inductive(ind)),
+    ensures
+        crate::env_model::inductive_data_owned(env, ind),
+{
+    assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::env_model::env_owns(env, #[trigger] ind.all_ind_names@[k]) by {
+        export_tagged_owned(c, ind.all_ind_names@[k]);
+    }
+    assert forall|k: int| 0 <= k < ind.all_ctor_names@.len() implies crate::env_model::env_owns(env, #[trigger] ind.all_ctor_names@[k]) by {
+        export_tagged_owned(c, ind.all_ctor_names@[k]);
+    }
+    export_tagged_owned(c, ind.info.name);
+    export_tagged_owned(c, ind.info.uparams);
+    export_tagged_owned(c, ind.info.ty);
+}
+
+/// `check_inductive_specs` keeps the state owned: what it adds is covered by
+/// `ind_st_ok`, the rest is unchanged.
+pub(crate) proof fn st_owned_after_specs<'t, 'p>(c: TcCtx<'t, 'p>, s0: InductiveCheckState<'t>, s1: InductiveCheckState<'t>)
+    requires
+        crate::inductive_model::st_owned(c, s0),
+        ind_st_ok(c, s1),
+        s1 == (InductiveCheckState {
+            local_indices: s1.local_indices,
+            block_codom: s1.block_codom,
+            is_zero: s1.is_zero,
+            is_nonzero: s1.is_nonzero,
+            ind_consts: s1.ind_consts,
+            tele: s1.tele,
+            ..s0
+        }),
+    ensures
+        crate::inductive_model::st_owned(c, s1),
+{
+    assert forall|i: int| 0 <= i < s1.local_indices@.len() implies crate::util_model::owns_all(c, #[trigger] s1.local_indices@[i]@) by {
+        assert forall|j: int| 0 <= j < s1.local_indices@[i]@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(c), #[trigger] s1.local_indices@[i]@[j]) by {
+            assert(level_free_local(c, s1.local_indices@[i]@[j]));
+        }
+    }
+    assert forall|i: int| 0 <= i < s1.ind_consts@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(c), #[trigger] s1.ind_consts@[i]) by {
+        assert(crate::util_model::owns(c, s1.ind_consts@[i]));
+    }
+}
+
 /// A context over the export file owns its export pointers.
 pub proof fn export_tagged_owned<'t, 'p, A>(c: TcCtx<'t, 'p>, p: crate::util::Ptr<A>)
     requires
-        crate::util_model::export_tagged(c.export_file.name_cache.arena_id(), p),
+        crate::util_model::export_tagged(crate::util_model::arena_ids(c).1, p),
     ensures
         crate::util_model::owns(c, p),
 {
@@ -1178,6 +1135,416 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// The recursors' names, as a set.
+    ///
+    /// VERUS-REWRITE(flat-map-collect): `recursors.iter().map(|x| x.info().name).collect()`
+    /// into an `FxHashSet` is this scan, inserting each name in order.
+    fn rec_names_set(&self, recursors: &Vec<Declar<'t>>) -> (result: FxHashSet<NamePtr<'t>>)
+        requires
+            forall|i: int| 0 <= i < recursors@.len() ==> crate::util_model::owns(*self, #[trigger] crate::env::declar_info(recursors@[i]).name),
+        ensures
+            forall|n: NamePtr<'t>| #[trigger] result@.contains(n) ==> crate::util_model::owns(*self, n),
+    {
+        let mut out = new_fx_hash_set();
+        let mut i: usize = 0;
+        while i < recursors.len()
+            invariant
+                forall|k: int| 0 <= k < recursors@.len() ==> crate::util_model::owns(*self, #[trigger] crate::env::declar_info(recursors@[k]).name),
+                forall|n: NamePtr<'t>| #[trigger] out@.contains(n) ==> crate::util_model::owns(*self, n),
+            decreases recursors@.len() - i,
+        {
+            let n = recursors[i].info().name;
+            proof {
+                assert(crate::util_model::owns(*self, crate::env::declar_info(recursors@[i as int]).name));
+                crate::util_model::build_hasher_default_valid_fx();
+                crate::util_model::ptr_owned_keys(*self, out@.insert(n));
+            }
+            out.insert(n);
+            i += 1;
+        }
+        out
+    }
+}
+
+impl<'t, 'p: 't> ExportFile<'p> {
+    /// Check an inductive declaration: the whole inductive checker, run on one
+    /// context. Verified in place.
+    ///
+    /// VERUS-REWRITE(closure-inlined): each `self.with_ctx(|ctx| ..)` is the
+    /// fresh `LeanDag` and `TcCtx` it builds, then the closure's body; each
+    /// `ctx.with_tc(limit, |tc| ..)` / `ctx.with_tc_and_env_ext(ext, limit, |tc| ..)`
+    /// is the environment it builds (`env_model::ctx_env` / `ctx_env_ext`, the
+    /// same `new_env` / `Env::new_w_temp_ext`) and `TypeChecker::new` on the same
+    /// context, then the closure's body. Same calls, same order.
+    /// VERUS-REWRITE(core-call): `tc.check_declar_info(d).unwrap()` is its
+    /// verdict part: the declared type TESTED closed (`assert_closed`), then
+    /// `check_declar_info_core` (an inductive is not a theorem, so its `ok` is
+    /// always true and the `Err` arm cannot fire); the wrapper's two shadow
+    /// observations are not made for inductive declarations.
+    /// VERUS-REWRITE(index-walk): the `any` over the block's names (the same
+    /// calls to `is_recursive`, stopping at the first true), and every `for`
+    /// over a slice, `Vec` or map, are the scans by index they stand for;
+    /// `for r in recursors.clone()` clones each element in turn.
+    /// VERUS-REWRITE(flat-map-collect): the recursor names through
+    /// `rec_names_set`. VERUS-REWRITE(level-ceiling): `start + size` panics on
+    /// overflow (overflow checks are on); the same check, explicit.
+    /// VERUS-REWRITE(hoisted-bounds-check): `specialize_nested` indexes the
+    /// block's first type; the kernel panics there on an empty block, and the
+    /// same test is made one frame earlier.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    pub(crate) fn check_inductive_declar(&self, d: &Declar<'t>)
+        requires
+            export_ok(*self),
+            export_rec_names_ok(*self),
+            export_blocks_ok(*self),
+            declar_export_tagged(self.name_cache.arena_id(), *d),
+    {
+        let ghost a = self.name_cache.arena_id();
+        let (ind, env_limit) = match d {
+            Declar::Inductive(ind) => {
+                // Assert computed `is_recursive` value matches the export file. Lean considers
+                // all types in a mutual block to be `is_rec: true` if any one of them is recursive.
+                proof {
+                    assert(declar_export_tagged(a, Declar::Inductive(*ind)));
+                }
+                let mut block_is_recursive = false;
+                let mut k: usize = 0;
+                while k < ind.all_ind_names.len()
+                    invariant
+                        export_ok(*self),
+                        a == self.name_cache.arena_id(),
+                        forall|j: int| 0 <= j < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[j]),
+                    decreases ind.all_ind_names@.len() - k,
+                {
+                    let ind_name = &ind.all_ind_names[k];
+                    proof {
+                        broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                        assert(crate::util_model::export_tagged(a, ind.all_ind_names@[k as int]));
+                    }
+                    if self.is_recursive(ind_name) {
+                        block_is_recursive = true;
+                        break;
+                    }
+                    k += 1;
+                }
+                assert_eq!(ind.is_recursive, block_is_recursive);
+                {
+                    let mut dag = LeanDag::new(&self.config);
+                    let mut ctx = TcCtx::new(self, &mut dag);
+                    let nested_pfx = ctx.str1("_nested");
+                    proof { export_tagged_owned(ctx, ind.info.ty); }
+                    assert!(!ctx.has_nested_pfx(ind.info.ty, nested_pfx));
+                    let mut j: usize = 0;
+                    while j < ind.all_ind_names.len()
+                        invariant
+                            export_ok(*self),
+                            a == self.name_cache.arena_id(),
+                            crate::util_model::arena_ids(ctx).1 == a,
+                            crate::util_model::owns(ctx, nested_pfx),
+                            forall|x: int| 0 <= x < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[x]),
+                        decreases ind.all_ind_names@.len() - j,
+                    {
+                        let ind_name = &ind.all_ind_names[j];
+                        proof {
+                            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                            crate::util_model::build_hasher_default_valid_fx();
+                            assert(crate::util_model::export_tagged(a, ind.all_ind_names@[j as int]));
+                            export_declars_get(*self, *ind_name);
+                        }
+                        match self.declars.get(ind_name).unwrap() {
+                            Declar::Inductive(ind_data @ InductiveData { .. }) => {
+                                proof {
+                                    broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                    assert(crate::indexmap_model::imap_view(&self.declars).contains_key(*ind_name));
+                                    assert(declar_export_tagged(a, Declar::Inductive(*ind_data)));
+                                    export_tagged_owned(ctx, ind_data.info.ty);
+                                }
+                                assert!(!ctx.has_nested_pfx(ind_data.info.ty, nested_pfx))
+                            }
+                            _ => panic!("expected inductive declar"),
+                        }
+                        j += 1;
+                    }
+                    let mut j: usize = 0;
+                    while j < ind.all_ctor_names.len()
+                        invariant
+                            export_ok(*self),
+                            a == self.name_cache.arena_id(),
+                            crate::util_model::arena_ids(ctx).1 == a,
+                            crate::util_model::owns(ctx, nested_pfx),
+                            forall|x: int| 0 <= x < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ctor_names@[x]),
+                        decreases ind.all_ctor_names@.len() - j,
+                    {
+                        let ctor_name = &ind.all_ctor_names[j];
+                        proof {
+                            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                            crate::util_model::build_hasher_default_valid_fx();
+                            assert(crate::util_model::export_tagged(a, ind.all_ctor_names@[j as int]));
+                            export_declars_get(*self, *ctor_name);
+                        }
+                        match self.declars.get(ctor_name).unwrap() {
+                            Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
+                                proof {
+                                    broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                    assert(crate::indexmap_model::imap_view(&self.declars).contains_key(*ctor_name));
+                                    assert(declar_export_tagged(a, Declar::Constructor(*ctor_data)));
+                                    export_tagged_owned(ctx, ctor_data.info.ty);
+                                }
+                                assert!(!ctx.has_nested_pfx(ctor_data.info.ty, nested_pfx))
+                            }
+                            _ => panic!("expected constructor"),
+                        }
+                        j += 1;
+                    }
+                }
+
+                proof {
+                    broadcast use vstd::std_specs::hash::group_hash_axioms;
+                    crate::util_model::build_hasher_default_valid_fx();
+                    export_keys_obey_model(a, self.mutual_block_sizes@.dom().insert(ind.info.name));
+                }
+                let (start, size) = self.mutual_block_sizes.get(&ind.info.name).unwrap();
+                assert!(*start <= usize::MAX - *size, "inductive: mutual block index overflow");
+                (ind, crate::env::EnvLimit::ByIndex(start + size))
+            }
+            _ => panic!("expected inductive"),
+        };
+        let mut dag = LeanDag::new(&self.config);
+        let mut ctx = TcCtx::new(self, &mut dag);
+        // The **unmodified** types and constructors for all of the types in this mutual block.
+        let unmodified_tys_ctors = {
+            let env = crate::env_model::ctx_env(&ctx, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            proof {
+                export_tagged_owned(*tc.ctx, crate::env::declar_info(*d).ty);
+                export_tagged_owned(*tc.ctx, crate::env::declar_info(*d).uparams);
+                assert(declar_export_tagged(a, Declar::Inductive(*ind)));
+                export_tagged_owned(*tc.ctx, ind.info.name);
+                export_tagged_owned(*tc.ctx, ind.info.uparams);
+                export_tagged_owned(*tc.ctx, ind.info.ty);
+                assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::env_model::env_owns(*tc.env, #[trigger] ind.all_ind_names@[k]) by {
+                    export_tagged_owned(*tc.ctx, ind.all_ind_names@[k]);
+                }
+                assert forall|k: int| 0 <= k < ind.all_ctor_names@.len() implies crate::env_model::env_owns(*tc.env, #[trigger] ind.all_ctor_names@[k]) by {
+                    export_tagged_owned(*tc.ctx, ind.all_ctor_names@[k]);
+                }
+                assert(crate::env_model::inductive_data_owned(*tc.env, *ind));
+            }
+            tc.assert_closed(d.info().ty);
+            let (_, _, ok) = tc.check_declar_info_core(d.info(), false);
+            assert!(ok);
+            tc.collect_unmodified_mutuals(ind)
+        };
+        assert!(unmodified_tys_ctors.len() > 0);
+
+        // Initialize the big chunk of state used throughout the process of checking
+        // this inductive declaration.
+        let mut st = {
+            let env = crate::env_model::ctx_env(&ctx, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            let hs = unmodified_tys_ctors.clone();
+            proof {
+                export_ind_env_owned(*tc.env, *tc.ctx, *ind);
+                assert forall|i: int| 0 <= i < hs@.len() implies {
+                    let h = #[trigger] hs@[i];
+                    &&& crate::util_model::owns(*tc.ctx, h.name)
+                    &&& crate::util_model::owns(*tc.ctx, h.ty)
+                    &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(*tc.ctx, #[trigger] h.ctors@[j].name)
+                    &&& forall|j: int| 0 <= j < h.ctors@.len() ==> crate::util_model::owns(*tc.ctx, #[trigger] h.ctors@[j].ty)
+                } by {
+                    let u = unmodified_tys_ctors@[i];
+                    let h = hs@[i];
+                    assert(vstd::pervasive::cloned::<IndTyHeader<'t>>(u, h));
+                    if h != u {
+                        assert(vstd::pervasive::strictly_cloned::<IndTyHeader<'t>>(u, h));
+                    }
+                    assert(h.name == u.name && h.ty == u.ty && h.ctors@ == u.ctors@);
+                    assert(crate::util_model::owns(*tc.ctx, u.name));
+                    assert(crate::util_model::owns(*tc.ctx, u.ty));
+                    assert forall|j: int| 0 <= j < h.ctors@.len() implies crate::util_model::owns(*tc.ctx, #[trigger] h.ctors@[j].name) by {
+                        assert(h.ctors@[j] == u.ctors@[j]);
+                        assert(crate::util_model::owns(*tc.ctx, u.ctors@[j].name));
+                    }
+                    assert forall|j: int| 0 <= j < h.ctors@.len() implies crate::util_model::owns(*tc.ctx, #[trigger] h.ctors@[j].ty) by {
+                        assert(h.ctors@[j] == u.ctors@[j]);
+                        assert(crate::util_model::owns(*tc.ctx, u.ctors@[j].name));
+                    }
+                }
+                assert(headers_owned(*tc.ctx, hs@));
+            }
+            tc.specialize_nested(ind, hs)
+        };
+
+        // Check the (potentially modified) inductive specs against the base environment.
+        let ghost st_spec = st;
+        {
+            let env = crate::env_model::ctx_env(&ctx, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            tc.check_inductive_specs(&mut st);
+        }
+        proof {
+            st_owned_after_specs(ctx, st_spec, st);
+        }
+
+        // The first temporary environment extension, containing any specialized
+        // types to deal with nested inductives.
+        let ind_ty_ext1 = ctx.mk_ind_tys_env_ext(&st);
+
+        // Check the constructors against the environment with the base extension.
+        {
+            let env = crate::env_model::ctx_env_ext(&ctx, &ind_ty_ext1, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            let ghost fut = mut_ref_future(tc.ctx);
+            let ghost c1 = *tc.ctx;
+            let mut x: usize = 0;
+            while x < st.all_inductives_incl_specialized.len()
+                invariant
+                    mut_ref_future(tc.ctx) == fut,
+                    crate::tc::tc_wf(tc),
+                    tc.ctx.dbj_level_counter == 0,
+                    crate::util_model::same_arenas(c1, *tc.ctx),
+                    ind_st_ok(*tc.ctx, st),
+                    crate::inductive_model::st_owned(*tc.ctx, st),
+                    ctors_level_free(*tc.ctx, st),
+                    st.ind_consts@.len() <= st.local_indices@.len(),
+                    st.is_zero is Some,
+                    st.block_codom is Some,
+            {
+                let ind = &st.all_inductives_incl_specialized[x];
+                let mut y: usize = 0;
+                while y < ind.ctors.len()
+                    invariant
+                        mut_ref_future(tc.ctx) == fut,
+                        crate::tc::tc_wf(tc),
+                        tc.ctx.dbj_level_counter == 0,
+                        crate::util_model::same_arenas(c1, *tc.ctx),
+                        ind_st_ok(*tc.ctx, st),
+                        crate::inductive_model::st_owned(*tc.ctx, st),
+                        ctors_level_free(*tc.ctx, st),
+                        st.ind_consts@.len() <= st.local_indices@.len(),
+                        st.is_zero is Some,
+                        st.block_codom is Some,
+                        x < st.all_inductives_incl_specialized@.len(),
+                        *ind == st.all_inductives_incl_specialized@[x as int],
+                {
+                    let ctor = &ind.ctors[y];
+                    proof {
+                        assert(level_free(*tc.ctx, st.all_inductives_incl_specialized@[x as int].ctors@[y as int].ty));
+                    }
+                    tc.check_ctor(&st, ind.name, ctor.ty);
+                    y += 1;
+                }
+                x += 1;
+            }
+        }
+
+        // The second temporary environment extension, which also includes the constructors.
+        let ctor_extension = ctx.mk_ctors_env_ext(&st, ind_ty_ext1);
+
+        // The constructed recursors and rec rules
+        let ghost st_rec = st;
+        let recursors = {
+            let env = crate::env_model::ctx_env_ext(&ctx, &ctor_extension, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            tc.mk_elim_level(&mut st);
+            tc.init_k_target(&mut st);
+            tc.mk_majors(&mut st);
+            tc.mk_motives(&mut st);
+            tc.mk_minors(&mut st);
+            tc.mk_recursors(&st)
+        };
+
+        // The last temporary environment extension, which also includes the recursors.
+        let recursor_extension = {
+            let mut out = ctor_extension;
+            let mut i: usize = 0;
+            while i < recursors.len()
+                decreases recursors@.len() - i,
+            {
+                let r = recursors[i].clone();
+                out.insert(r.info().name, r);
+                i += 1;
+            }
+            out
+        };
+
+        {
+            let env = crate::env_model::ctx_env_ext(&ctx, &recursor_extension, env_limit);
+            let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            proof {
+                // the recursor's universe parameters are parameters: the
+                // block's own (distinct parameters, `check_declar_info_core`),
+                // possibly behind a fresh one (`mk_elim_level`)
+                let ups = crate::level_arena_bridge::to_model_of_levels(st.uparams);
+                assert(st.uparams == ind.info.uparams);
+                assert(crate::level_arena_bridge::distinct_params(ups));
+                let ru = st.rec_uparams->0;
+                if crate::level_arena_bridge::to_model(st.elim_level->0) != LevelSpec::Zero {
+                    let rm = to_model_of_levels(ru);
+                    assert forall|j: int| 0 <= j < rm.len() implies #[trigger] rm[j] is Param by {
+                        if j > 0 { assert(rm[j] == ups[j - 1]); }
+                    }
+                }
+                assert(levels_all_param(ru));
+            }
+            proof {
+                broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                assert(declar_export_tagged(a, Declar::Inductive(*ind)));
+                assert(crate::util_model::arena_ids(*tc.ctx).1 == a);
+                assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(*tc.ctx), #[trigger] ind.all_ind_names@[k]) by {
+                    export_tagged_owned(*tc.ctx, ind.all_ind_names@[k]);
+                }
+            }
+            if st.is_nested() {
+                let base_rec_names = tc.ctx.mk_base_rec_names(ind.all_ind_names.as_ref());
+                proof {
+                    crate::util_model::ptr_owned_keys(*tc.ctx, base_rec_names@);
+                }
+                let specialized_to_unspecialized_rec_names =
+                    tc.mk_specialized_rec_to_unspecialized_map(&unmodified_tys_ctors);
+                // Just unions the unspecialized nested recursor names with the base ind type recursor names.
+                let all_rec_names = {
+                    let mut base = base_rec_names.clone();
+                    let mut k: usize = 0;
+                    while k < specialized_to_unspecialized_rec_names.len()
+                        invariant
+                            forall|n: NamePtr<'t>| #[trigger] base@.contains(n) ==> crate::util_model::owns(*tc.ctx, n),
+                            ptr_map_owned(*tc.ctx, &specialized_to_unspecialized_rec_names),
+                    {
+                        let (_, unspecialized_rec_name) = specialized_to_unspecialized_rec_names.get_index(k).unwrap();
+                        proof {
+                            let keys = crate::indexmap_model::imap_keys(&specialized_to_unspecialized_rec_names);
+                            assert(keys.to_set().contains(keys[k as int]));
+                            crate::util_model::build_hasher_default_valid_fx();
+                            crate::util_model::ptr_owned_keys(*tc.ctx, base@.insert(*unspecialized_rec_name));
+                        }
+                        base.insert(*unspecialized_rec_name);
+                        k += 1;
+                    }
+                    base
+                };
+                tc.ctx.ck_recursor_names_simple(&d.info().name, all_rec_names);
+                tc.restore_and_check(
+                    &st,
+                    &unmodified_tys_ctors,
+                    &ind.all_ind_names,
+                    &base_rec_names,
+                    &specialized_to_unspecialized_rec_names,
+                );
+            } else {
+                let rec_names = tc.ctx.rec_names_set(&recursors);
+                tc.ctx.ck_recursor_names_simple(&d.info().name, rec_names);
+                // Do the definitional equality assertions of new/old here.
+                tc.assert_nonnested_tys_def_eq(ind, &st);
+                tc.assert_nonnested_ctors_def_eq(&st);
+                tc.assert_nonnested_recursors_def_eq(&st, &recursors);
+            }
+        }
+    }
+}
+
 /// A level-free local's recorded type is closed.
 pub proof fn local_type_closed<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
     requires
@@ -1331,6 +1698,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -1357,6 +1725,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Compensate for stack-like unfold
         for _ in it: 0..st.local_params.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, ctor_args_wo_params@),
                 crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(ind_ty_app)) <= 0 ==>
                     forall|j: int| 0 <= j < ctor_args_wo_params@.len() ==> crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] ctor_args_wo_params@[j])) <= 0,
@@ -1377,6 +1746,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -1423,6 +1793,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|j: int| 0 <= j < st.local_indices@[ind_type_idx as int]@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_indices@[ind_type_idx as int]@[j]),
             ind_type_idx < u64::MAX,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -1468,11 +1839,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*old(self).ctx, old(st).elim_level->0),
             old(st).ind_consts@.len() <= old(st).local_indices@.len(),
             old(st).ind_consts@.len() <= old(st).majors@.len(),
-            old(st).ind_consts@.len() < u64::MAX,
             forall|i: int| 0 <= i < old(st).majors@.len() ==> major_ok(*old(self).ctx, #[trigger] old(st).majors@[i]),
             forall|i: int, j: int| 0 <= i < old(st).local_indices@.len() && 0 <= j < old(st).local_indices@[i]@.len()
                 ==> level_free_local(*old(self).ctx, #[trigger] old(st).local_indices@[i]@[j]),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -1488,6 +1859,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         debug_assert_eq!(st.majors.len(), st.ind_consts.len());
         for i in 0..st.ind_consts.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -1496,7 +1868,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 *st == (InductiveCheckState { motives: st.motives, ..st0 }),
                 st0.ind_consts@.len() <= st0.local_indices@.len(),
                 st0.ind_consts@.len() <= st0.majors@.len(),
-                st0.ind_consts@.len() < u64::MAX,
                 st.elim_level is Some,
                 crate::util_model::owns(*self.ctx, st.elim_level->0),
                 forall|k: int| 0 <= k < st0.majors@.len() ==> major_ok(*self.ctx, #[trigger] st0.majors@[k]),
@@ -1540,6 +1911,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -1551,6 +1923,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < rec_args.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -1671,6 +2044,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -1683,6 +2057,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut ctor_idx: usize = 0;
         while ctor_idx < ctors.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -1831,6 +2206,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *old(st)),
             old(st).ind_consts@.len() <= old(st).local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -1850,6 +2226,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -1933,6 +2310,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -1949,6 +2327,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < rec_ctor_args.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -2058,6 +2437,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -2128,6 +2508,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -2149,6 +2530,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -2187,6 +2569,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut j: usize = 0;
             while j < ind_ty.ctors.len()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == 0,
@@ -2283,6 +2666,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] rec_rules@[k].val),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -2291,6 +2675,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             match result {
                 Declar::Recursor(r) => {
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
+                    &&& crate::util_model::owns(*(*final(self)).ctx, r.info.name)
                     &&& r.num_params == st.local_params@.len()
                     &&& r.num_motives == st.motives@.len()
                     &&& r.num_minors == flat_mapped_minors@.len()
@@ -2374,6 +2759,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             st.all_inductives_incl_specialized@.len() <= st.motives@.len(),
             st.all_inductives_incl_specialized@.len() <= st.majors@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -2384,6 +2770,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Declar::Recursor(r) => {
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
                     &&& crate::util_model::owns(*(*final(self)).ctx, r.info.ty)
+                    &&& crate::util_model::owns(*(*final(self)).ctx, r.info.name)
                     &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                     &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[i].ctors@.len()
@@ -2396,6 +2783,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -2422,6 +2810,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
                         &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                        &&& crate::util_model::owns(*self.ctx, r.info.name)
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                         &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
@@ -2464,6 +2853,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
                         &&& crate::util_model::owns(*self.ctx, r.info.ty)
+                        &&& crate::util_model::owns(*self.ctx, r.info.name)
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                         &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
@@ -2485,6 +2875,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             crate::util_model::owns(*old(self).ctx, n),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2497,6 +2888,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         for idx in st.next_ngen_idx..u64::MAX
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, n),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -2531,6 +2923,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*old(self).ctx, e),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(self) == *old(self),
             result matches Some(d) ==> crate::env_model::inductive_data_owned(*(*final(self)).env, d),
     {
@@ -2547,6 +2940,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut is_nested = false;
         for i in 0..(*num_params as usize)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, args@),
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 *num_params as usize <= args@.len(),
@@ -2613,6 +3007,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             unmodified_tys_ctors@.len() > 0,
             headers_owned(*old(self).ctx, unmodified_tys_ctors@),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -2625,6 +3020,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             result.tele@.len() == 0,
             result.is_nonzero is None,
             result.is_zero is None,
+            result.uparams == t_from_file.info.uparams,
+            result.all_inductives_incl_specialized@.len() >= unmodified_tys_ctors@.len(),
+            ptr_map_owned(*(*final(self)).ctx, &result.nested_to_unspecialized_ty_nofvars),
             result.ind_consts@.len() == 0,
             result.majors@.len() == 0,
             result.motives@.len() == 0,
@@ -2683,6 +3081,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut a: usize = 0;
         while a < st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 nest_ok(*self.ctx, st),
                 a <= st.all_inductives_incl_specialized@.len(),
                 forall|x: int| 0 <= x < a ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
@@ -2695,6 +3094,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut b: usize = 0;
             while b < ind.ctors.len()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     nest_ok(*self.ctx, st),
                     a < st.all_inductives_incl_specialized@.len(),
                     *ind == st.all_inductives_incl_specialized@[a as int],
@@ -2738,12 +3138,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(self).ctx.dbj_level_counter == 0,
             nest_ok(*old(self).ctx, *old(st)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             nest_ok(*(*final(self)).ctx, *final(st)),
+            final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
             crate::indexmap_model::imap_wf(&final(st).nested_to_unspecialized_ty_nofvars),
             forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&final(st).nested_to_unspecialized_ty_nofvars).contains_key(n)
                 ==> crate::util_model::owns(*(*final(self)).ctx, n)
@@ -2766,12 +3168,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // inductive.
         while i < st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 nest_ok(*self.ctx, *st),
+                st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                 *st == (InductiveCheckState {
                     nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                     all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -2794,12 +3198,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut j: usize = 0;
             while j < hdr.ctors.len()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == 0,
                     crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                     self.live == old(self).live,
                     nest_ok(*self.ctx, *st),
+                    st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                     *st == (InductiveCheckState {
                         nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                         all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -2872,12 +3278,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut k: usize = 0;
             while k < st.nested_to_unspecialized_ty_wfvars.len()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     nest_ok(*self.ctx, *st),
                     crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                     self.ctx.dbj_level_counter == 0,
                     self.env == old(self).env,
                     self.live == old(self).live,
                     crate::tc::tc_wf(*self),
+                    st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                     crate::indexmap_model::imap_wf(&out),
                     forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&out).contains_key(n)
                         ==> crate::util_model::owns(*self.ctx, n) && crate::util_model::owns(*self.ctx, crate::indexmap_model::imap_view(&out)[n]),
@@ -2915,6 +3323,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < outgoing_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] outgoing_params@[i]),
             outgoing_params@.len() <= u16::MAX,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3004,6 +3413,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < outgoing_param_locals@.len() ==> level_free_local(*old(self).ctx, #[trigger] outgoing_param_locals@[i]),
             outgoing_param_locals@.len() <= u16::MAX,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3051,8 +3461,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             invariant_except_break
                 found is None,
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 nest_ok(*self.ctx, *st),
             ensures
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 nest_ok(*self.ctx, *st),
                 found matches Some(n) ==> crate::util_model::owns(*self.ctx, n),
         {
@@ -3086,6 +3498,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let mut c: usize = 0;
             while c < nested_container_ty.all_ind_names.len()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3172,6 +3585,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let mut d: usize = 0;
                 while d < all_nested_container_ctor_names.len()
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         crate::tc::tc_wf(*self),
                         self.env == old(self).env,
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3264,6 +3678,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_wf(*old(self)),
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(self) == *old(self),
             result matches Some((t, n)) ==> crate::util_model::owns(*(*final(self)).ctx, t)
                 && crate::util_model::owns(*(*final(self)).ctx, n),
@@ -3288,6 +3703,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*old(self).ctx, ctor_name),
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3323,6 +3739,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3419,6 +3836,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3519,6 +3937,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, nested_rec_name_to_rec_name),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -3531,6 +3950,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut locals = Vec::new();
         for _ in 0..st.local_params.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -3608,6 +4028,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_wf(*old(self)),
             headers_owned(*old(self).ctx, base_mutuals@),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3639,6 +4060,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut k: usize = base_mutuals.len();
         while k < all_ind_names.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3700,6 +4122,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, specialized_rec_names_to_unspecialized_rec_names),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -3724,6 +4147,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut k: usize = 0;
         while k < new_env_rec.rec_rules.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -3791,6 +4215,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, nested_rec_name_to_rec_name),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -3818,6 +4243,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert_eq!(original.rec_rules.len(), restored.rec_rules.len());
                 for i in 0..original.rec_rules.len()
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         crate::tc::tc_wf(*self),
                         self.env == old(self).env,
                         self.ctx.dbj_level_counter == 0,
@@ -3867,6 +4293,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, &st.nested_to_unspecialized_ty_nofvars),
             ptr_map_owned(*old(self).ctx, rec_name_map),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -3900,6 +4327,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_wf(*old(self)),
             crate::env_model::inductive_data_owned(*old(self).env, *base_ind),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3912,6 +4340,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         for name in it: base_ind.all_ind_names.iter()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3944,6 +4373,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             crate::tc::tc_wf(*old(self)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -3953,6 +4383,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         assert!(!st.is_nested());
         for inductive in it: st.all_inductives_incl_specialized.iter()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -3961,6 +4392,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         {
             for ctor in it2: inductive.ctors.iter()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4012,6 +4444,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
                 && levels_all_param(ls),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4069,6 +4502,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 _ => true,
             },
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4082,6 +4516,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut n: usize = 0;
         while n < recursors.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4128,6 +4563,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let mut j: usize = 0;
                     while j < old_rec_rules.len()
                         invariant
+                            mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                             crate::tc::tc_wf(*self),
                             self.env == old(self).env,
                             self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4198,6 +4634,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, specialized_rec_name_to_rec_name),
             forall|n: NamePtr<'t>| #[trigger] base_rec_names@.contains(n) ==> crate::util_model::owns(*old(self).ctx, n),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4225,6 +4662,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4257,6 +4695,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut k: usize = 0;
         while k < specialized_rec_name_to_rec_name.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4302,6 +4741,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ptr_map_owned(*old(self).ctx, specialized_to_unspecialized_rec_names),
             forall|n: NamePtr<'t>| #[trigger] base_rec_names@.contains(n) ==> crate::util_model::owns(*old(self).ctx, n),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4310,6 +4750,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         for unmodified_ind_type in it: unmodified_mutuals.iter()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4340,6 +4781,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
             for ctor in it2: unmodified_ind_type.ctors.iter()
                 invariant
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == 0,
@@ -4377,6 +4819,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4391,6 +4834,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         self.tc_cache.clear();
         for i in 0..st.local_params.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4419,6 +4863,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4563,6 +5008,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(self).ctx.dbj_level_counter == 0,
             level_free(*old(self).ctx, e),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4575,6 +5021,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut param_locals = Vec::with_capacity(num_params as usize);
         for _ in it: 0..num_params
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4623,6 +5070,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(self).ctx.dbj_level_counter == 0,
             level_free(*old(self).ctx, rec_arg_cursor),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4634,6 +5082,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut xs = Vec::new();
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(rec_arg_cursor)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -4693,6 +5142,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| #![trigger st.motives@[i]] 0 <= i < st.motives@.len() ==> crate::expr_arena_bridge::to_model(st.motives@[i]) is Free,
             forall|i: int| #![trigger st.local_params@[i]] 0 <= i < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(st.local_params@[i]) is Free,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4754,6 +5204,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| #![trigger st.motives@[i]] 0 <= i < st.motives@.len() ==> crate::expr_arena_bridge::to_model(st.motives@[i]) is Free,
             forall|i: int| #![trigger st.local_params@[i]] 0 <= i < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(st.local_params@[i]) is Free,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::util_model::owns(*(*final(self)).ctx, result),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -4810,6 +5261,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free(*old(self).ctx, ctor_type_in),
             crate::util_model::owns(*old(self).ctx, parent_ind_name),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -4827,6 +5279,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         self.tc_cache.clear();
         for i in 0..st.local_params.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -4878,6 +5331,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // Non-param constructor args.
         while let Pi { binder_name, binder_type, binder_style, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -4957,6 +5411,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -4974,6 +5429,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i: usize = 0;
         while i < st.ind_consts.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -5017,6 +5473,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5033,6 +5490,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut locs: Seq<u32> = Seq::empty();
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -5133,6 +5591,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -5155,6 +5614,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 requires
                     crate::util_model::owns(ctx0, x),
                 ensures
+                    mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     b == (crate::expr_arena_bridge::const_id(x) == crate::level_arena_bridge::name_id(ind_name)),
             {
                 match self.ctx.read_expr(x) {
@@ -5171,6 +5631,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 for i in 0..lhs.len()
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         self.env == old(self).env,
                         self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                         crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -5206,6 +5667,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut k = st.local_params.len();
         while k < ctor_apps.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -5256,12 +5718,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*old(self).ctx, e),
             crate::util_model::owns_all(*old(self).ctx, haystack@),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(self) == *old(self),
             !result ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(e), const_ids(haystack@)),
     {
         let mut names: Vec<NamePtr<'t>> = Vec::new();
         for c in it: haystack.iter().copied()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 *self == *old(self),
                 it.seq() == haystack@,
                 names@.len() == it.index(),
@@ -5297,6 +5761,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             st.is_nonzero is Some,
             elim_ctor_ok(*old(self).ctx, *st),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5352,6 +5817,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             elim_ctor_ok(*old(self).ctx, *old(st)),
             crate::inductive_model::st_owned(*old(self).ctx, *old(st)),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5383,6 +5849,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ls = self.ctx.read_levels(st.uparams);
                 for l in it: ls.iter().copied()
                     invariant
+                        mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         base@.len() == it.index() + 1,
                         base@[0] == elim_level,
                         it.seq() == ls@,
@@ -5460,6 +5927,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(self).ctx.dbj_level_counter == 0,
             level_free(*old(self).ctx, ctor_type_in),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5482,6 +5950,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut sorts: Seq<LevelSpec> = Seq::empty();
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -5663,6 +6132,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(st).is_nonzero is None,
             old(st).is_zero is None,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(st) == (InductiveCheckState {
                 local_indices: final(st).local_indices,
                 block_codom: final(st).block_codom,
@@ -5695,6 +6165,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let nbefore = st.all_inductives_incl_specialized.len();
         for i in 0..st.all_inductives_incl_specialized.len()
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == 0,
@@ -5767,6 +6238,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(st).all_inductives_incl_specialized@.len() >= 1,
             crate::util_model::owns(*old(self).ctx, uparams),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(st) == (InductiveCheckState {
                 local_indices: final(st).local_indices,
                 block_codom: final(st).block_codom,
@@ -5829,6 +6301,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -5987,6 +6460,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free(*old(self).ctx, ind.ty),
             crate::util_model::owns(*old(self).ctx, ind.name),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             *final(st) == (InductiveCheckState {
                 local_indices: final(st).local_indices,
                 block_codom: final(st).block_codom,
@@ -6040,6 +6514,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 env == *self.env,
@@ -6182,6 +6657,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
             old(st).is_zero is Some,
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             final(st).k_target is Some,
             *final(st) == (InductiveCheckState { k_target: final(st).k_target, ..*old(st) }),
             *final(self) == *old(self),
@@ -6211,6 +6687,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             crate::inductive_model::st_owned(*(*old(self)).ctx, *st),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -6238,6 +6715,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut i = 1u64;
         loop
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, p),
                 crate::util_model::owns(*self.ctx, st.uparams),
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
@@ -6277,6 +6755,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
             old(st).ind_consts@.len() <= old(st).local_indices@.len(),
         ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
@@ -6296,6 +6775,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let mut idx: usize = 0;
         while idx < n
             invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, st.local_params@),
                 crate::util_model::owns_all(*self.ctx, st.ind_consts@),
                 forall|i: int| 0 <= i < st.local_indices@.len() ==> crate::util_model::owns_all(*self.ctx, #[trigger] st.local_indices@[i]@),
