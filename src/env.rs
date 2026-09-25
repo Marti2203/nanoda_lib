@@ -168,12 +168,32 @@ pub struct RecursorData<'a> {
     pub is_k: bool,
 }
 
+::vstd::prelude::verus! {
+
 impl<'a> RecursorData<'a> {
-    /// Compute the index in the recursor's type (in the telescope) where the major premise is located.
-    pub fn major_idx(&self) -> usize {
-        (self.num_params + self.num_motives + self.num_minors + self.num_indices) as usize
+    /// The sum `major_idx` computes, when it does not overflow.
+    pub open spec fn major_idx_spec(self) -> nat {
+        (self.num_params + self.num_motives + self.num_minors + self.num_indices) as nat
     }
 
+    /// Compute the index in the recursor's type (in the telescope) where the major premise is located.
+    ///
+    /// VERUS-REWRITE(level-ceiling): the `u16` sum panics on overflow (the
+    /// crate builds with overflow checks); the same check, explicit, on the
+    /// sum computed wider.
+    pub fn major_idx(&self) -> (result: usize)
+        ensures
+            result == self.major_idx_spec(),
+    {
+        let sum = self.num_params as u32 + self.num_motives as u32 + self.num_minors as u32 + self.num_indices as u32;
+        assert!(sum <= u16::MAX as u32, "attempt to add with overflow");
+        sum as usize
+    }
+}
+
+} // verus!
+
+impl<'a> RecursorData<'a> {
     pub fn aux_data_ck(&self, other: &Self) -> bool {
         self.num_params == other.num_params
             && self.num_indices == other.num_indices
@@ -326,6 +346,35 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         }
     }
 
+    /// The name ids of every visible key: a finite set `find` stays within.
+    pub closed spec fn ids(self) -> Set<u64> {
+        let keys = self.old_keys();
+        let n = if self.visible() <= keys.len() { self.visible() } else { keys.len() as int };
+        self.temp_view().dom().map(|k: NamePtr<'a>| crate::level_arena_bridge::name_id(k))
+            .union(keys.take(n).map_values(|k: NamePtr<'a>| crate::level_arena_bridge::name_id(k)).to_set())
+    }
+
+    pub proof fn find_in_ids(self, id: u64)
+        ensures
+            self.find(id) is Some ==> self.ids().contains(id),
+    {
+        broadcast use vstd::set_lib::group_set_lib_default, vstd::seq_lib::group_seq_properties;
+        let t = self.temp_view();
+        let keys = self.old_keys();
+        let n = if self.visible() <= keys.len() { self.visible() } else { keys.len() as int };
+        let f = |k: NamePtr<'a>| crate::level_arena_bridge::name_id(k);
+        if exists|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id {
+            let k = choose|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id;
+            assert(t.dom().contains(k));
+            assert(t.dom().map(f).contains(f(k)));
+        } else if exists|i: int| 0 <= i < keys.len() && i < self.cutoff && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id {
+            let i = choose|i: int| 0 <= i < keys.len() && i < self.cutoff && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id;
+            let s = keys.take(n).map_values(f);
+            assert(s[i] == id);
+            assert(s.contains(id));
+        }
+    }
+
     /// Every declaration the environment holds belongs to its arenas.
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
@@ -383,7 +432,8 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             result matches Some(d) ==> crate::env_model::declar_owned(*self, *d)
                 && crate::env_model::declar_params_ok(*d),
             crate::util_model::owns_in(self.arena_ids(), *n) ==> match result {
-                Some(d) => self.find(crate::level_arena_bridge::name_id(*n)) == Some(*d),
+                Some(d) => self.find(crate::level_arena_bridge::name_id(*n)) == Some(*d)
+                    && crate::env::declar_info(*d).name == *n,
                 None => self.find(crate::level_arena_bridge::name_id(*n)) is None,
             },
     {
@@ -444,7 +494,7 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             crate::util_model::owns_in(self.arena_ids(), *n) ==> {
                 let t = self.temp_view();
                 match result {
-                    Some(d) => t.contains_key(*n) && t[*n] == *d,
+                    Some(d) => t.contains_key(*n) && t[*n] == *d && crate::env::declar_info(*d).name == *n,
                     None => !t.contains_key(*n),
                 }
             },
@@ -477,7 +527,8 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             crate::util_model::owns_in(self.arena_ids(), *n) ==> {
                 let keys = self.old_keys();
                 match result {
-                    Some(d) => exists|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n
+                    Some(d) => crate::env::declar_info(*d).name == *n
+                        && exists|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n
                         && self.old_view()[keys[i]] == *d,
                     None => !(exists|i: int| 0 <= i < keys.len() && i < self.visible() && #[trigger] keys[i] == *n),
                 }
@@ -509,6 +560,7 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     pub fn get_inductive(&self, n: &NamePtr<'a>) -> (result: Option<&InductiveData<'a>>)
         ensures
             result matches Some(d) ==> crate::env_model::inductive_data_owned(*self, *d),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> (result matches Some(d) ==> self.find(crate::level_arena_bridge::name_id(*n)) == Some(Declar::Inductive(*d))),
     {
         match self.get_declar(n) {
             Some(Declar::Inductive(i)) => Some(i),
@@ -519,7 +571,12 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// Verified: what it returns is owned.
     pub fn get_recursor(&self, n: &NamePtr<'a>) -> (result: Option<&RecursorData<'a>>)
         ensures
-            result matches Some(d) ==> crate::env_model::recursor_data_owned(*self, *d),
+            result matches Some(d) ==> crate::env_model::recursor_data_owned(*self, *d)
+                && crate::env_model::declar_params_ok(Declar::Recursor(*d)),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> match result {
+                Some(d) => self.find(crate::level_arena_bridge::name_id(*n)) == Some(Declar::Recursor(*d)),
+                None => !(self.find(crate::level_arena_bridge::name_id(*n)) matches Some(Declar::Recursor(_))),
+            },
     {
         match self.get_declar(n) {
             Some(Declar::Recursor(r)) => Some(r),
@@ -531,6 +588,10 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     pub fn get_constructor(&self, n: &NamePtr<'a>) -> (result: Option<&ConstructorData<'a>>)
         ensures
             result matches Some(d) ==> crate::env_model::constructor_data_owned(*self, *d),
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> match result {
+                Some(d) => self.find(crate::level_arena_bridge::name_id(*n)) == Some(Declar::Constructor(*d)),
+                None => !(self.find(crate::level_arena_bridge::name_id(*n)) matches Some(Declar::Constructor(_))),
+            },
     {
         match self.get_declar(n) {
             Some(Declar::Constructor(c)) => Some(c),
@@ -554,7 +615,9 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
     /// Verified: what it returns is owned.
     pub fn get_structure(&self, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<&InductiveData<'a>>)
         ensures
-            result matches Some(d) ==> crate::env_model::inductive_data_owned(*self, *d),
+            result matches Some(d) ==> crate::env_model::inductive_data_owned(*self, *d)
+                && d.all_ctor_names@.len() == 1 && d.num_indices == 0,
+            crate::util_model::owns_in(self.arena_ids(), *n) ==> (result matches Some(d) ==> self.find(crate::level_arena_bridge::name_id(*n)) == Some(Declar::Inductive(*d))),
     {
         match self.get_inductive(n) {
             Some(i @ InductiveData { is_recursive, num_indices, all_ctor_names, .. })
@@ -565,38 +628,38 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             _ => None,
         }
     }
-}
-
-} // verus!
-
-impl<'x, 'a: 'x> Env<'x, 'a> {
-    /// Every declaration name visible through `get_declar`: the temporary
-    /// extension plus the persistent map up to the visibility cutoff.
-    /// (Duplicates are harmless -- callers use this for coverage, not
-    /// uniqueness.) Trust-bridged in `env_model.rs`: the model-level
-    /// declaration maps' domains are covered by this list.
-    pub fn visible_declar_names(&self) -> Vec<NamePtr<'a>> {
-        let mut out = Vec::new();
-        if let Some(ext) = self.temp_declars.as_ref() {
-            for k in ext.keys() {
-                out.push(*k);
-            }
-        }
-        for (i, k) in self.declars.keys().enumerate() {
-            if i < self.cutoff {
-                out.push(*k);
-            }
-        }
-        out
-    }
 
     /// Get the value of a declaration, if that declaration has an associated value (only
     /// definitions and theorems have values). Also returns the declaration's universe parameters.
-    pub fn get_declar_val(&self, n: &NamePtr<'a>) -> Option<(LevelsPtr<'a>, ExprPtr<'a>)> {
+    ///
+    /// Verified: the result is what the environment model maps the name to
+    /// (`to_model_of_defs`), its pointers are the environment's, and its
+    /// universe parameters are parameters. The value's closedness is not
+    /// claimed: the export parser does not check it, so the kernel tests it
+    /// where it relies on it.
+    pub fn get_declar_val(&self, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
+        requires
+            crate::util_model::owns_in(self.arena_ids(), *n),
+        ensures
+            match result {
+                Some((uparams, val)) => crate::env_model::env_owns(*self, uparams) && crate::env_model::env_owns(*self, val)
+                    && crate::env_model::to_model_of_env(*self).contains_key(crate::level_arena_bridge::name_id(*n))
+                    && crate::env_model::to_model_of_env(*self)[crate::level_arena_bridge::name_id(*n)] == (
+                        crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(uparams)),
+                        crate::expr_arena_bridge::to_model(val),
+                    )
+                    && crate::inductive::levels_all_param(uparams),
+                None => !crate::env_model::to_model_of_env(*self).contains_key(crate::level_arena_bridge::name_id(*n)),
+            },
+    {
+        proof { crate::env_model::to_model_of_defs_at(*self, crate::level_arena_bridge::name_id(*n)); }
         match self.get_declar(n)? {
             Declar::Definition { info, val, .. } | Declar::Theorem { info, val, .. } => Some((info.uparams, *val)),
             _ => None,
         }
     }
 }
+
+} // verus!
+
 

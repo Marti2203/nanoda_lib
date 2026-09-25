@@ -4139,8 +4139,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             return None
         }
         // (3) the rule's right-hand side is closed. No environment claim covers
-        //     RULE rhs's -- `env_global_closed`/`_ty` cover declaration values
-        //     and types -- so this is TESTED rather than assumed, which costs a
+        //     it, so this is TESTED rather than assumed, which costs a
         //     `has_fvars` read and no trust at all.
         if self.ctx.has_fvars(rec_rule.val) {
             return None
@@ -5306,16 +5305,6 @@ use crate::level_model::LevelSpec;
 use vstd::prelude::*;
 
 verus! {
-
-// Accessors the cycle reaches and nothing else needs yet. CLAIM-FREE: the
-// cycle's contracts at this stage are the `tc_wf` frame only, so its callees
-// need to be callable, not to promise anything. Each gets a real contract when
-// the function that consumes it does.
-
-pub assume_specification<'a>[ crate::env::RecursorData::<'a>::major_idx ](
-    rd: &crate::env::RecursorData<'a>,
-) -> (result: usize)
-;
 
 /// TRANSPARENT, like `ExExpr`/`ExLevel`. `infer_sort` reads `self.ctx` and
 /// `self.declar_info`, so an opaque `TypeChecker` would not let the kernel's

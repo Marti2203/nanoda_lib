@@ -924,6 +924,7 @@ pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
         ==> crate::util_model::export_tagged(a, k)
             && declar_export_tagged(a, crate::indexmap_model::imap_view(&ef.declars)[k])
             && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(&ef.declars)[k])
+            && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k
 }
 
 /// The parser's mutual-block table is keyed by the export file's own names.

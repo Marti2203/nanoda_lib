@@ -1,16 +1,13 @@
-//! Exploratory Verus model of `env.rs`'s `ReducibilityHint::is_lt`, plus a
-//! real trust boundary for `Env`'s declaration lookups (`get_declar_val`,
-//! `get_constructor`'s `num_params`) that `tc.rs`'s delta reduction and
-//! `Proj` reduction need.
+//! The environment as the models see it, and `ReducibilityHint::is_lt`.
 //!
-//! Most of `env.rs` beyond that is thin `IndexMap`/`HashMap` lookup
-//! plumbing (`Env`'s `get_declar`/`get_inductive`/etc., the `cutoff`-based
-//! visibility scheme) over an external, unverified map type -- there's no
-//! real algorithmic content there to formally model beyond what's already
-//! evident from inspection, so it isn't given a standalone model the way
-//! `name.rs`'s functions were.
+//! The model maps (`to_model_of_defs`, `to_model_of_declar_ty`, the
+//! recursor and constructor tables) are DEFINED from the environment's
+//! contents: each is its entry function applied to `Env::find`, the
+//! declaration a name id resolves to. The lookups the checker uses
+//! (`get_declar_val`, `get_declar_info_ty`, `get_recursor_data`, ...) are
+//! verified against them, for names the environment owns.
 //!
-//! `ReducibilityHint::is_lt`, though, is genuinely worth pinning down:
+//! `ReducibilityHint::is_lt` is worth pinning down:
 //! `tc.rs`'s delta reduction (unfolding definitions during `def_eq`) uses it
 //! to decide *which* of two definitions to unfold first, on the assumption
 //! that it behaves like a real ordering. If `is_lt` weren't a valid strict
@@ -48,89 +45,6 @@ use crate::tc_model::{rec_rule_ctor_name_of, rec_rule_ctor_telescope_size_wo_par
 use crate::util::{ExprPtr, LevelsPtr, NamePtr};
 use std::sync::Arc;
 use vstd::prelude::*;
-
-/// `Env::get_constructor` returns `Option<&ConstructorData>`, a reference
-/// to a struct with several fields -- rather than registering the whole
-/// struct with Verus, this plain wrapper extracts just the one field
-/// `reduce_proj` (`tc.rs:447-458`) actually needs, the same "extract only
-/// what's needed, axiomatize that" approach `rec_rule_ctor_name` (`tc_model.rs`)
-/// already uses for `RecRule`.
-#[allow(dead_code)]
-pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
-    env.get_constructor(n).map(|cd| cd.num_params)
-}
-
-/// `Env::get_recursor` returns `Option<&RecursorData>`; this wrapper
-/// extracts exactly the fields `reduce_rec` (`tc.rs:1070-1102`) actually
-/// reads (`num_params`/`num_motives`/`num_minors`, the computed `major_
-/// idx()`, the recursor's own `uparams`, and its computation rules) into
-/// an owned tuple, same "extract only what's needed" approach `get_
-/// constructor_num_params` above already uses for `ConstructorData`.
-/// `rec_rules` is cloned (an `Arc`, cheap) rather than borrowed, sidestepping
-/// tying the result's lifetime to the `Env` reference.
-#[allow(dead_code)]
-pub(crate) fn get_recursor_data<'x, 'a>(
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)> {
-    let rec = env.get_recursor(n)?;
-    Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
-}
-
-/// `tc.rs::TypeChecker::get_applied_def`'s own env-level classification
-/// (`tc.rs:1133-1142`): a name is "an applied def" exactly when it's a
-/// `Definition` (real hint) or `Theorem` (treated as `Opaque` -- theorems
-/// are never unfolded during delta reduction, but ARE tracked so `lazy_
-/// delta_step` knows to keep looking at the OTHER side instead of giving
-/// up immediately). Same "extract only what's needed" approach as `get_
-/// constructor_num_params`/`get_recursor_data` above.
-#[allow(dead_code)]
-pub(crate) fn get_declar_hint<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(NamePtr<'a>, ReducibilityHint)> {
-    match env.get_declar(n) {
-        Some(Declar::Definition { info, hint, .. }) => Some((info.name, *hint)),
-        Some(Declar::Theorem { info, .. }) => Some((info.name, ReducibilityHint::Opaque)),
-        _ => None,
-    }
-}
-
-/// `tc.rs::TypeChecker::infer_const`'s own declaration lookup
-/// (`tc.rs:221-231`, `InferOnly` case): unlike `get_declar_val` (only
-/// `Definition`/`Theorem` have a VALUE to unfold), `infer_const` needs a
-/// TYPE, which `Declar::info()` (`env.rs:167-180`) extracts uniformly
-/// from EVERY declaration kind (`Axiom`/`Quot`/`Theorem`/`Definition`/
-/// `Inductive`/`Constructor`/`Recursor`/`Opaque`) -- a strictly LARGER
-/// domain than `get_declar_val`'s, so this needs its own map rather than
-/// reusing `to_model_of_env`.
-#[allow(dead_code)]
-pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<(LevelsPtr<'a>, ExprPtr<'a>)> {
-    env.get_declar(n).map(|d| {
-        let info = d.info();
-        (info.uparams, info.ty)
-    })
-}
-
-/// `Env::get_structure` returns `Option<&InductiveData>`; this wrapper
-/// extracts just `all_ctor_names[0]` -- the ONE field `def_eq_unit`
-/// (`tc.rs:357-368`) actually reads, same "extract only what's needed"
-/// approach as `get_constructor_num_params` above. `get_structure`'s own
-/// match guard already guarantees `all_ctor_names.len() == 1` whenever it
-/// returns `Some`, so indexing `[0]` can't panic.
-#[allow(dead_code)]
-pub(crate) fn get_structure_first_ctor<'x, 'a>(
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-    rec_ok: bool,
-) -> Option<NamePtr<'a>> {
-    env.get_structure(n, rec_ok).map(|i| i.all_ctor_names[0])
-}
-
-/// `Env::get_constructor` returns `Option<&ConstructorData>`; this wrapper
-/// extracts `num_fields` -- `def_eq_unit`'s other field read, sibling to
-/// `get_constructor_num_params` above (same struct, different field).
-#[allow(dead_code)]
-pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<u16> {
-    env.get_constructor(n).map(|cd| cd.num_fields)
-}
 
 verus! {
 
@@ -273,8 +187,9 @@ pub open spec fn declar_owned_in<'a>(ids: (nat, nat), d: Declar<'a>) -> bool {
         Declar::Inductive(i) => inductive_owned_in(ids, i),
         Declar::Constructor(c) => constructor_owned_in(ids, c),
         Declar::Recursor(r) => recursor_owned_in(ids, r),
-        Declar::Axiom { info } | Declar::Quot { info } | Declar::Opaque { info, .. }
-        | Declar::Theorem { info, .. } | Declar::Definition { info, .. } => info_owned_in(ids, info),
+        Declar::Opaque { info, val, .. } | Declar::Theorem { info, val, .. } | Declar::Definition { info, val, .. } =>
+            info_owned_in(ids, info) && crate::util_model::owns_in(ids, val),
+        Declar::Axiom { info } | Declar::Quot { info } => info_owned_in(ids, info),
     }
 }
 
@@ -291,6 +206,7 @@ pub open spec fn declar_map_owned_in<'a>(ids: (nat, nat), m: &crate::env::Declar
     &&& forall|k: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(m).contains_key(k)
         ==> crate::util_model::owns_in(ids, k) && declar_owned_in(ids, crate::indexmap_model::imap_view(m)[k])
             && declar_params_ok(crate::indexmap_model::imap_view(m)[k])
+            && crate::env::declar_info(crate::indexmap_model::imap_view(m)[k]).name == k
 }
 
 /// A declaration header's pointers belong to `env`'s arenas.
@@ -374,7 +290,32 @@ pub proof fn export_declars_owned<'t, 'p>(c: crate::util::TcCtx<'t, 'p>)
     }
 }
 
-pub uninterp spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
+/// A declaration's entry in the definitions map: its universe parameter
+/// names and value, if it has a value (definitions and theorems).
+pub open spec fn def_entry<'a>(d: Declar<'a>) -> Option<(Seq<u64>, ExprSpec)> {
+    match d {
+        Declar::Definition { info, val, .. } | Declar::Theorem { info, val, .. } =>
+            Some((level_names(to_model_of_levels(info.uparams)), expr_to_model(val))),
+        _ => None,
+    }
+}
+
+/// The environment's definitions, by name id: every visible declaration
+/// with a value (`Env::find`).
+pub closed spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && def_entry(env.find(id)->0) is Some),
+        |id: u64| def_entry(env.find(id)->0)->0,
+    )
+}
+
+pub proof fn to_model_of_defs_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_defs(env).contains_key(id) == (env.find(id) is Some && def_entry(env.find(id)->0) is Some),
+        to_model_of_defs(env).contains_key(id) ==> to_model_of_defs(env)[id] == def_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
 
 /// The environment as the reduction and typing models see it: its
 /// definitions and its own per-name tables, each tied to the lookup that
@@ -390,85 +331,6 @@ pub open spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
     }
 }
 
-/// The trust boundary: `get_declar_val` (only definitions/theorems have a
-/// value -- `env.rs:320-327`) returns exactly what `to_model_of_env` says
-/// this name maps to, and the declaration's `uparams` are `Param`-shaped
-/// throughout (what `verified_subst_expr_levels`'s `ks` argument
-/// requires). Closedness of the value is NOT claimed: the parser does not
-/// check it, so the kernel tests it where it relies on it.
-pub assume_specification<'x, 'a>[ Env::<'x, 'a>::get_declar_val ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>) where 'a: 'x
-    ensures
-        match result {
-            Some((uparams, val)) => env_owns(*env, uparams) && env_owns(*env, val) && to_model_of_env(*env).contains_key(name_id(*n))
-                && to_model_of_env(*env)[name_id(*n)] == (
-                level_names(to_model_of_levels(uparams)),
-                expr_to_model(val),
-            // (A well-formed declaration's value is closed, but the export
-            // parser does not check it, so it is not claimed here: users test
-            // the node's cached flags.)
-            ) && forall|j: int|
-                0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
-                    uparams,
-                )[j] is Param,
-            None => !to_model_of_env(*env).contains_key(name_id(*n)),
-        },
-;
-
-/// COVERAGE of the visible declaration names: every id in either
-/// model-level declaration map's domain appears (as `name_id`) in the
-/// list `visible_declar_names` returns. Trust content: the exec method
-/// iterates exactly the maps the keyed lookups read (temp extension +
-/// persistent-up-to-cutoff), so nothing the models can see is missed --
-/// the iteration-completeness twin of the per-key lookup contracts.
-pub assume_specification<'x, 'a>[ Env::<'x, 'a>::visible_declar_names ](
-    env: &Env<'x, 'a>,
-) -> (result: Vec<NamePtr<'a>>) where 'a: 'x
-    ensures
-        forall|i: int| 0 <= i < result@.len() ==> #[trigger] env_owns(*env, result@[i]),
-        forall|id: u64| #[trigger]
-            to_model_of_env(*env).contains_key(id) ==> exists|i: int|
-                0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
-        forall|id: u64| #[trigger]
-            to_model_of_declar_ty(*env).contains_key(id) ==> exists|i: int|
-                0 <= i < result@.len() && name_id(#[trigger] result@[i]) == id,
-;
-
-/// LEASTNESS pin for `env_global_cap`: any `k` that bounds every visible
-/// declaration's value and type models (depth AND `max_var_below`)
-/// dominates the cap. The existing trust only asserts facts hold AT the
-/// cap ("some sufficient bound exists"); this adds that the named cap is
-/// no larger than any actually-sufficient bound -- consistent (interpret
-/// the cap as the exact supremum, which satisfies both), and what turns
-/// an exec scan's measurements into a usable `env_global_cap(*env) <= k`
-/// hypothesis for the whnf/delta routes.
-/// SIZE twin of `env_global_cap` (delta-lift L3(b)): the certified
-/// family's `env_wf` demands `size <= cap`, which depth/mvb caps cannot
-/// give (wide terms), so the certificate scan -- which measures SIZES
-/// via `verified_size` -- pins this separately, with the same
-/// leastness/iteration-completeness character as `env_global_cap_le`.
-pub uninterp spec fn env_global_size_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
-
-/// Closedness of every definition body (no locals) -- CHECKED by the
-/// certificate scan via the real `has_fvars` flag, then pinned here --
-/// bundled with "no definition id is a constructor id" (a name has one
-/// declaration per export: `get_declar_val` only ever returns
-/// Definition/Theorem values and `get_constructor` only Constructor
-/// data, so their key sets are disjoint).
-pub uninterp spec fn env_global_closed<'x, 'a>(env: Env<'x, 'a>) -> bool;
-
-/// Closedness of every declaration TYPE, the sibling of `env_global_closed`
-/// just below and established by the same certificate scan. Declaration types
-/// in a Lean environment are closed terms, like values -- the scan already
-/// walked them for depth and `max_var_below`, it simply never checked
-/// `has_fvars` on them.
-///
-/// This is what the kernel's own `subst_expr_levels` needs: it PANICS on a
-/// `Local`, so verifying it in place turned that into a `!has_fv`
-/// precondition, and its callers substitute into declaration types.
-pub uninterp spec fn env_global_closed_ty<'x, 'a>(env: Env<'x, 'a>) -> bool;
 
 /// The UNCAPPED delta model: every definition whose value has no free
 /// variables, with no size ceiling at all. `env_model_capped`'s `size <= k`
@@ -525,72 +387,92 @@ pub proof fn env_model_nofv_sub<'x, 'a>(env: Env<'x, 'a>)
     reveal(nofv_defs);
 }
 
-#[verifier::external_body]
-pub proof fn env_global_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    requires
-        forall|id: u64| #[trigger]
-            to_model_of_env(env).contains_key(id) ==> depth(to_model_of_env(env)[id].1) <= k
-                && max_var_below(to_model_of_env(env)[id].1, k),
-        forall|id: u64| #[trigger]
-            to_model_of_declar_ty(env).contains_key(id) ==> depth(to_model_of_declar_ty(env)[id].1)
-                <= k && max_var_below(to_model_of_declar_ty(env)[id].1, k),
-    ensures
-        env_global_cap(env) <= k,
-{
+/// A declaration's entry in the types map: every declaration has one.
+pub open spec fn ty_entry<'a>(d: Declar<'a>) -> Option<(Seq<u64>, ExprSpec)> {
+    Some((level_names(to_model_of_levels(crate::env::declar_info(d).uparams)), expr_to_model(crate::env::declar_info(d).ty)))
 }
 
-/// A real environment's declaration TYPES, as a name-id-keyed map --
-/// same shape as `to_model_of_env` (uparams + a value), but covering
-/// EVERY declaration kind (see `get_declar_info_ty`'s doc comment), not
-/// just `Definition`/`Theorem`. Same two substantive facts as `get_
-/// declar_val`'s trust boundary: a declaration's TYPE is always CLOSED
-/// (`nlbv == 0` -- a top-level type can no more have an escaping de-
-/// Bruijn index than a top-level value can), and its `uparams` are always
-/// genuinely `Param`-shaped.
-pub uninterp spec fn to_model_of_declar_ty<'x, 'a>(env: Env<'x, 'a>) -> Map<
-    u64,
-    (Seq<u64>, ExprSpec),
->;
+/// The environment's declaration TYPES, by name id -- the same shape as the
+/// definitions map, but covering every declaration kind.
+pub closed spec fn to_model_of_declar_ty<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && ty_entry(env.find(id)->0) is Some),
+        |id: u64| ty_entry(env.find(id)->0)->0,
+    )
+}
 
-pub assume_specification<'x, 'a>[ get_declar_info_ty ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
+pub proof fn to_model_of_declar_ty_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_declar_ty(env).contains_key(id) == (env.find(id) is Some && ty_entry(env.find(id)->0) is Some),
+        to_model_of_declar_ty(env).contains_key(id) ==> to_model_of_declar_ty(env)[id] == ty_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `infer_const`'s lookup: a declaration's universe parameters and type,
+/// for every declaration kind (`Declar::info`). Verified: the result is the
+/// types map's entry, owned, with parameters that are parameters. The type's
+/// closedness is not claimed (the parser does not check it).
+pub(crate) fn get_declar_info_ty<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(LevelsPtr<'a>, ExprPtr<'a>)>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some((uparams, ty)) => env_owns(*env, uparams) && env_owns(*env, ty) && to_model_of_declar_ty(*env).contains_key(name_id(*n))
                 && to_model_of_declar_ty(*env)[name_id(*n)] == (
                 level_names(to_model_of_levels(uparams)),
                 expr_to_model(ty),
-            // (Closedness is not claimed, as for `get_declar_val`.)
             ) && forall|j: int|
                 0 <= j < to_model_of_levels(uparams).len() ==> #[trigger] to_model_of_levels(
                     uparams,
                 )[j] is Param,
             None => !to_model_of_declar_ty(*env).contains_key(name_id(*n)),
         },
-;
+{
+    proof { to_model_of_declar_ty_at(*env, name_id(*n)); }
+    match env.get_declar(n) {
+        Some(d) => {
+            let info = d.info();
+            Some((info.uparams, info.ty))
+        }
+        None => None,
+    }
+}
 
-/// A real environment's `Definition`/`Theorem` reducibility hints, as a
-/// NAME-id-keyed map (mirrors `to_model_of_ctor_num_params`'s shape) --
-/// `get_declar_hint`'s only real-world claim beyond bookkeeping is that
-/// this key set is EXACTLY `to_model_of_env`'s own domain (`get_declar_
-/// val`, above): the same real match arms (`Definition`/`Theorem`) decide
-/// both, so "has a value to unfold" and "has a reducibility hint" are the
-/// same set of names, not independently-axiomatized facts that could
-/// silently drift apart.
-pub uninterp spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<
-    u64,
-    ReducibilityHintSpec,
->;
+/// A declaration's reducibility hint: a definition's own, a theorem's
+/// `Opaque` (theorems are never unfolded, but are tracked).
+pub open spec fn hint_entry<'a>(d: Declar<'a>) -> Option<ReducibilityHintSpec> {
+    match d {
+        Declar::Definition { hint, .. } => Some(to_model(hint)),
+        Declar::Theorem { .. } => Some(ReducibilityHintSpec::Opaque),
+        _ => None,
+    }
+}
 
-/// The returned name is the declaration's own `info.name`, and it is the name
-/// it was looked up by: the parser inserts every declaration under
-/// `info.name` (`parser.rs`, `declars.insert(name, ..)` with `info = DeclarInfo
-/// { name, .. }`). `lazy_delta_step` relies on exactly this when it compares
-/// two definitions by the names this returns.
-pub assume_specification<'x, 'a>[ get_declar_hint ](env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result:
-    Option<(NamePtr<'a>, ReducibilityHint)>)
+/// The environment's reducibility hints, by name id. Its domain is the
+/// definitions map's: the same two declaration kinds decide both.
+pub closed spec fn to_model_of_declar_hint<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, ReducibilityHintSpec> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && hint_entry(env.find(id)->0) is Some),
+        |id: u64| hint_entry(env.find(id)->0)->0,
+    )
+}
+
+pub proof fn to_model_of_declar_hint_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_declar_hint(env).contains_key(id) == (env.find(id) is Some && hint_entry(env.find(id)->0) is Some),
+        to_model_of_declar_hint(env).contains_key(id) ==> to_model_of_declar_hint(env)[id] == hint_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `get_applied_def`'s classification: a name is an applied definition
+/// exactly when it is a `Definition` (its hint) or a `Theorem` (`Opaque`).
+/// Verified: the returned name is the one looked up (the maps are keyed by
+/// `info.name`), and the hint is the hints map's entry.
+pub(crate) fn get_declar_hint<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<(NamePtr<'a>, ReducibilityHint)>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some((dn, hint)) => dn == *n && to_model_of_env(*env).contains_key(name_id(*n))
@@ -598,37 +480,60 @@ pub assume_specification<'x, 'a>[ get_declar_hint ](env: &Env<'x, 'a>, n: &NameP
                 && to_model_of_declar_hint(*env)[name_id(*n)] == to_model(hint),
             None => !to_model_of_env(*env).contains_key(name_id(*n)),
         },
-;
+{
+    proof {
+        to_model_of_declar_hint_at(*env, name_id(*n));
+        to_model_of_defs_at(*env, name_id(*n));
+    }
+    match env.get_declar(n) {
+        Some(Declar::Definition { info, hint, .. }) => Some((info.name, *hint)),
+        Some(Declar::Theorem { info, .. }) => Some((info.name, ReducibilityHint::Opaque)),
+        _ => None,
+    }
+}
 
-/// A real environment's constructors, as a NAME-id-keyed `num_params` map
-/// -- `reduce_proj`'s only real dependency on `ConstructorData`.
-pub uninterp spec fn to_model_of_ctor_num_params<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
+/// A constructor's parameter count.
+pub open spec fn ctor_np_entry<'a>(d: Declar<'a>) -> Option<u16> {
+    match d {
+        Declar::Constructor(c) => Some(c.num_params),
+        _ => None,
+    }
+}
 
-pub assume_specification<'x, 'a>[ get_constructor_num_params ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<u16>)
+/// The environment's constructors' parameter counts, by name id --
+/// `reduce_proj`'s only dependency on `ConstructorData`.
+pub closed spec fn to_model_of_ctor_num_params<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && ctor_np_entry(env.find(id)->0) is Some),
+        |id: u64| ctor_np_entry(env.find(id)->0)->0,
+    )
+}
+
+pub proof fn to_model_of_ctor_num_params_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_ctor_num_params(env).contains_key(id) == (env.find(id) is Some && ctor_np_entry(env.find(id)->0) is Some),
+        to_model_of_ctor_num_params(env).contains_key(id) ==> to_model_of_ctor_num_params(env)[id] == ctor_np_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `Env::get_constructor`'s `num_params`. Verified against the map.
+pub(crate) fn get_constructor_num_params<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some(num_params) => to_model_of_ctor_num_params(*env).contains_key(name_id(*n))
                 && to_model_of_ctor_num_params(*env)[name_id(*n)] == num_params,
             None => !to_model_of_ctor_num_params(*env).contains_key(name_id(*n)),
         },
-;
-
-
-/// The one substantive real-world fact `get_recursor_data` asserts beyond
-/// bookkeeping: a recursor's own universe parameters are always genuinely
-/// `Param`-shaped (same fact `get_declar_val` already asserts for plain
-/// declarations, needed for the exact same reason -- `verified_subst_
-/// expr_levels`'s `ks` argument requires it). No `to_model_of_env`-style
-/// keyed map is needed here: unlike delta/proj/quot, nothing downstream
-/// needs to relate TWO separate calls' results back to the same identity,
-/// so this is a plain per-call fact, not a lookup table.
-/// The env's recursors at the MODEL level (rec-iota P0): keyed by name id,
-/// the same shape `get_recursor_data` returns, with rule values modeled
-/// through `to_model`.
-pub uninterp spec fn to_model_of_recursors<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, RecDataSpec>;
+{
+    proof { to_model_of_ctor_num_params_at(*env, name_id(*n)); }
+    match env.get_constructor(n) {
+        Some(cd) => Some(cd.num_params),
+        None => None,
+    }
+}
 
 pub open spec fn rec_rules_model<'a>(rules: Seq<RecRule<'a>>) -> Seq<RecRuleSpec> {
     Seq::new(
@@ -642,10 +547,47 @@ pub open spec fn rec_rules_model<'a>(rules: Seq<RecRule<'a>>) -> Seq<RecRuleSpec
     )
 }
 
-pub assume_specification<'x, 'a>[ get_recursor_data ](
+/// A recursor's data as the iota rule reads it.
+pub open spec fn rec_entry<'a>(d: Declar<'a>) -> Option<RecDataSpec> {
+    match d {
+        Declar::Recursor(r) => Some(RecDataSpec {
+            num_params: r.num_params as nat,
+            num_motives: r.num_motives as nat,
+            num_minors: r.num_minors as nat,
+            major_idx: r.major_idx_spec(),
+            uparams: level_names(to_model_of_levels(r.info.uparams)),
+            rules: rec_rules_model(r.rec_rules@),
+        }),
+        _ => None,
+    }
+}
+
+/// The environment's recursors, by name id, in the shape
+/// `get_recursor_data` returns them, rule values modeled through `to_model`.
+pub closed spec fn to_model_of_recursors<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, RecDataSpec> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && rec_entry(env.find(id)->0) is Some),
+        |id: u64| rec_entry(env.find(id)->0)->0,
+    )
+}
+
+pub proof fn to_model_of_recursors_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_recursors(env).contains_key(id) == (env.find(id) is Some && rec_entry(env.find(id)->0) is Some),
+        to_model_of_recursors(env).contains_key(id) ==> to_model_of_recursors(env)[id] == rec_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `reduce_rec`'s recursor lookup: exactly the fields it reads. Verified
+/// against the recursors map; the pointers are the environment's and the
+/// universe parameters are parameters.
+pub(crate) fn get_recursor_data<'x, 'a>(
     env: &Env<'x, 'a>,
     n: &NamePtr<'a>,
 ) -> (result: Option<(u16, u16, u16, usize, LevelsPtr<'a>, Arc<[RecRule<'a>]>)>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some((np, nm, nmin, major, uparams, rules)) => env_owns(*env, uparams) && (forall|i: int|
@@ -665,54 +607,109 @@ pub assume_specification<'x, 'a>[ get_recursor_data ](
             },
             None => true,
         },
-;
+{
+    proof { to_model_of_recursors_at(*env, name_id(*n)); }
+    let rec = env.get_recursor(n)?;
+    let rules = rec.rec_rules.clone();
+    let major = rec.major_idx();
+    Some((rec.num_params, rec.num_motives, rec.num_minors, major, rec.info.uparams, rules))
+}
 
+/// A structure's (single) constructor: an inductive with one constructor
+/// and no indices.
+pub open spec fn struct_ctor_entry<'a>(d: Declar<'a>) -> Option<u64> {
+    match d {
+        Declar::Inductive(i) => if i.all_ctor_names@.len() == 1 && i.num_indices == 0 {
+            Some(name_id(i.all_ctor_names@[0]))
+        } else {
+            None
+        },
+        _ => None,
+    }
+}
 
-/// `def_eq_unit`'s own env lookups -- unlike `get_declar_hint`/`get_
-/// constructor_num_params`, neither needs a semantic fact connecting the
-/// result back to `to_model_of_env`/a keyed map: nothing downstream
-/// relates two separate calls to the same ground truth, and the ENTIRE
-/// soundness content of `verified_def_eq_unit` is carried by its final
-/// `verified_def_eq` call, same "plain per-call fact, no keyed map"
-/// convention as `get_recursor_data` above.
-/// Structure -> first (only) constructor, `name_id`-keyed: the typing
-/// model's `Proj` rule needs the two `get_structure_first_ctor` calls
-/// (arm and rule) to agree on ONE ground truth, so unlike the per-call
-/// wrappers above this one is tied to a map (2026-09-06, projection typing).
-pub uninterp spec fn to_model_of_struct_ctor<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u64>;
+/// Structure -> its constructor, by name id: the projection typing rule
+/// needs two `get_structure_first_ctor` calls to agree on one ground truth.
+pub closed spec fn to_model_of_struct_ctor<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u64> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && struct_ctor_entry(env.find(id)->0) is Some),
+        |id: u64| struct_ctor_entry(env.find(id)->0)->0,
+    )
+}
 
+pub proof fn to_model_of_struct_ctor_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_struct_ctor(env).contains_key(id) == (env.find(id) is Some && struct_ctor_entry(env.find(id)->0) is Some),
+        to_model_of_struct_ctor(env).contains_key(id) ==> to_model_of_struct_ctor(env)[id] == struct_ctor_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
 
-pub assume_specification<'x, 'a>[ get_structure_first_ctor ](
+/// `Env::get_structure`'s `all_ctor_names[0]` (the match guard makes the
+/// index safe). Verified against the map.
+pub(crate) fn get_structure_first_ctor<'x, 'a>(
     env: &Env<'x, 'a>,
     n: &NamePtr<'a>,
     rec_ok: bool,
 ) -> (result: Option<NamePtr<'a>>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some(c) => env_owns(*env, c) && to_model_of_struct_ctor(*env).contains_key(name_id(*n))
                 && to_model_of_struct_ctor(*env)[name_id(*n)] == name_id(c),
             None => true,
         },
-;
+{
+    proof { to_model_of_struct_ctor_at(*env, name_id(*n)); }
+    match env.get_structure(n, rec_ok) {
+        Some(i) => Some(i.all_ctor_names[0]),
+        None => None,
+    }
+}
 
-/// Constructor -> its field count, keyed the same way as
-/// `to_model_of_struct_ctor` above, because `def_eq_unit` relates two
-/// separate reads of it (the route's own check and the leaf's claim) and so
-/// needs them to agree on one ground truth.
-pub uninterp spec fn to_model_of_ctor_num_fields<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16>;
+/// A constructor's field count.
+pub open spec fn ctor_nf_entry<'a>(d: Declar<'a>) -> Option<u16> {
+    match d {
+        Declar::Constructor(c) => Some(c.num_fields),
+        _ => None,
+    }
+}
 
+/// Constructor -> its field count, by name id: `def_eq_unit` relates two
+/// separate reads of it.
+pub closed spec fn to_model_of_ctor_num_fields<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u16> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && ctor_nf_entry(env.find(id)->0) is Some),
+        |id: u64| ctor_nf_entry(env.find(id)->0)->0,
+    )
+}
 
-pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<u16>)
+pub proof fn to_model_of_ctor_num_fields_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_ctor_num_fields(env).contains_key(id) == (env.find(id) is Some && ctor_nf_entry(env.find(id)->0) is Some),
+        to_model_of_ctor_num_fields(env).contains_key(id) ==> to_model_of_ctor_num_fields(env)[id] == ctor_nf_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `Env::get_constructor`'s `num_fields`. Verified against the map.
+pub(crate) fn get_constructor_num_fields<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> (result: Option<u16>)
+    requires
+        env_owns(*env, *n),
     ensures
         match result {
             Some(k) => to_model_of_ctor_num_fields(*env).contains_key(name_id(*n))
                 && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
             None => true,
         },
-;
+{
+    proof { to_model_of_ctor_num_fields_at(*env, name_id(*n)); }
+    match env.get_constructor(n) {
+        Some(cd) => Some(cd.num_fields),
+        None => None,
+    }
+}
 
 /// A declaration's pointers belong to `env`'s arenas.
 pub open spec fn declar_owned<'x, 'a>(env: Env<'x, 'a>, d: Declar<'a>) -> bool {
@@ -788,43 +785,6 @@ pub assume_specification<'a>[ <crate::env::InductiveData<'a> as Clone>::clone ](
         r == *d,
 ;
 
-/// A real, finitely-many-declarations `Env` always has SOME maximum size
-/// among its declarations -- a genuine structural fact about any finite
-/// collection of finite terms, not an arbitrary limit imposed on the
-/// math (contrast with, say, hardcoding "no declaration exceeds 60000" as
-/// a blanket axiom, which WOULD be an unjustified limit -- this instead
-/// just names the maximum, whatever it happens to be for a given real
-/// `env`, and lets a caller who needs a NUMERIC bound state it as a
-/// hypothesis about that SPECIFIC environment). `env_global_cap` names
-/// that maximum (uninterpreted -- doesn't compute it, just asserts it
-/// exists), and `env_global_wf` packages it as `env_wf` over the WHOLE
-/// `to_model_of_env(*env)` map at once (not just a single derived
-/// singleton the way `env_declar_singleton_wf` below does for one
-/// lookup) -- this is the "global environment depth cap" this whole
-/// arc's multi-round `whnf`/`reduce_proj` chaining and `lazy_delta_
-/// step`'s outer loop have both independently been blocked on needing.
-pub uninterp spec fn env_global_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
-
-/// `env_global_wf`'s counterpart for `to_model_of_declar_ty` (declaration
-/// TYPES, needed by `infer_const`'s own depth-boundedness -- a completely
-/// separate lookup table from `to_model_of_env`, since `get_declar_info_
-/// ty` covers every declaration kind, not just `Definition`/`Theorem`).
-/// Reuses the SAME `env_global_cap` (one real environment has one real
-/// maximum declaration size, whether measuring types or values) --
-/// deliberately omits `size` again, for the exact same reason `env_
-/// global_wf` above does (see its doc comment / [[feedback_verus_size_axiom_blowup]]).
-/// Closedness is not claimed: the parser does not check it (see
-/// `get_declar_info_ty`), and users test the node's cached flags.
-#[verifier::external_body]
-pub proof fn env_global_wf_ty<'x, 'a>(env: Env<'x, 'a>)
-    ensures
-        forall|id: u64| #[trigger]
-            to_model_of_declar_ty(env).contains_key(id) ==> {
-                &&& max_var_below(to_model_of_declar_ty(env)[id].1, env_global_cap(env))
-                &&& depth(to_model_of_declar_ty(env)[id].1) <= env_global_cap(env)
-            },
-{
-}
 
 } // verus!
 #[cfg(test)]

@@ -25,8 +25,9 @@
 //! `unfold_def` composes bridges from three other files: `expr_arena_
 //! bridge.rs`'s `verified_unfold_apps`/`verified_subst_expr_levels`/
 //! `verified_foldl_apps` (peel the `Const`'s applied args, substitute the
-//! definition body's level parameters, reapply the args) and `env_model.rs`'s
-//! `Env::get_declar_val` trust boundary (the real declaration lookup) --
+//! definition body's level parameters, reapply the args) and
+//! `Env::get_declar_val` (the real declaration lookup, verified against the
+//! definitions map) --
 //! the capstone connecting real delta reduction to a genuine `pstep_star`
 //! step, the way `expr_arena_bridge.rs`'s `verified_whnf_beta_step`/
 //! `verified_whnf_zeta_step` already do for beta/zeta.
@@ -52,8 +53,6 @@ use crate::env_model::to_model_of_declar_hint;
 use crate::env_model::to_model_of_declar_ty;
 #[cfg(verus_only)]
 use crate::env_model::to_model_of_env;
-#[cfg(verus_only)]
-use crate::env_model::{env_global_cap, env_global_wf_ty};
 #[cfg(verus_only)]
 use crate::env_model::{env_model_nofv, env_model_nofv_has, env_model_nofv_sub, rec_rules_model, to_model_of_recursors};
 use crate::env_model::{get_constructor_num_params, get_declar_hint, get_declar_info_ty, get_recursor_data, reducibility_hint_as_regular};

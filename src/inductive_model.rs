@@ -35,11 +35,9 @@ use crate::beta_model::{subst_expr_levels_rel_depth, subst_expr_levels_rel_nlbv}
 use crate::env::{Declar, Env, RecRule};
 use crate::env::{DeclarInfo, RecursorData};
 #[cfg(verus_only)]
-#[cfg(verus_only)]
-use crate::env_model::env_global_cap;
 use crate::env_model::get_declar_info_ty;
 #[cfg(verus_only)]
-use crate::env_model::{env_global_wf_ty, to_model_of_declar_ty};
+use crate::env_model::to_model_of_declar_ty;
 use crate::expr::BinderStyle;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::abstr_pi_telescope_model;
