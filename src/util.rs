@@ -243,11 +243,17 @@ pub trait IterSpec {}
 impl<T: ?Sized> IterSpec for T {}
 pub type BigUintPtr<'a> = Ptr<&'a BigUint>;
 
-pub(crate) fn new_fx_index_map<K, V>() -> FxIndexMap<K, V> {
+::vstd::prelude::verus! {
+
+/// Inside `verus!` so verified code can start a map; body unchanged.
+pub(crate) fn new_fx_index_map<K, V>() -> (result: FxIndexMap<K, V>)
+    ensures
+        crate::indexmap_model::imap_view(&result) == vstd::map::Map::<K, V>::empty(),
+        crate::indexmap_model::imap_keys(&result) == vstd::seq::Seq::<K>::empty(),
+        crate::indexmap_model::imap_wf(&result),
+{
     FxIndexMap::with_hasher(Default::default())
 }
-
-::vstd::prelude::verus! {
 
 /// Inside `verus!` so the memo caches' reset path is expressible; body unchanged.
 pub(crate) fn new_fx_hash_map<K, V>() -> (result: FxHashMap<K, V>)

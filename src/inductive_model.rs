@@ -156,11 +156,10 @@ pub(crate) open spec fn st_owned<'t, 'p, 'a>(c: crate::util::TcCtx<'t, 'p>, st: 
     &&& (st.elim_level matches Some(l) ==> crate::util_model::owns(c, l))
 }
 
-/// The three `Declar` payload types, registered OPAQUELY. Making `Declar`
-/// itself matchable needs its variants' payload types known to Verus, but not
-/// their contents -- `tc.rs`'s `is_ctor_app` and `get_applied_def` discriminate
-/// on the VARIANT and never look inside these. Keeping them `external_body`
-/// sidesteps their `Arc<[T]>` fields entirely.
+/// The `Declar` payload types, TRANSPARENT: the inductive checker builds
+/// the temporary environment's inductive and constructor declarations in
+/// verified code. Their `Arc<[T]>` fields are specified (the fork's
+/// `Arc::<[T]>::from`).
 #[allow(dead_code)]
 #[verifier::external_type_specification]
 pub struct ExInductiveData<'a>(crate::env::InductiveData<'a>);

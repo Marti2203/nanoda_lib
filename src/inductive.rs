@@ -181,53 +181,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Extend the current environment with the inductive specifications,
-    /// including modifications to accommodate any temporary declarations
-    /// that come from nested inductives.
-    ///
-    /// Then assert that any of the inductive types in the temporary extension
-    /// which are also in the export file are def_eq to those in the export file.
-    fn mk_ind_tys_env_ext(&mut self, st: &InductiveCheckState<'t>) -> DeclarMap<'t> {
-        // This will be different from the export file's list if this is a nested.
-        let is_nested = !st.nested_to_unspecialized_ty_nofvars.is_empty();
-        let all_ind_names: Arc<[NamePtr]> = st.all_inductives_incl_specialized.iter().map(|x| x.name).collect();
-        let mut env_extension = crate::util::new_fx_index_map();
-        for (idx, inductive) in st.all_inductives_incl_specialized.iter().enumerate() {
-            let t = Declar::Inductive(InductiveData {
-                info: DeclarInfo { name: inductive.name, ty: inductive.ty, uparams: st.uparams },
-                is_nested,
-                is_recursive: false,
-                num_params: u16::try_from(st.local_params.len()).unwrap(),
-                num_indices: u16::try_from((st.local_indices[idx]).len()).unwrap(),
-                all_ind_names: all_ind_names.clone(),
-                all_ctor_names: inductive.ctors.iter().map(|x| x.name).collect(),
-            });
-            env_extension.insert(inductive.name, t);
-        }
-        env_extension
-    }
-
-    /// Extend the current environment with new constructors, including modifications
-    /// to accommodate any temporary declarations that come from nested inductives.
-    fn mk_ctors_env_ext(&mut self, nest_st: &InductiveCheckState<'t>, mut env_ext: DeclarMap<'t>) -> DeclarMap<'t> {
-        // This will be different from the export file's list if this is a nested.
-        for inductive in nest_st.all_inductives_incl_specialized.iter() {
-            for (idx, ctor) in inductive.ctors.iter().copied().enumerate() {
-                let info = DeclarInfo { name: ctor.name, ty: ctor.ty, uparams: nest_st.uparams };
-                let num_params = u16::try_from(nest_st.local_params.len()).unwrap();
-                let num_fields = self.pi_telescope_size(ctor.ty) - num_params;
-                let d = Declar::Constructor(ConstructorData {
-                    info,
-                    inductive_name: inductive.name,
-                    ctor_idx: u16::try_from(idx).unwrap(),
-                    num_params,
-                    num_fields,
-                });
-                env_ext.insert(ctor.name, d);
-            }
-        }
-        env_ext
-    }
 }
 
 pub(crate) struct InductiveCheckState<'a> {
@@ -1512,6 +1465,139 @@ fn ind_names<'t>(hs: &Vec<IndTyHeader<'t>>) -> (result: Vec<NamePtr<'t>>)
         i += 1;
     }
     out
+}
+
+/// VERUS-REWRITE(flat-map-collect): `ctors.iter().map(|x| x.name).collect()`
+/// is this scan (into a `Vec`, then `Arc::from`); vstd cannot specify
+/// `collect` through a `map` closure. Same elements, same order.
+fn ctor_names<'t>(cs: &Vec<CtorHeader<'t>>) -> (result: Vec<NamePtr<'t>>)
+    ensures
+        result@.len() == cs@.len(),
+        forall|i: int| 0 <= i < cs@.len() ==> #[trigger] result@[i] == cs@[i].name,
+{
+    let mut out = Vec::new();
+    let mut i: usize = 0;
+    while i < cs.len()
+        invariant
+            i <= cs@.len(),
+            out@.len() == i,
+            forall|k: int| 0 <= k < i ==> #[trigger] out@[k] == cs@[k].name,
+        decreases cs@.len() - i,
+    {
+        out.push(cs[i].name);
+        i += 1;
+    }
+    out
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place: the first temporary environment extension, one
+    /// inductive declaration per block type (specialized ones included).
+    ///
+    /// VERUS-REWRITE(flat-map-collect): the two `.map(|x| x.name).collect()`
+    /// name lists through `ind_names` / `ctor_names` and `Arc::from`;
+    /// VERUS-REWRITE(enumerate): `for (idx, inductive) in ...iter().enumerate()`
+    /// is the index walk it stands for. Same elements, same order.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_ind_tys_env_ext(&mut self, st: &InductiveCheckState<'t>) -> (result: DeclarMap<'t>)
+        requires
+            st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+    {
+        // This will be different from the export file's list if this is a nested.
+        let is_nested = !st.nested_to_unspecialized_ty_nofvars.is_empty();
+        let all_ind_names: Arc<[NamePtr]> = Arc::from(ind_names(&st.all_inductives_incl_specialized));
+        let mut env_extension = crate::util::new_fx_index_map();
+        let mut idx: usize = 0;
+        while idx < st.all_inductives_incl_specialized.len()
+            invariant
+                st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
+                idx <= st.all_inductives_incl_specialized@.len(),
+            decreases st.all_inductives_incl_specialized@.len() - idx,
+        {
+            let inductive = &st.all_inductives_incl_specialized[idx];
+            let t = Declar::Inductive(InductiveData {
+                info: DeclarInfo { name: inductive.name, ty: inductive.ty, uparams: st.uparams },
+                is_nested,
+                is_recursive: false,
+                num_params: u16::try_from(st.local_params.len()).unwrap(),
+                num_indices: u16::try_from((st.local_indices[idx]).len()).unwrap(),
+                all_ind_names: all_ind_names.clone(),
+                all_ctor_names: Arc::from(ctor_names(&inductive.ctors)),
+            });
+            env_extension.insert(inductive.name, t);
+            idx += 1;
+        }
+        env_extension
+    }
+
+    /// Verified in place: the second temporary environment extension, which
+    /// adds one constructor declaration per constructor.
+    ///
+    /// VERUS-REWRITE(index-walk): the two `for` loops (the inner one over
+    /// `.iter().copied().enumerate()`) are the front-to-back scans by index;
+    /// VERUS-REWRITE(level-ceiling): `pi_telescope_size(..) - num_params`
+    /// panics on `u16` underflow (overflow checks are on); the same check,
+    /// explicit, on the size bound to `tele`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn mk_ctors_env_ext(&mut self, nest_st: &InductiveCheckState<'t>, mut env_ext: DeclarMap<'t>) -> (result: DeclarMap<'t>)
+        requires
+            crate::inductive_model::st_owned(*old(self), *nest_st),
+        ensures
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+    {
+        // This will be different from the export file's list if this is a nested.
+        let mut i: usize = 0;
+        while i < nest_st.all_inductives_incl_specialized.len()
+            invariant
+                crate::inductive_model::st_owned(*self, *nest_st),
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                self.expr_cache == old(self).expr_cache,
+                i <= nest_st.all_inductives_incl_specialized@.len(),
+            decreases nest_st.all_inductives_incl_specialized@.len() - i,
+        {
+            let inductive = &nest_st.all_inductives_incl_specialized[i];
+            let mut idx: usize = 0;
+            while idx < inductive.ctors.len()
+                invariant
+                    crate::inductive_model::st_owned(*self, *nest_st),
+                    self.dbj_level_counter == old(self).dbj_level_counter,
+                    crate::util_model::same_arenas(*old(self), *self),
+                    self.expr_cache == old(self).expr_cache,
+                    i < nest_st.all_inductives_incl_specialized@.len(),
+                    *inductive == nest_st.all_inductives_incl_specialized@[i as int],
+                    idx <= inductive.ctors@.len(),
+                decreases inductive.ctors@.len() - idx,
+            {
+                let ctor = inductive.ctors[idx];
+                proof {
+                    assert(crate::util_model::owns(*self, nest_st.all_inductives_incl_specialized@[i as int].ctors@[idx as int].ty));
+                }
+                let info = DeclarInfo { name: ctor.name, ty: ctor.ty, uparams: nest_st.uparams };
+                let num_params = u16::try_from(nest_st.local_params.len()).unwrap();
+                let tele = self.pi_telescope_size(ctor.ty);
+                assert!(tele >= num_params, "mk_ctors_env_ext: constructor telescope shorter than its parameters");
+                let num_fields = tele - num_params;
+                let d = Declar::Constructor(ConstructorData {
+                    info,
+                    inductive_name: inductive.name,
+                    ctor_idx: u16::try_from(idx).unwrap(),
+                    num_params,
+                    num_fields,
+                });
+                env_ext.insert(ctor.name, d);
+                idx += 1;
+            }
+            i += 1;
+        }
+        env_ext
+    }
 }
 
 /// A level-free local's recorded type is closed.

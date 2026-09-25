@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **113 marked rewrites across 79 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **118 marked rewrites across 82 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -104,13 +104,14 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate` — 5 rewrites
+### `Iterator::enumerate` — 6 rewrites
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
 | `which_valid_ind_app` | `src/inductive.rs` | `enumerate`: with the fork's specification the loop body still cannot show `ind_const == st.ind_consts@[i]` (tried 2026-09-25) |
 | `mk_recursors` | `src/inductive.rs` | `enumerate` over the block inductives |
+| `mk_ind_tys_env_ext` | `src/inductive.rs` | `enumerate` over the block inductives |
 | `mk_minors1group` | `src/inductive.rs` | `enumerate` over the constructors; also the iterators handed to `foldl_apps`/`abstr_pis` bound to locals so the proof can name their elements (same calls) |
 | `handle_rec_args_minor` | `src/inductive.rs` | `enumerate` over `rec_args`; also the reversed index iterator and the two `xs` iterators bound to locals so the proof can name their elements (same calls) |
 
@@ -146,20 +147,20 @@ Binding the call to a local first is behaviour-identical.
 |---|---|
 | `no_dupes_all_params` | `src/level.rs` |
 
-### `flat_map` / `map` + `collect` — 4 rewrites
+### `flat_map` / `map` + `collect` — 6 rewrites
 
 `st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`
 and `hs.iter().map(|x| x.name).collect::<Vec<_>>()`: vstd specifies neither
 `flat_map` nor `collect` through a closure adapter (`collect` instantiates its
 postcondition at the adapter's unresolved `Item` projection). They are the
-verified free functions `flatten_minors` (result `flat_ptrs(minors@)`) and
-`ind_names` (`src/inductive.rs`), the scans they stand for; same elements,
-same order.
+verified free functions `flatten_minors` (result `flat_ptrs(minors@)`),
+`ind_names` and `ctor_names` (`src/inductive.rs`), the scans they stand for;
+same elements, same order.
 
 | function | file |
 |---|---|
-| `flatten_minors`, `ind_names` (the definitions) | `src/inductive.rs` |
-| `mk_rec_rules`, `mk_recursors` | `src/inductive.rs` |
+| `flatten_minors`, `ind_names`, `ctor_names` (the definitions) | `src/inductive.rs` |
+| `mk_rec_rules`, `mk_recursors`, `mk_ind_tys_env_ext` | `src/inductive.rs` |
 
 `handle_rec_ctor_args_rec_rule` and `mk_recursor_aux` call them too (their
 markers are under `index-walk` / `rec-ty-split`).
@@ -259,6 +260,7 @@ needed a different shape.
 | `check_positivity1` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
 | `abstr_pis` | `src/expr.rs` | parameters `mut binders, mut body` → `binders_in, body_in` with `let mut` copies (the claim names the entry values); the `IterSpec` bound `foldl_apps` already carries |
+| `mk_ctors_env_ext` | `src/inductive.rs` | the two `for` loops (the inner over `.iter().copied().enumerate()`) → front-to-back scans by index |
 | `mk_minors`, `mk_rec_rules`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` | `for x in v.iter()` / `.iter().copied()` → the same front-to-back scan by index, so the invariant can say which element produced each output (and, in `mk_rec_rules`, where the constructor's minor sits in the flattened list); `handle_rec_ctor_args_rec_rule` also binds the iterators handed to `foldl_apps` to locals, and uses `flatten_minors` |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
@@ -308,6 +310,7 @@ still a rejection — but each is an improvement.
 | `leq_core` | `src/level.rs` | `diff - 1` / `diff + 1` in the `Succ` arms panic on `isize` overflow (overflow checks are on); the same checks are made explicit, which is what replaced the arena axiom bounding `leq_measure` (refutable by allocating ~500M nested levels) |
 | `NAME`/`LEVEL` hash constants | `src/name.rs`, `src/level.rs` | `STR_HASH`, `NUM_HASH`, `SUCC_HASH`, `MAX_HASH`, `IMAX_HASH`, `PARAM_HASH` widened from `pub(crate)` to `pub` (visibility only): the public `alloc_name`/`alloc_level` specifications name them in their canonical-hash precondition |
 | `pi_telescope_size` | `src/expr.rs` | `size += 1` on a `u16` panics on overflow (overflow checks are on); the check is explicit, which replaced the `depth <= 60000` precondition no caller could discharge. Nothing the original accepted is rejected |
+| `mk_ctors_env_ext` | `src/inductive.rs` | `pi_telescope_size(ctor.ty) - num_params` panics on `u16` underflow; the same check, explicit. Never fires on a constructor `check_ctor` accepted |
 | `mk_rec_rule1` | `src/inductive.rs` | `pi_telescope_size(ctor.ty) as usize - np` panics on underflow; the same check, explicit, on the size bound to `tele`. Never fires on a constructor `check_ctor` accepted |
 | `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
 
