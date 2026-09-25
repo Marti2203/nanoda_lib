@@ -363,10 +363,8 @@ pub proof fn sorted_pair_set_keys<'t, 'p>(
     sorted_pair_owned_keys(c, s.insert(key));
 }
 
-// TcCtx's three composite field types, registered so `TcCtx` itself can be a
-// TRANSPARENT `external_type_specification`. `ExportFile` and `LeanDag` stay
-// opaque -- nothing needs their internals yet; registering them is only what
-// lets `TcCtx` be looked inside at all.
+// TcCtx's composite field types, registered so `TcCtx` itself can be a
+// TRANSPARENT `external_type_specification`.
 /// TRANSPARENT: the name cache lives in here, and seven kernel functions
 /// (`c_nat_zero` and its four siblings, `quot_kind_code`, `nat_bin_op_code`)
 /// can only be proved rather than assumed if their cached name is
@@ -417,16 +415,12 @@ pub assume_specification[ crate::util::Config::string_extension_on ](
 #[verifier::external_body]
 pub struct ExNotation<'a>(crate::env::Notation<'a>);
 
-#[allow(dead_code)]
-#[verifier::external_type_specification]
-#[verifier::external_body]
-pub struct ExLeanDag<'t>(crate::util::LeanDag<'t>);
-
-/// The identity of a dag (see `docs/ARENA_IDENTITY.md`). `LeanDag` is
-/// opaque and only unverified code builds one, so nothing can show two dags'
-/// ids equal; the allocation specifications say an id survives allocating
-/// into its dag.
-pub uninterp spec fn dag_arena<'a>(d: crate::util::LeanDag<'a>) -> nat;
+/// The identity of a dag (see `docs/ARENA_IDENTITY.md`): the arena its
+/// history tokens belong to. Only unverified code builds a dag, so nothing
+/// can show two dags' ids equal.
+pub open spec fn dag_arena<'a>(d: crate::util::LeanDag<'a>) -> nat {
+    d.id()
+}
 
 /// A context's two arenas: its own dag's id, and its export file's, which
 /// is DEFINED as the tag the export file's name cache carries (so the cached

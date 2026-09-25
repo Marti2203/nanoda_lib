@@ -882,8 +882,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
-} // verus!
-#[derive(Debug)]
+/// The dag's storage.
+///
+/// The ghost `toks` field (erased at run time) counts, per set, the positions pinned to the arena's history
+/// (`arena_history.rs`); the type invariant says each set is exactly that
+/// pinned prefix. Values built by unverified code (`LeanDag::new`, the
+/// parser) are assumed to satisfy it -- the boundary the parser already is.
 pub struct LeanDag<'a> {
     pub names: UniqueIndexSet<Name<'a>>,
     pub levels: UniqueIndexSet<Level<'a>>,
@@ -891,6 +895,55 @@ pub struct LeanDag<'a> {
     pub uparams: FxIndexSet<Arc<[LevelPtr<'a>]>>,
     pub strings: FxIndexSet<CowStr<'a>>,
     pub bignums: Option<FxIndexSet<BigUint>>,
+    pub(crate) toks: Tracked<DagToks<'a>>,
+}
+
+/// One history token per set, all for the dag's arena.
+pub tracked struct DagToks<'a> {
+    pub tracked names: crate::arena_history::ArenaTok<Name<'a>>,
+    pub tracked levels: crate::arena_history::ArenaTok<Level<'a>>,
+    pub tracked exprs: crate::arena_history::ArenaTok<Expr<'a>>,
+    pub tracked uparams: crate::arena_history::ArenaTok<Arc<[LevelPtr<'a>]>>,
+    pub tracked strings: crate::arena_history::ArenaTok<CowStr<'a>>,
+    pub tracked bignums: crate::arena_history::ArenaTok<BigUint>,
+}
+
+impl<'a> LeanDag<'a> {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        let t = self.toks@;
+        &&& crate::arena_history::agrees(&self.names, t.names)
+        &&& crate::arena_history::agrees(&self.levels, t.levels)
+        &&& crate::arena_history::agrees(&self.exprs, t.exprs)
+        &&& crate::arena_history::agrees(&self.uparams, t.uparams)
+        &&& crate::arena_history::agrees(&self.strings, t.strings)
+        &&& (self.bignums matches Some(b) ==> crate::arena_history::agrees(&b, t.bignums))
+        &&& t.levels.id() == t.names.id()
+        &&& t.exprs.id() == t.names.id()
+        &&& t.uparams.id() == t.names.id()
+        &&& t.strings.id() == t.names.id()
+        &&& t.bignums.id() == t.names.id()
+    }
+
+    /// The dag's arena.
+    pub closed spec fn id(self) -> nat {
+        self.toks@.names.id()
+    }
+}
+
+} // verus!
+
+impl<'a> std::fmt::Debug for LeanDag<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LeanDag")
+            .field("names", &self.names)
+            .field("levels", &self.levels)
+            .field("exprs", &self.exprs)
+            .field("uparams", &self.uparams)
+            .field("strings", &self.strings)
+            .field("bignums", &self.bignums)
+            .finish()
+    }
 }
 
 impl<'a> LeanDag<'a> {
@@ -900,6 +953,9 @@ impl<'a> LeanDag<'a> {
     ///
     /// So when creating a new parser, we need to begin by placing `Anon` and `Zero` in the 0th position
     /// of their backing storage, satisfying the exporter's assumption.
+    ///
+    /// VERUS-REWRITE(arena-tokens): the dag carries its history tokens, a
+    /// ghost field (erased at run time).
     pub fn new(config: &Config) -> Self {
         let mut out = Self {
             names: new_unique_index_set(),
@@ -908,6 +964,7 @@ impl<'a> LeanDag<'a> {
             uparams: new_fx_index_set(),
             strings: new_fx_index_set(),
             bignums: if config.nat_extension { Some(new_fx_index_set()) } else { None },
+            toks: vstd::prelude::Tracked::assume_new(),
         };
 
         let _ = out.names.insert(Name::Anon);

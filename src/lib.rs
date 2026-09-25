@@ -8,6 +8,7 @@
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
+pub mod arena_history;
 pub mod beta_model;
 pub mod debug_printer;
 pub mod env;
