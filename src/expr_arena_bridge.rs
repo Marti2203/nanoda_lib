@@ -1174,20 +1174,30 @@ pub open spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a> {
     }
 }
 
-/// The arena's local context, viewed at the MODEL level: the (total,
-/// ambient) map from a `Local`-shaped node's model identity
-/// (`expr_id`, i.e. the payload of its `ExprSpec::Free` model) to the
-/// MODEL of its recorded binder type. Same "pure function of the one
-/// ambient arena" convention as `to_model` itself -- and the same
-/// disclosed-trust character: `arena_lctx_local` below is the one
-/// axiom connecting it to the real `local_binder_type_of` field, so
-/// the model-level typing relation (`types_to`, `delta_bound_model.rs`)
-/// can give `Free` leaves a type without reaching back into ptr-land.
-/// One map per arena pair: two contexts give the same local id different
-/// types.
-pub uninterp spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec>;
+/// The ids naming a stored local in the arena pair `aids`.
+pub open spec fn lctx_ids(aids: (nat, nat)) -> Set<u32> {
+    vstd::set_lib::set_int_range(0, 0x1_0000_0000).map(|i: int| i as u32).filter(
+        |id: u32| raw_node(aids, id) matches Some(Expr::Local { .. }),
+    )
+}
 
-#[verifier::external_body]
+/// The arena's local context, viewed at the MODEL level: each stored local's
+/// model identity (`expr_id`, the payload of its `ExprSpec::Free` model)
+/// mapped to the MODEL of its binder type, read from the arena histories. It
+/// lets the model-level typing relation (`types_to`) give `Free` leaves a type
+/// without reaching back into ptr-land. One map per arena pair: two contexts
+/// give the same local id different types.
+pub closed spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec> {
+    Map::new(
+        lctx_ids(aids),
+        |id: u32| match raw_node(aids, id) {
+            Some(Expr::Local { binder_type, .. }) => to_model(binder_type),
+            _ => ExprSpec::Closed,
+        },
+    )
+}
+
+/// An owned local's id is in the local context, with its binder type.
 pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
     requires
         crate::util_model::owns_in(aids, ptr),
@@ -1196,6 +1206,14 @@ pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
         arena_lctx(aids).contains_key(expr_id(ptr)),
         arena_lctx(aids)[expr_id(ptr)] == to_model(local_binder_type_of(ptr)),
 {
+    broadcast use vstd::set_lib::group_set_lib_default;
+    to_model_shape(ptr);
+    let id = expr_id(ptr);
+    vstd::set_lib::lemma_int_range(0, 0x1_0000_0000);
+    let r = vstd::set_lib::set_int_range(0, 0x1_0000_0000);
+    assert(r.contains(id as int));
+    assert(r.map(|i: int| i as u32).contains((id as int) as u32));
+    assert(raw_node(aids, id) == expr_node_at(ptr));
 }
 
 /// Read-side twin of `is_const_shape_model` for `Local`s: a bare
@@ -2231,44 +2249,6 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
 ;
 
-// HOW THESE NINE GET RETIRED (piloted 2026-09-17, not landed).
-//
-// Every `mk_*` body is two lines: compute a hash, call `alloc_expr`. So ONE
-// storage primitive
-//
-//     assume_specification [TcCtx::alloc_expr](ctx, e) -> (result: ExprPtr)
-//         ensures to_model(result) == to_model_of_expr(e);
-//
-// derives all nine denotation contracts, once the bodies are inside
-// `verus!`. That primitive is justified by the facts proven above:
-// hash-consing may return an existing pointer rather than appending, but
-// either way the stored node IS `e`, and children keep their denotations by
-// `expr_model_at_append`.
-//
-// What stops the bodies moving in is `hash64!`, not the denotation
-// reasoning. Piloted on `mk_var`: registering `rustc_hash::FxHasher` as an
-// external type clears the hasher, and then `Hash::hash` wants an
-// `assume_specification` per primitive type hashed (u16, u64, the `Ptr`
-// types) and the `*_HASH` consts need to be visible inside `verus!`.
-// Estimated 8-12 further claim-free additions, all about hashing, which no
-// model function reads.
-//
-// Net once done: these 9, plus the level and name constructors -- roughly 25
-// denotation claims -- collapse to 3 storage primitives, and that many kernel
-// functions move inside `verus!`.
-/// Adapter over the kernel's own `TcCtx::inst`, which is verified in place now
-/// (`expr.rs`). This was a 110-line reimplementation with its own fuel
-/// parameter; what is left is the `Option` shape its twenty-four call sites
-/// expect.
-///
-/// `offset == 0` is now required rather than supported. Every call site passes
-/// a literal `0` -- the general-offset entry point was only ever exercised by
-/// the mirror's own recursion, and the kernel has no such entry point at all
-/// (`inst` fixes the offset at 0 and `inst_aux` is private to `expr.rs`).
-///
-/// The `substs` length check takes the place of a precondition the call sites
-/// could not establish, using the same `None` escape the mirror used for fuel
-/// exhaustion.
 pub fn verified_inst<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
     e: ExprPtr<'t>,
