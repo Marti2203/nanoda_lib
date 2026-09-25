@@ -425,24 +425,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         };
     }
 
-    /// Return a sequence of expressions which are free variables corresponding to the
-    /// inductive type's parameters, also returning the end of the telescope instantiated
-    /// with the parameters.
-    fn get_local_params(&mut self, mut e: ExprPtr<'t>, num_params: u16) -> (Vec<ExprPtr<'t>>, ExprPtr<'t>) {
-        let mut param_locals = Vec::with_capacity(num_params as usize);
-        for _ in 0..num_params {
-            match self.ctx.read_expr(e) {
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                    e = self.ctx.inst(body, &[local_]);
-                    e = self.whnf(e);
-                    param_locals.push(local_);
-                }
-                _ => panic!("exhausted telescope early"),
-            }
-        }
-        (param_locals, e)
-    }
 
     fn is_nested_ind_app(&mut self, st: &InductiveCheckState<'t>, e: ExprPtr<'t>) -> Option<InductiveData<'t>> {
         if !(matches!(self.ctx.read_expr(e), App { .. })) {
@@ -477,32 +459,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(ind_ty_declar.clone())
     }
 
-    fn header_of_ty(&self, t: &InductiveData<'t>) -> IndTyHeader<'t> {
-        fn header_of_ctor<'t>(t: &ConstructorData<'t>) -> CtorHeader<'t> {
-            CtorHeader { name: t.info.name, ty: t.info.ty }
-        }
-        let ctors = {
-            let mut out = Vec::new();
-            for ctor_name in t.all_ctor_names.as_ref() {
-                out.push(header_of_ctor(self.env.get_constructor(ctor_name).unwrap()));
-            }
-            out
-        };
-        IndTyHeader { name: t.info.name, ty: t.info.ty, ctors }
-    }
 
-    /// For some exported inductive declaration `T` that has a list of mutual names
-    /// `[T, U, .., Z]`, return the `IndTyHeader` elements for `[T, U, .., Z]`, without
-    /// any specializations/modifications.
-    fn collect_unmodified_mutuals(&self, t_from_file: &InductiveData<'t>) -> Vec<IndTyHeader<'t>> {
-        let mut all_inductives = Vec::new();
-        // Get all of the mutual inductives, but don't re-insert the base type.
-        for n in t_from_file.all_ind_names.iter() {
-            let t = self.env.get_inductive(n).unwrap();
-            all_inductives.push(self.header_of_ty(t));
-        }
-        all_inductives
-    }
 
     fn mk_unique_name(&mut self, n: NamePtr<'t>, st: &mut InductiveCheckState<'t>) -> NamePtr<'t> {
         for idx in st.next_ngen_idx..u64::MAX {
@@ -669,18 +626,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     // a type is recursive, reflexive, contains only positive occurrences, and
     // has only valid applications.
 
-    /// For some application of arguments to an inductive type (e.g. `Eq A a`), get back
-    /// the applied indices, and the index showing which inductive type from the block
-    /// is being applied to.
-    fn get_i_indices(&mut self, st: &InductiveCheckState<'t>, ind_ty_app: ExprPtr<'t>) -> (usize, Vec<ExprPtr<'t>>) {
-        let valid_app_idx = self.which_valid_ind_app(st, ind_ty_app).unwrap();
-        let (_, mut ctor_args_wo_params) = self.ctx.unfold_apps_stack(ind_ty_app);
-        // Compensate for stack-like unfold
-        for _ in 0..st.local_params.len() {
-            ctor_args_wo_params.pop();
-        }
-        (valid_app_idx, ctor_args_wo_params)
-    }
 
 
     fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> ExprPtr<'t> {
@@ -708,27 +653,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    fn is_rec_argument(&mut self, st: &InductiveCheckState<'t>, mut ctor_btype_cursor: ExprPtr<'t>) -> Option<usize> {
-        ctor_btype_cursor = self.whnf(ctor_btype_cursor);
-        if let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_btype_cursor) {
-            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-            ctor_btype_cursor = self.ctx.inst(body, &[local]);
-            self.is_rec_argument(st, ctor_btype_cursor)
-        } else {
-            self.which_valid_ind_app(st, ctor_btype_cursor)
-        }
-    }
 
-    fn handle_rec_args_aux(&mut self, mut rec_arg_cursor: ExprPtr<'t>) -> (ExprPtr<'t>, Vec<ExprPtr<'t>>) {
-        let mut xs = Vec::new();
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(rec_arg_cursor) {
-            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-            rec_arg_cursor = self.ctx.inst(body, &[local]);
-            rec_arg_cursor = self.whnf(rec_arg_cursor);
-            xs.push(local)
-        }
-        (rec_arg_cursor, xs)
-    }
 
     fn sep_nonrec_rec_ctor_args(
         &mut self,
@@ -1802,6 +1727,268 @@ pub(crate) open spec fn ctor_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: Induct
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Verified in place, body unchanged: the block inductive `ind_ty_app`
+    /// applies, and its non-parameter arguments (in the stack order the
+    /// kernel uses), all owned.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn get_i_indices(&mut self, st: &InductiveCheckState<'t>, ind_ty_app: ExprPtr<'t>) -> (result: (usize, Vec<ExprPtr<'t>>))
+        requires
+            crate::util_model::owns(*old(self).ctx, ind_ty_app),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            result.0 < st.ind_consts@.len(),
+            crate::util_model::owns_all(*(*final(self)).ctx, result.1@),
+    {
+        let valid_app_idx = self.which_valid_ind_app(st, ind_ty_app).unwrap();
+        let (_, mut ctor_args_wo_params) = self.ctx.unfold_apps_stack(ind_ty_app);
+        // Compensate for stack-like unfold
+        for _ in it: 0..st.local_params.len()
+            invariant
+                crate::util_model::owns_all(*self.ctx, ctor_args_wo_params@),
+        {
+            ctor_args_wo_params.pop();
+        }
+        (valid_app_idx, ctor_args_wo_params)
+    }
+
+    /// Verified in place, body unchanged: `Some(i)` when the binder type ends,
+    /// after its own binders, in a valid application of block inductive `i`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn is_rec_argument(&mut self, st: &InductiveCheckState<'t>, mut ctor_btype_cursor: ExprPtr<'t>) -> (result: Option<usize>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, ctor_btype_cursor),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result matches Some(i) ==> i < st.ind_consts@.len(),
+    {
+        proof {
+            level_free_in_scope(*self, ctor_btype_cursor);
+        }
+        let ghost pre = ctor_btype_cursor;
+        ctor_btype_cursor = self.whnf(ctor_btype_cursor);
+        proof {
+            level_free_pres(*self.ctx, pre, ctor_btype_cursor);
+        }
+        if let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_btype_cursor) {
+            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+            proof {
+                assert(level_free(*self.ctx, binder_type));
+                crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+            }
+            ctor_btype_cursor = self.ctx.inst(body, &[local]);
+            proof {
+                let aids = crate::util_model::arena_ids(*self.ctx);
+                assert([local]@ =~= seq![local]);
+                assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+            }
+            self.is_rec_argument(st, ctor_btype_cursor)
+        } else {
+            self.which_valid_ind_app(st, ctor_btype_cursor)
+        }
+    }
+
+    /// Verified in place, body unchanged: one header per name in the block,
+    /// all of it owned by the checker's context.
+    fn collect_unmodified_mutuals(&self, t_from_file: &InductiveData<'t>) -> (result: Vec<IndTyHeader<'t>>)
+        requires
+            crate::env_model::inductive_data_owned(*self.env, *t_from_file),
+            crate::tc::tc_wf(*self),
+        ensures
+            result@.len() == t_from_file.all_ind_names@.len(),
+            forall|i: int| 0 <= i < result@.len() ==> crate::tc::tc_owns(*self, #[trigger] result@[i].name)
+                && crate::tc::tc_owns(*self, result@[i].ty)
+                && forall|j: int| 0 <= j < result@[i].ctors@.len() ==> crate::tc::tc_owns(*self, #[trigger] result@[i].ctors@[j].name)
+                    && crate::tc::tc_owns(*self, result@[i].ctors@[j].ty),
+    {
+        let mut all_inductives: Vec<IndTyHeader<'t>> = Vec::new();
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+        }
+        // Get all of the mutual inductives, but don't re-insert the base type.
+        for n in it: t_from_file.all_ind_names.iter()
+            invariant
+                crate::tc::tc_wf(*self),
+                all_inductives@.len() == it.index(),
+                it.seq().len() == t_from_file.all_ind_names@.len(),
+                forall|i: int| 0 <= i < all_inductives@.len() ==> crate::tc::tc_owns(*self, #[trigger] all_inductives@[i].name)
+                    && crate::tc::tc_owns(*self, all_inductives@[i].ty)
+                    && forall|j: int| 0 <= j < all_inductives@[i].ctors@.len() ==> crate::tc::tc_owns(*self, #[trigger] all_inductives@[i].ctors@[j].name)
+                        && crate::tc::tc_owns(*self, all_inductives@[i].ctors@[j].ty),
+        {
+            let t = self.env.get_inductive(n).unwrap();
+            all_inductives.push(self.header_of_ty(t));
+        }
+        all_inductives
+    }
+
+    /// Verified in place, body unchanged: the header of `t` with its
+    /// constructors, all of it owned by the checker's context.
+    fn header_of_ty(&self, t: &InductiveData<'t>) -> (result: IndTyHeader<'t>)
+        requires
+            crate::env_model::inductive_data_owned(*self.env, *t),
+            crate::tc::tc_wf(*self),
+        ensures
+            result.name == t.info.name,
+            result.ty == t.info.ty,
+            result.ctors@.len() == t.all_ctor_names@.len(),
+            forall|j: int| 0 <= j < result.ctors@.len() ==> crate::tc::tc_owns(*self, #[trigger] result.ctors@[j].name)
+                && crate::tc::tc_owns(*self, result.ctors@[j].ty),
+    {
+        fn header_of_ctor<'t>(t: &ConstructorData<'t>) -> (r: CtorHeader<'t>)
+            ensures
+                r.name == t.info.name,
+                r.ty == t.info.ty,
+        {
+            CtorHeader { name: t.info.name, ty: t.info.ty }
+        }
+        let ctors = {
+            let mut out: Vec<CtorHeader<'t>> = Vec::new();
+            proof {
+                broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            }
+            for ctor_name in it: t.all_ctor_names.as_ref()
+                invariant
+                    crate::tc::tc_wf(*self),
+                    out@.len() == it.index(),
+                    it.seq().len() == t.all_ctor_names@.len(),
+                    forall|j: int| 0 <= j < out@.len() ==> crate::tc::tc_owns(*self, #[trigger] out@[j].name)
+                        && crate::tc::tc_owns(*self, out@[j].ty),
+            {
+                out.push(header_of_ctor(self.env.get_constructor(ctor_name).unwrap()));
+            }
+            out
+        };
+        IndTyHeader { name: t.info.name, ty: t.info.ty, ctors }
+    }
+
+    /// Verified in place, body unchanged: the parameter locals are well-scoped
+    /// unique locals, and the telescope's remainder stays level free.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn get_local_params(&mut self, mut e: ExprPtr<'t>, num_params: u16) -> (result: (Vec<ExprPtr<'t>>, ExprPtr<'t>))
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, e),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result.0@.len() == num_params,
+            forall|i: int| 0 <= i < result.0@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.0@[i]),
+            level_free(*(*final(self)).ctx, result.1),
+    {
+        let mut param_locals = Vec::with_capacity(num_params as usize);
+        for _ in it: 0..num_params
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                level_free(*self.ctx, e),
+                param_locals@.len() == it.index(),
+                it.seq().len() == num_params,
+                forall|i: int| 0 <= i < param_locals@.len() ==> level_free_local(*self.ctx, #[trigger] param_locals@[i]),
+        {
+            match self.ctx.read_expr(e) {
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                    proof {
+                        assert(level_free(*self.ctx, binder_type));
+                        crate::quot_model::mk_unique_deep(*self.ctx, local_, binder_type);
+                    }
+                    e = self.ctx.inst(body, &[local_]);
+                    proof {
+                        let aids = crate::util_model::arena_ids(*self.ctx);
+                        assert([local_]@ =~= seq![local_]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![local_]) =~= seq![crate::expr_arena_bridge::to_model(local_)]);
+                        crate::tc::inst_deep_in(aids, body, seq![local_], vstd::iset::ISet::empty(), 0);
+                        crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_), 0);
+                        level_free_in_scope(*self, e);
+                    }
+                    let ghost pre = e;
+                    e = self.whnf(e);
+                    proof {
+                        level_free_pres(*self.ctx, pre, e);
+                    }
+                    param_locals.push(local_);
+                }
+                _ => panic!("exhausted telescope early"),
+            }
+        }
+        (param_locals, e)
+    }
+
+    /// Verified in place, body unchanged: the binders' locals are well-scoped
+    /// unique locals, and the remainder stays level free.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn handle_rec_args_aux(&mut self, mut rec_arg_cursor: ExprPtr<'t>) -> (result: (ExprPtr<'t>, Vec<ExprPtr<'t>>))
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, rec_arg_cursor),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            level_free(*(*final(self)).ctx, result.0),
+            forall|i: int| 0 <= i < result.1@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.1@[i]),
+    {
+        let mut xs = Vec::new();
+        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(rec_arg_cursor)
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                level_free(*self.ctx, rec_arg_cursor),
+                forall|i: int| 0 <= i < xs@.len() ==> level_free_local(*self.ctx, #[trigger] xs@[i]),
+        {
+            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+            proof {
+                assert(level_free(*self.ctx, binder_type));
+                crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+            }
+            rec_arg_cursor = self.ctx.inst(body, &[local]);
+            proof {
+                let aids = crate::util_model::arena_ids(*self.ctx);
+                assert([local]@ =~= seq![local]);
+                assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                level_free_in_scope(*self, rec_arg_cursor);
+            }
+            let ghost pre = rec_arg_cursor;
+            rec_arg_cursor = self.whnf(rec_arg_cursor);
+            proof {
+                level_free_pres(*self.ctx, pre, rec_arg_cursor);
+            }
+            xs.push(local)
+        }
+        (rec_arg_cursor, xs)
+    }
+
     /// A recursor rule's value, built exactly as `mk_rec_rule1` built it:
     /// `minor ctor_args* handled_rec_args*` under the lambda telescopes over the
     /// constructor's arguments, the minor premises, the motives and the
