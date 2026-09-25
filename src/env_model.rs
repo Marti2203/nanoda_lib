@@ -292,6 +292,47 @@ pub open spec fn env_matches<'x, 'a, 't, 'p>(env: Env<'x, 'a>, c: crate::util::T
     env_arena_ids(env) == crate::util_model::arena_ids(c)
 }
 
+/// Registered opaquely: only passed through.
+#[allow(dead_code)]
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExEnvLimit<'a>(crate::env::EnvLimit<'a>);
+
+/// THE TRUSTED FACT ABOUT FRESH ENVIRONMENTS (option A, chosen 2026-09-25).
+///
+/// A checker's environment is built from its context's own export file
+/// (optionally with a temporary extension the context itself produced), and
+/// such an environment indexes the context's arenas. `TypeChecker::new`
+/// requires exactly this (`env_matches`); every unverified caller already
+/// assumed it silently, and this states it once, where the environment is
+/// made. It is a fact about ghost arena ids only -- no claim about the
+/// environment's contents.
+///
+/// Discharging it instead (option B, not taken yet): give `Env` its arena
+/// ids as a ghost field set from the export file and the extension, so
+/// `env_arena_ids` is defined rather than uninterpreted and `env_matches`
+/// follows from ownership. See `docs/ARENA_IDENTITY.md`.
+#[verifier::external_body]
+pub fn ctx_env<'t, 'p: 't>(ctx: &crate::util::TcCtx<'t, 'p>, env_limit: crate::env::EnvLimit<'p>) -> (result: Env<'t, 't>)
+    ensures
+        env_matches(result, *ctx),
+{
+    ctx.export_file.new_env(env_limit)
+}
+
+/// The same fact for an environment with a temporary extension.
+#[verifier::external_body]
+pub fn ctx_env_ext<'x, 't, 'p: 't>(
+    ctx: &crate::util::TcCtx<'t, 'p>,
+    env_ext: &'x crate::env::DeclarMap<'t>,
+    env_limit: crate::env::EnvLimit<'p>,
+) -> (result: Env<'x, 't>)
+    ensures
+        env_matches(result, *ctx),
+{
+    crate::env::Env::new_w_temp_ext(&ctx.export_file.declars, Some(env_ext), &ctx.export_file.notations, env_limit)
+}
+
 pub uninterp spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
 
 /// The environment as the reduction and typing models see it: its

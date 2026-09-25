@@ -143,3 +143,40 @@ What this rests on:
   injectivity axiom would be refutable there. Nothing does this, and it would
   have to be written deliberately; closing it fully needs the counter to carry
   its context's arena ids as a ghost tag.
+
+## Environments and their arenas: option A now, option B later (2026-09-25)
+
+`TypeChecker::new` requires `env_matches(env, ctx)`: the environment indexes
+the context's arenas. `env_arena_ids` is uninterpreted, so nothing proves this
+for a fresh environment; before this change every unverified caller of
+`TypeChecker::new` assumed it silently.
+
+**Option A (taken).** `env_model::ctx_env` / `ctx_env_ext` build a checker's
+environment from the context's own export file (and, for the latter, a
+temporary extension the context produced) and are *trusted* to satisfy
+`env_matches`. They are `external_body` with one `ensures`, counted by
+`scripts/trust-surface.sh` among the "external_body exec fn with a contract"
+entries. The fact is about ghost ids only; it claims nothing about what the
+environment contains. Verified code that makes a type checker (the
+`check_inductive_declar` glue, once verified) goes through these two.
+
+**Option B (not taken yet): make the fact provable.**
+
+1. Give `Env` a ghost field `arenas: Ghost<(nat, nat)>`, and define
+   `env_arena_ids(env)` as that field instead of leaving it uninterpreted.
+2. Set it where environments are made. `Env::new` / `new_w_temp_ext` would
+   take the context (or its arena ids) as a ghost argument, so their
+   constructors state the ids they record. `ExportFile::new_env` and the three
+   `with_tc*` helpers pass the ids of the context they are about to pair it
+   with.
+3. The `env_matches` requirement of `TypeChecker::new` then follows from how
+   the environment was constructed, and `ctx_env`/`ctx_env_ext` become
+   verified, with no trust.
+
+Cost: the `Env` constructors and their callers change signature (a ghost
+argument each); every `Env` value is built in one of about six places
+(`util.rs`, `env.rs`, `inductive.rs`), so the change is small in lines but
+touches the environment type the whole cycle is generic over. The risk is
+proof churn wherever `env_arena_ids` is currently treated as an opaque
+function of the environment value. Worth doing once the inductive glue is
+verified and the remaining trusted facts are being paid down.
