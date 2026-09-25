@@ -111,10 +111,11 @@ pub proof fn build_hasher_default_valid_unique()
 // (componentwise `raw`, and `u16` equality), and the `*_owned_keys` lemmas
 // below derive it from "every key belongs to one context".
 
-/// A fresh dag for a new context. Callable, claims nothing: the checker only
-/// needs a context's arena ids to be its own (`TcCtx::new`), never what the
-/// dag holds.
-pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::util::Config) -> crate::util::LeanDag<'a>
+/// A fresh dag for a new context: its body inserts the anonymous name and
+/// level zero into empty sets, and nothing else.
+pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::util::Config) -> (result: crate::util::LeanDag<'a>)
+    ensures
+        result.fresh(),
 ;
 
 /// Pointers owned by one arena pair obey the hash-table key model: same raw
@@ -458,7 +459,14 @@ pub open spec fn owns_all_in<A>(ids: (nat, nat), s: Seq<crate::util::Ptr<A>>) ->
 /// (`same_arenas`) carries every ownership fact across a call by congruence,
 /// with no quantifier to re-instantiate.
 pub open spec fn owns<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, p: crate::util::Ptr<A>) -> bool {
-    owns_in(arena_ids(c), p)
+    owns_in(arena_ids(c), p) && ctx_ok(c)
+}
+
+/// The context's dag is a checker's dag serving the context's export file
+/// (`TcCtx::new` makes it so, and every context function keeps it:
+/// `same_arenas`). Part of `owns`, so an owned pointer carries it.
+pub open spec fn ctx_ok<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> bool {
+    c.dag.is_tc() && c.dag.partner() == c.export_file.arena()
 }
 
 /// Two pointers one context owns are equal exactly when their indices are:
@@ -501,7 +509,7 @@ pub proof fn owns_all_push<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crat
 }
 
 pub open spec fn owns_all<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate::util::Ptr<A>>) -> bool {
-    owns_all_in(arena_ids(c), s)
+    owns_all_in(arena_ids(c), s) && ctx_ok(c)
 }
 
 /// The frame every `&mut` context function keeps: the context still indexes
@@ -511,6 +519,8 @@ pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::ut
     &&& arena_ids(a) == arena_ids(b)
     &&& crate::util::unique_count(a) <= crate::util::unique_count(b)
     &&& a.export_file == b.export_file
+    &&& a.dag.is_tc() == b.dag.is_tc()
+    &&& a.dag.partner() == b.dag.partner()
 }
 
 /// `FxHashMap`'s hasher factory, registered so `ExprCache`'s fields have a

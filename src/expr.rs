@@ -148,6 +148,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// the four others, proved the same way from `mk_const` plus the
     /// name-cache invariant.
     pub(crate) fn c_bool_false(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -171,6 +173,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_bool_true(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -194,6 +198,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_nat_zero(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -217,6 +223,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn c_nat_succ(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -240,6 +248,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn nat_type(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -262,6 +272,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged. Was an `assume_specification`; now
     /// proved from `mk_const` (itself verified) plus the name-cache invariant.
     pub(crate) fn string_type(&mut self) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -915,6 +927,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// did not say the constant carries no universe levels -- which the model's
     /// Nat-folding rule requires of `Bool.true`/`Bool.false`.
     pub(crate) fn bool_to_expr(&mut self, b: bool) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,

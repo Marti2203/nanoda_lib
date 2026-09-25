@@ -1007,14 +1007,10 @@ pub proof fn export_ind_env_owned<'x, 't, 'p>(env: crate::env::Env<'x, 't>, c: T
         crate::env_model::inductive_data_owned(env, ind),
 {
     assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::env_model::env_owns(env, #[trigger] ind.all_ind_names@[k]) by {
-        export_tagged_owned(c, ind.all_ind_names@[k]);
     }
     assert forall|k: int| 0 <= k < ind.all_ctor_names@.len() implies crate::env_model::env_owns(env, #[trigger] ind.all_ctor_names@[k]) by {
-        export_tagged_owned(c, ind.all_ctor_names@[k]);
     }
-    export_tagged_owned(c, ind.info.name);
-    export_tagged_owned(c, ind.info.uparams);
-    export_tagged_owned(c, ind.info.ty);
+
 }
 
 /// `check_inductive_specs` keeps the state owned: what it adds is covered by
@@ -1089,6 +1085,7 @@ pub proof fn imap_owned_insert<'a>(ids: (nat, nat), m: &DeclarMap<'a>, k: NamePt
 /// A context over the export file owns its export pointers.
 pub proof fn export_tagged_owned<'t, 'p, A>(c: TcCtx<'t, 'p>, p: crate::util::Ptr<A>)
     requires
+        crate::util_model::ctx_ok(c),
         crate::util_model::export_tagged(crate::util_model::arena_ids(c).1, p),
     ensures
         crate::util_model::owns(c, p),
@@ -1134,6 +1131,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     invariant
                         export_ok(*self),
                         ctx.export_file == self,
+                        crate::util_model::ctx_ok(ctx),
                         forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(self.arena(), #[trigger] ind.all_ctor_names@[k]),
                         forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]),
                     decreases ind.all_ctor_names@.len() - c,
@@ -1219,6 +1217,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     fn ck_recursor_names_simple(&self, ind_name: &NamePtr<'t>, derived: FxHashSet<NamePtr<'t>>)
         requires
             export_rec_names_ok(*self.export_file),
+            crate::util_model::ctx_ok(*self),
             crate::util_model::export_tagged(self.export_file.arena(), *ind_name),
             forall|n: NamePtr<'t>| #[trigger] derived@.contains(n) ==> crate::util_model::owns(*self, n),
         ensures

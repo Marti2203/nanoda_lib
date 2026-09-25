@@ -432,7 +432,9 @@ impl<'p> ExportFile<'p> {
     /// both; unverified, so assumed of every export file.
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
-        self.name_cache.arena_id() == self.dag.id()
+        &&& self.name_cache.arena_id() == self.dag.id()
+        &&& !self.dag.is_tc()
+        &&& self.dag.partner() == self.dag.id()
     }
 
     /// The export tier's arena: the tag its name cache carries. Closed,
@@ -580,13 +582,24 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Verified in place, body unchanged: a context over `export_file` and
     /// `tdag`, its level counter at zero and its caches empty.
+    ///
+    /// VERUS-REWRITE(arena-tokens): the dag is marked, in ghost state, as a
+    /// checker's dag serving `export_file` (erased at run time).
     pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> (result: Self)
+        requires
+            old(tdag).fresh(),
         ensures
             result.export_file == export_file,
             crate::util_model::arena_ids(result) == (crate::util_model::dag_arena(*old(tdag)), export_file.arena()),
+            crate::util_model::ctx_ok(result),
             result.dbj_level_counter == 0,
             crate::expr_arena_bridge::dsubst_cache_sound(result),
     {
+        proof {
+            use_type_invariant(&*tdag);
+            tdag.toks.borrow_mut().is_tc = true;
+            tdag.toks.borrow_mut().partner = export_file.arena();
+        }
         Self {
             export_file,
             dag: tdag,
@@ -939,6 +952,10 @@ pub tracked struct DagToks<'a> {
     pub tracked uparams: crate::arena_history::ArenaTok<Arc<[LevelPtr<'a>]>>,
     pub tracked strings: crate::arena_history::ArenaTok<CowStr<'a>>,
     pub tracked bignums: crate::arena_history::ArenaTok<BigUint>,
+    /// A checker's dag (rather than an export file's), and the export arena
+    /// its nodes may point into.
+    pub ghost is_tc: bool,
+    pub ghost partner: nat,
 }
 
 impl<'a> LeanDag<'a> {
@@ -956,11 +973,37 @@ impl<'a> LeanDag<'a> {
         &&& t.uparams.id() == t.names.id()
         &&& t.strings.id() == t.names.id()
         &&& t.bignums.id() == t.names.id()
+        &&& crate::indexmap_model::iset_keys(&self.names).len() >= 1
+        &&& crate::indexmap_model::iset_keys(&self.names)[0] == Name::Anon
+        &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
+            ==> crate::name_arena_bridge::name_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.names)[i], i as nat, t.is_tc, t.names.id(), t.partner)
     }
 
     /// The dag's arena.
     pub closed spec fn id(self) -> nat {
         self.toks@.names.id()
+    }
+
+    /// A checker's dag, rather than an export file's.
+    pub closed spec fn is_tc(self) -> bool {
+        self.toks@.is_tc
+    }
+
+    /// The export arena this dag's nodes may point into (its own, for an
+    /// export file's dag).
+    pub closed spec fn partner(self) -> nat {
+        self.toks@.partner
+    }
+
+    /// What `LeanDag::new` builds: the anonymous name and level zero, nothing
+    /// else.
+    pub closed spec fn fresh(self) -> bool {
+        &&& crate::indexmap_model::iset_keys(&self.names) == seq![Name::<'a>::Anon]
+        &&& crate::indexmap_model::iset_keys(&self.levels) == seq![Level::<'a>::Zero]
+        &&& crate::indexmap_model::iset_keys(&self.exprs).len() == 0
+        &&& crate::indexmap_model::iset_keys(&self.uparams).len() == 0
+        &&& crate::indexmap_model::iset_keys(&self.strings).len() == 0
+        &&& (self.bignums matches Some(b) ==> crate::indexmap_model::iset_keys(&b).len() == 0)
     }
 }
 

@@ -8529,6 +8529,7 @@ pub open spec fn tc_owns<'x, 't, 'p, A>(tc: TypeChecker<'x, 't, 'p>, p: crate::u
 
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& crate::env_model::env_matches(*tc.env, *tc.ctx)
+    &&& crate::util_model::ctx_ok(*tc.ctx)
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.infer_cache_check@.contains_key(e) ==> kinfer_claim(
             *tc.env,
@@ -8640,6 +8641,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 && crate::util_model::owns(*old(dag), d.uparams) && crate::util_model::owns(*old(dag), d.ty),
             old(dag).dbj_level_counter == 0,
             crate::env_model::env_matches(*env, *old(dag)),
+            crate::util_model::ctx_ok(*old(dag)),
             // Vacuous for a freshly built `TcCtx` -- the cache is empty -- but
             // it has to be said, because `tc_wf` now carries it.
             crate::expr_arena_bridge::dsubst_cache_sound(*old(dag)),

@@ -407,6 +407,21 @@ pub proof fn name_model_at_append<'a>(ns: Seq<Name<'a>>, n: Name<'a>, i: nat)
     assert(ns.push(n)[i as int] == ns[i as int]);
 }
 
+/// A stored name node is well formed at position `i` of a dag of tier `tc`
+/// with arena `id`, whose nodes may point into export arena `partner`: its
+/// children come earlier (or from the export tier), belong to those arenas,
+/// and it carries its canonical hash. Part of `LeanDag`'s invariant.
+pub open spec fn name_node_ok<'a>(n: Name<'a>, i: nat, tc: bool, id: nat, partner: nat) -> bool {
+    &&& name_children_below2(n, tc, i)
+    &&& match n {
+        Name::Anon => true,
+        Name::Str(pfx, sfx, _) => crate::util_model::owns_in((id, partner), pfx)
+            && crate::util_model::owns_in((id, partner), sfx) && (!tc ==> !ptr_is_tc(sfx)),
+        Name::Num(pfx, _, _) => crate::util_model::owns_in((id, partner), pfx),
+    }
+    &&& name_hash_ok(n)
+}
+
 /// The canonical hash of a name node: what `hash64!` computes from its
 /// contents. The arena compares nodes including this field, so it is what
 /// makes hash-consing (`to_model_name_injective`) hold.
