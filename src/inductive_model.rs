@@ -80,7 +80,6 @@ use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_b
 use crate::quot_model::local_type;
 #[cfg(verus_only)]
 use crate::tc_model::rec_rule_val_of;
-use crate::tc_model::{WhnfMemo};
 use crate::util::{ExprPtr, LevelPtr, LevelsPtr, NamePtr, TcCtx};
 #[allow(unused_imports)]
 use vstd::prelude::*;

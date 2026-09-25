@@ -77,17 +77,6 @@ pub(crate) fn get_recursor_data<'x, 'a>(
     Some((rec.num_params, rec.num_motives, rec.num_minors, rec.major_idx(), rec.info.uparams, rec.rec_rules.clone()))
 }
 
-/// `to_ctor_when_k`'s (`tc.rs:1015-1038`) own gate: `RecursorData::is_k`,
-/// a SEPARATE small accessor rather than extending `get_recursor_data`'s
-/// existing tuple (avoids touching that function's own already-verified
-/// `assume_specification`/call site), same "extract only what's needed,
-/// one field at a time" convention as `get_constructor_num_fields` next
-/// to `get_constructor_num_params`.
-#[allow(dead_code)]
-pub(crate) fn get_recursor_is_k<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>) -> Option<bool> {
-    env.get_recursor(n).map(|rec| rec.is_k)
-}
-
 /// `tc.rs::TypeChecker::get_applied_def`'s own env-level classification
 /// (`tc.rs:1133-1142`): a name is "an applied def" exactly when it's a
 /// `Definition` (real hint) or `Theorem` (treated as `Opaque` -- theorems
@@ -409,16 +398,6 @@ pub assume_specification<'x, 'a>[ Env::<'x, 'a>::visible_declar_names ](
 /// leastness/iteration-completeness character as `env_global_cap_le`.
 pub uninterp spec fn env_global_size_cap<'x, 'a>(env: Env<'x, 'a>) -> nat;
 
-#[verifier::external_body]
-pub proof fn env_global_size_cap_le<'x, 'a>(env: Env<'x, 'a>, k: nat)
-    requires
-        forall|id: u64| #[trigger]
-            to_model_of_env(env).contains_key(id) ==> size(to_model_of_env(env)[id].1) <= k,
-    ensures
-        env_global_size_cap(env) <= k,
-{
-}
-
 /// Closedness of every definition body (no locals) -- CHECKED by the
 /// certificate scan via the real `has_fvars` flag, then pinned here --
 /// bundled with "no definition id is a constructor id" (a name has one
@@ -437,28 +416,6 @@ pub uninterp spec fn env_global_closed<'x, 'a>(env: Env<'x, 'a>) -> bool;
 /// `Local`, so verifying it in place turned that into a `!has_fv`
 /// precondition, and its callers substitute into declaration types.
 pub uninterp spec fn env_global_closed_ty<'x, 'a>(env: Env<'x, 'a>) -> bool;
-
-#[verifier::external_body]
-pub proof fn env_global_closed_ty_pin<'x, 'a>(env: Env<'x, 'a>)
-    requires
-        forall|id: u64| #[trigger]
-            to_model_of_declar_ty(env).contains_key(id) ==> !has_fv(
-                to_model_of_declar_ty(env)[id].1,
-            ),
-    ensures
-        env_global_closed_ty(env),
-{
-}
-
-#[verifier::external_body]
-pub proof fn env_global_closed_pin<'x, 'a>(env: Env<'x, 'a>)
-    requires
-        forall|id: u64| #[trigger]
-            to_model_of_env(env).contains_key(id) ==> !has_fv(to_model_of_env(env)[id].1),
-    ensures
-        env_global_closed(env),
-{
-}
 
 /// The UNCAPPED delta model: every definition whose value has no free
 /// variables, with no size ceiling at all. `env_model_capped`'s `size <= k`
@@ -702,12 +659,6 @@ pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
                 && to_model_of_ctor_num_fields(*env)[name_id(*n)] == k,
             None => true,
         },
-;
-
-pub assume_specification<'x, 'a>[ get_recursor_is_k ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<bool>)
 ;
 
 /// `Env::can_be_struct` bridged directly (no wrapper needed -- it already

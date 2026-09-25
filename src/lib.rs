@@ -10,7 +10,6 @@ use vstd::prelude::*;
 
 pub mod beta_model;
 pub mod debug_printer;
-pub mod delta_bound_model;
 pub mod env;
 pub mod env_model;
 pub mod expr;
