@@ -628,30 +628,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
 
 
-    fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> ExprPtr<'t> {
-        let elim_sort = self.ctx.mk_sort(st.elim_level.unwrap());
-        let w_major = self.ctx.abstr_pi(major, elim_sort);
-        let motive_type =
-            self.ctx.abstr_pi_telescope(&st.local_indices[usize::try_from(ind_type_idx).unwrap()], w_major);
-        let motive_name_base = self.ctx.str1("motive");
-        let motive_name = if st.all_inductives_incl_specialized.len() > 1 {
-            // Lean uses 1-based indexing for these, so we try to match for the pretty printer output.
-            self.ctx.append_index_after(motive_name_base, ind_type_idx + 1)
-        } else {
-            motive_name_base
-        };
 
-        self.ctx.mk_unique(motive_name, BinderStyle::Implicit, motive_type)
-    }
-
-    fn mk_motives(&mut self, st: &mut InductiveCheckState<'t>) {
-        debug_assert_eq!(st.local_indices.len(), st.ind_consts.len());
-        debug_assert_eq!(st.majors.len(), st.ind_consts.len());
-        for i in 0..st.ind_consts.len() {
-            let major = st.majors[i];
-            st.motives.push(self.mk_motive_dep(st, major, i as u64));
-        }
-    }
 
 
 
@@ -1627,6 +1604,56 @@ pub proof fn spine_free_size(h: ExprSpec, args: Seq<ExprSpec>)
     }
 }
 
+/// A major premise (or motive) local: `Free`, owned, with a closed type.
+pub open spec fn major_ok<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>) -> bool {
+    &&& crate::util_model::owns(c, l)
+    &&& crate::expr_arena_bridge::to_model(l) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(l))
+    &&& crate::expr_model::nlbv(crate::quot_model::local_type(l)) <= 0
+}
+
+/// A level-free local's recorded type is closed.
+pub proof fn local_type_closed<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
+    requires
+        level_free_local(c, l),
+    ensures
+        crate::expr_model::nlbv(crate::quot_model::local_type(l)) <= 0,
+{
+    let aids = crate::util_model::arena_ids(c);
+    let id = crate::expr_arena_bridge::expr_id(l);
+    crate::expr_arena_bridge::arena_lctx_local(aids, l);
+    assert(crate::expr_model::dbj_deep_in(aids, ExprSpec::Free(id), vstd::iset::ISet::empty(), 0));
+    let n = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(id), n);
+}
+
+/// A telescope over locals with closed types keeps a closed body closed.
+pub proof fn tele_closed<'t>(bs: Seq<ExprPtr<'t>>, e: ExprSpec)
+    requires
+        crate::expr_model::nlbv(e) <= 0,
+        forall|i: int| 0 <= i < bs.len() ==> crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] bs[i])) <= 0,
+    ensures
+        crate::expr_model::nlbv(crate::expr_arena_bridge::abstr_pi_telescope_model(
+            Seq::new(bs.len(), |i: int| crate::expr_arena_bridge::expr_id(bs[i])),
+            Seq::new(bs.len(), |i: int| crate::quot_model::local_type(bs[i])),
+            e,
+        )) <= 0,
+    decreases bs.len(),
+{
+    if bs.len() > 0 {
+        let ids = Seq::new(bs.len(), |i: int| crate::expr_arena_bridge::expr_id(bs[i]));
+        let tys = Seq::new(bs.len(), |i: int| crate::quot_model::local_type(bs[i]));
+        let rest = bs.drop_last();
+        assert(ids.drop_last() =~= Seq::new(rest.len(), |i: int| crate::expr_arena_bridge::expr_id(rest[i])));
+        assert(tys.drop_last() =~= Seq::new(rest.len(), |i: int| crate::quot_model::local_type(rest[i])));
+        crate::expr_model::abstr_full_nlbv1(e, ids.last(), 0);
+        let inner = ExprSpec::Bind(Box::new(tys.last()), Box::new(crate::expr_model::abstr_full(e, seq![ids.last()], 0)));
+        assert(crate::expr_model::nlbv(inner) <= 0);
+        assert forall|i: int| 0 <= i < rest.len() implies crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] rest[i])) <= 0 by {
+            assert(rest[i] == bs[i]);
+        }
+        tele_closed(rest, inner);
+    }
+}
+
 /// The name ids of a slice of constants.
 pub open spec fn const_ids<'t>(cs: Seq<ExprPtr<'t>>) -> Seq<u64> {
     Seq::new(cs.len(), |i: int| crate::expr_arena_bridge::const_id(cs[i]))
@@ -1803,6 +1830,113 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
+    /// Verified in place, body unchanged: the motive is a local with a closed
+    /// type (`Pi indices, Pi major, Sort elim_level`).
+    fn mk_motive_dep(&mut self, st: &InductiveCheckState<'t>, major: ExprPtr<'t>, ind_type_idx: u64) -> (result: ExprPtr<'t>)
+        requires
+            st.elim_level is Some,
+            crate::util_model::owns(*old(self).ctx, st.elim_level->0),
+            major_ok(*old(self).ctx, major),
+            (ind_type_idx as int) < st.local_indices@.len(),
+            forall|j: int| 0 <= j < st.local_indices@[ind_type_idx as int]@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_indices@[ind_type_idx as int]@[j]),
+            ind_type_idx < u64::MAX,
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            major_ok(*(*final(self)).ctx, result),
+    {
+        let elim_sort = self.ctx.mk_sort(st.elim_level.unwrap());
+        let w_major = self.ctx.abstr_pi(major, elim_sort);
+        let motive_type =
+            self.ctx.abstr_pi_telescope(&st.local_indices[usize::try_from(ind_type_idx).unwrap()], w_major);
+        proof {
+            let ix = st.local_indices@[ind_type_idx as int]@;
+            assert(crate::expr_model::abstr_full(crate::expr_arena_bridge::to_model(elim_sort),
+                seq![crate::expr_arena_bridge::expr_id(major)], 0) == crate::expr_arena_bridge::to_model(elim_sort));
+            assert forall|j: int| 0 <= j < ix.len() implies crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] ix[j])) <= 0 by {
+                local_type_closed(*self.ctx, ix[j]);
+            }
+            assert(crate::expr_arena_bridge::to_model(w_major) == ExprSpec::Bind(
+                Box::new(crate::quot_model::local_type(major)), Box::new(crate::expr_arena_bridge::to_model(elim_sort))));
+            assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(w_major)) <= 0) by {
+                reveal_with_fuel(crate::expr_model::nlbv, 2);
+            }
+            tele_closed(ix, crate::expr_arena_bridge::to_model(w_major));
+            assert(forall|i: int| #![trigger ix[i]] 0 <= i < ix.len() ==> crate::expr_arena_bridge::to_model(ix[i]) is Free);
+        }
+        let motive_name_base = self.ctx.str1("motive");
+        let motive_name = if st.all_inductives_incl_specialized.len() > 1 {
+            // Lean uses 1-based indexing for these, so we try to match for the pretty printer output.
+            self.ctx.append_index_after(motive_name_base, ind_type_idx + 1)
+        } else {
+            motive_name_base
+        };
+
+        self.ctx.mk_unique(motive_name, BinderStyle::Implicit, motive_type)
+    }
+
+    /// Verified in place, body unchanged: one motive per block inductive,
+    /// each a local with a closed type.
+    fn mk_motives(&mut self, st: &mut InductiveCheckState<'t>)
+        requires
+            old(st).elim_level is Some,
+            crate::util_model::owns(*old(self).ctx, old(st).elim_level->0),
+            old(st).ind_consts@.len() <= old(st).local_indices@.len(),
+            old(st).ind_consts@.len() <= old(st).majors@.len(),
+            old(st).ind_consts@.len() < u64::MAX,
+            forall|i: int| 0 <= i < old(st).majors@.len() ==> major_ok(*old(self).ctx, #[trigger] old(st).majors@[i]),
+            forall|i: int, j: int| 0 <= i < old(st).local_indices@.len() && 0 <= j < old(st).local_indices@[i]@.len()
+                ==> level_free_local(*old(self).ctx, #[trigger] old(st).local_indices@[i]@[j]),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            *final(st) == (InductiveCheckState { motives: final(st).motives, ..*old(st) }),
+            final(st).motives@.len() == old(st).motives@.len() + old(st).ind_consts@.len(),
+            forall|i: int| 0 <= i < old(st).motives@.len() ==> #[trigger] final(st).motives@[i] == old(st).motives@[i],
+            forall|i: int| old(st).motives@.len() <= i < final(st).motives@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).motives@[i]),
+    {
+        let ghost st0 = *st;
+        debug_assert_eq!(st.local_indices.len(), st.ind_consts.len());
+        debug_assert_eq!(st.majors.len(), st.ind_consts.len());
+        for i in 0..st.ind_consts.len()
+            invariant
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*self),
+                *st == (InductiveCheckState { motives: st.motives, ..st0 }),
+                st0.ind_consts@.len() <= st0.local_indices@.len(),
+                st0.ind_consts@.len() <= st0.majors@.len(),
+                st0.ind_consts@.len() < u64::MAX,
+                st.elim_level is Some,
+                crate::util_model::owns(*self.ctx, st.elim_level->0),
+                forall|k: int| 0 <= k < st0.majors@.len() ==> major_ok(*self.ctx, #[trigger] st0.majors@[k]),
+                forall|k: int, j: int| 0 <= k < st0.local_indices@.len() && 0 <= j < st0.local_indices@[k]@.len()
+                    ==> level_free_local(*self.ctx, #[trigger] st0.local_indices@[k]@[j]),
+                st.motives@.len() == st0.motives@.len() + i,
+                forall|k: int| 0 <= k < st0.motives@.len() ==> #[trigger] st.motives@[k] == st0.motives@[k],
+                forall|k: int| st0.motives@.len() <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+        {
+            let major = st.majors[i];
+            let ghost ms0 = st.motives@;
+            st.motives.push(self.mk_motive_dep(st, major, i as u64));
+            proof {
+                assert forall|k: int| st0.motives@.len() <= k < st.motives@.len() implies major_ok(*self.ctx, #[trigger] st.motives@[k]) by {
+                    if k < st.motives@.len() - 1 {
+                        assert(st.motives@[k] == ms0[k]);
+                    }
+                }
+            }
+        }
+    }
+
     /// Verified in place, body unchanged: one header per name in the block,
     /// all of it owned by the checker's context.
     fn collect_unmodified_mutuals(&self, t_from_file: &InductiveData<'t>) -> (result: Vec<IndTyHeader<'t>>)
@@ -1832,7 +1966,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         && crate::tc::tc_owns(*self, all_inductives@[i].ctors@[j].ty),
         {
             let t = self.env.get_inductive(n).unwrap();
-            all_inductives.push(self.header_of_ty(t));
+            let ghost ai0 = all_inductives@;
+            let h = self.header_of_ty(t);
+            all_inductives.push(h);
+            proof {
+                assert forall|i: int| 0 <= i < all_inductives@.len() implies crate::tc::tc_owns(*self, #[trigger] all_inductives@[i].name)
+                    && crate::tc::tc_owns(*self, all_inductives@[i].ty)
+                    && forall|j: int| 0 <= j < all_inductives@[i].ctors@.len() ==> crate::tc::tc_owns(*self, #[trigger] all_inductives@[i].ctors@[j].name)
+                        && crate::tc::tc_owns(*self, all_inductives@[i].ctors@[j].ty) by {
+                    if i < ai0.len() {
+                        assert(all_inductives@[i] == ai0[i]);
+                    } else {
+                        assert(all_inductives@[i] == h);
+                    }
+                }
+            }
         }
         all_inductives
     }
@@ -3567,7 +3715,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn mk_majors(&mut self, st: &mut InductiveCheckState<'t>)
         requires
             crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
+            old(st).ind_consts@.len() <= old(st).local_indices@.len(),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            *final(st) == (InductiveCheckState { majors: final(st).majors, ..*old(st) }),
+            final(st).majors@.len() == old(st).majors@.len() + old(st).ind_consts@.len(),
+            forall|i: int| 0 <= i < old(st).majors@.len() ==> #[trigger] final(st).majors@[i] == old(st).majors@[i],
+            forall|i: int| old(st).majors@.len() <= i < final(st).majors@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).majors@[i]),
     {
+        let ghost st0 = *st;
         let n = st.ind_consts.len();
         if st.local_indices.len() < n {
             panic!("mk_majors: local_indices is shorter than ind_consts");
@@ -3582,6 +3742,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 n == st.ind_consts@.len(),
                 n <= st.local_indices@.len(),
                 idx <= n,
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*self),
+                *st == (InductiveCheckState { majors: st.majors, ..st0 }),
+                st.majors@.len() == st0.majors@.len() + idx,
+                forall|i: int| 0 <= i < st0.majors@.len() ==> #[trigger] st.majors@[i] == st0.majors@[i],
+                forall|i: int| st0.majors@.len() <= i < st.majors@.len() ==> major_ok(*self.ctx, #[trigger] st.majors@[i]),
             decreases n - idx,
         {
             let ind_const = st.ind_consts[idx];
@@ -3593,7 +3762,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // requires it (every local's type is). Never fails on a
             // well-formed declaration.
             assert!(self.ctx.num_loose_bvars(ty) == 0, "mk_majors: a major premise's type has loose bound variables");
+            let ghost ms0 = st.majors@;
             st.majors.push(self.ctx.mk_unique(t, BinderStyle::Default, ty));
+            proof {
+                assert forall|i: int| st0.majors@.len() <= i < st.majors@.len() implies major_ok(*self.ctx, #[trigger] st.majors@[i]) by {
+                    if i < st.majors@.len() - 1 {
+                        assert(st.majors@[i] == ms0[i]);
+                    }
+                }
+            }
             idx = idx + 1;
         }
     }
