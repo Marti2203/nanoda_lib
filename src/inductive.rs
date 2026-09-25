@@ -1,33 +1,10 @@
 use crate::env::{ConstructorData, Declar, DeclarInfo, DeclarMap, InductiveData, RecRule, RecursorData};
 use crate::expr::{BinderStyle, Expr::*};
 use crate::tc::{InferFlag, TypeChecker};
-use crate::util::{new_fx_hash_set, ExportFile, ExprPtr, FxHashSet, FxIndexMap, LevelPtr, LevelsPtr, NamePtr, TcCtx};
+use crate::util::{new_fx_hash_set, ExportFile, ExprPtr, LeanDag, FxHashSet, FxIndexMap, LevelPtr, LevelsPtr, NamePtr, TcCtx};
 use std::sync::Arc;
 
 impl<'t, 'p: 't> ExportFile<'p> {
-    pub(crate) fn is_recursive(&self, ind_name: &NamePtr<'t>) -> bool {
-        match self.declars.get(ind_name).unwrap() {
-            Declar::Inductive(ind) => self.with_ctx(|ctx| {
-                for ctor_name in ind.all_ctor_names.iter() {
-                    match self.declars.get(ctor_name).unwrap() {
-                        Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
-                            let mut ctor_ty = ctor_data.info.ty;
-                            while let Pi { binder_type, body, .. } = ctx.read_expr(ctor_ty) {
-                                if ctx.find_const(binder_type, |n| ind.all_ind_names.iter().any(|nn| n == *nn)) {
-                                    return true;
-                                }
-                                ctor_ty = body;
-                            }
-                        }
-                        _ => panic!("expected constructor"),
-                    }
-                }
-                false
-            }),
-            _ => panic!("Not an inductive declaration"),
-        }
-    }
-
     pub(crate) fn check_inductive_declar(&self, d: &Declar<'t>) {
         let (ind, env_limit) = match d {
             Declar::Inductive(ind) => {
@@ -1010,6 +987,150 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             out.insert(r);
         }
         out
+    }
+}
+
+/// Every pointer of a declaration is an export pointer of arena `a`.
+pub open spec fn declar_export_tagged<'a>(a: nat, d: Declar<'a>) -> bool {
+    let i = crate::env::declar_info(d);
+    &&& crate::util_model::export_tagged(a, i.name)
+    &&& crate::util_model::export_tagged(a, i.uparams)
+    &&& crate::util_model::export_tagged(a, i.ty)
+    &&& match d {
+        Declar::Inductive(x) => {
+            &&& forall|k: int| 0 <= k < x.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] x.all_ind_names@[k])
+            &&& forall|k: int| 0 <= k < x.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] x.all_ctor_names@[k])
+        },
+        Declar::Constructor(c) => crate::util_model::export_tagged(a, c.inductive_name),
+        Declar::Recursor(r) => {
+            &&& forall|k: int| 0 <= k < r.all_inductives@.len() ==> crate::util_model::export_tagged(a, #[trigger] r.all_inductives@[k])
+            &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::export_tagged(a, #[trigger] r.rec_rules@[k].ctor_name)
+            &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::export_tagged(a, #[trigger] r.rec_rules@[k].val)
+        },
+        _ => true,
+    }
+}
+
+/// The export file's declarations are its own: every name and every pointer
+/// in the declaration map is an export pointer of the file's arena. What the
+/// parser builds; the checker's entry points take it as given.
+pub open spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
+    let a = ef.name_cache.arena_id();
+    &&& crate::indexmap_model::imap_wf(&ef.declars)
+    &&& forall|k: NamePtr<'p>| #[trigger] crate::indexmap_model::imap_view(&ef.declars).contains_key(k)
+        ==> crate::util_model::export_tagged(a, k)
+            && declar_export_tagged(a, crate::indexmap_model::imap_view(&ef.declars)[k])
+}
+
+/// Export pointers of one arena obey the hash-table key model: equal raw
+/// index, same arena, same pointer.
+pub proof fn export_keys_obey_model<A>(a: nat, s: Set<crate::util::Ptr<A>>)
+    requires
+        forall|k: crate::util::Ptr<A>| #[trigger] s.contains(k) ==> crate::util_model::export_tagged(a, k),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<crate::util::Ptr<A>>(s),
+{
+    assert forall|x: crate::util::Ptr<A>, y: crate::util::Ptr<A>|
+        #![trigger s.contains(x), s.contains(y)]
+        s.contains(x) && s.contains(y) && crate::util_model::ptr_raw(x) == crate::util_model::ptr_raw(y) implies x == y by {
+        crate::util_model::owned_raw_eq_in((0nat, a), x, y);
+    }
+    crate::util_model::ptr_keys_obey_model(s);
+}
+
+/// A context over the export file owns its export pointers.
+pub proof fn export_tagged_owned<'t, 'p, A>(c: TcCtx<'t, 'p>, p: crate::util::Ptr<A>)
+    requires
+        crate::util_model::export_tagged(c.export_file.name_cache.arena_id(), p),
+    ensures
+        crate::util_model::owns(c, p),
+{
+}
+
+impl<'t, 'p: 't> ExportFile<'p> {
+    /// Verified in place.
+    ///
+    /// VERUS-REWRITE(closure-inlined): the body of the `with_ctx` closure is
+    /// inlined after the two lines `with_ctx` runs (a fresh `LeanDag` and a
+    /// `TcCtx` over it); its `return true` returns the same value from here;
+    /// VERUS-REWRITE(closure-specialised): the closure given to `find_const`
+    /// (`|n| ind.all_ind_names.iter().any(|nn| n == *nn)`) is
+    /// `find_const_named` over `all_ind_names`, the same test with a contract;
+    /// VERUS-REWRITE(index-walk): `for ctor_name in ind.all_ctor_names.iter()`
+    /// is the scan by index it stands for.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn is_recursive(&self, ind_name: &NamePtr<'t>) -> (result: bool)
+        requires
+            export_ok(*self),
+            crate::util_model::export_tagged(self.name_cache.arena_id(), *ind_name),
+    {
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            crate::util_model::build_hasher_default_valid_fx();
+            export_keys_obey_model(self.name_cache.arena_id(),
+                crate::indexmap_model::imap_view(&self.declars).dom().insert(*ind_name));
+        }
+        match self.declars.get(ind_name).unwrap() {
+            Declar::Inductive(ind) => {
+                let mut dag = LeanDag::new(&self.config);
+                let ctx = TcCtx::new(self, &mut dag);
+                proof {
+                    let a = self.name_cache.arena_id();
+                    assert(declar_export_tagged(a, Declar::Inductive(*ind)));
+                    assert forall|k: int| 0 <= k < ind.all_ind_names@.len() implies crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]) by {
+                        export_tagged_owned(ctx, ind.all_ind_names@[k]);
+                    }
+                }
+                let mut c: usize = 0;
+                while c < ind.all_ctor_names.len()
+                    invariant
+                        export_ok(*self),
+                        ctx.export_file == self,
+                        forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(self.name_cache.arena_id(), #[trigger] ind.all_ctor_names@[k]),
+                        forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]),
+                    decreases ind.all_ctor_names@.len() - c,
+                {
+                    let ctor_name = &ind.all_ctor_names[c];
+                    proof {
+                        broadcast use vstd::std_specs::hash::group_hash_axioms;
+                        crate::util_model::build_hasher_default_valid_fx();
+                        assert(crate::util_model::export_tagged(self.name_cache.arena_id(), ind.all_ctor_names@[c as int]));
+                        export_keys_obey_model(self.name_cache.arena_id(),
+                            crate::indexmap_model::imap_view(&self.declars).dom().insert(*ctor_name));
+                    }
+                    match self.declars.get(ctor_name).unwrap() {
+                        Declar::Constructor(ctor_data @ ConstructorData { .. }) => {
+                            let mut ctor_ty = ctor_data.info.ty;
+                            proof {
+                                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                let a = self.name_cache.arena_id();
+                                assert(crate::indexmap_model::imap_view(&self.declars).contains_key(*ctor_name));
+                                assert(declar_export_tagged(a, Declar::Constructor(*ctor_data)));
+                                export_tagged_owned(ctx, ctor_ty);
+                            }
+                            while let Pi { binder_type, body, .. } = ctx.read_expr(ctor_ty)
+                                invariant
+                                    crate::util_model::owns(ctx, ctor_ty),
+                                    forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]),
+                            {
+                                proof {
+                                    broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                                    assert(vstd::std_specs::smart_ptrs::arc_contents(&ind.all_ind_names)@ == ind.all_ind_names@);
+                                }
+                                if ctx.find_const_named(binder_type, ind.all_ind_names.as_ref()) {
+                                    return true;
+                                }
+                                ctor_ty = body;
+                            }
+                        }
+                        _ => panic!("expected constructor"),
+                    }
+                    c += 1;
+                }
+                false
+            }
+            _ => panic!("Not an inductive declaration"),
+        }
     }
 }
 
@@ -5498,6 +5619,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(st).is_nonzero is None,
             old(st).is_zero is None,
         ensures
+            *final(st) == (InductiveCheckState {
+                local_indices: final(st).local_indices,
+                block_codom: final(st).block_codom,
+                is_zero: final(st).is_zero,
+                is_nonzero: final(st).is_nonzero,
+                ind_consts: final(st).ind_consts,
+                tele: final(st).tele,
+                ..*old(st)
+            }),
+            final(st).ind_consts@.len() == old(st).ind_consts@.len() + final(st).all_inductives_incl_specialized@.len(),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5529,6 +5660,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.all_inductives_incl_specialized@ == old(st).all_inductives_incl_specialized@,
                 st.local_params@ == old(st).local_params@,
                 nbefore == st.all_inductives_incl_specialized@.len(),
+                *st == (InductiveCheckState {
+                    local_indices: st.local_indices,
+                    block_codom: st.block_codom,
+                    is_zero: st.is_zero,
+                    is_nonzero: st.is_nonzero,
+                    ind_consts: st.ind_consts,
+                    tele: st.tele,
+                    ..*old(st)
+                }),
+                st.ind_consts@.len() == old(st).ind_consts@.len() + i,
                 st.local_indices@.len() == i,
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
@@ -5582,6 +5723,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             old(st).all_inductives_incl_specialized@.len() >= 1,
             crate::util_model::owns(*old(self).ctx, uparams),
         ensures
+            *final(st) == (InductiveCheckState {
+                local_indices: final(st).local_indices,
+                block_codom: final(st).block_codom,
+                is_zero: final(st).is_zero,
+                is_nonzero: final(st).is_nonzero,
+                ind_consts: final(st).ind_consts,
+                tele: final(st).tele,
+                ..*old(st)
+            }),
+            final(st).ind_consts@.len() == old(st).ind_consts@.len() + 1,
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5792,6 +5943,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free(*old(self).ctx, ind.ty),
             crate::util_model::owns(*old(self).ctx, ind.name),
         ensures
+            *final(st) == (InductiveCheckState {
+                local_indices: final(st).local_indices,
+                block_codom: final(st).block_codom,
+                is_zero: final(st).is_zero,
+                is_nonzero: final(st).is_nonzero,
+                ind_consts: final(st).ind_consts,
+                tele: final(st).tele,
+                ..*old(st)
+            }),
+            final(st).ind_consts@.len() == old(st).ind_consts@.len() + 1,
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -5976,19 +6137,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         requires
             crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
             old(st).is_zero is Some,
-            old(st).all_inductives_incl_specialized@.len() == 1 && old(
-                st,
-            ).all_inductives_incl_specialized@[0].ctors@.len() == 1 ==> crate::expr_model::depth(
-                crate::expr_arena_bridge::to_model(
-                    old(st).all_inductives_incl_specialized@[0].ctors@[0].ty,
-                ),
-            ) <= 60000,
         ensures
             final(st).k_target is Some,
-            final(st).all_inductives_incl_specialized == old(st).all_inductives_incl_specialized,
-            final(st).local_params == old(st).local_params,
-            final(st).is_zero == old(st).is_zero,
-            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            *final(st) == (InductiveCheckState { k_target: final(st).k_target, ..*old(st) }),
+            *final(self) == *old(self),
     {
         let is_k_target = st.is_zero.unwrap() && st.all_inductives_incl_specialized.len() == 1
             && st.all_inductives_incl_specialized[0].ctors.len() == 1 && self.ctx.pi_telescope_size(

@@ -383,8 +383,14 @@ pub struct ExprCache<'t> {
     pub abstr_cache_levels: FxHashMap<(ExprPtr<'t>, u16, u16), ExprPtr<'t>>,
 }
 
+::vstd::prelude::verus! {
+
 impl<'t> ExprCache<'t> {
-    fn new() -> Self {
+    /// Verified in place, body unchanged: every cache starts empty.
+    fn new() -> (result: Self)
+        ensures
+            result.dsubst_cache@ == vstd::map::Map::<(ExprPtr<'t>, LevelsPtr<'t>, LevelsPtr<'t>), ExprPtr<'t>>::empty(),
+    {
         Self {
             inst_cache: new_fx_hash_map(),
             abstr_cache: new_fx_hash_map(),
@@ -394,6 +400,8 @@ impl<'t> ExprCache<'t> {
         }
     }
 }
+
+} // verus!
 
 pub struct ExportFile<'p> {
     /// The underlying storage for `Name`, `Level`, and `Expr` items (and Strings).
@@ -506,8 +514,18 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 }
 
 } // verus!
+::vstd::prelude::verus! {
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
-    pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> Self {
+    /// Verified in place, body unchanged: a context over `export_file` and
+    /// `tdag`, its level counter at zero and its caches empty.
+    pub fn new(export_file: &'t ExportFile<'p>, tdag: &'t mut LeanDag<'t>) -> (result: Self)
+        ensures
+            result.export_file == export_file,
+            crate::util_model::arena_ids(result) == (crate::util_model::dag_arena(*old(tdag)), export_file.name_cache.arena_id()),
+            result.dbj_level_counter == 0,
+            crate::expr_arena_bridge::dsubst_cache_sound(result),
+    {
         Self {
             export_file,
             dag: tdag,
@@ -517,6 +535,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             eager_mode: false,
         }
     }
+}
+
+} // verus!
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     pub fn with_tc<F, A>(&mut self, env_limit: EnvLimit<'p>, f: F) -> A
     where

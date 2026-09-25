@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **154 marked rewrites across 99 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **159 marked rewrites across 101 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -197,7 +197,7 @@ rust_to_vir_expr.rs:  PatKind::Slice(..) => unsupported_err!(pat.span, "slice pa
 Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 #2959 — is a different feature and does not help here.)
 
-### Closures capturing `&mut self` — 9 rewrites
+### Closures capturing `&mut self` — 11 rewrites
 
 | function | file |
 |---|---|
@@ -210,6 +210,8 @@ Each is an index walk instead. (Recently landed *index range* syntax — #2913,
 | `check_declar` (the value check, lifted into the verified `check_declar_value`) | `src/tc.rs` |
 | `has_ind_occ` (the closure given to `find_const` is `find_const_named` over the block constants' names, read out first; `find_const_named` is `find_const_aux`'s traversal and memo with that predicate) | `src/inductive.rs` |
 | `is_nested_ind_app` (the same: its `find_const` closure tests the block's type names, so it is `find_const_named` over `ind_names` of the block) | `src/inductive.rs` |
+| `is_recursive` (its `with_ctx` closure is inlined after the two lines `with_ctx` runs -- a fresh `LeanDag`, a `TcCtx` over it -- and its `return true` returns the same value; the `find_const` closure is `find_const_named` over `all_ind_names`; the `for` over constructor names is the scan by index) | `src/inductive.rs` |
+| `has_nested_pfx` (the closure given to `find_e` is `find_nested_pfx_aux`, `find_aux`'s traversal and memo with that predicate; the debug-build `debug_assert_eq!(.., format!(..))` is the same check behind the claim-free `debug_check_nested_pfx`, since Verus does not process `format!`) | `src/expr.rs` |
 
 Rejected outright, and the message is explicit:
 

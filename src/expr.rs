@@ -554,14 +554,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// `[a, b, c], e` ~> `(Pi (a b c) => e)`
 
-    pub(crate) fn has_nested_pfx(&self, e: ExprPtr<'t>, nested_pfx: NamePtr<'t>) -> bool {
-        debug_assert_eq!("_nested", format!("{:?}", self.debug_print(nested_pfx)));
-        self.find_e(e, |eprime| match self.read_expr(eprime) {
-            Const { name, .. } | Proj { ty_name: name, .. } => self.get_pfx(name) == nested_pfx,
-            _ => false,
-        })
-    }
-
     pub(crate) fn find_e<F>(&self, e: ExprPtr<'t>, pred: F) -> bool
     where
         F: FnOnce(ExprPtr<'t>) -> bool + Copy,
@@ -724,6 +716,75 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
         body
+    }
+
+    /// The debug-build check `has_nested_pfx` makes of its argument, the same
+    /// `debug_assert_eq!` (Verus does not process `format!`). Claims nothing.
+    #[verifier::external_body]
+    pub(crate) fn debug_check_nested_pfx(&self, nested_pfx: NamePtr<'t>) {
+        debug_assert_eq!("_nested", format!("{:?}", self.debug_print(nested_pfx)));
+    }
+
+    /// Verified in place.
+    ///
+    /// VERUS-REWRITE(closure-specialised): the closure given to `find_e`
+    /// (`Const`/`Proj` names whose prefix is `nested_pfx`) is
+    /// `find_nested_pfx_aux`, `find_aux`'s traversal and memo with that
+    /// predicate; VERUS-REWRITE(debug-wrapper): the debug-build
+    /// `debug_assert_eq!(.., format!(..))` is the same check behind
+    /// `debug_check_nested_pfx` (Verus does not process `format!`).
+    pub(crate) fn has_nested_pfx(&self, e: ExprPtr<'t>, nested_pfx: NamePtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::util_model::owns(*self, nested_pfx),
+    {
+        self.debug_check_nested_pfx(nested_pfx);
+        let mut cache = crate::util::new_fx_hash_map();
+        self.find_nested_pfx_aux(e, nested_pfx, &mut cache)
+    }
+
+    /// `find_aux` with `has_nested_pfx`'s predicate: the predicate is false
+    /// on every node but a `Const` or `Proj`, so each `pred(e) || ..` there is
+    /// its right operand. Same traversal, same memo.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn find_nested_pfx_aux(&self, e: ExprPtr<'t>, nested_pfx: NamePtr<'t>, cache: &mut FxHashMap<ExprPtr<'t>, bool>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::util_model::owns(*self, nested_pfx),
+            forall|k: ExprPtr<'t>| #[trigger] old(cache)@.contains_key(k) ==> crate::util_model::owns(*self, k),
+        ensures
+            forall|k: ExprPtr<'t>| #[trigger] final(cache)@.contains_key(k) ==> crate::util_model::owns(*self, k),
+    {
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::ptr_owned_keys(*self, cache@.dom().insert(e));
+            crate::util_model::build_hasher_default_valid_fx();
+        }
+        if let Some(cached) = cache.get(&e) {
+            *cached
+        } else {
+            let r = match self.read_expr(e) {
+                Var { .. } | Sort { .. } | NatLit { .. } | StringLit { .. } => false,
+                Const { name, .. } => self.get_pfx(name) == nested_pfx,
+                App { fun, arg, .. } => self.find_nested_pfx_aux(fun, nested_pfx, cache) || self.find_nested_pfx_aux(arg, nested_pfx, cache),
+                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                    self.find_nested_pfx_aux(binder_type, nested_pfx, cache) || self.find_nested_pfx_aux(body, nested_pfx, cache)
+                }
+                Let { binder_type, val, body, .. } => {
+                    self.find_nested_pfx_aux(binder_type, nested_pfx, cache)
+                        || self.find_nested_pfx_aux(val, nested_pfx, cache)
+                        || self.find_nested_pfx_aux(body, nested_pfx, cache)
+                }
+                Local { binder_type, .. } => self.find_nested_pfx_aux(binder_type, nested_pfx, cache),
+                Proj { ty_name, structure, .. } => self.get_pfx(ty_name) == nested_pfx || self.find_nested_pfx_aux(structure, nested_pfx, cache),
+            };
+            proof {
+                crate::util_model::ptr_owned_keys(*self, cache@.dom().insert(e));
+                crate::util_model::build_hasher_default_valid_fx();
+            }
+            cache.insert(e, r);
+            r
+        }
     }
 
     /// `find_const` specialised to the one predicate `has_ind_occ` passes --

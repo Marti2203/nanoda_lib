@@ -111,6 +111,12 @@ pub proof fn build_hasher_default_valid_unique()
 // (componentwise `raw`, and `u16` equality), and the `*_owned_keys` lemmas
 // below derive it from "every key belongs to one context".
 
+/// A fresh dag for a new context. Callable, claims nothing: the checker only
+/// needs a context's arena ids to be its own (`TcCtx::new`), never what the
+/// dag holds.
+pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::util::Config) -> crate::util::LeanDag<'a>
+;
+
 #[verifier::external_body]
 pub proof fn ptr_keys_obey_model<A>(s: Set<Ptr<A>>)
     requires
