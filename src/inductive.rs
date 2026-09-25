@@ -659,43 +659,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    // This is only ONE of the binders from the constructor's telescope,
-    // AFTER the block params have been removed. These are the "proper"
-    // constructor arguments.
-    //
-    // When we match here on Pi { n, t, s, b }, `t` is the left hand side
-    // of a function argument to an inductive constructor.
-    // We need to search `t` to prevent non-positive occurrences; the following
-    // would be prohibited:
-    //
-    //```ignore
-    // inductive Foo
-    // | mk (f : Foo → Nat) : Foo
-    //```
-    //
-    // Read about issues with non-positive occurrences here:
-    // https://counterexamples.org/strict-positivity.html?highlight=posi#positivity-strict-and-otherwise
-    fn check_positivity1(&mut self, st: &InductiveCheckState<'t>, mut ctor_type_cursor: ExprPtr<'t>) {
-        loop {
-            ctor_type_cursor = self.whnf(ctor_type_cursor);
-            match self.ctx.read_expr(ctor_type_cursor) {
-                _any if !self.has_ind_occ(ctor_type_cursor, st.ind_consts.as_ref()) => return,
-                Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    if self.has_ind_occ(binder_type, st.ind_consts.as_ref()) {
-                        panic!("non-positive occurrence");
-                    }
-                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                    ctor_type_cursor = self.ctx.inst(body, &[local]);
-                }
-                _ => {
-                    // We only need to know that it's a valid ind-app for SOMETHING in the block, since
-                    // this is only a binder in the constructor, not the end of the telescope.
-                    assert!(self.which_valid_ind_app(st, ctor_type_cursor).is_some());
-                    return;
-                }
-            }
-        }
-    }
 
 
     // For an expression `E` and a list
@@ -720,21 +683,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         (valid_app_idx, ctor_args_wo_params)
     }
 
-    /// For some expression `e`, get the index of the inductive type
-    /// that `e` is a valid application of.
-    fn which_valid_ind_app(&mut self, st: &InductiveCheckState<'t>, u_i_ty: ExprPtr<'t>) -> Option<usize> {
-        // For every inductive type in the block...
-        for (i, ind_const) in st.ind_consts.iter().copied().enumerate() {
-            let ind_name = match self.ctx.read_expr(ind_const) {
-                Const { name, .. } => name,
-                _ => panic!(),
-            };
-            if self.is_valid_ind_app(st, ind_name, u_i_ty) {
-                return Some(i);
-            }
-        }
-        None
-    }
 
     /// Shadow-only (NANODA_SHADOW=1): run the certified constructor check
     /// (`delta_bound_model::verified_ctor_ok`) on the same inputs the original
@@ -1945,13 +1893,13 @@ pub open spec fn const_ids<'t>(cs: Seq<ExprPtr<'t>>) -> Seq<u64> {
 
 /// `e` is the parent inductive applied to the block's parameters and then its
 /// own indices, with no block inductive inside an index.
-pub(crate) open spec fn ind_app_ok<'t>(st: InductiveCheckState<'t>, parent: NamePtr<'t>, e: ExprSpec) -> bool {
+pub(crate) open spec fn ind_app_ok<'t>(st: InductiveCheckState<'t>, pid: u64, e: ExprSpec) -> bool {
     &&& (match crate::beta_model::spine_head(e) {
-        ExprSpec::Const(id, _) => id == crate::level_arena_bridge::name_id(parent),
+        ExprSpec::Const(id, _) => id == pid,
         _ => false,
     })
     &&& exists|pos: int| 0 <= pos < st.ind_consts@.len() && 0 <= pos < st.local_indices@.len()
-        && #[trigger] crate::expr_arena_bridge::const_id(st.ind_consts@[pos]) == crate::level_arena_bridge::name_id(parent)
+        && #[trigger] crate::expr_arena_bridge::const_id(st.ind_consts@[pos]) == pid
         && crate::beta_model::spine_args(e).len() == st.local_params@.len() + st.local_indices@[pos]@.len()
     &&& crate::beta_model::spine_args(e).len() >= st.local_params@.len()
     &&& forall|j: int| 0 <= j < st.local_params@.len() ==> #[trigger] crate::beta_model::spine_args(e)[j]
@@ -1960,7 +1908,201 @@ pub(crate) open spec fn ind_app_ok<'t>(st: InductiveCheckState<'t>, parent: Name
         ==> !crate::inductive_model::contains_const_named(#[trigger] crate::beta_model::spine_args(e)[j], const_ids(st.ind_consts@))
 }
 
+/// The positivity walk of one constructor-argument type (`check_positivity1`):
+/// the cursors, each one's reduct (kernel judgement), and for every step but
+/// the last the `Pi` it was and the local its body was opened with.
+pub struct PosCert {
+    pub cursors: Seq<ExprSpec>,
+    pub ws: Seq<ExprSpec>,
+    pub bts: Seq<ExprSpec>,
+    pub bodies: Seq<ExprSpec>,
+    pub locals: Seq<u32>,
+}
+
+/// Strict positivity: every domain along the walk mentions no block inductive,
+/// and the walk ends in a term that mentions none, or in a valid application
+/// of one of them.
+pub(crate) open spec fn pos_cert_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, ty: ExprSpec, c: PosCert) -> bool {
+    &&& c.cursors.len() == c.locals.len() + 1
+    &&& c.ws.len() == c.cursors.len()
+    &&& c.bts.len() == c.locals.len()
+    &&& c.bodies.len() == c.locals.len()
+    &&& c.cursors[0] == ty
+    &&& forall|k: int| 0 <= k < c.cursors.len() ==> #[trigger] crate::tc::kconv(env, c.cursors[k], c.ws[k])
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.ws[k] == ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+        && !crate::inductive_model::contains_const_named(c.bts[k], const_ids(st.ind_consts@))
+        && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
+    &&& !crate::inductive_model::contains_const_named(c.ws.last(), const_ids(st.ind_consts@))
+        || exists|i: int| 0 <= i < st.ind_consts@.len() && #[trigger] ind_app_ok(st, crate::expr_arena_bridge::const_id(st.ind_consts@[i]), c.ws.last())
+}
+
+pub(crate) open spec fn positive_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, ty: ExprSpec) -> bool {
+    exists|c: PosCert| #[trigger] pos_cert_ok(env, st, ty, c)
+}
+
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+    /// Verified in place: `Some(i)` means the term is a valid application of
+    /// the block's `i`-th inductive (`ind_app_ok`).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn which_valid_ind_app(&mut self, st: &InductiveCheckState<'t>, u_i_ty: ExprPtr<'t>) -> (result: Option<usize>)
+        requires
+            crate::util_model::owns(*old(self).ctx, u_i_ty),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
+            result matches Some(i) ==> i < st.ind_consts@.len() && ind_app_ok(*st,
+                crate::expr_arena_bridge::const_id(st.ind_consts@[i as int]), crate::expr_arena_bridge::to_model(u_i_ty)),
+    {
+        // For every inductive type in the block...
+        //
+        // VERUS-REWRITE(enumerate): `for (i, ind_const) in
+        // st.ind_consts.iter().copied().enumerate()` is the index walk it
+        // stands for (the element/index pairing does not reach the proof through
+        // `enumerate`'s specification). Same elements, same order, same return.
+        let mut i: usize = 0;
+        while i < st.ind_consts.len()
+            invariant
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*self),
+                crate::util_model::owns(*self.ctx, u_i_ty),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                i <= st.ind_consts@.len(),
+            decreases st.ind_consts@.len() - i,
+        {
+            let ind_const = st.ind_consts[i];
+            let ind_name = match self.ctx.read_expr(ind_const) {
+                Const { name, .. } => name,
+                _ => panic!(),
+            };
+            if self.is_valid_ind_app(st, ind_name, u_i_ty) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Verified in place: the argument type is strictly positive in the block's
+    /// inductives (`positive_ok`), or this panics.
+    ///
+    /// VERUS-REWRITE(guard-in-body): the `_any if !self.has_ind_occ(..)` guard
+    /// (a `&mut self` call in a match guard) is the `if` before the match on the
+    /// same read, in the same order.
+    ///
+    /// VERUS-REWRITE(entry-params): parameter `mut ctor_type_cursor` ->
+    /// `ctor_type_in` with a `let mut` copy; the claim names the entry value.
+    #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
+    fn check_positivity1(&mut self, st: &InductiveCheckState<'t>, ctor_type_in: ExprPtr<'t>)
+        requires
+            crate::tc::tc_wf(*old(self)),
+            old(self).ctx.dbj_level_counter == 0,
+            level_free(*old(self).ctx, ctor_type_in),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
+            st.ind_consts@.len() <= st.local_indices@.len(),
+        ensures
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).ctx.dbj_level_counter == 0,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            positive_ok(*old(self).env, *st, crate::expr_arena_bridge::to_model(ctor_type_in)),
+    {
+        let mut ctor_type_cursor = ctor_type_in;
+        let ghost env = *self.env;
+        let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ctor_type_in)];
+        let ghost mut ws: Seq<ExprSpec> = Seq::empty();
+        let ghost mut bts: Seq<ExprSpec> = Seq::empty();
+        let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
+        let ghost mut locs: Seq<u32> = Seq::empty();
+        loop
+            invariant
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                env == *self.env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                level_free(*self.ctx, ctor_type_cursor),
+                cs.len() == locs.len() + 1,
+                ws.len() == locs.len(),
+                bts.len() == locs.len(),
+                bodies.len() == locs.len(),
+                cs[0] == crate::expr_arena_bridge::to_model(ctor_type_in),
+                cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
+                forall|k: int| 0 <= k < ws.len() ==> #[trigger] crate::tc::kconv(env, cs[k], ws[k]),
+                forall|k: int| 0 <= k < locs.len() ==> ws[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                    && !crate::inductive_model::contains_const_named(bts[k], const_ids(st.ind_consts@))
+                    && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
+        {
+            let ghost pre = ctor_type_cursor;
+            proof {
+                level_free_in_scope(*self, ctor_type_cursor);
+            }
+            ctor_type_cursor = self.whnf(ctor_type_cursor);
+            proof {
+                level_free_pres(*self.ctx, pre, ctor_type_cursor);
+                ws = ws.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+            }
+            let el = self.ctx.read_expr(ctor_type_cursor);
+            if !self.has_ind_occ(ctor_type_cursor, st.ind_consts.as_ref()) {
+                proof {
+                    let c = PosCert { cursors: cs, ws, bts, bodies, locals: locs };
+                    assert(pos_cert_ok(env, *st, crate::expr_arena_bridge::to_model(ctor_type_in), c));
+                }
+                return;
+            }
+            match el {
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    if self.has_ind_occ(binder_type, st.ind_consts.as_ref()) {
+                        panic!("non-positive occurrence");
+                    }
+                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                    proof {
+                        assert(level_free(*self.ctx, binder_type));
+                        crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                    }
+                    ctor_type_cursor = self.ctx.inst(body, &[local]);
+                    proof {
+                        let aids = crate::util_model::arena_ids(*self.ctx);
+                        assert([local]@ =~= seq![local]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                        crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                        crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                        bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                        bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                        locs = locs.push(crate::expr_arena_bridge::expr_id(local));
+                        cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                    }
+                }
+                _ => {
+                    // We only need to know that it's a valid ind-app for SOMETHING in the block, since
+                    // this is only a binder in the constructor, not the end of the telescope.
+                    let which = self.which_valid_ind_app(st, ctor_type_cursor);
+                    assert!(which.is_some());
+                    proof {
+                        let c = PosCert { cursors: cs, ws, bts, bodies, locals: locs };
+                        let i = which->0 as int;
+                        assert(ind_app_ok(*st, crate::expr_arena_bridge::const_id(st.ind_consts@[i]), c.ws.last()));
+                        assert(pos_cert_ok(env, *st, crate::expr_arena_bridge::to_model(ctor_type_in), c));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     /// Check whether `ind_ty_app` is a valid application of some arguments
     /// to `parent_ind_const`. The arguments need to be the parameters for the
     /// inductive block.
@@ -1989,7 +2131,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
-            result ==> ind_app_ok(*st, parent_ind_name, crate::expr_arena_bridge::to_model(ind_ty_app)),
+            result ==> ind_app_ok(*st, crate::level_arena_bridge::name_id(parent_ind_name), crate::expr_arena_bridge::to_model(ind_ty_app)),
     {
         // The arguments applied to the constructor are the params + indices.
         let (base_const, ctor_apps) = self.ctx.unfold_apps(ind_ty_app);
