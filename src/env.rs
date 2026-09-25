@@ -2,6 +2,8 @@ use crate::util::{ExprPtr, FxHashMap, FxIndexMap, LevelsPtr, NamePtr};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// Reducibility hints accompany definitions; used to determine how
 /// to unfold expressions in order to most efficiently proceed.
@@ -251,6 +253,8 @@ pub enum EnvLimit<'a> {
     PpUnlimited,
 }
 
+::vstd::prelude::verus! {
+
 /// A Lean environment, which consists of a set of declarations that my have a temporary
 /// extension, and some notation items. The temporary extensions are used to acommodate
 /// the specialization process needed for checking nested inductives.
@@ -267,40 +271,192 @@ pub struct Env<'x, 'a: 'x> {
     /// This allows us to make the complete environment at parse time, and then control visibility
     /// between threads by only making a particular slice of that environment available to a thread.
     cutoff: usize,
+    /// GHOST: the arenas the declarations' pointers index (the checker's
+    /// context's dag and its export file). Erased at run time.
+    ids: Ghost<(nat, nat)>,
 }
+
+} // verus!
 
 pub(crate) type DeclarMap<'a> = FxIndexMap<NamePtr<'a>, Declar<'a>>;
 pub(crate) type NotationMap<'a> = FxHashMap<NamePtr<'a>, Notation<'a>>;
 
+::vstd::prelude::verus! {
+
 impl<'x, 'a: 'x> Env<'x, 'a> {
+    /// The arenas the environment's pointers index.
+    pub closed spec fn arena_ids(self) -> (nat, nat) {
+        self.ids@
+    }
+
+    /// Every declaration the environment holds belongs to its arenas.
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        &&& crate::env_model::declar_map_owned_in(self.ids@, self.declars)
+        &&& (self.temp_declars matches Some(t) ==> crate::env_model::declar_map_owned_in(self.ids@, t))
+    }
+
     /// Create a new environment (without any temporary extension)
-    pub fn new(declars: &'a DeclarMap<'a>, notation: &'a NotationMap<'a>, limit: EnvLimit<'a>) -> Self {
-        Self::new_w_temp_ext(declars, None, notation, limit)
+    ///
+    /// VERUS-REWRITE(ghost-ids): the environment records, as a ghost
+    /// parameter erased at run time, the arenas its declarations belong to.
+    pub fn new(declars: &'a DeclarMap<'a>, notation: &'a NotationMap<'a>, limit: EnvLimit<'a>, Ghost(ids): Ghost<(nat, nat)>) -> (result: Self)
+        requires
+            crate::env_model::declar_map_owned_in(ids, declars),
+        ensures
+            result.arena_ids() == ids,
+    {
+        Self::new_w_temp_ext(declars, None, notation, limit, Ghost(ids))
     }
 
     /// Create a new environment that includes some temporary extension; the temporary
     /// extension is used for checking nested inductives.
+    ///
+    /// VERUS-REWRITE(ghost-ids): as in `new`.
     pub fn new_w_temp_ext(
         declars: &'a DeclarMap<'a>,
         temp_declars: Option<&'x DeclarMap<'a>>,
         notation: &'a NotationMap<'a>,
         limit: EnvLimit<'a>,
-    ) -> Self {
+        Ghost(ids): Ghost<(nat, nat)>,
+    ) -> (result: Self)
+        requires
+            crate::env_model::declar_map_owned_in(ids, declars),
+            temp_declars matches Some(t) ==> crate::env_model::declar_map_owned_in(ids, t),
+        ensures
+            result.arena_ids() == ids,
+    {
         let cutoff = match limit {
             EnvLimit::Empty => 0,
             EnvLimit::ByIndex(idx) => idx,
             EnvLimit::PpUnlimited => declars.len(),
             EnvLimit::ByName(n) => declars.get_index_of(&n).unwrap_or(0),
         };
-        Self { declars, cutoff, temp_declars, notation }
+        Self { declars, cutoff, temp_declars, notation, ids: Ghost(ids) }
     }
 
     /// Retrieve a declaration by first checking the contents of any temporary extension,
     /// then checking the persistent environment.
-    pub fn get_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> {
-        self.temp_declars.as_ref().and_then(|ext| ext.get(n)).or_else(|| self.get_old_declar(n))
+    ///
+    /// Verified: what it returns is owned. VERUS-REWRITE(closure-inlined):
+    /// `self.temp_declars.as_ref().and_then(|ext| ext.get(n)).or_else(|| self.get_old_declar(n))`
+    /// is the `match` it stands for. Same lookups, same order.
+    pub fn get_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+    {
+        match self.get_temp_declar(n) {
+            Some(d) => Some(d),
+            None => self.get_old_declar(n),
+        }
     }
 
+    /// Get a declaration, only looking in the temporary extension.
+    ///
+    /// Verified: what it returns is owned. VERUS-REWRITE(closure-inlined):
+    /// `self.temp_declars.as_ref().and_then(|ext| ext.get(n))` is the `match`
+    /// it stands for.
+    pub fn get_temp_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        match self.temp_declars {
+            Some(ext) => {
+                proof {
+                    crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(ext).dom());
+                }
+                ext.get(n)
+            }
+            None => None,
+        }
+    }
+
+    /// Get a declaration, bypassing the temporary extension, only searching in
+    /// the persistent set of declarations. Verified: what it returns is owned.
+    pub fn get_old_declar(&self, n: &NamePtr<'a>) -> (result: Option<&Declar<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::declar_owned(*self, *d),
+    {
+        proof {
+            use_type_invariant(self);
+            crate::util_model::owned_in_keys_obey_model(self.ids@, crate::indexmap_model::imap_view(self.declars).dom());
+        }
+        let (idx, _, v) = self.declars.get_full(n)?;
+        if idx < self.cutoff {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Verified: what it returns is owned.
+    pub fn get_inductive(&self, n: &NamePtr<'a>) -> (result: Option<&InductiveData<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::inductive_data_owned(*self, *d),
+    {
+        match self.get_declar(n) {
+            Some(Declar::Inductive(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Verified: what it returns is owned.
+    pub fn get_recursor(&self, n: &NamePtr<'a>) -> (result: Option<&RecursorData<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::recursor_data_owned(*self, *d),
+    {
+        match self.get_declar(n) {
+            Some(Declar::Recursor(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Verified: what it returns is owned.
+    pub fn get_constructor(&self, n: &NamePtr<'a>) -> (result: Option<&ConstructorData<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::constructor_data_owned(*self, *d),
+    {
+        match self.get_declar(n) {
+            Some(Declar::Constructor(c)) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` iff the inductive type declaration associated with `n` has the
+    /// characteristics required of a structure. The requirements to be a structure are
+    /// (1) the inductive declaration is not recursive, (2) the declaration has only one
+    /// constructor, and (3) the type is declared with no indices. Verified.
+    pub(crate) fn can_be_struct(&self, n: &NamePtr<'a>) -> bool {
+        match self.get_inductive(n) {
+            Some(InductiveData { is_recursive, num_indices, all_ctor_names, .. }) => {
+                (!is_recursive) && (all_ctor_names.len() == 1) && (*num_indices == 0)
+            }
+            _ => false,
+        }
+    }
+
+    /// Verified: what it returns is owned.
+    pub fn get_structure(&self, n: &NamePtr<'a>, rec_ok: bool) -> (result: Option<&InductiveData<'a>>)
+        ensures
+            result matches Some(d) ==> crate::env_model::inductive_data_owned(*self, *d),
+    {
+        match self.get_inductive(n) {
+            Some(i @ InductiveData { is_recursive, num_indices, all_ctor_names, .. })
+                if (all_ctor_names.len() == 1) && (*num_indices == 0) && (rec_ok || !is_recursive) =>
+            {
+                Some(i)
+            }
+            _ => None,
+        }
+    }
+}
+
+} // verus!
+
+impl<'x, 'a: 'x> Env<'x, 'a> {
     /// Every declaration name visible through `get_declar`: the temporary
     /// extension plus the persistent map up to the visibility cutoff.
     /// (Duplicates are harmless -- callers use this for coverage, not
@@ -321,67 +477,6 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         out
     }
 
-    /// Get a declaration, only looking in the temporary extension.
-    pub fn get_temp_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> {
-        self.temp_declars.as_ref().and_then(|ext| ext.get(n))
-    }
-
-    /// Get a declaration, bypassing the temporary extension, only searching in
-    /// the persistent set of declarations.
-    pub fn get_old_declar(&self, n: &NamePtr<'a>) -> Option<&Declar<'a>> {
-        let (idx, _, v) = self.declars.get_full(n)?;
-        if idx < self.cutoff {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    pub fn get_inductive(&self, n: &NamePtr<'a>) -> Option<&InductiveData<'a>> {
-        match self.get_declar(n) {
-            Some(Declar::Inductive(i)) => Some(i),
-            _ => None,
-        }
-    }
-
-    pub fn get_recursor(&self, n: &NamePtr<'a>) -> Option<&RecursorData<'a>> {
-        match self.get_declar(n) {
-            Some(Declar::Recursor(r)) => Some(r),
-            _ => None,
-        }
-    }
-
-    pub fn get_constructor(&self, n: &NamePtr<'a>) -> Option<&ConstructorData<'a>> {
-        match self.get_declar(n) {
-            Some(Declar::Constructor(c)) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Returns `true` iff the inductive type declaration associated with `n` has the
-    /// characteristics required of a structure. The requirements to be a structure are
-    /// (1) the inductive declaration is not recursive, (2) the declaration has only one
-    /// constructor, and (3) the type is declared with no indices.
-    pub(crate) fn can_be_struct(&self, n: &NamePtr<'a>) -> bool {
-        match self.get_inductive(n) {
-            Some(InductiveData { is_recursive, num_indices, all_ctor_names, .. }) => {
-                (!is_recursive) && (all_ctor_names.len() == 1) && (*num_indices == 0)
-            }
-            _ => false,
-        }
-    }
-
-    pub fn get_structure(&self, n: &NamePtr<'a>, rec_ok: bool) -> Option<&InductiveData<'a>> {
-        match self.get_inductive(n) {
-            Some(i @ InductiveData { is_recursive, num_indices, all_ctor_names, .. })
-                if (all_ctor_names.len() == 1) && (*num_indices == 0) && (rec_ok || !is_recursive) =>
-            {
-                Some(i)
-            }
-            _ => None,
-        }
-    }
-
     /// Get the value of a declaration, if that declaration has an associated value (only
     /// definitions and theorems have values). Also returns the declaration's universe parameters.
     pub fn get_declar_val(&self, n: &NamePtr<'a>) -> Option<(LevelsPtr<'a>, ExprPtr<'a>)> {
@@ -391,3 +486,4 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         }
     }
 }
+

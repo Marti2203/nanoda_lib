@@ -139,6 +139,9 @@ pub assume_specification<'a, K, V, S: core::hash::BuildHasher, Q: ?Sized + core:
             Some(v) => maps_borrowed_key_to_value(imap_view(m), k, *v),
             None => !contains_borrowed_key(imap_view(m), k),
         },
+        // Whatever was asked for, a returned value is a stored entry's.
+        keys_obey_model::<K>(imap_view(m).dom()) ==> (result matches Some(v) ==>
+            exists|kk: K| #[trigger] imap_view(m).contains_key(kk) && imap_view(m)[kk] == *v),
 ;
 
 /// Callable, claims nothing: the position of a key, used by the checker only
@@ -147,6 +150,21 @@ pub assume_specification<K, V, S: core::hash::BuildHasher, Q: ?Sized + core::has
     m: &IndexMap<K, V, S>,
     k: &Q,
 ) -> Option<usize>
+;
+
+/// `get` with the entry's position and stored key.
+pub assume_specification<'a, K, V, S: core::hash::BuildHasher, Q: ?Sized + core::hash::Hash + indexmap::Equivalent<K>>[ IndexMap::<K, V, S>::get_full::<Q> ](
+    m: &'a IndexMap<K, V, S>,
+    k: &Q,
+) -> (result: Option<(usize, &'a K, &'a V)>)
+    ensures
+        borrowed_keys_obey_model::<K, Q>(imap_view(m).dom(), k) && builds_valid_hashers::<S>() ==> match result {
+            Some((i, kk, v)) => maps_borrowed_key_to_value(imap_view(m), k, *v),
+            None => !contains_borrowed_key(imap_view(m), k),
+        },
+        // The returned key and value are a stored entry.
+        keys_obey_model::<K>(imap_view(m).dom()) ==> (result matches Some((i, kk, v)) ==>
+            imap_view(m).contains_key(*kk) && imap_view(m)[*kk] == *v),
 ;
 
 /// The entry at position `i` in insertion order.

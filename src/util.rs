@@ -422,7 +422,7 @@ pub struct ExportFile<'p> {
 
 impl<'p> ExportFile<'p> {
     pub fn new_env(&self, env_limit: EnvLimit<'p>) -> Env<'_, '_> {
-        Env::new(&self.declars, &self.notations, env_limit)
+        Env::new(&self.declars, &self.notations, env_limit, vstd::prelude::Ghost::assume_new())
     }
 
     pub fn with_ctx<F, A>(&self, f: F) -> A
@@ -574,6 +574,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Some(env_ext),
             &self.export_file.notations,
             env_limit,
+            vstd::prelude::Ghost::assume_new(),
         );
         let mut tc = TypeChecker::new(self, &env, None);
         f(&mut tc)

@@ -120,6 +120,7 @@ fn invalid_quot<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, declar: &Declar<'p>) -> ! {
 #[verifier::exec_allows_no_decreases_clause]
 pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>)
     requires
+        crate::inductive::export_ok(*old(ctx).export_file),
         old(ctx).dbj_level_counter == 0,
         crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)),
     ensures
@@ -192,6 +193,7 @@ pub fn check_eq<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<
 #[verifier::exec_allows_no_decreases_clause]
 pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Declar<'p>)
     requires
+        crate::inductive::export_ok(*old(ctx).export_file),
         old(ctx).dbj_level_counter == 0,
         crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)),
         crate::inductive::declar_export_tagged(crate::util_model::arena_ids(*old(ctx)).1, *declar),

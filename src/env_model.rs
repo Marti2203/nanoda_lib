@@ -230,50 +230,78 @@ pub fn verified_is_lt(a: &ReducibilityHint, b: &ReducibilityHint) -> (result: bo
     }
 }
 
-/// A real declaration environment's contents, as a `pstep`-family `env`
-/// value: for each constant NAME id (matching `Const`'s own `const_id`
-/// convention), its universe-parameter names and its (model-erased) value.
-/// Uninterpreted, same trust-boundary style as `to_model` elsewhere --
-/// `Env`'s actual `IndexMap`-based storage isn't reverse-engineered, only
-/// its OBSERVABLE behavior through `get_declar_val` is axiomatized below.
-#[allow(dead_code)]
-#[verifier::external_type_specification]
-#[verifier::external_body]
-pub struct ExEnv<'x, 'a>(Env<'x, 'a>) where 'a: 'x;
 
 /// The arenas an environment's pointers index: its declarations are stored
 /// in some context's dag (temporary declarations) or the export file's. See
 /// `docs/ARENA_IDENTITY.md`. Every lookup below says its result belongs to
 /// these; a checker's environment and context agree on them (`tc_wf`).
-pub uninterp spec fn env_arena_ids<'x, 'a>(env: Env<'x, 'a>) -> (nat, nat);
+/// Recorded by the environment itself (a ghost field set where it is built).
+pub open spec fn env_arena_ids<'x, 'a>(env: Env<'x, 'a>) -> (nat, nat) {
+    env.arena_ids()
+}
 
 /// `p` belongs to `env`'s arenas (compare `util_model::owns`).
 pub open spec fn env_owns<'x, 'a, A>(env: Env<'x, 'a>, p: crate::util::Ptr<A>) -> bool {
     crate::util_model::owns_in(env_arena_ids(env), p)
 }
 
+/// A declaration header's pointers belong to the arena pair `ids`.
+pub open spec fn info_owned_in<'a>(ids: (nat, nat), i: crate::env::DeclarInfo<'a>) -> bool {
+    crate::util_model::owns_in(ids, i.name) && crate::util_model::owns_in(ids, i.uparams) && crate::util_model::owns_in(ids, i.ty)
+}
+
+pub open spec fn inductive_owned_in<'a>(ids: (nat, nat), d: crate::env::InductiveData<'a>) -> bool {
+    &&& info_owned_in(ids, d.info)
+    &&& forall|k: int| 0 <= k < d.all_ind_names@.len() ==> crate::util_model::owns_in(ids, #[trigger] d.all_ind_names@[k])
+    &&& forall|k: int| 0 <= k < d.all_ctor_names@.len() ==> crate::util_model::owns_in(ids, #[trigger] d.all_ctor_names@[k])
+}
+
+pub open spec fn constructor_owned_in<'a>(ids: (nat, nat), d: crate::env::ConstructorData<'a>) -> bool {
+    info_owned_in(ids, d.info) && crate::util_model::owns_in(ids, d.inductive_name)
+}
+
+pub open spec fn recursor_owned_in<'a>(ids: (nat, nat), d: crate::env::RecursorData<'a>) -> bool {
+    &&& info_owned_in(ids, d.info)
+    &&& forall|k: int| 0 <= k < d.all_inductives@.len() ==> crate::util_model::owns_in(ids, #[trigger] d.all_inductives@[k])
+    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> crate::util_model::owns_in(ids, #[trigger] d.rec_rules@[k].ctor_name)
+    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> crate::util_model::owns_in(ids, #[trigger] d.rec_rules@[k].val)
+}
+
+/// A declaration's pointers belong to the arena pair `ids`.
+pub open spec fn declar_owned_in<'a>(ids: (nat, nat), d: Declar<'a>) -> bool {
+    match d {
+        Declar::Inductive(i) => inductive_owned_in(ids, i),
+        Declar::Constructor(c) => constructor_owned_in(ids, c),
+        Declar::Recursor(r) => recursor_owned_in(ids, r),
+        Declar::Axiom { info } | Declar::Quot { info } | Declar::Opaque { info, .. }
+        | Declar::Theorem { info, .. } | Declar::Definition { info, .. } => info_owned_in(ids, info),
+    }
+}
+
+/// A declaration map every entry of which belongs to `ids`.
+pub open spec fn declar_map_owned_in<'a>(ids: (nat, nat), m: &crate::env::DeclarMap<'a>) -> bool {
+    &&& crate::indexmap_model::imap_wf(m)
+    &&& forall|k: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(m).contains_key(k)
+        ==> crate::util_model::owns_in(ids, k) && declar_owned_in(ids, crate::indexmap_model::imap_view(m)[k])
+}
+
 /// A declaration header's pointers belong to `env`'s arenas.
 pub open spec fn info_owned<'x, 'a>(env: Env<'x, 'a>, i: crate::env::DeclarInfo<'a>) -> bool {
-    env_owns(env, i.name) && env_owns(env, i.uparams) && env_owns(env, i.ty)
+    info_owned_in(env_arena_ids(env), i)
 }
 
 /// An environment's records point into its own arenas. Stated per record kind
 /// and ensured by the lookup that hands the record out.
 pub open spec fn inductive_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::InductiveData<'a>) -> bool {
-    &&& info_owned(env, d.info)
-    &&& forall|k: int| 0 <= k < d.all_ind_names@.len() ==> env_owns(env, #[trigger] d.all_ind_names@[k])
-    &&& forall|k: int| 0 <= k < d.all_ctor_names@.len() ==> env_owns(env, #[trigger] d.all_ctor_names@[k])
+    inductive_owned_in(env_arena_ids(env), d)
 }
 
 pub open spec fn constructor_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::ConstructorData<'a>) -> bool {
-    info_owned(env, d.info) && env_owns(env, d.inductive_name)
+    constructor_owned_in(env_arena_ids(env), d)
 }
 
 pub open spec fn recursor_data_owned<'x, 'a>(env: Env<'x, 'a>, d: crate::env::RecursorData<'a>) -> bool {
-    &&& info_owned(env, d.info)
-    &&& forall|k: int| 0 <= k < d.all_inductives@.len() ==> env_owns(env, #[trigger] d.all_inductives@[k])
-    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> env_owns(env, #[trigger] d.rec_rules@[k].ctor_name)
-    &&& forall|k: int| 0 <= k < d.rec_rules@.len() ==> env_owns(env, #[trigger] d.rec_rules@[k].val)
+    recursor_owned_in(env_arena_ids(env), d)
 }
 
 /// `env`'s pointers are `c`'s: then `env_owns` is `owns(c, _)`.
@@ -286,39 +314,56 @@ pub open spec fn env_matches<'x, 'a, 't, 'p>(env: Env<'x, 'a>, c: crate::util::T
 #[verifier::external_type_specification]
 pub struct ExEnvLimit<'a>(crate::env::EnvLimit<'a>);
 
-/// THE TRUSTED FACT ABOUT FRESH ENVIRONMENTS (option A, chosen 2026-09-25).
+/// A checker's environment: the context's own export file, limited, with
+/// its arenas. Verified (option B): the export file's declarations are its
+/// own (`export_ok`), so they are the context's.
 ///
-/// A checker's environment is built from its context's own export file
-/// (optionally with a temporary extension the context itself produced), and
-/// such an environment indexes the context's arenas. `TypeChecker::new`
-/// requires exactly this (`env_matches`); every unverified caller already
-/// assumed it silently, and this states it once, where the environment is
-/// made. It is a fact about ghost arena ids only -- no claim about the
-/// environment's contents.
-///
-/// Discharging it instead (option B, not taken yet): give `Env` its arena
-/// ids as a ghost field set from the export file and the extension, so
-/// `env_arena_ids` is defined rather than uninterpreted and `env_matches`
-/// follows from ownership. See `docs/ARENA_IDENTITY.md`.
-#[verifier::external_body]
+/// VERUS-REWRITE(ghost-ids): `ctx.export_file.new_env(env_limit)` is
+/// `Env::new` with the same arguments and the context's arena ids as the
+/// ghost argument.
 pub fn ctx_env<'t, 'p: 't>(ctx: &crate::util::TcCtx<'t, 'p>, env_limit: crate::env::EnvLimit<'p>) -> (result: Env<'t, 't>)
+    requires
+        crate::inductive::export_ok(*ctx.export_file),
     ensures
         env_matches(result, *ctx),
 {
-    ctx.export_file.new_env(env_limit)
+    proof {
+        export_declars_owned(*ctx);
+    }
+    crate::env::Env::new(&ctx.export_file.declars, &ctx.export_file.notations, env_limit, Ghost(crate::util_model::arena_ids(*ctx)))
 }
 
-/// The same fact for an environment with a temporary extension.
-#[verifier::external_body]
+/// The same for an environment with a temporary extension the context built.
 pub fn ctx_env_ext<'x, 't, 'p: 't>(
     ctx: &crate::util::TcCtx<'t, 'p>,
     env_ext: &'x crate::env::DeclarMap<'t>,
     env_limit: crate::env::EnvLimit<'p>,
 ) -> (result: Env<'x, 't>)
+    requires
+        crate::inductive::export_ok(*ctx.export_file),
+        declar_map_owned_in(crate::util_model::arena_ids(*ctx), env_ext),
     ensures
         env_matches(result, *ctx),
 {
-    crate::env::Env::new_w_temp_ext(&ctx.export_file.declars, Some(env_ext), &ctx.export_file.notations, env_limit)
+    proof {
+        export_declars_owned(*ctx);
+    }
+    crate::env::Env::new_w_temp_ext(&ctx.export_file.declars, Some(env_ext), &ctx.export_file.notations, env_limit, Ghost(crate::util_model::arena_ids(*ctx)))
+}
+
+/// A context's export file's declarations belong to the context's arenas.
+pub proof fn export_declars_owned<'t, 'p>(c: crate::util::TcCtx<'t, 'p>)
+    requires
+        crate::inductive::export_ok(*c.export_file),
+    ensures
+        declar_map_owned_in(crate::util_model::arena_ids(c), &c.export_file.declars),
+{
+    let ids = crate::util_model::arena_ids(c);
+    let m = crate::indexmap_model::imap_view(&c.export_file.declars);
+    assert forall|k: NamePtr<'p>| #[trigger] m.contains_key(k)
+        implies crate::util_model::owns_in(ids, k) && declar_owned_in(ids, m[k]) by {
+        crate::inductive::export_declar_owned_in(ids, m[k]);
+    }
 }
 
 pub uninterp spec fn to_model_of_defs<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, (Seq<u64>, ExprSpec)>;
@@ -661,92 +706,10 @@ pub assume_specification<'x, 'a>[ get_constructor_num_fields ](
         },
 ;
 
-/// `Env::can_be_struct` bridged directly (no wrapper needed -- it already
-/// returns a plain `bool`, no struct field extraction required), same
-/// "plain per-call fact, no keyed map" convention as everywhere else on
-/// this page.
-/// CLAIM-FREE. It states nothing about what `get_declar` returns -- no model
-/// map, no correspondence -- and exists only so the kernel's own
-/// declaration-kind tests (`tc.rs`'s `is_ctor_app`, `get_applied_def`) can be
-/// verified in place at all. Those functions consume the VARIANT, which
-/// `ExDeclar` now makes matchable; what they promise their callers is about the
-/// expression's spine head, not about the environment.
-///
-/// Deliberately not given a contract: saying what a `Declar` IS would mean
-/// modelling declaration kinds, which is a much larger trust boundary than
-/// anything these two functions need.
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_declar ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
-;
-
-/// Claims only that the record's pointers belong to the environment's arenas
-/// (`inductive_data_owned`) -- nothing about what the record says. `tc.rs`'s
-/// `mk_nullary_ctor` reads the inductive's constructor list; what it promises
-/// its callers is about the EXPRESSION it builds, not about the environment.
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_inductive ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> inductive_data_owned(*env, *d),
-;
-
-/// Same terms as `get_inductive` above.
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_structure ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-    rec_ok: bool,
-) -> (result: Option<&'b crate::env::InductiveData<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> inductive_data_owned(*env, *d),
-;
-
-/// Same terms as `get_inductive` above (`constructor_data_owned`).
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_constructor ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b crate::env::ConstructorData<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> constructor_data_owned(*env, *d),
-;
-
-pub assume_specification<'x, 'a>[ Env::<'x, 'a>::can_be_struct ](
-    env: &Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: bool) where 'a: 'x
-;
-
-/// A declaration's pointers belong to `env`'s arenas (the per-kind
-/// predicates above, and `info_owned` for the kinds without extra names).
+/// A declaration's pointers belong to `env`'s arenas.
 pub open spec fn declar_owned<'x, 'a>(env: Env<'x, 'a>, d: Declar<'a>) -> bool {
-    match d {
-        Declar::Inductive(i) => inductive_data_owned(env, i),
-        Declar::Constructor(c) => constructor_data_owned(env, c),
-        Declar::Recursor(r) => recursor_data_owned(env, r),
-        Declar::Axiom { info } | Declar::Quot { info } | Declar::Opaque { info, .. }
-        | Declar::Theorem { info, .. } | Declar::Definition { info, .. } => info_owned(env, info),
-    }
+    declar_owned_in(env_arena_ids(env), d)
 }
-
-/// Same terms as `get_inductive`: what the environment returns is owned.
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_old_declar ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> declar_owned(*env, *d),
-;
-
-/// Same terms as `get_inductive`.
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_temp_declar ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b Declar<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> declar_owned(*env, *d),
-;
 
 /// Derived `Clone`s: every field is `Copy` or an `Arc` (whose clone is the
 /// same allocation), so the copy is the original.

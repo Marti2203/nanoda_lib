@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **178 marked rewrites across 104 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **182 marked rewrites across 108 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -322,6 +322,8 @@ needed a different shape.
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the universe-arity test `subst_expr_levels` panics on, made one frame earlier (as `infer_const`) |
 | `check_inductive_declar` | `src/inductive.rs` | `tc.check_declar_info(d).unwrap()` → its verdict part: the declared type tested closed (`assert_closed`), then `check_declar_info_core` (an inductive is not a theorem, so `ok` is always true and the `Err` arm cannot fire). The `any` over the block's names (same `is_recursive` calls, same early stop) and every `for` over a slice, `Vec` or map → scans by index; `for r in recursors.clone()` clones each element in turn; `specialize_nested`'s index of the block's first type is tested one frame earlier (the kernel panics there on an empty block) |
 | `check_declar` | `src/tc.rs` | each `with_tc_and_declar(info, |tc| ..)` / `with_ctx(|ctx| ..)` inlined (a fresh `LeanDag` + `TcCtx`, `ctx_env` limited by the name, `TypeChecker::new` with the declaration); the recursor arm's formatted rejections behind claim-free `recursor_*` helpers (the same `with_ctx` + `panic!`); its `for` over the recursor's inductives a scan by index |
+| `Env::new`, `Env::new_w_temp_ext`, `ctx_env`, `ctx_env_ext` | `src/env.rs`, `src/env_model.rs` | the environment takes, as a ghost argument erased at run time, the arenas its declarations belong to (`Env` gains a ghost field `ids` and a type invariant: every declaration it holds is owned by them). Unverified callers (the pretty printer, `with_tc_and_env_ext`, tests) pass `Ghost::assume_new()`; `ctx_env` / `ctx_env_ext` build it from the context's arena ids |
+| `get_declar`, `get_temp_declar` | `src/env.rs` | `self.temp_declars.as_ref().and_then(|ext| ext.get(n)).or_else(|| self.get_old_declar(n))` → the `match` it stands for (`get_temp_declar` first, then `get_old_declar`); same lookups, same order |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |

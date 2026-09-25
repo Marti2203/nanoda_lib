@@ -580,20 +580,34 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     fn mk_ind_tys_env_ext(&mut self, st: &InductiveCheckState<'t>) -> (result: DeclarMap<'t>)
         requires
             st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
+            crate::inductive_model::st_owned(*old(self), *st),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             final(self).expr_cache == old(self).expr_cache,
+            crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*final(self)), &result),
     {
         // This will be different from the export file's list if this is a nested.
         let is_nested = !st.nested_to_unspecialized_ty_nofvars.is_empty();
-        let all_ind_names: Arc<[NamePtr]> = Arc::from(ind_names(&st.all_inductives_incl_specialized));
+        let ghost ids = crate::util_model::arena_ids(*self);
+        let names_v = ind_names(&st.all_inductives_incl_specialized);
+        let all_ind_names: Arc<[NamePtr]> = Arc::from(names_v);
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            assert forall|k: int| 0 <= k < all_ind_names@.len() implies crate::util_model::owns_in(ids, #[trigger] all_ind_names@[k]) by {
+                assert(all_ind_names@[k] == st.all_inductives_incl_specialized@[k].name);
+            }
+        }
         let mut env_extension = crate::util::new_fx_index_map();
         let mut idx: usize = 0;
         while idx < st.all_inductives_incl_specialized.len()
             invariant
                 st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
                 idx <= st.all_inductives_incl_specialized@.len(),
+                crate::inductive_model::st_owned(*self, *st),
+                crate::util_model::arena_ids(*self) == ids,
+                forall|k: int| 0 <= k < all_ind_names@.len() ==> crate::util_model::owns_in(ids, #[trigger] all_ind_names@[k]),
+                crate::env_model::declar_map_owned_in(ids, &env_extension),
             decreases st.all_inductives_incl_specialized@.len() - idx,
         {
             let inductive = &st.all_inductives_incl_specialized[idx];
@@ -606,6 +620,22 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 all_ind_names: all_ind_names.clone(),
                 all_ctor_names: Arc::from(ctor_names(&inductive.ctors)),
             });
+            let ghost tg = t;
+            proof {
+                broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                let h = st.all_inductives_incl_specialized@[idx as int];
+                assert(crate::util_model::owns(*self, h.name));
+                match tg {
+                    Declar::Inductive(x) => {
+                        assert forall|k: int| 0 <= k < x.all_ctor_names@.len() implies crate::util_model::owns_in(ids, #[trigger] x.all_ctor_names@[k]) by {
+                            assert(x.all_ctor_names@[k] == h.ctors@[k].name);
+                        }
+                    },
+                    _ => {},
+                }
+                assert(crate::env_model::declar_owned_in(ids, t));
+                imap_owned_insert(ids, &env_extension, inductive.name, t);
+            }
             env_extension.insert(inductive.name, t);
             idx += 1;
         }
@@ -624,10 +654,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     fn mk_ctors_env_ext(&mut self, nest_st: &InductiveCheckState<'t>, mut env_ext: DeclarMap<'t>) -> (result: DeclarMap<'t>)
         requires
             crate::inductive_model::st_owned(*old(self), *nest_st),
+            crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*old(self)), &env_ext),
         ensures
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             final(self).expr_cache == old(self).expr_cache,
+            crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*final(self)), &result),
     {
         // This will be different from the export file's list if this is a nested.
         let mut i: usize = 0;
@@ -637,6 +669,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
                 self.expr_cache == old(self).expr_cache,
+                crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*self), &env_ext),
                 i <= nest_st.all_inductives_incl_specialized@.len(),
             decreases nest_st.all_inductives_incl_specialized@.len() - i,
         {
@@ -648,6 +681,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     self.dbj_level_counter == old(self).dbj_level_counter,
                     crate::util_model::same_arenas(*old(self), *self),
                     self.expr_cache == old(self).expr_cache,
+                    crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*self), &env_ext),
                     i < nest_st.all_inductives_incl_specialized@.len(),
                     *inductive == nest_st.all_inductives_incl_specialized@[i as int],
                     idx <= inductive.ctors@.len(),
@@ -669,6 +703,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     num_params,
                     num_fields,
                 });
+                proof {
+                    let h = nest_st.all_inductives_incl_specialized@[i as int];
+                    assert(crate::util_model::owns(*self, h.name));
+                    assert(crate::util_model::owns(*self, h.ctors@[idx as int].name));
+                    assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self), d));
+                    imap_owned_insert(crate::util_model::arena_ids(*self), &env_ext, ctor.name, d);
+                }
                 env_ext.insert(ctor.name, d);
                 idx += 1;
             }
@@ -966,6 +1007,45 @@ pub(crate) proof fn st_owned_after_specs<'t, 'p>(c: TcCtx<'t, 'p>, s0: Inductive
     assert forall|i: int| 0 <= i < s1.ind_consts@.len() implies crate::util_model::owns_in(crate::util_model::arena_ids(c), #[trigger] s1.ind_consts@[i]) by {
         assert(crate::util_model::owns(c, s1.ind_consts@[i]));
     }
+}
+
+/// An export declaration's pointers belong to any arena pair whose export
+/// half is the file's.
+pub proof fn export_declar_owned_in<'a>(ids: (nat, nat), d: Declar<'a>)
+    requires
+        declar_export_tagged(ids.1, d),
+    ensures
+        crate::env_model::declar_owned_in(ids, d),
+{
+    match d {
+        Declar::Inductive(x) => {
+            assert forall|k: int| 0 <= k < x.all_ind_names@.len() implies crate::util_model::owns_in(ids, #[trigger] x.all_ind_names@[k]) by {}
+            assert forall|k: int| 0 <= k < x.all_ctor_names@.len() implies crate::util_model::owns_in(ids, #[trigger] x.all_ctor_names@[k]) by {}
+        },
+        Declar::Recursor(r) => {
+            assert forall|k: int| 0 <= k < r.all_inductives@.len() implies crate::util_model::owns_in(ids, #[trigger] r.all_inductives@[k]) by {}
+            assert forall|k: int| 0 <= k < r.rec_rules@.len() implies crate::util_model::owns_in(ids, #[trigger] r.rec_rules@[k].ctor_name) by {}
+            assert forall|k: int| 0 <= k < r.rec_rules@.len() implies crate::util_model::owns_in(ids, #[trigger] r.rec_rules@[k].val) by {}
+        },
+        _ => {},
+    }
+}
+
+/// Inserting an owned declaration under an owned name keeps a declaration
+/// map owned: the insert's gate holds, and its clauses say what the map is.
+pub proof fn imap_owned_insert<'a>(ids: (nat, nat), m: &DeclarMap<'a>, k: NamePtr<'a>, d: Declar<'a>)
+    requires
+        crate::env_model::declar_map_owned_in(ids, m),
+        crate::util_model::owns_in(ids, k),
+        crate::env_model::declar_owned_in(ids, d),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(crate::indexmap_model::imap_view(m).dom().insert(k)),
+        vstd::std_specs::hash::builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>(),
+        forall|x: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(m).insert(k, d).contains_key(x)
+            ==> crate::util_model::owns_in(ids, x) && crate::env_model::declar_owned_in(ids, crate::indexmap_model::imap_view(m).insert(k, d)[x]),
+{
+    crate::util_model::build_hasher_default_valid_fx();
+    crate::util_model::owned_in_keys_obey_model(ids, crate::indexmap_model::imap_view(m).dom().insert(k));
 }
 
 /// A context over the export file owns its export pointers.
@@ -1457,9 +1537,17 @@ impl<'t, 'p: 't> ExportFile<'p> {
             let mut out = ctor_extension;
             let mut i: usize = 0;
             while i < recursors.len()
+                invariant
+                    crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(ctx), &out),
+                    forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), #[trigger] recursors@[a]),
                 decreases recursors@.len() - i,
             {
                 let r = recursors[i].clone();
+                proof {
+                    assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), recursors@[i as int]));
+                    assert(crate::util_model::owns_in(crate::util_model::arena_ids(ctx), crate::env::declar_info(r).name));
+                    imap_owned_insert(crate::util_model::arena_ids(ctx), &out, crate::env::declar_info(r).name, r);
+                }
                 out.insert(r.info().name, r);
                 i += 1;
             }
@@ -2661,7 +2749,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] rec_rules@[k].val),
+            forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*old(self).ctx, #[trigger] rec_rules@[k].ctor_name),
         ensures
+            crate::env_model::declar_owned_in(crate::util_model::arena_ids(*(*final(self)).ctx), result),
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
@@ -2721,6 +2811,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             rec_rules: Arc::from(rec_rules),
             is_k: st.k_target.unwrap(),
         };
+        proof {
+            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+            let ids = crate::util_model::arena_ids(*self.ctx);
+            assert forall|k: int| 0 <= k < recursor.all_inductives@.len() implies crate::util_model::owns_in(ids, #[trigger] recursor.all_inductives@[k]) by {
+                assert(recursor.all_inductives@[k] == st.all_inductives_incl_specialized@[k].name);
+            }
+            assert forall|k: int| 0 <= k < recursor.rec_rules@.len() implies crate::util_model::owns_in(ids, #[trigger] recursor.rec_rules@[k].ctor_name)
+                && crate::util_model::owns_in(ids, recursor.rec_rules@[k].val) by {
+                assert(vstd::pervasive::cloned::<RecRule<'t>>(rec_rules@[k], recursor.rec_rules@[k]));
+                if recursor.rec_rules@[k] != rec_rules@[k] {
+                    assert(vstd::pervasive::strictly_cloned::<RecRule<'t>>(rec_rules@[k], recursor.rec_rules@[k]));
+                }
+                assert(crate::util_model::owns(*self.ctx, rec_rules@[k].ctor_name));
+                assert(crate::util_model::owns(*self.ctx, rec_rules@[k].val));
+            }
+            assert forall|k: int| 0 <= k < recursor.rec_rules@.len() implies crate::util_model::owns_in(ids, #[trigger] recursor.rec_rules@[k].val) by {
+                assert(crate::util_model::owns_in(ids, recursor.rec_rules@[k].ctor_name) && crate::util_model::owns_in(ids, recursor.rec_rules@[k].val));
+            }
+        }
 
         Declar::Recursor(recursor)
     }
@@ -2762,6 +2871,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result@.len() == st.all_inductives_incl_specialized@.len(),
+            forall|i: int| 0 <= i < result@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*(*final(self)).ctx), #[trigger] result@[i]),
             forall|i: int| 0 <= i < result@.len() ==> match #[trigger] result@[i] {
                 Declar::Recursor(r) => {
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
@@ -2775,6 +2885,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             },
     {
         let rec_rules = self.mk_rec_rules(st);
+        proof {
+            assert forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
+                implies crate::util_model::owns(*self.ctx, (#[trigger] rec_rules@[a]@[j]).ctor_name) by {
+                let h = st.all_inductives_incl_specialized@[a];
+                assert(rec_rules@[a]@[j].ctor_name == h.ctors@[j].name);
+                assert(crate::util_model::owns(*self.ctx, h.ctors@[j].name));
+            }
+        }
         let mut recursors: Vec<Declar<'t>> = Vec::new();
         let mut i: usize = 0;
         while i < st.all_inductives_incl_specialized.len()
@@ -2798,10 +2916,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 rec_rules@.len() == st.all_inductives_incl_specialized@.len(),
                 forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
                     ==> crate::util_model::owns(*self.ctx, (#[trigger] rec_rules@[a]@[j]).val),
+                forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
+                    ==> crate::util_model::owns(*self.ctx, (#[trigger] rec_rules@[a]@[j]).ctor_name),
                 forall|a: int| 0 <= a < rec_rules@.len()
                     ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
+                forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
@@ -2832,6 +2953,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let rr = rec_rules@[i as int]@[k];
                     assert(crate::util_model::owns(*self.ctx, rr.val));
                 }
+                assert forall|k: int| 0 <= k < rec_rules@[i as int]@.len() implies crate::util_model::owns(*self.ctx, #[trigger] rec_rules@[i as int]@[k].ctor_name) by {
+                    let rr = rec_rules@[i as int]@[k];
+                    assert(crate::util_model::owns(*self.ctx, rr.ctor_name));
+                }
             }
             let recursor = self.mk_recursor_aux(
                 st,
@@ -2845,6 +2970,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost r0 = recursors@;
             recursors.push(recursor);
             proof {
+                assert forall|a: int| 0 <= a < recursors@.len() implies crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]) by {
+                    if a < r0.len() { assert(recursors@[a] == r0[a]); }
+                }
                 assert forall|a: int| 0 <= a < recursors@.len() implies match #[trigger] recursors@[a] {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)

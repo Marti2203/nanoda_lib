@@ -117,6 +117,22 @@ pub proof fn build_hasher_default_valid_unique()
 pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::util::Config) -> crate::util::LeanDag<'a>
 ;
 
+/// Pointers owned by one arena pair obey the hash-table key model: same raw
+/// index, same arena, same pointer.
+pub proof fn owned_in_keys_obey_model<A>(ids: (nat, nat), s: Set<Ptr<A>>)
+    requires
+        forall|k: Ptr<A>| #[trigger] s.contains(k) ==> owns_in(ids, k),
+    ensures
+        keys_obey_model::<Ptr<A>>(s),
+{
+    assert forall|a: Ptr<A>, b: Ptr<A>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && crate::util_model::ptr_raw(a) == crate::util_model::ptr_raw(b) implies a == b by {
+        owned_raw_eq_in(ids, a, b);
+    }
+    ptr_keys_obey_model(s);
+}
+
 #[verifier::external_body]
 pub proof fn ptr_keys_obey_model<A>(s: Set<Ptr<A>>)
     requires

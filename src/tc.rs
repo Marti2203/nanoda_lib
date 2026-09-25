@@ -5165,7 +5165,7 @@ mod routed_tests {
         let mut declars = crate::util::new_fx_index_map();
         declars.insert(foo, d);
         let notation = crate::util::new_fx_hash_map();
-        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited, vstd::prelude::Ghost::assume_new());
 
         let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
         let c_foo = tc.ctx.mk_const(foo, uparams);
@@ -5236,7 +5236,7 @@ mod routed_tests {
         let mut declars = crate::util::new_fx_index_map();
         declars.insert(foo, d);
         let notation = crate::util::new_fx_hash_map();
-        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited, vstd::prelude::Ghost::assume_new());
 
         let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
         let c_foo = tc.ctx.mk_const(foo, uparams);
@@ -5278,7 +5278,7 @@ mod routed_tests {
         let mut declars = crate::util::new_fx_index_map();
         declars.insert(mk_name, ctor);
         let notation = crate::util::new_fx_hash_map();
-        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited);
+        let env = crate::env::Env::new(&declars, &notation, crate::env::EnvLimit::PpUnlimited, vstd::prelude::Ghost::assume_new());
 
         let mut tc = super::TypeChecker::new(&mut ctx, &env, None);
         let c_mk = tc.ctx.mk_const(mk_name, uparams);
@@ -5315,14 +5315,6 @@ verus! {
 pub assume_specification<'a>[ crate::env::RecursorData::<'a>::major_idx ](
     rd: &crate::env::RecursorData<'a>,
 ) -> (result: usize)
-;
-
-pub assume_specification<'b, 'x, 'a>[ Env::<'x, 'a>::get_recursor ](
-    env: &'b Env<'x, 'a>,
-    n: &NamePtr<'a>,
-) -> (result: Option<&'b crate::env::RecursorData<'a>>) where 'a: 'x
-    ensures
-        result matches Some(d) ==> crate::env_model::recursor_data_owned(*env, *d),
 ;
 
 /// TRANSPARENT, like `ExExpr`/`ExLevel`. `infer_sort` reads `self.ctx` and
