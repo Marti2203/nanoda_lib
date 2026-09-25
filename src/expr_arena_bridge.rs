@@ -581,7 +581,10 @@ pub open spec fn fvar_unique_serial(id: FVarId) -> Option<u32> {
 
 /// `mk_unique` is the only constructor of a `Unique` fvar id and allocates each
 /// counter value once per context (the counter is checked, and never goes
-/// back -- `same_arenas`), so a serial names one local.
+/// back -- `same_arenas`), so a serial names one local. Verified code cannot
+/// store a local any other way (`alloc_expr` refuses one). The pretty
+/// printer's `swap_local_binding_name` renames a local under the same id, in
+/// its own context after checking; no checker context holds such a pair.
 #[verifier::external_body]
 pub proof fn unique_serial_injective(aids: (nat, nat), x: u32, y: u32)
     requires
@@ -989,17 +992,6 @@ pub proof fn is_local_shape_model<'a>(ptr: ExprPtr<'a>)
 {
 }
 
-/// Every stored local's type is closed. True by construction: the three
-/// local constructors (`mk_dbj_level`, `remake_dbj_level`, `mk_unique`) test
-/// it at run time before allocating, `alloc_expr` requires it of any other
-/// `Local` verified code stores, and export files contain no locals.
-#[verifier::external_body]
-pub proof fn local_type_wf<'a>(ptr: ExprPtr<'a>)
-    ensures
-        is_local_shape(ptr) ==> nlbv(to_model(local_binder_type_of(ptr))) == 0,
-{
-}
-
 /// Was an `assume_specification`. `ExFVarId` is transparent now, so comparing
 /// the variants explicitly proves what the derived `PartialEq` only asserted:
 /// making the type transparent is not by itself enough, because `==` on it is
@@ -1098,8 +1090,8 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_dbj_level ](
         crate::util_model::owns(*old(ctx), binder_name),
         crate::util_model::owns(*old(ctx), binder_type),
         old(ctx).dbj_level_counter < u16::MAX,
-        // a local's type is closed: `local_type_wf` states it of EVERY local,
-        // so creating one has to establish it
+        // a local's type is closed, as `alloc_expr` requires of every local
+        // it stores
         nlbv(to_model(binder_type)) == 0,
     ensures
         crate::util_model::owns(*final(ctx), result),
@@ -2059,10 +2051,12 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_expr ](
     requires
         expr_children_owned(*old(ctx), e),
         // what `read_expr` promises of every stored node has to hold of what
-        // is stored: the cached flags are right, and a local's type is closed
-        // (`local_type_wf`)
+        // is stored: the cached flags are right
         node_cache_ok(e),
-        e matches Expr::Local { binder_type, .. } ==> nlbv(to_model(binder_type)) == 0,
+        // locals come only from `mk_dbj_level`, `remake_dbj_level` and
+        // `mk_unique`, which number them: `unique_serial_injective` holds
+        // because nothing else stores one
+        !(e is Local),
     ensures
         crate::util_model::owns(*final(ctx), result),
         !(e is Local) ==> to_model(result) == to_model_of_expr(e),
