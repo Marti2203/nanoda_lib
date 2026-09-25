@@ -75,9 +75,8 @@ None as of stage 5. Stage 4 fixed `Ptr::eq`'s specification (now
 - `env_arena_ids(env)` / `env_owns` / `env_matches(env, c)`: environment
   lookups and records (`inductive_data_owned`, `constructor_data_owned`,
   `recursor_data_owned`) hand out pointers of the environment's arenas;
-  `tc_wf` and the shadow routes require the environment to match the context.
-- Cache invariants (`tc_wf`'s five caches, the expression caches, the shadow
-  memo's certificates) carry ownership of keys and values.
+  `tc_wf` requires the environment to match the context.
+- Cache invariants (`tc_wf`'s five caches, the expression caches) carry ownership of keys and values.
 - Comparisons that run with no context in scope (`ptr_in_seq`,
   `ctor_app_params_ok`, closures) are stated on `raw`, which is what the
   kernel's `==` computes; `owned_raw_eq` turns that into pointer equality

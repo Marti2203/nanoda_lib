@@ -1,5 +1,9 @@
 # Verifying `tc.rs`: the measured shape of the job
 
+> 2026-09-25: the cycle landed (2026-09-24) and the shadow certifier this
+> document refers to throughout has been retired (see `SHADOW_RETIREMENT.md`).
+> Kept as the historical record of how the arc was scoped.
+
 Status: **open, and now scoped**. `tc.rs` was opened to Verus on 2026-09-18
 (commit `9217544`); two functions are verified in place. This note records what
 the file's call graph actually looks like, because the shape decides the plan

@@ -1,5 +1,15 @@
 # Retiring the shadow
 
+**Status: DONE 2026-09-25** (commits `7f7f356`, `be1c1ed`). The `tc.rs` cycle
+was proven against the kernel model (2026-09-24), and a re-run over eight
+corpora (Init.Core, Init.Omega, Array/BitVec/Fin/Int/List/Nat lemmas) showed 0
+disagreements and 0 "verified type not shown equal" before removal. Removed:
+`def_eq`'s instrumentation, `shadow_memo`, `route_stats`, 100 exec mirror
+functions, `delta_bound_model.rs`, the proof-carrying memo and the
+mirror-only claims, and three environment axioms (claiming trust 98 -> 95).
+The model's theory (deq/deq_p, types_to, projection typing) was kept. What
+follows is the plan as written before the removal.
+
 The shadow certifier is scaffolding. It exists because the kernel's own
 `def_eq` does not yet carry a proof, so the only way to get a machine-checked
 claim about a conversion is to run a *separate*, verified route alongside the
