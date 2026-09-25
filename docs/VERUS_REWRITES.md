@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **77 marked rewrites across 55 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **80 marked rewrites across 57 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -221,6 +221,7 @@ needed a different shape.
 | `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
+| `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls. A fresh `Env` cannot be shown to match the context's arenas without a new trusted fact, so the environment side stays outside |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 
 The bodies are the kernel's; what changed is where results are bound.
@@ -237,6 +238,7 @@ still a rejection — but each is an improvement.
 |---|---|---|
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so) |
 | `reduce_proj` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
+| `mk_unique` | `src/util.rs` | `self.unique_counter += 1` on a `u32`, which WRAPS in a release build: after 2^32 locals two different locals would share an id, which unlike the others here could make distinct locals compare equal. Overflow is a rejection now (`checked_add`) |
 | `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's |
 | `to_ctor_when_k` | `src/tc.rs` | K-like replacement additionally tests that the major premise's type is a proposition (`is_prop`) — the kernel relies on K-like recursors existing only for `Prop` inductives, which is what makes the swap a proof-irrelevance step; never fails on a well-formed environment, costs one inference when K fires |
 | `def_eq_unit`, `try_eta_struct_aux` | `src/tc.rs` | the structure's constructor and its field count tested against the environment model's records, as in `infer_proj` (decline otherwise; never fails on a well-formed environment) |

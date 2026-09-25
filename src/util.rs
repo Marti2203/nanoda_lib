@@ -737,7 +737,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         binder_type: ExprPtr<'t>,
     ) -> ExprPtr<'t> {
         let unique_id = self.unique_counter;
-        self.unique_counter += 1;
+        // VERUS-REWRITE(unique-counter-overflow): `+= 1` wraps in a release
+        // build, after which two locals could share an id; overflow is a
+        // rejection now.
+        self.unique_counter = match self.unique_counter.checked_add(1) {
+            Some(n) => n,
+            None => panic!("unique local counter overflow"),
+        };
         let id = FVarId::Unique(unique_id);
         let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
         // VERUS-REWRITE(local-closed-check): a local's type must be closed; see

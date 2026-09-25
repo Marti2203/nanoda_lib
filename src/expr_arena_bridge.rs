@@ -566,6 +566,11 @@ pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
 /// ids for different de Bruijn levels.
 pub uninterp spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16>;
 
+/// The same for a `Unique` local: the counter value it was created with.
+/// `mk_unique` ties it to the node; two uniques from one context with
+/// different serials are therefore different locals.
+pub uninterp spec fn unique_serial(aids: (nat, nat), id: u32) -> Option<u32>;
+
 /// The memo caches are sound: every entry maps its key to a pointer denoting
 /// exactly what the key's function computes. `subst_aux`'s `return cached`
 /// branch is correct precisely when this holds, and its `insert` branch is what

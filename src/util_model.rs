@@ -492,9 +492,11 @@ pub open spec fn owns_all<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate
 }
 
 /// The frame every `&mut` context function keeps: the context still indexes
-/// the same two arenas.
+/// the same two arenas, and the unique-local counter has not gone back (so a
+/// `Unique` local made later has a later serial, and is a different local).
 pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::util::TcCtx<'t, 'p>) -> bool {
-    arena_ids(a) == arena_ids(b)
+    &&& arena_ids(a) == arena_ids(b)
+    &&& a.unique_counter <= b.unique_counter
 }
 
 /// `FxHashMap`'s hasher factory, registered so `ExprCache`'s fields have a
