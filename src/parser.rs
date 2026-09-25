@@ -443,11 +443,24 @@ pub(crate) fn parse_export_file<'p, R: BufRead>(
 }
 
 impl<'a, R: BufRead> Parser<'a, R> {
+    /// The export file format does not output the anonymous name and level zero, but the export
+    /// program back-references them as though they were the 0th element of their kind; the exporter
+    /// implicitly assumes that whatever you're using for storage knows about this convention.
+    ///
+    /// So when creating a new parser, we need to begin by placing `Anon` and `Zero` in the 0th position
+    /// of their backing storage, satisfying the exporter's assumption.
+    ///
+    /// VERUS-REWRITE(dag-prefill-moved): those two insertions were in
+    /// `LeanDag::new`, which every checker's dag also went through; they are
+    /// made here, on the parser's dag only.
     pub fn new(buf_reader: R, config: Config) -> Self {
+        let mut dag = LeanDag::new(&config);
+        let _ = dag.names.insert(Name::Anon);
+        let _ = dag.levels.insert(Level::Zero);
         Self {
             buf_reader,
             line_num: 0usize,
-            dag: LeanDag::new(&config),
+            dag,
             declars: new_fx_index_map(),
             notations: new_fx_hash_map(),
             config,

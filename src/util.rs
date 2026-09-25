@@ -485,6 +485,12 @@ impl<'p> ExportFile<'p> {
         &&& self.name_cache.arena_id() == self.dag.id()
         &&& !self.dag.is_tc()
         &&& self.dag.partner() == self.dag.id()
+        // the export format's back-references: the anonymous name and level
+        // zero are element 0 (`Parser::new` puts them there)
+        &&& crate::indexmap_model::iset_keys(&self.dag.names).len() >= 1
+        &&& crate::indexmap_model::iset_keys(&self.dag.names)[0] == Name::Anon
+        &&& crate::indexmap_model::iset_keys(&self.dag.levels).len() >= 1
+        &&& crate::indexmap_model::iset_keys(&self.dag.levels)[0] == Level::Zero
     }
 
     /// The export tier's arena: the tag its name cache carries. Closed,
@@ -1335,12 +1341,8 @@ impl<'a> LeanDag<'a> {
         &&& t.uparams.id() == t.names.id()
         &&& t.strings.id() == t.names.id()
         &&& t.bignums.id() == t.names.id()
-        &&& crate::indexmap_model::iset_keys(&self.names).len() >= 1
-        &&& crate::indexmap_model::iset_keys(&self.names)[0] == Name::Anon
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
             ==> crate::name_arena_bridge::name_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.names)[i], i as nat, t.is_tc, t.names.id(), t.partner)
-        &&& crate::indexmap_model::iset_keys(&self.levels).len() >= 1
-        &&& crate::indexmap_model::iset_keys(&self.levels)[0] == Level::Zero
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
             ==> crate::level_arena_bridge::level_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.levels)[i], i as nat, t.is_tc, t.names.id(), t.partner)
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
@@ -1363,11 +1365,10 @@ impl<'a> LeanDag<'a> {
         self.toks@.partner
     }
 
-    /// What `LeanDag::new` builds: the anonymous name and level zero, nothing
-    /// else.
+    /// What `LeanDag::new` builds: nothing stored.
     pub closed spec fn fresh(self) -> bool {
-        &&& crate::indexmap_model::iset_keys(&self.names) == seq![Name::<'a>::Anon]
-        &&& crate::indexmap_model::iset_keys(&self.levels) == seq![Level::<'a>::Zero]
+        &&& crate::indexmap_model::iset_keys(&self.names).len() == 0
+        &&& crate::indexmap_model::iset_keys(&self.levels).len() == 0
         &&& crate::indexmap_model::iset_keys(&self.exprs).len() == 0
         &&& crate::indexmap_model::iset_keys(&self.uparams).len() == 0
         &&& crate::indexmap_model::iset_keys(&self.strings).len() == 0
@@ -1421,17 +1422,18 @@ impl<'a> std::fmt::Debug for LeanDag<'a> {
 }
 
 impl<'a> LeanDag<'a> {
-    /// The export file format does not output the anonymous name and level zero, but the export
-    /// program back-references them as though they were the 0th element of their kind; the exporter
-    /// implicitly assumes that whatever you're using for storage knows about this convention.
-    ///
-    /// So when creating a new parser, we need to begin by placing `Anon` and `Zero` in the 0th position
-    /// of their backing storage, satisfying the exporter's assumption.
+    /// An empty dag.
     ///
     /// VERUS-REWRITE(arena-tokens): the dag carries its history tokens, a
     /// ghost field (erased at run time).
+    /// VERUS-REWRITE(dag-prefill-moved): the anonymous name and level zero it
+    /// used to insert are inserted by `Parser::new`, the one caller whose dag
+    /// needs them; a checker's dag starts empty. Those two entries of a
+    /// checker's dag were never reached (allocation finds the export file's
+    /// copies first), and they duplicated the export file's nodes, which the
+    /// arena model's hash-consing facts rule out.
     pub fn new(config: &Config) -> Self {
-        let mut out = Self {
+        let out = Self {
             names: new_unique_index_set(),
             levels: new_unique_index_set(),
             exprs: new_unique_index_set(),
@@ -1440,9 +1442,6 @@ impl<'a> LeanDag<'a> {
             bignums: if config.nat_extension { Some(new_fx_index_set()) } else { None },
             toks: vstd::prelude::Tracked::assume_new(),
         };
-
-        let _ = out.names.insert(Name::Anon);
-        let _ = out.levels.insert(Level::Zero);
         out
     }
 

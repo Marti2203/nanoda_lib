@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **195 marked rewrites across 117 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **196 marked rewrites across 117 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -410,6 +410,7 @@ still a rejection — but each is an improvement.
 | `check_inductive_declar` | `src/inductive.rs` | the mutual-block limit `start + size` panics on overflow; the same check, explicit |
 | `check_declar_info_unwrap`, `check_declar` | `src/tc.rs` | every declaration's type (and a definition's value) is TESTED closed before it is checked; the export parser checks neither. Never fails on a well-formed export |
 | `abstr_aux_levels` | `src/expr.rs` | `num_open_binders + 1` under each binder panics on overflow (the crate builds with `overflow-checks = true`, release included); the same check is made explicit at exactly that point, so the result can carry `levels_fit`. Nothing the original accepted is rejected. Replaces the old `open levels + depth < 60000` precondition, which no caller could discharge |
+| `LeanDag::new`, `Parser::new` | `src/util.rs`, `src/parser.rs` | the anonymous name and level zero were inserted by `LeanDag::new`, so every checker's dag held copies of the export file's two nodes; they are inserted by `Parser::new` instead, on the export file's dag only. The copies were never reached (allocation finds the export file's first), and with the arena denotations defined they made `to_model_name_injective` refutable: two distinct owned pointers, both denoting the anonymous name |
 
 ---
 
