@@ -462,15 +462,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// If this is a const application, return (Const {..}, name, levels, args)
 
-    pub(crate) fn abstr_pis<I>(&mut self, mut binders: I, mut body: ExprPtr<'t>) -> ExprPtr<'t>
-    where
-        I: Iterator<Item = ExprPtr<'t>> + DoubleEndedIterator,
-    {
-        while let Some(local) = binders.next_back() {
-            body = self.abstr_pi(local, body)
-        }
-        body
-    }
 
     /// The `nat_extension` binary-op code of a constant name (the same
     /// name-cache dispatch `tc.rs::try_reduce_nat` performs), or `None`:
@@ -626,6 +617,85 @@ pub open spec fn find_const_cache_ok<'t, 'p>(c: TcCtx<'t, 'p>, cache: Map<ExprPt
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place: the same telescope `abstr_pi_telescope` builds, over
+    /// the iterator's elements.
+    ///
+    /// VERUS-REWRITE(entry-params): parameters `mut binders, mut body` ->
+    /// `binders_in, body_in` with `let mut` copies (the claim names the entry
+    /// values), and the `IterSpec` bound `foldl_apps` also carries, so the
+    /// claim can name the iterator's elements.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn abstr_pis<I>(&mut self, binders_in: I, body_in: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    where
+        I: Iterator<Item = ExprPtr<'t>> + DoubleEndedIterator + crate::util::IterSpec,
+        requires
+            binders_in.obeys_prophetic_iter_laws(),
+            crate::util_model::owns_all(*old(self), binders_in.remaining()),
+            crate::util_model::owns(*old(self), body_in),
+            forall|i: int| #![trigger binders_in.remaining()[i]] 0 <= i < binders_in.remaining().len()
+                ==> crate::expr_arena_bridge::to_model(binders_in.remaining()[i]) is Free,
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
+    {
+        let mut binders = binders_in;
+        let mut body = body_in;
+        // VERUS-REWRITE(while-let-exit): `while let Some(local) = binders.next_back()`
+        // is the `loop`/`match` it stands for, so the proof can name the
+        // iterator before each pop and knows it is exhausted at the exit.
+        loop
+            invariant
+                binders.obeys_prophetic_iter_laws(),
+                crate::util_model::owns_all(*self, binders.remaining()),
+                crate::util_model::owns(*self, body),
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                forall|i: int| #![trigger binders.remaining()[i]] 0 <= i < binders.remaining().len()
+                    ==> crate::expr_arena_bridge::to_model(binders.remaining()[i]) is Free,
+                crate::expr_arena_bridge::abstr_pi_telescope_model(
+                    Seq::new(binders.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders.remaining()[i])),
+                    Seq::new(binders.remaining().len(), |i: int| crate::quot_model::local_type(binders.remaining()[i])),
+                    crate::expr_arena_bridge::to_model(body),
+                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
+            ensures
+                crate::util_model::owns(*self, body),
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                crate::expr_arena_bridge::to_model(body) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
+        {
+            let ghost rem = binders.remaining();
+            let local = match binders.next_back() {
+                Some(local) => local,
+                None => {
+                    proof {
+                        assert(Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i])) =~= Seq::<u32>::empty());
+                        assert(Seq::new(rem.len(), |i: int| crate::quot_model::local_type(rem[i])) =~= Seq::<crate::expr_model::ExprSpec>::empty());
+                        assert(crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::<u32>::empty(), Seq::<crate::expr_model::ExprSpec>::empty(),
+                            crate::expr_arena_bridge::to_model(body)) == crate::expr_arena_bridge::to_model(body));
+                    }
+                    break;
+                }
+            };
+            body = self.abstr_pi(local, body);
+            proof {
+                let ids = Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i]));
+                let tys = Seq::new(rem.len(), |i: int| crate::quot_model::local_type(rem[i]));
+                assert(ids.drop_last() =~= Seq::new(binders.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders.remaining()[i])));
+                assert(tys.drop_last() =~= Seq::new(binders.remaining().len(), |i: int| crate::quot_model::local_type(binders.remaining()[i])));
+                assert forall|i: int| 0 <= i < binders.remaining().len() implies crate::util_model::owns_in(crate::util_model::arena_ids(*self), #[trigger] binders.remaining()[i]) by {
+                    assert(binders.remaining()[i] == rem[i]);
+                }
+            }
+        }
+        body
+    }
+
     /// `find_const` specialised to the one predicate `has_ind_occ` passes --
     /// "the constant's name is one of `names`" -- so it can carry a contract.
     /// Same traversal (into a local's type too), same memo. On `false`, no

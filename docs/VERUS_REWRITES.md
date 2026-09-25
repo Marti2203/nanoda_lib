@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **96 marked rewrites across 69 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **100 marked rewrites across 71 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -104,12 +104,13 @@ iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
 with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
 either, and it changes the kernel's line more, not less.
 
-### `Iterator::enumerate` — 2 rewrites
+### `Iterator::enumerate` — 3 rewrites
 
 | function | file | missing |
 |---|---|---|
 | `mk_majors` | `src/inductive.rs` | `enumerate` |
 | `which_valid_ind_app` | `src/inductive.rs` | `enumerate`: with the fork's specification the loop body still cannot show `ind_const == st.ind_consts@[i]` (tried 2026-09-25) |
+| `handle_rec_args_minor` | `src/inductive.rs` | `enumerate` over `rec_args`; also the reversed index iterator and the two `xs` iterators bound to locals so the proof can name their elements (same calls) |
 
 All three of `nth`, `position` and `enumerate` have now been **specified on the
 fork** (`d5d5e80fa`) — they genuinely had none, checked directly rather than
@@ -198,9 +199,11 @@ Verus does not currently support closures capturing a mutable reference
 Each is spelled as the `match`/index walk the adapter desugars to. This is the
 one blocker left in the 46-function `def_eq` cycle that is not an `.unwrap()`.
 
-### An exit proof inside a `while let` — 1 rewrite
+### An exit proof inside a `while let` — 2 rewrites
 
-`unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`.
+`unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`;
+so is `abstr_pis` (`src/expr.rs`), whose `while let Some(b) = binders.next_back()`
+needs the iterator's emptiness at exit.
 
 `while let` itself is fine — Verus desugars it to exactly that and it accepts
 `invariant`/`ensures`. The problem is narrower: these two put a `proof` block
@@ -235,6 +238,7 @@ needed a different shape.
 | `check_ctor` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `check_positivity1` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
+| `abstr_pis` | `src/expr.rs` | parameters `mut binders, mut body` → `binders_in, body_in` with `let mut` copies (the claim names the entry values); the `IterSpec` bound `foldl_apps` already carries |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
 | `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
