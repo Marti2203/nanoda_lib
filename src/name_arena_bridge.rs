@@ -50,12 +50,54 @@ verus! {
 
 broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
-/// What a `NamePtr` denotes in the `NameSpec` model -- uninterpreted, same
-/// trust boundary as `expr_arena_bridge::to_model`/`level_arena_bridge::
-/// to_model`: we don't compute this from the arena's actual `IndexSet`
-/// storage, we trust the axioms below (attached to the real constructor/
-/// reader functions) to be consistent with it.
-pub uninterp spec fn to_model_name<'a>(ptr: NamePtr<'a>) -> NameSpec;
+/// What a `NamePtr` denotes in the `NameSpec` model: the name its arena's
+/// history holds at its index (`arena_history.rs`), with children read the
+/// same way. A function of the pointer alone. The recursion is on (tier,
+/// index): a child is in the export tier or earlier in the same tier, and a
+/// node breaking that (which no stored node does, `name_node_ok`) denotes
+/// `Anon`. Closed; `to_model_name_at` states the unfolding.
+pub closed spec fn to_model_name<'a>(ptr: NamePtr<'a>) -> NameSpec
+    decreases
+            (if ptr_is_tc(ptr) {
+                1int
+            } else {
+                0int
+            }),
+            ptr_index(ptr),
+{
+    let h = crate::arena_history::arena_hist::<Name<'a>>(crate::util::arena_of(ptr));
+    let i = ptr_index(ptr);
+    if i >= h.len() {
+        NameSpec::Anon
+    } else {
+        match h[i as int] {
+            Name::Anon => NameSpec::Anon,
+            Name::Str(pfx, sfx, _) => if child_ok(pfx, ptr_is_tc(ptr), i) {
+                NameSpec::Str(Box::new(to_model_name(pfx)), string_id(sfx))
+            } else {
+                NameSpec::Anon
+            },
+            Name::Num(pfx, sfx, _) => if child_ok(pfx, ptr_is_tc(ptr), i) {
+                NameSpec::Num(Box::new(to_model_name(pfx)), sfx)
+            } else {
+                NameSpec::Anon
+            },
+        }
+    }
+}
+
+/// A pointer denotes what its arena's history holds at its index, read
+/// structurally, whenever that node's children are placed as stored nodes'
+/// are.
+pub proof fn to_model_name_at<'a>(p: NamePtr<'a>)
+    ensures
+        ({
+            let h = crate::arena_history::arena_hist::<Name<'a>>(crate::util::arena_of(p));
+            ptr_index(p) < h.len() && name_children_below2(h[ptr_index(p) as int], ptr_is_tc(p), ptr_index(p))
+                ==> to_model_name(p) == to_model_of_name(h[ptr_index(p) as int])
+        }),
+{
+}
 
 /// Ditto, keyed by an already-read `Name` value rather than a pointer --
 /// mirrors `expr_arena_bridge::to_model_of_expr`'s split from `to_model`.
@@ -416,10 +458,73 @@ pub open spec fn name_node_ok<'a>(n: Name<'a>, i: nat, tc: bool, id: nat, partne
     &&& match n {
         Name::Anon => true,
         Name::Str(pfx, sfx, _) => crate::util_model::owns_in((id, partner), pfx)
-            && crate::util_model::owns_in((id, partner), sfx) && (!tc ==> !ptr_is_tc(sfx)),
-        Name::Num(pfx, _, _) => crate::util_model::owns_in((id, partner), pfx),
+            && crate::util_model::owns_in((id, partner), sfx)
+            && (!tc ==> !crate::util_model::ptr_is_tc(pfx) && !crate::util_model::ptr_is_tc(sfx)),
+        Name::Num(pfx, _, _) => crate::util_model::owns_in((id, partner), pfx)
+            && (!tc ==> !crate::util_model::ptr_is_tc(pfx)),
     }
     &&& name_hash_ok(n)
+}
+
+/// Runtime `==` on names: the derived comparison, which compares pointers by
+/// `raw` (their `PartialEq`) and the integers as integers.
+pub open spec fn name_raw_eq<'a>(a: Name<'a>, b: Name<'a>) -> bool {
+    match (a, b) {
+        (Name::Anon, Name::Anon) => true,
+        (Name::Str(p1, s1, h1), Name::Str(p2, s2, h2)) => crate::util_model::ptr_raw(p1) == crate::util_model::ptr_raw(p2)
+            && crate::util_model::ptr_raw(s1) == crate::util_model::ptr_raw(s2) && h1 == h2,
+        (Name::Num(p1, k1, h1), Name::Num(p2, k2, h2)) => crate::util_model::ptr_raw(p1) == crate::util_model::ptr_raw(p2)
+            && k1 == k2 && h1 == h2,
+        _ => false,
+    }
+}
+
+/// THE HASH-TABLE KEY MODEL FOR NAMES, the analogue of `ptr_keys_obey_model`:
+/// `Name`'s `==` is derived (field-wise, pointers by `raw`), its `Hash`
+/// writes the node's stored hash (deterministic), and it is `Copy`. So `==`
+/// is faithful on a set of names in which runtime-equal means equal.
+#[verifier::external_body]
+pub proof fn name_keys_obey_model<'a>(s: Set<Name<'a>>)
+    requires
+        forall|a: Name<'a>, b: Name<'a>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && name_raw_eq(a, b) ==> a == b,
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Name<'a>>(s),
+{
+}
+
+/// A name's pointers belong to the arena pair `ids`.
+pub open spec fn name_parts_owned_in<'a>(ids: (nat, nat), n: Name<'a>) -> bool {
+    match n {
+        Name::Anon => true,
+        Name::Str(pfx, sfx, _) => crate::util_model::owns_in(ids, pfx) && crate::util_model::owns_in(ids, sfx),
+        Name::Num(pfx, _, _) => crate::util_model::owns_in(ids, pfx),
+    }
+}
+
+/// Names whose pointers belong to one arena pair obey the key model.
+pub proof fn owned_names_keys_obey_model<'a>(ids: (nat, nat), s: Set<Name<'a>>)
+    requires
+        forall|n: Name<'a>| #[trigger] s.contains(n) ==> name_parts_owned_in(ids, n),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<Name<'a>>(s),
+{
+    assert forall|a: Name<'a>, b: Name<'a>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && name_raw_eq(a, b) implies a == b by {
+        match (a, b) {
+            (Name::Str(p1, s1, _), Name::Str(p2, s2, _)) => {
+                crate::util_model::owned_raw_eq_in(ids, p1, p2);
+                crate::util_model::owned_raw_eq_in(ids, s1, s2);
+            },
+            (Name::Num(p1, _, _), Name::Num(p2, _, _)) => {
+                crate::util_model::owned_raw_eq_in(ids, p1, p2);
+            },
+            _ => {},
+        }
+    }
+    name_keys_obey_model(s);
 }
 
 /// The canonical hash of a name node: what `hash64!` computes from its
@@ -436,25 +541,6 @@ pub open spec fn name_hash_ok<'t>(n: Name<'t>) -> bool {
         ),
     }
 }
-
-/// THE storage primitive for names -- the analogue of `alloc_expr`'s and
-/// `alloc_level`'s, justified the same way by `name_model_at_append` above.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_name ](
-    ctx: &mut TcCtx<'t, 'p>,
-    n: Name<'t>,
-) -> (result: NamePtr<'t>) where 'p: 't
-    requires
-        name_children_owned(*old(ctx), n),
-        name_hash_ok(n),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        to_model_name(result) == to_model_of_name(n),
-        // FRAME, same as `alloc_expr`/`alloc_level`: allocation touches the
-        // dag, never the memo caches.
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
 
 /// THE storage primitive for strings, the fourth beside `alloc_name`,
 /// `alloc_level` and `alloc_expr`. A string has no model beyond its opaque
@@ -481,17 +567,6 @@ pub open spec fn name_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, n: crate::name::N
     }
 }
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
-    ctx: &TcCtx<'t, 'p>,
-    ptr: NamePtr<'t>,
-) -> (result: Name<'t>) where 'p: 't
-    requires
-        crate::util_model::owns(*ctx, ptr),
-    ensures
-        name_children_owned(*ctx, result),
-        to_model_of_name(result) == to_model_name(ptr),
-;
-
 // Contradiction detector, run and removed: a `proof fn` assuming exactly the
 // biconditional below and claiming `ensures false` FAILS to verify, as it must.
 // Non-degeneracy is witnessed by `TcCtx::get_pfx` and `TcCtx::replace_pfx`
@@ -502,12 +577,11 @@ pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_name ](
 /// (`level_ptr_eq_iff_same_model_param`); `name_id_injective` is NOT the same
 /// fact -- it is about the opaque `name_id`, not about `to_model_name`.
 ///
-/// NOT PROVABLE from what is here, and the reason is specific rather than
-/// incidental. `alloc_name`'s real body dedups with
-/// `IndexSet::get_index_of`, and that method is deliberately left unspecified
-/// in `util_model.rs`: it is generic over `Q: Equivalent<T>`, so there is
-/// nothing truthful to say about it in general. Until that changes, this is
-/// where hash-consing enters, and it enters as an assumption.
+/// Not proven yet. Within one tier it follows from the arena histories: a
+/// dag's stored names are distinct and carry canonical hashes (`LeanDag`'s
+/// invariant). Across tiers it also needs the checker's names to be disjoint
+/// from the export file's, which `alloc_name` ensures by looking in the export
+/// file first but which is not yet stated as an invariant.
 ///
 /// The `==>` direction is free (`to_model_name` is a function); the content is
 /// the converse. It holds because the arena compares whole nodes, hash
@@ -523,13 +597,6 @@ pub proof fn to_model_name_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'
         (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2)),
 {
 }
-
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::anonymous ](ctx: &TcCtx<'t, 'p>) -> (result:
-    NamePtr<'t>) where 'p: 't
-    ensures
-        crate::util_model::owns(*ctx, result),
-        to_model_name(result) == NameSpec::Anon,
-;
 
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id

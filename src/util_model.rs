@@ -438,6 +438,16 @@ pub open spec fn ptr_is_tc<A>(p: crate::util::Ptr<A>) -> bool {
     crate::util_model::ptr_raw(p) >= 0x8000_0000u32
 }
 
+/// The two spellings of the tier test agree (`name_arena_bridge::ptr_is_tc`
+/// tests the bit).
+pub proof fn ptr_is_tc_agree<A>(p: crate::util::Ptr<A>)
+    ensures
+        ptr_is_tc(p) == crate::name_arena_bridge::ptr_is_tc(p),
+{
+    let r = ptr_raw(p);
+    assert((r >= 0x8000_0000u32) == (r & 0x8000_0000u32 != 0)) by (bit_vector);
+}
+
 /// An export-file pointer of the export arena `a`.
 pub open spec fn export_tagged<A>(a: nat, p: crate::util::Ptr<A>) -> bool {
     !ptr_is_tc(p) && crate::util::arena_of(p) == a

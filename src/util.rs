@@ -146,8 +146,49 @@ impl<A> Ptr<A> {
 // used to only assert.
 ::vstd::prelude::verus! {
 
+/// `Ptr::from`'s capacity panic, formatted as it formats it. Claims nothing.
+#[verifier::external_body]
+fn index_capacity_exceeded(idx: usize) -> ! {
+    panic!("index {idx} exceeds 31-bit capacity")
+}
+
+
 
 impl<A> Ptr<A> {
+    /// `Ptr::from`, with the arena the index is into (a ghost argument, erased
+    /// at run time). Allocation and the arena readers build pointers with it,
+    /// which is how they know what the pointer is owned by.
+    pub(crate) fn from_in(dag_marker: DagMarker, idx: usize, Ghost(arena): Ghost<nat>) -> (result: Self)
+        ensures
+            crate::name_arena_bridge::ptr_index(result) == idx,
+            crate::util_model::ptr_is_tc(result) == crate::util_model::dm_is_tc(dag_marker),
+            crate::name_arena_bridge::ptr_is_tc(result) == crate::util_model::dm_is_tc(dag_marker),
+            arena_of(result) == arena,
+    {
+        let idx_u32 = u32::try_from(idx).unwrap();
+        if idx_u32 & TC_BIT != 0 {
+            index_capacity_exceeded(idx);
+        }
+        let tag = match dag_marker {
+            DagMarker::ExportFile => 0,
+            DagMarker::TcCtx => TC_BIT,
+        };
+        let raw = tag | idx_u32;
+        proof {
+            assert(TC_BIT == 0x8000_0000u32) by (bit_vector);
+            if crate::util_model::dm_is_tc(dag_marker) {
+                assert(tag == 0x8000_0000u32);
+                assert(raw & 0x7FFF_FFFFu32 == idx_u32 && raw & 0x8000_0000u32 != 0 && raw >= 0x8000_0000u32) by (bit_vector)
+                    requires idx_u32 & 0x8000_0000u32 == 0, raw == 0x8000_0000u32 | idx_u32;
+            } else {
+                assert(tag == 0u32);
+                assert(raw & 0x7FFF_FFFFu32 == idx_u32 && raw & 0x8000_0000u32 == 0 && raw < 0x8000_0000u32) by (bit_vector)
+                    requires idx_u32 & 0x8000_0000u32 == 0, raw == 0u32 | idx_u32;
+            }
+        }
+        Self { raw, ph: PhantomData, arena: Ghost(arena) }
+    }
+
     /// Exposes the packed representation for `util_model.rs`'s Verus proof
     /// that `from`/`idx`/`dag_marker`'s bit-packing round-trips correctly.
     /// Purely additive -- no behavior change.
@@ -554,6 +595,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place, body unchanged: a two-component name, owned.
     pub fn str2(&mut self, s1: &'static str, s2: &'static str) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache == old(self).expr_cache,
@@ -569,6 +612,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Verified in place, body unchanged: a one-component name, owned.
     pub fn str1(&mut self, s: &'static str) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -578,6 +623,129 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let anon = self.alloc_name(Name::Anon);
         let s = self.alloc_string(CowStr::Borrowed(s));
         self.str(anon, s)
+    }
+
+    /// Verified in place, body unchanged: the name the pointer's dag stores at
+    /// its index, which is what the pointer denotes.
+    pub fn read_name(&self, p: NamePtr<'t>) -> (result: Name<'t>)
+        requires
+            crate::util_model::owns(*self, p),
+        ensures
+            crate::name_arena_bridge::name_children_owned(*self, result),
+            crate::name_arena_bridge::to_model_of_name(result) == crate::name_arena_bridge::to_model_name(p),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            crate::util_model::ptr_is_tc_agree(p);
+            crate::name_arena_bridge::to_model_name_at(p);
+        }
+        match p.dag_marker() {
+            DagMarker::ExportFile => self.export_file.dag.names.get_index(p.idx()).copied().unwrap(),
+            DagMarker::TcCtx => self.dag.names.get_index(p.idx()).copied().unwrap(),
+        }
+    }
+
+    /// Store a `Name`, getting back a pointer to the allocated item. If the item was
+    /// already stored, forego the allocation and return a pointer to the previously inserted
+    /// element. Checks the longer-lived storage first.
+    ///
+    /// Verified: the pointer denotes the name given. VERUS-REWRITE(arena-tokens):
+    /// `insert_full` is `arena_insert`, which also pins the new position of
+    /// the arena's history, and `Ptr::from` is `Ptr::from_in`, which also takes
+    /// the arena (both ghost, erased at run time).
+    /// VERUS-REWRITE(stored-child-check): a prefix in this context's own tier
+    /// is TESTED to be already stored (`idx < len`) before the name is
+    /// appended; every pointer the checker holds came from an earlier
+    /// allocation, so it never fails.
+    pub fn alloc_name(&mut self, n: Name<'t>) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
+            crate::name_arena_bridge::name_children_owned(*old(self), n),
+            crate::name_arena_bridge::name_hash_ok(n),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::name_arena_bridge::to_model_name(result) == crate::name_arena_bridge::to_model_of_name(n),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let ghost ids = crate::util_model::arena_ids(*self);
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.names);
+            assert forall|m: Name<'t>| #[trigger] ek.to_set().insert(n).contains(m)
+                implies crate::name_arena_bridge::name_parts_owned_in(ids, m) by {
+                if m != n {
+                    let i = choose|i: int| 0 <= i < ek.len() && ek[i] == m;
+                    assert(crate::name_arena_bridge::name_node_ok(ek[i], i as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
+                }
+            }
+            crate::name_arena_bridge::owned_names_keys_obey_model(ids, ek.to_set().insert(n));
+        }
+        if let Some(idx) = self.export_file.dag.names.get_index_of(&n) {
+            proof {
+                let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.names);
+                assert(ek[idx as int] == n);
+                assert(crate::name_arena_bridge::name_node_ok(ek[idx as int], idx as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
+            }
+            let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
+            proof { crate::name_arena_bridge::to_model_name_at(r); }
+            r
+        } else {
+            match n {
+                Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => {
+                    if matches!(pfx.dag_marker(), DagMarker::TcCtx) && pfx.idx() >= self.dag.names.len() {
+                        panic!("alloc_name: a prefix that is not stored");
+                    }
+                },
+                Name::Anon => {},
+            }
+            let ghost tk = crate::indexmap_model::iset_keys(&self.dag.names);
+            proof {
+                assert forall|m: Name<'t>| #[trigger] tk.to_set().insert(n).contains(m)
+                    implies crate::name_arena_bridge::name_parts_owned_in(ids, m) by {
+                    if m != n {
+                        let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                        assert(crate::name_arena_bridge::name_node_ok(tk[i], i as nat, true, self.dag.id(), self.dag.partner()));
+                    }
+                }
+                crate::name_arena_bridge::owned_names_keys_obey_model(ids, tk.to_set().insert(n));
+                match n {
+                    Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => crate::util_model::ptr_is_tc_agree(pfx),
+                    Name::Anon => {},
+                }
+                assert(crate::name_arena_bridge::name_node_ok(n, tk.len() as nat, true, self.dag.id(), self.dag.partner()));
+            }
+            let (idx, _) = crate::arena_history::arena_insert(&mut self.dag.names, Tracked(&mut self.dag.toks.borrow_mut().names), n);
+            proof { use_type_invariant(&*self.dag); }
+            let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
+            proof { crate::name_arena_bridge::to_model_name_at(r); }
+            r
+        }
+    }
+
+    /// A constructor for the anonymous name. Verified: position 0 of the export
+    /// file's names is the anonymous name.
+    pub fn anonymous(&self) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*self),
+        ensures
+            crate::util_model::owns(*self, result),
+            crate::name_arena_bridge::to_model_name(result) == crate::name_model::NameSpec::Anon,
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+        }
+        let r = self.export_file.dag.anonymous();
+        proof { crate::name_arena_bridge::to_model_name_at(r); }
+        r
     }
 
     /// Verified in place, body unchanged: a context over `export_file` and
@@ -646,13 +814,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         f(&mut PrettyPrinter::new(self))
     }
 
-    pub fn read_name(&self, p: NamePtr<'t>) -> Name<'t> {
-        match p.dag_marker() {
-            DagMarker::ExportFile => self.export_file.dag.names.get_index(p.idx()).copied().unwrap(),
-            DagMarker::TcCtx => self.dag.names.get_index(p.idx()).copied().unwrap(),
-        }
-    }
-
     /// Convenience function for reading two items as a tuple.
     pub fn read_name_pr(&self, p: NamePtr<'t>, q: NamePtr<'t>) -> (Name<'t>, Name<'t>) {
         (self.read_name(p), self.read_name(q))
@@ -690,17 +851,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         match p.dag_marker() {
             DagMarker::ExportFile => self.export_file.dag.uparams.get_index(p.idx()).cloned().unwrap(),
             DagMarker::TcCtx => self.dag.uparams.get_index(p.idx()).cloned().unwrap(),
-        }
-    }
-
-    /// Store a `Name`, getting back a pointer to the allocated item. If the item was
-    /// already stored, forego the allocation and return a pointer to the previously inserted
-    /// element. Checks the longer-lived storage first.
-    pub fn alloc_name(&mut self, n: Name<'t>) -> NamePtr<'t> {
-        if let Some(idx) = self.export_file.dag.names.get_index_of(&n) {
-            Ptr::from(DagMarker::ExportFile, idx)
-        } else {
-            Ptr::from(DagMarker::TcCtx, self.dag.names.insert_full(n).0)
         }
     }
 
@@ -771,11 +921,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         } else {
             Ptr::from(DagMarker::TcCtx, self.dag.uparams.insert_full(Arc::from(ls)).0)
         }
-    }
-
-    /// A constructor for the anonymous name.
-    pub fn anonymous(&self) -> NamePtr<'t> {
-        self.export_file.dag.anonymous()
     }
 
     pub fn str1_owned(&mut self, s: String) -> NamePtr<'t> {
@@ -1005,6 +1150,21 @@ impl<'a> LeanDag<'a> {
         &&& crate::indexmap_model::iset_keys(&self.strings).len() == 0
         &&& (self.bignums matches Some(b) ==> crate::indexmap_model::iset_keys(&b).len() == 0)
     }
+
+    /// Used for constructing the name cache;
+    ///
+    /// VERUS-REWRITE(arena-tokens): `Ptr::from` is `Ptr::from_in`, which
+    /// also takes the arena (a ghost argument, erased at run time).
+    pub(crate) fn anonymous(&self) -> (result: NamePtr<'a>)
+        ensures
+            crate::name_arena_bridge::ptr_index(result) == 0,
+            !crate::util_model::ptr_is_tc(result),
+            !crate::name_arena_bridge::ptr_is_tc(result),
+            arena_of(result) == self.id(),
+    {
+        debug_assert_eq!(self.names.get_index(0).copied().unwrap(), Name::Anon);
+        Ptr::from_in(DagMarker::ExportFile, 0, Ghost(self.id()))
+    }
 }
 
 } // verus!
@@ -1046,12 +1206,6 @@ impl<'a> LeanDag<'a> {
         let _ = out.names.insert(Name::Anon);
         let _ = out.levels.insert(Level::Zero);
         out
-    }
-
-    /// Used for constructing the name cache;
-    pub(crate) fn anonymous(&self) -> NamePtr<'a> {
-        debug_assert_eq!(self.names.get_index(0).copied().unwrap(), Name::Anon);
-        Ptr::from(DagMarker::ExportFile, 0)
     }
 
     /// Used for constructing the name cache;
